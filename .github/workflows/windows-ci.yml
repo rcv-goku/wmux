@@ -1,0 +1,63 @@
+name: Windows CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: Build & test (x86_64-windows-gnu)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Keep Zig's global cache on the same drive as the checkout (D:), or the
+      # build system asserts on a cross-drive relative path during configure.
+      # (runner.temp is unavailable in job-level env, so set it in a step.)
+      - name: Pin Zig global cache to build drive
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_ENV -Value "ZIG_GLOBAL_CACHE_DIR=$env:RUNNER_TEMP\zig-global"
+
+      - name: Cache Zig 0.15.2
+        id: cache-zig
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}\zig
+          key: zig-0.15.2-windows-x86_64
+
+      - name: Download Zig 0.15.2
+        if: steps.cache-zig.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest 'https://ziglang.org/download/0.15.2/zig-x86_64-windows-0.15.2.zip' -OutFile "$env:RUNNER_TEMP\zig.zip"
+          Expand-Archive "$env:RUNNER_TEMP\zig.zip" -DestinationPath "$env:RUNNER_TEMP\zig" -Force
+
+      - name: Add Zig to PATH
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP\zig\zig-x86_64-windows-0.15.2"
+
+      - name: Build (win32 apprt)
+        run: zig build -Dapp-runtime=win32 -Dtarget=x86_64-windows-gnu
+
+      # The full test suite has known environment-specific failures in
+      # cli.ssh-cache.DiskCache on the gnu test binary, and some tests pull in
+      # the GTK apprt at comptime. Run the win32-relevant filters instead.
+      - name: Test (win32 feature suites)
+        run: |
+          zig build test -Dapp-runtime=win32 -Dtarget=x86_64-windows-gnu -Dtest-filter=sidebar
+          zig build test -Dapp-runtime=win32 -Dtarget=x86_64-windows-gnu -Dtest-filter=wsl
+          zig build test -Dapp-runtime=win32 -Dtarget=x86_64-windows-gnu -Dtest-filter=win-pwd
+          zig build test -Dapp-runtime=win32 -Dtarget=x86_64-windows-gnu "-Dtest-filter=unit: "

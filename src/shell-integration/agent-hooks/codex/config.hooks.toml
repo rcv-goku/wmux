@@ -1,0 +1,26 @@
+# Ghostty session-capture hook for OpenAI Codex CLI.
+#
+# Merge this block into $CODEX_HOME/config.toml (default ~/.codex/config.toml),
+# or drop it in the sibling hooks.json — installed by
+# `ghostty +hooks setup codex`.
+#
+# Codex fires a `SessionStart` lifecycle hook on session begin/resume and
+# passes a shared JSON payload on the hook command's stdin that includes
+# `session_id` (a UUID), `cwd`, `model`, and `hook_event_name`. The command
+# reads that stdin, extracts `session_id`, and forwards it to the running
+# Ghostty instance (resolved from GHOSTTY_PID, which Codex inherits because
+# it was launched inside a Ghostty-spawned shell).
+#
+# Resume later with:  codex resume <session_id>
+#
+# Use the .ps1 command on native-Windows Codex, the .sh command under
+# WSL/Git-Bash. The hook is best-effort: its command exits 0 on any failure
+# so capture can never block a Codex session.
+
+[[hooks.SessionStart]]
+matcher = ""
+
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = 'pwsh -NoProfile -File "%USERPROFILE%\.codex\ghostty-hooks\ghostty-capture.ps1"'
+timeout = 10

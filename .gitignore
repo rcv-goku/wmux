@@ -1,0 +1,42 @@
+*~
+.*.swp
+.swp
+*.log
+.DS_Store
+.vscode/
+.direnv/
+.envrc.local
+.flatpak-builder/
+zig-cache/
+.zig-cache/
+zig-out/
+build-cmake/
+CMakeCache.txt
+CMakeFiles/
+/build.zig.zon.bak
+/result*
+/.nixos-test-history
+example/*.wasm
+test/ghostty
+test/cases/**/*.actual.png
+flatpak/builddir/
+flatpak/repo/
+
+glad.zip
+/Box_test.ppm
+/Box_test_diff.ppm
+/ghostty.qcow2
+
+vgcore.*
+
+dist/windows/ghostty-windows-x64-*.zip
+
+# Claude Code session state (local only)
+.claude/
+
+# Zig 0.16+ package cache (lands here when build deps resolve outside .zig-cache)
+zig-pkg/
+
+# Windows installer build artifacts (produced by dist/windows/release.ps1)
+dist/windows/_staging/
+dist/windows/output/

@@ -1,0 +1,406 @@
+# Ghostty Win32 Test Harness
+# Usage from WSL: powershell.exe -ExecutionPolicy Bypass -File test_harness.ps1 -Action <action> [args]
+#
+# Actions:
+#   launch      — Start ghostty.exe, output PID and HWND
+#   screenshot  — Capture ghostty window to PNG file
+#   sendkeys    — Send keystrokes to ghostty window
+#   sendtext    — Type text into ghostty window
+#   check       — Check if ghostty window exists, output title + size
+#   close       — Close ghostty window gracefully
+#   kill        — Force-kill ghostty process
+#
+# Window finding: In WSL2, FindWindow/EnumWindows fail across sessions.
+# The launch action outputs HWND= which subsequent actions use via -Hwnd.
+
+param(
+    [Parameter(Mandatory=$true)]
+    [string]$Action,
+
+    [string]$ExePath,
+    [string]$Args,
+    [string]$OutputPath,
+    [string]$Keys,
+    [string]$Text,
+    [int]$ProcessId,
+    [long]$Hwnd = 0,
+    [int]$WaitMs = 3000,
+    [int]$Width = 0,
+    [int]$Height = 0
+)
+
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+
+public class Win32Test {
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
+
+    [DllImport("user32.dll")]
+    public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+    [DllImport("user32.dll")]
+    public static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
+
+    [DllImport("user32.dll")]
+    public static extern int GetWindowTextLength(IntPtr hWnd);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+
+    [DllImport("user32.dll")]
+    public static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdcBlt, uint nFlags);
+
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
+
+    [DllImport("user32.dll")]
+    public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    public static extern bool MoveWindow(IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
+
+    [DllImport("user32.dll")]
+    public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+
+    public delegate bool EnumChildProc(IntPtr hWnd, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    public static extern bool EnumChildWindows(IntPtr hWndParent, EnumChildProc lpEnumFunc, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr dpiContext);
+
+    public const uint GW_OWNER = 4;
+
+    public const uint SWP_NOZORDER = 0x0004;
+    public const uint SWP_NOACTIVATE = 0x0010;
+    public const uint SWP_NOMOVE = 0x0002;
+    public const uint WM_CLOSE = 0x0010;
+    public const uint WM_GHOSTTY_SCROLLBAR_QUERY = 0x0401;
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT {
+        public int Left, Top, Right, Bottom;
+    }
+}
+"@
+
+# Per-Monitor-V2 DPI awareness: without this, at >100% display scale Windows
+# silently virtualizes window rects/coords for this (DPI-unaware) pwsh process
+# (and rescales any PostMessage coordinates). Must run before any window
+# queries. DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4.
+# Older hosts (pre Win10 1703) lack the API; fall back gracefully.
+try {
+    [Win32Test]::SetThreadDpiAwarenessContext([IntPtr](-4)) | Out-Null
+} catch {
+    Write-Warning "SetThreadDpiAwarenessContext unavailable; continuing DPI-unaware ($($_.Exception.Message))"
+}
+
+function Find-GhosttyWindow {
+    param([int]$ProcessId = 0, [long]$DirectHwnd = 0)
+
+    # Strategy 0: Direct HWND passed from a previous launch action.
+    # Required in WSL2 where cross-session FindWindow/EnumWindows and
+    # even IsWindowVisible fail due to desktop isolation.
+    if ($DirectHwnd -ne 0) {
+        $hWnd = [IntPtr]$DirectHwnd
+        $tb = New-Object System.Text.StringBuilder 256
+        [Win32Test]::GetWindowText($hWnd, $tb, 256) | Out-Null
+        return @{ Handle = $hWnd; Title = $tb.ToString(); Pid = $ProcessId }
+    }
+
+    # Strategy 1: Get-Process.MainWindowHandle — works from the same
+    # session that launched the process.
+    $procs = @()
+    if ($ProcessId -ne 0) {
+        $p = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+        if ($p) { $procs = @($p) }
+    } else {
+        $procs = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
+            $_.Name -like "*ghostty*"
+        })
+    }
+
+    foreach ($p in $procs) {
+        $p.Refresh()
+        $hWnd = $p.MainWindowHandle
+        if ($hWnd -ne [IntPtr]::Zero -and [Win32Test]::IsWindowVisible($hWnd)) {
+            $sb = New-Object System.Text.StringBuilder 256
+            [Win32Test]::GetClassName($hWnd, $sb, 256) | Out-Null
+            if ($sb.ToString() -eq "GhosttyWindow") {
+                $tb = New-Object System.Text.StringBuilder 256
+                [Win32Test]::GetWindowText($hWnd, $tb, 256) | Out-Null
+                return @{ Handle = $hWnd; Title = $tb.ToString(); Pid = $p.Id }
+            }
+        }
+    }
+
+    return $null
+}
+
+function Invoke-Launch {
+    $exe = if ($ExePath) { $ExePath } else {
+        # Default: find ghostty.exe relative to this script
+        $scriptDir = Split-Path -Parent $MyInvocation.ScriptName
+        $candidate = Join-Path (Split-Path -Parent (Split-Path -Parent $scriptDir)) "zig-out\bin\ghostty.exe"
+        if (Test-Path $candidate) { $candidate }
+        else { throw "ghostty.exe not found. Specify -ExePath." }
+    }
+
+    # Use Start-Process -PassThru instead of ProcessStartInfo with
+    # RedirectStandardError. Stderr redirect can hang on debug builds
+    # and even on release builds when ConPTY produces debug output.
+    if ($Args) {
+        $proc = Start-Process -FilePath $exe -ArgumentList $Args -PassThru
+    } else {
+        $proc = Start-Process -FilePath $exe -PassThru
+    }
+    Write-Output "PID=$($proc.Id)"
+
+    # Wait for window to appear
+    $deadline = (Get-Date).AddMilliseconds($WaitMs)
+    while ((Get-Date) -lt $deadline) {
+        Start-Sleep -Milliseconds 200
+        $win = Find-GhosttyWindow -ProcessId $proc.Id
+        if ($win) {
+            Write-Output "WINDOW_FOUND=true"
+            Write-Output "HWND=$([long]$win.Handle)"
+            Write-Output "TITLE=$($win.Title)"
+            return
+        }
+    }
+    Write-Output "WINDOW_FOUND=false"
+}
+
+function Invoke-Screenshot {
+    $win = Find-GhosttyWindow -ProcessId $ProcessId -DirectHwnd $Hwnd
+    if (-not $win) {
+        Write-Error "No ghostty window found"
+        exit 1
+    }
+
+    $hWnd = $win.Handle
+    $rect = New-Object Win32Test+RECT
+    [Win32Test]::GetWindowRect($hWnd, [ref]$rect) | Out-Null
+
+    $width = $rect.Right - $rect.Left
+    $height = $rect.Bottom - $rect.Top
+
+    if ($width -le 0 -or $height -le 0) {
+        Write-Error "Invalid window dimensions: ${width}x${height}"
+        exit 1
+    }
+
+    $bmp = New-Object System.Drawing.Bitmap $width, $height
+    $gfx = [System.Drawing.Graphics]::FromImage($bmp)
+    $hdc = $gfx.GetHdc()
+
+    # PrintWindow with PW_RENDERFULLCONTENT flag (2) for better capture
+    [Win32Test]::PrintWindow($hWnd, $hdc, 2) | Out-Null
+
+    $gfx.ReleaseHdc($hdc)
+    $gfx.Dispose()
+
+    $outFile = if ($OutputPath) { $OutputPath } else {
+        Join-Path $env:TEMP "ghostty_screenshot_$(Get-Date -Format 'yyyyMMdd_HHmmss').png"
+    }
+    $bmp.Save($outFile, [System.Drawing.Imaging.ImageFormat]::Png)
+    $bmp.Dispose()
+
+    Write-Output "SCREENSHOT=$outFile"
+    Write-Output "SIZE=${width}x${height}"
+}
+
+function Invoke-SendKeys {
+    $win = Find-GhosttyWindow -ProcessId $ProcessId -DirectHwnd $Hwnd
+    if (-not $win) {
+        Write-Error "No ghostty window found"
+        exit 1
+    }
+
+    [Win32Test]::SetForegroundWindow($win.Handle) | Out-Null
+    Start-Sleep -Milliseconds 100
+
+    if ($Keys) {
+        # SendKeys format: {ENTER}, {TAB}, ^c (Ctrl+C), etc.
+        # SendWait can throw on locked desktops / isolated sessions; report
+        # delivery health explicitly instead of failing silently.
+        try {
+            [System.Windows.Forms.SendKeys]::SendWait($Keys)
+            Write-Output "SEND_OK=true"
+        } catch {
+            Write-Output "SEND_OK=false"
+            Write-Output "SEND_ERROR=$($_.Exception.Message)"
+        }
+    }
+    Write-Output "SENT=$Keys"
+}
+
+function Invoke-SendText {
+    $win = Find-GhosttyWindow -ProcessId $ProcessId -DirectHwnd $Hwnd
+    if (-not $win) {
+        Write-Error "No ghostty window found"
+        exit 1
+    }
+
+    [Win32Test]::SetForegroundWindow($win.Handle) | Out-Null
+    Start-Sleep -Milliseconds 100
+
+    if ($Text) {
+        # Escape special SendKeys characters
+        $escaped = $Text -replace '([+^%~{}()\[\]])', '{$1}'
+        try {
+            [System.Windows.Forms.SendKeys]::SendWait($escaped)
+            Write-Output "SEND_OK=true"
+        } catch {
+            Write-Output "SEND_OK=false"
+            Write-Output "SEND_ERROR=$($_.Exception.Message)"
+        }
+    }
+    Write-Output "SENT_TEXT=$Text"
+}
+
+function Invoke-Check {
+    $win = Find-GhosttyWindow -ProcessId $ProcessId -DirectHwnd $Hwnd
+    if (-not $win) {
+        Write-Output "EXISTS=false"
+        return
+    }
+
+    $hWnd = $win.Handle
+    $rect = New-Object Win32Test+RECT
+    [Win32Test]::GetWindowRect($hWnd, [ref]$rect) | Out-Null
+    $clientRect = New-Object Win32Test+RECT
+    [Win32Test]::GetClientRect($hWnd, [ref]$clientRect) | Out-Null
+
+    Write-Output "EXISTS=true"
+    Write-Output "TITLE=$($win.Title)"
+    Write-Output "PID=$($win.Pid)"
+    Write-Output "WINDOW_RECT=$($rect.Left),$($rect.Top),$($rect.Right),$($rect.Bottom)"
+    Write-Output "CLIENT_SIZE=$($clientRect.Right)x$($clientRect.Bottom)"
+    Write-Output "VISIBLE=$([Win32Test]::IsWindowVisible($hWnd))"
+}
+
+function Invoke-Close {
+    $win = Find-GhosttyWindow -ProcessId $ProcessId -DirectHwnd $Hwnd
+    if (-not $win) {
+        Write-Output "NO_WINDOW"
+        return
+    }
+    [Win32Test]::PostMessage($win.Handle, [Win32Test]::WM_CLOSE, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+    Write-Output "CLOSED=true"
+}
+
+function Invoke-Resize {
+    $win = Find-GhosttyWindow -ProcessId $ProcessId -DirectHwnd $Hwnd
+    if (-not $win) {
+        Write-Error "No ghostty window found"
+        exit 1
+    }
+    if ($Width -le 0 -or $Height -le 0) {
+        Write-Error "Width and Height must be positive"
+        exit 1
+    }
+    # Use SetWindowPos (size only) so the window doesn't move.
+    $flags = [Win32Test]::SWP_NOZORDER -bor [Win32Test]::SWP_NOACTIVATE -bor [Win32Test]::SWP_NOMOVE
+    [Win32Test]::SetWindowPos($win.Handle, [IntPtr]::Zero, 0, 0, $Width, $Height, $flags) | Out-Null
+    Start-Sleep -Milliseconds 200
+    $cr = New-Object Win32Test+RECT
+    [Win32Test]::GetClientRect($win.Handle, [ref]$cr) | Out-Null
+    Write-Output "RESIZED=true"
+    Write-Output "CLIENT_SIZE=$($cr.Right)x$($cr.Bottom)"
+}
+
+function Invoke-Kill {
+    if ($ProcessId) {
+        # Use taskkill /T to kill the entire process tree (ghostty + child cmd.exe).
+        # Stop-Process only kills the main process, leaving orphaned children.
+        & taskkill /PID $ProcessId /T /F 2>$null | Out-Null
+        Write-Output "KILLED=$ProcessId"
+    } else {
+        Get-Process ghostty*  -ErrorAction SilentlyContinue | ForEach-Object {
+            & taskkill /PID $_.Id /T /F 2>$null | Out-Null
+        }
+        Write-Output "KILLED=all"
+    }
+}
+
+function Invoke-ScrollbarQuery {
+    # Find the GhosttyWindow (top-level). -Hwnd is the main window HWND.
+    $win = Find-GhosttyWindow -ProcessId $ProcessId -DirectHwnd $Hwnd
+    if (-not $win) {
+        Write-Error "No ghostty window found"
+        exit 1
+    }
+
+    $script:mainHwnd = [IntPtr]$win.Handle
+
+    # Win32 traverses up to the top-level ancestor for popup ownership, so
+    # even though Scrollbar.create() is called with the GhosttyTerminal child
+    # HWND, the resulting popup's effective owner is the top-level
+    # GhosttyWindow. Look for a GhosttyScrollbar whose GW_OWNER is mainHwnd.
+    $script:scrollbarHwnd = $null
+    $enumCb = [Win32Test+EnumWindowsProc]{
+        param([IntPtr]$h, [IntPtr]$l)
+        $sb = New-Object System.Text.StringBuilder 256
+        [Win32Test]::GetClassName($h, $sb, 256) | Out-Null
+        if ($sb.ToString() -eq "GhosttyScrollbar") {
+            $owner = [Win32Test]::GetWindow($h, [Win32Test]::GW_OWNER)
+            if ($owner.ToInt64() -eq $script:mainHwnd.ToInt64()) {
+                $script:scrollbarHwnd = $h
+                return $false  # stop enumeration
+            }
+        }
+        return $true
+    }
+    [Win32Test]::EnumWindows($enumCb, [IntPtr]::Zero) | Out-Null
+
+    if ($null -eq $scrollbarHwnd) {
+        Write-Output "STATE=NOT_FOUND"
+        exit 1
+    }
+
+    # Send WM_GHOSTTY_SCROLLBAR_QUERY and read the returned visibility state.
+    $result = [Win32Test]::SendMessage($scrollbarHwnd, [Win32Test]::WM_GHOSTTY_SCROLLBAR_QUERY, [IntPtr]::Zero, [IntPtr]::Zero)
+    Write-Output "STATE=$([long]$result)"
+}
+
+# Dispatch
+switch ($Action.ToLower()) {
+    "launch"          { Invoke-Launch }
+    "screenshot"      { Invoke-Screenshot }
+    "sendkeys"        { Invoke-SendKeys }
+    "sendtext"        { Invoke-SendText }
+    "check"           { Invoke-Check }
+    "close"           { Invoke-Close }
+    "resize"          { Invoke-Resize }
+    "kill"            { Invoke-Kill }
+    "scrollbar-query" { Invoke-ScrollbarQuery }
+    default           { Write-Error "Unknown action: $Action"; exit 1 }
+}

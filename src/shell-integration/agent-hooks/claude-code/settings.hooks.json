@@ -1,0 +1,17 @@
+{
+  "//": "Merge this 'hooks' block into ~/.claude/settings.json (user level) or .claude/settings.json (project). Installed by `ghostty +hooks setup claude_code`. The SessionStart hook fires on source startup|resume|clear|compact; the command reads the SessionStart JSON on stdin (which carries `session_id`) and forwards it to the running Ghostty. Use the .ps1 command on native Windows agents, the .sh command under WSL/Git-Bash. $CLAUDE_PROJECT_DIR is substituted by Claude Code; GHOSTTY_BIN_DIR is exported by Ghostty into the shell so `ghostty` is always resolvable.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pwsh -NoProfile -File \"%USERPROFILE%\\.claude\\ghostty-hooks\\ghostty-capture.ps1\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,90 @@
+name: Windows Release
+
+# Tags use the win-vX.Y.Z form: Ghostty's build.zig panics on a checked-out
+# exact tag named vX.Y.Z unless it matches its internal version, and win-v*
+# is the fork's sanctioned format. v* stays accepted for the old tags.
+on:
+  push:
+    tags: ['win-v*', 'v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version, e.g. 0.1.0'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build installer & publish release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Keep Zig's global cache on the same drive as the checkout (D:), or the
+      # build system asserts on a cross-drive relative path during configure.
+      # (runner.temp is unavailable in job-level env, so set it in a step.)
+      - name: Pin Zig global cache to build drive
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_ENV -Value "ZIG_GLOBAL_CACHE_DIR=$env:RUNNER_TEMP\zig-global"
+
+      - name: Cache Zig 0.15.2
+        id: cache-zig
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}\zig
+          key: zig-0.15.2-windows-x86_64
+
+      - name: Download Zig 0.15.2
+        if: steps.cache-zig.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest 'https://ziglang.org/download/0.15.2/zig-x86_64-windows-0.15.2.zip' -OutFile "$env:RUNNER_TEMP\zig.zip"
+          Expand-Archive "$env:RUNNER_TEMP\zig.zip" -DestinationPath "$env:RUNNER_TEMP\zig" -Force
+
+      - name: Add Zig to PATH
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP\zig\zig-x86_64-windows-0.15.2"
+
+      - name: Determine version
+        id: ver
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -like 'refs/tags/*') {
+              $v = $env:GITHUB_REF -replace 'refs/tags/(win-)?v?', ''
+          } else {
+              $v = '${{ github.event.inputs.version }}'
+          }
+          "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Fetch WebView2Loader.dll
+        shell: pwsh
+        run: |
+          Invoke-WebRequest 'https://www.nuget.org/api/v2/package/Microsoft.Web.WebView2' -OutFile wv2.zip
+          Expand-Archive wv2.zip -DestinationPath wv2 -Force
+          Copy-Item wv2\build\native\x64\WebView2Loader.dll dist\windows\WebView2Loader.dll
+
+      - name: Install Inno Setup 6
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer
+        shell: pwsh
+        run: dist\windows\release.ps1 -Version ${{ steps.ver.outputs.version }}
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ghostty-win v${{ steps.ver.outputs.version }}
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', steps.ver.outputs.version) }}
+          files: dist/windows/output/*-setup.exe
+          fail_on_unmatched_files: true
+          body: |
+            Unofficial community build of the Ghostty terminal for Windows.
+            Not affiliated with or endorsed by the Ghostty project.
+
+            Requires the Microsoft Edge WebView2 Runtime (preinstalled on
+            Windows 11) for browser panes. The installer is unsigned, so
+            SmartScreen will warn on first run ("More info" → "Run anyway").
