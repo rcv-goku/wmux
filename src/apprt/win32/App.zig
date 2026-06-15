@@ -548,6 +548,7 @@ pub fn terminate(self: *App) void {
     self.session_store.deinit();
 
     if (self.msg_hwnd) |hwnd| {
+        _ = w32.KillTimer(hwnd, WS_META_TIMER_ID);
         // Clear GWLP_USERDATA before destroying so msgWndProc sees
         // userdata=0 and falls through to DefWindowProc for any
         // messages during destruction (e.g. WM_DESTROY).

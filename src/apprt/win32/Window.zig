@@ -5195,6 +5195,9 @@ pub fn windowWndProc(
                     };
                 }
             }
+            // Reposition corner button overlays — they are screen-positioned
+            // layered popups and must follow the window on move.
+            window.updatePaneButtons();
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
         },
         w32.WM_GETMINMAXINFO => {
