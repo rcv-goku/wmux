@@ -113,17 +113,18 @@ const windows_impl = if (builtin.os.tag == .windows) struct {
         var iter = try args.argsIterator(alloc);
         defer iter.deinit();
 
-        const sub_str = iter.next() orelse {
-            try stderr.print("usage: ghostty +notify <ring|clear|next|toggle-read|mark-oldest-next> [--workspace I] [--tab J]\n", .{});
+        // The first positional may be an explicit subcommand (ring, clear,
+        // next, ...) or bare text, in which case we default to "ring".
+        // This lets `+notify "Hello world"` work as shorthand for
+        // `+notify ring`.
+        const first = iter.next() orelse {
+            try stderr.print("usage: ghostty +notify [ring|clear|next|toggle-read|mark-oldest-next] [<text>] [--workspace I] [--tab J]\n", .{});
             return 1;
         };
-        if (std.mem.eql(u8, sub_str, "--help") or std.mem.eql(u8, sub_str, "-h")) {
+        if (std.mem.eql(u8, first, "--help") or std.mem.eql(u8, first, "-h")) {
             return Action.help_error;
         }
-        const sub = std.meta.stringToEnum(Command, sub_str) orelse {
-            try stderr.print("unknown subcommand '{s}'\n", .{sub_str});
-            return 1;
-        };
+        const sub = std.meta.stringToEnum(Command, first) orelse .ring;
 
         var workspace: ?u32 = null;
         var tab: ?u32 = null;
@@ -162,8 +163,10 @@ const windows_impl = if (builtin.os.tag == .windows) struct {
                 try stderr.print("unknown flag '{s}'\n", .{arg});
                 return 1;
             } else {
-                try stderr.print("unexpected argument '{s}'\n", .{arg});
-                return 1;
+                // Accept (and ignore) positional text arguments so that
+                // `+notify "Hello world"` and `+notify ring "text"` both
+                // work. The IPC "ring" action does not use a text payload,
+                // but rejecting it here would break the simple-text UX.
             }
         }
 

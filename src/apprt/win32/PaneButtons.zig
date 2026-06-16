@@ -61,7 +61,7 @@ const ICON_R: u8 = 0xE6;
 const ICON_G: u8 = 0xE6;
 const ICON_B: u8 = 0xE6;
 
-pub const WINDOW_CLASS_NAME = std.unicode.utf8ToUtf16LeStringLiteral("GhosttyPaneButtons");
+pub const WINDOW_CLASS_NAME = std.unicode.utf8ToUtf16LeStringLiteral("WmuxPaneButtons");
 
 /// The action a clicked button maps to. Pure enum so the hit-test result
 /// is testable; Window routes each to the corresponding pane operation.

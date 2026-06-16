@@ -43,6 +43,12 @@ pub const Options = struct {
 ///   * `show [--json]`: Print the whole session store. `--json` is the
 ///     default and only format today: `[{surface, agent, session}]`.
 ///
+///   * `save`: Persist the full workspace/tab layout to disk
+///     (`session-state.json` under `%LOCALAPPDATA%\ghostty`).
+///
+///   * `restore`: Reload the workspace/tab layout from the saved session
+///     state on disk.
+///
 /// The target instance's IPC pipe is `ghostty-ipc-<pid>`. The pid is taken
 /// from the `GHOSTTY_PID` environment variable (exported into every shell
 /// Ghostty spawns); if it is unset, `+session` connects to the sole
@@ -85,7 +91,7 @@ const windows_impl = if (builtin.os.tag == .windows) struct {
         return code;
     }
 
-    const Command = enum { capture, @"resume", show };
+    const Command = enum { capture, @"resume", show, save, restore };
 
     fn runImpl(
         alloc: Allocator,
@@ -96,7 +102,7 @@ const windows_impl = if (builtin.os.tag == .windows) struct {
         defer iter.deinit();
 
         const sub_str = iter.next() orelse {
-            try stderr.print("usage: ghostty +session <capture|resume|show> [...]\n", .{});
+            try stderr.print("usage: ghostty +session <capture|resume|show|save|restore> [...]\n", .{});
             return 1;
         };
         if (std.mem.eql(u8, sub_str, "--help") or std.mem.eql(u8, sub_str, "-h")) {
@@ -193,6 +199,14 @@ const windows_impl = if (builtin.os.tag == .windows) struct {
             },
             .show => {
                 const request = "{\"id\":1,\"cmd\":\"session-list\"}\n";
+                return agent_ipc.sendRequest(alloc, request, stdout, stderr);
+            },
+            .save => {
+                const request = "{\"id\":1,\"cmd\":\"session-save\"}\n";
+                return agent_ipc.sendRequest(alloc, request, stdout, stderr);
+            },
+            .restore => {
+                const request = "{\"id\":1,\"cmd\":\"session-restore\"}\n";
                 return agent_ipc.sendRequest(alloc, request, stdout, stderr);
             },
         }

@@ -3865,7 +3865,7 @@ fn paintTabBar(self: *Window, hdc_screen: w32.HDC) void {
                 x_char,
                 1,
                 &close_rect,
-                w32.DT_LEFT | w32.DT_VCENTER | w32.DT_SINGLELINE | w32.DT_NOPREFIX,
+                w32.DT_CENTER | w32.DT_VCENTER | w32.DT_SINGLELINE | w32.DT_NOPREFIX,
             );
         }
 
@@ -3908,7 +3908,7 @@ fn paintTabBar(self: *Window, hdc_screen: w32.HDC) void {
             plus_char,
             1,
             &plus_rect,
-            w32.DT_LEFT | w32.DT_VCENTER | w32.DT_SINGLELINE | w32.DT_NOPREFIX,
+            w32.DT_CENTER | w32.DT_VCENTER | w32.DT_SINGLELINE | w32.DT_NOPREFIX,
         );
     }
 
