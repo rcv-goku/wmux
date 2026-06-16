@@ -1,14 +1,11 @@
 <#
 .SYNOPSIS
-    Build Ghostty for Windows and package it as an Inno Setup installer.
+    Build wmux for Windows and package it as an Inno Setup installer.
 
 .DESCRIPTION
-    Unofficial community build of the Ghostty terminal emulator for Windows.
-    Not affiliated with or endorsed by the Ghostty project.
-
     Steps:
       1. zig build (ReleaseFast, win32 app runtime, x86_64-windows-gnu)
-      2. Stage ghostty.exe, WebView2Loader.dll, and share/ resources into
+      2. Stage wmux.exe, WebView2Loader.dll, and share/ resources into
          dist\windows\_staging\
       3. Compile dist\windows\installer.iss with Inno Setup 6 (ISCC.exe),
          emitting the setup exe to dist\windows\output\
@@ -96,7 +93,7 @@ if ($Version -match '(\d+)\.(\d+)\.(\d+)(?:-(\d+))?') {
     $VersionNumeric = '{0}.{1}.{2}.{3}' -f [int]$Matches[1], [int]$Matches[2], [int]$Matches[3], $rev
 }
 
-Write-Host "Ghostty Windows installer build" -ForegroundColor Cyan
+Write-Host "wmux Windows installer build" -ForegroundColor Cyan
 Write-Host "  Version:         $Version  (VERSIONINFO: $VersionNumeric)"
 Write-Host "  Repo root:       $RepoRoot"
 Write-Host "  Staging dir:     $StageDir"
@@ -113,12 +110,12 @@ if ($SkipBuild) {
     if (-not (Test-Path $ZigExe) -and -not (Get-Command $ZigExe -ErrorAction SilentlyContinue)) {
         Fail "Zig compiler not found: $ZigExe"
     }
-    Write-Host 'Building ghostty (ReleaseFast)...' -ForegroundColor Cyan
+    Write-Host 'Building wmux (ReleaseFast)...' -ForegroundColor Cyan
     Push-Location $RepoRoot
     try {
-        # When building from an exact git tag, Ghostty's build.zig requires the
-        # tag to match its declared version. Pass an explicit semantic version
-        # to bypass that check (and stamp the build) whenever $Version is a
+        # When building from an exact git tag, build.zig requires the tag to
+        # match its declared version. Pass an explicit semantic version to
+        # bypass that check (and stamp the build) whenever $Version is a
         # plain a.b.c; otherwise let the build derive it from git.
         $zigArgs = @('build', '-Dapp-runtime=win32', '-Dtarget=x86_64-windows-gnu', '-Doptimize=ReleaseFast')
         if ($Version -match '^\d+\.\d+\.\d+$') { $zigArgs += "-Dversion-string=$Version" }
@@ -133,7 +130,11 @@ if ($SkipBuild) {
 
 $ExePath = Join-Path $RepoRoot 'zig-out\bin\ghostty.exe'
 if (-not (Test-Path $ExePath)) {
-    Fail "ghostty.exe not found at $ExePath. Run without -SkipBuild, or run the zig build first."
+    # Also check for wmux.exe in case the build system has been updated.
+    $ExePath = Join-Path $RepoRoot 'zig-out\bin\wmux.exe'
+}
+if (-not (Test-Path $ExePath)) {
+    Fail "wmux.exe (or ghostty.exe) not found in zig-out\bin. Run without -SkipBuild, or run the zig build first."
 }
 
 # --------------------------------------------------------------------------
@@ -143,28 +144,49 @@ Write-Host 'Staging files...' -ForegroundColor Cyan
 if (Test-Path $StageDir) { Remove-Item -Recurse -Force $StageDir }
 New-Item -ItemType Directory -Path $StageDir -Force | Out-Null
 
-Copy-Item $ExePath -Destination $StageDir
-Write-Host "  ghostty.exe  ($([math]::Round((Get-Item $ExePath).Length / 1MB, 1)) MB)"
+Copy-Item $ExePath -Destination (Join-Path $StageDir 'wmux.exe')
+Write-Host "  wmux.exe  ($([math]::Round((Get-Item $ExePath).Length / 1MB, 1)) MB)"
 
 if (Test-Path $WebView2LoaderSource) {
     Copy-Item $WebView2LoaderSource -Destination $StageDir
     Write-Host '  WebView2Loader.dll  (Microsoft.Web.WebView2 NuGet, build/native/x64)'
 } else {
-    Fail @"
-WebView2Loader.dll not found at:
-  $WebView2LoaderSource
+    Write-Host '  WebView2Loader.dll not found locally; downloading from NuGet...' -ForegroundColor Yellow
+    $NuGetTmp = Join-Path $env:TEMP 'webview2-nuget'
+    $NuGetZip = "$NuGetTmp.zip"
+    try {
+        Invoke-WebRequest 'https://www.nuget.org/api/v2/package/Microsoft.Web.WebView2' -OutFile $NuGetZip -UseBasicParsing
+        if (Test-Path $NuGetTmp) { Remove-Item -Recurse -Force $NuGetTmp }
+        Expand-Archive $NuGetZip $NuGetTmp
+        $DownloadedDll = Join-Path $NuGetTmp 'build\native\x64\WebView2Loader.dll'
+        if (-not (Test-Path $DownloadedDll)) {
+            Fail "Downloaded NuGet package but WebView2Loader.dll not found at expected path: $DownloadedDll"
+        }
+        Copy-Item $DownloadedDll -Destination $StageDir
+        # Also cache a copy beside this script for future builds.
+        Copy-Item $DownloadedDll -Destination (Join-Path $ScriptDir 'WebView2Loader.dll')
+        Write-Host '  WebView2Loader.dll  (auto-downloaded from Microsoft.Web.WebView2 NuGet)'
+    } catch {
+        Fail @"
+WebView2Loader.dll not found and auto-download failed.
+Error: $($_.Exception.Message)
 
 This DLL comes from the Microsoft.Web.WebView2 NuGet package
 (path inside the package: build/native/x64/WebView2Loader.dll).
-It is redistributable per the WebView2 SDK license. To fetch it:
+It is redistributable per the WebView2 SDK license. To fetch it manually:
 
   `$tmp = Join-Path `$env:TEMP 'webview2-nuget'
   Invoke-WebRequest 'https://www.nuget.org/api/v2/package/Microsoft.Web.WebView2' -OutFile "`$tmp.zip"
   Expand-Archive "`$tmp.zip" `$tmp
-  Copy-Item "`$tmp\build\native\x64\WebView2Loader.dll" '$WebView2LoaderSource'
+  Copy-Item "`$tmp\build\native\x64\WebView2Loader.dll" '$(Join-Path $ScriptDir 'WebView2Loader.dll')'
 
 (or: nuget.exe install Microsoft.Web.WebView2, then copy from build\native\x64\)
 "@
+    } finally {
+        # Clean up temp files.
+        if (Test-Path $NuGetZip) { Remove-Item -Force $NuGetZip -ErrorAction SilentlyContinue }
+        if (Test-Path $NuGetTmp) { Remove-Item -Recurse -Force $NuGetTmp -ErrorAction SilentlyContinue }
+    }
 }
 
 # share/ resources: terminfo sentinel + themes + shell integration.
@@ -235,7 +257,7 @@ if ($LASTEXITCODE -ne 0) {
     Fail "ISCC failed with exit code $LASTEXITCODE"
 }
 
-$SetupExe = Join-Path $OutputDir "ghostty-windows-x64-$Version-setup.exe"
+$SetupExe = Join-Path $OutputDir "wmux-windows-x64-$Version-setup.exe"
 if (-not (Test-Path $SetupExe)) {
     Fail "ISCC reported success but $SetupExe was not found."
 }

@@ -1,13 +1,6 @@
 ; =============================================================================
-; Ghostty for Windows -- Inno Setup 6 installer script
+; wmux for Windows -- Inno Setup 6 installer script
 ; =============================================================================
-;
-; UNOFFICIAL BUILD NOTICE (branding rules):
-;   This is an UNOFFICIAL community build of the Ghostty terminal emulator
-;   for Windows. It is NOT affiliated with, endorsed by, or supported by
-;   the Ghostty project or Mitchell Hashimoto. Do not report issues with
-;   this build to the upstream Ghostty project.
-;   Publisher string is intentionally "Ghostty Windows Community Build".
 ;
 ; ABSOLUTE RULE -- ENVIRONMENT VARIABLES:
 ;   This installer must NEVER read or modify the PATH environment variable,
@@ -22,7 +15,7 @@
 ; UNINSTALL / USER DATA:
 ;   The uninstaller removes ONLY files this installer copied into {app}.
 ;   User data is intentionally preserved on uninstall:
-;     - %LOCALAPPDATA%\ghostty           (config + cache)
+;     - %LOCALAPPDATA%\wmux              (config + cache)
 ;     - WebView2 user-data folders       (created at runtime)
 ;   Do NOT add [UninstallDelete] entries for those locations.
 ;
@@ -38,7 +31,7 @@
 ;     winget install -e --id JRSoftware.InnoSetup
 ;
 ; STAGING LAYOUT expected in {#StagingDir}:
-;   ghostty.exe                          (required)
+;   wmux.exe                             (required)
 ;   WebView2Loader.dll                   (required; from Microsoft.Web.WebView2
 ;                                         NuGet package, build/native/x64 --
 ;                                         redistributable per the WebView2 SDK
@@ -61,10 +54,10 @@
   #define StagingDir "_staging"
 #endif
 
-#define AppName "Ghostty"
-#define AppPublisher "Ghostty Windows Community Build"
-#define AppURL "https://github.com/InsipidPoint/ghostty-windows"
-#define AppExeName "ghostty.exe"
+#define AppName "wmux"
+#define AppPublisher "wmux"
+#define AppURL "https://github.com/Rey-ColonValero/wmux"
+#define AppExeName "wmux.exe"
 
 [Setup]
 ; Unique AppId for this community build's install/uninstall registration.
@@ -73,20 +66,18 @@
 AppId={{B5D596AF-6D83-4ABD-A430-F4203FC1239F}
 AppName={#AppName}
 AppVersion={#AppVersion}
-AppVerName={#AppName} {#AppVersion} (community build)
+AppVerName={#AppName} {#AppVersion}
 AppPublisher={#AppPublisher}
 AppPublisherURL={#AppURL}
 AppSupportURL={#AppURL}/issues
 AppUpdatesURL={#AppURL}/releases
-; Shows in Apps & Features; reinforces the unofficial status.
-AppComments=Unofficial community build. Not affiliated with the Ghostty project.
 
 ; --- Per-user install -------------------------------------------------------
 ; PrivilegesRequired=lowest => non-administrative install mode: no UAC
 ; elevation, uninstall info under HKCU, and all {auto*} constants resolve
 ; to their per-user form.
 PrivilegesRequired=lowest
-DefaultDirName={localappdata}\Programs\Ghostty
+DefaultDirName={localappdata}\Programs\wmux
 DisableProgramGroupPage=yes
 
 ; --- Architecture -----------------------------------------------------------
@@ -99,12 +90,12 @@ ArchitecturesInstallIn64BitMode=x64compatible
 ArchitecturesAllowed=x64
 ArchitecturesInstallIn64BitMode=x64
 #endif
-; Ghostty win32 + WebView2 require Windows 10 or later.
+; wmux win32 + WebView2 require Windows 10 or later.
 MinVersion=10.0
 
 ; --- Output -----------------------------------------------------------------
 OutputDir=output
-OutputBaseFilename=ghostty-windows-x64-{#AppVersion}-setup
+OutputBaseFilename=wmux-windows-x64-{#AppVersion}-setup
 SetupIconFile=ghostty.ico
 Compression=lzma2/max
 SolidCompression=yes
@@ -113,10 +104,10 @@ WizardStyle=modern
 ; --- Version resource -------------------------------------------------------
 VersionInfoVersion={#AppVersionNumeric}
 VersionInfoProductTextVersion={#AppVersion}
-VersionInfoDescription=Ghostty terminal emulator (unofficial Windows community build)
+VersionInfoDescription=wmux terminal multiplexer for Windows
 
 ; --- Uninstall --------------------------------------------------------------
-UninstallDisplayName={#AppName} (community build)
+UninstallDisplayName={#AppName}
 UninstallDisplayIcon={app}\{#AppExeName}
 
 ; This installer makes no environment changes whatsoever (see header).
@@ -129,7 +120,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-Source: "{#StagingDir}\ghostty.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#StagingDir}\wmux.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; WebView2Loader.dll: from the Microsoft.Web.WebView2 NuGet package
 ; (build/native/x64). Redistribution is permitted by the WebView2 SDK license.
 Source: "{#StagingDir}\WebView2Loader.dll"; DestDir: "{app}"; Flags: ignoreversion
@@ -141,12 +132,120 @@ Source: "{#StagingDir}\LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion skip
 [Icons]
 ; {autoprograms}/{autodesktop} resolve to the per-user Start Menu / Desktop
 ; because of PrivilegesRequired=lowest.
-Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Comment: "Ghostty terminal emulator (community build)"
+Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Comment: "wmux terminal multiplexer"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
 
 ; NOTE: deliberately no [Registry] section (see environment rule in header)
-; and no [UninstallDelete] section (user data in %LOCALAPPDATA%\ghostty and
+; and no [UninstallDelete] section (user data in %LOCALAPPDATA%\wmux and
 ; WebView2 user-data folders must survive uninstall).
+
+; =============================================================================
+; WebView2 Runtime auto-install
+; =============================================================================
+; If the WebView2 Evergreen Runtime is not already installed, download and run
+; the bootstrapper silently. The bootstrapper is ~1.8 MB and fetches the full
+; runtime from Microsoft's CDN. Detection uses the well-known registry key
+; that the runtime writes on install.
+;
+; Registry key checked (works for both per-machine and per-user installs on
+; 64-bit Windows):
+;   HKLM\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BEE-154A06EE57EE}
+;   HKCU\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BEE-154A06EE57EE}
+; The "pv" (product version) value is non-empty when installed.
+; =============================================================================
+
+[Code]
+function IsWebView2Installed: Boolean;
+var
+  PV: String;
+begin
+  Result := False;
+  { Check per-machine (64-bit registry view) }
+  if RegQueryStringValue(HKLM, 'SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BEE-154A06EE57EE}', 'pv', PV) then
+  begin
+    if PV <> '' then
+    begin
+      Result := True;
+      Exit;
+    end;
+  end;
+  { Check per-machine (native view, covers 32-bit OS edge case) }
+  if RegQueryStringValue(HKLM, 'SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BEE-154A06EE57EE}', 'pv', PV) then
+  begin
+    if PV <> '' then
+    begin
+      Result := True;
+      Exit;
+    end;
+  end;
+  { Check per-user install }
+  if RegQueryStringValue(HKCU, 'SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BEE-154A06EE57EE}', 'pv', PV) then
+  begin
+    if PV <> '' then
+      Result := True;
+  end;
+end;
+
+procedure InstallWebView2IfNeeded;
+var
+  BootstrapperPath: String;
+  ResultCode: Integer;
+  DownloadOK: Boolean;
+begin
+  if IsWebView2Installed then
+  begin
+    Log('WebView2 Runtime is already installed; skipping download.');
+    Exit;
+  end;
+
+  Log('WebView2 Runtime not detected; downloading bootstrapper...');
+  BootstrapperPath := ExpandConstant('{tmp}\MicrosoftEdgeWebview2Setup.exe');
+
+  { Download the Evergreen Bootstrapper from Microsoft's CDN }
+  DownloadOK := False;
+  try
+    DownloadTemporaryFile(
+      'https://go.microsoft.com/fwlink/p/?LinkId=2124703',
+      'MicrosoftEdgeWebview2Setup.exe',
+      '',
+      nil);
+    DownloadOK := True;
+  except
+    Log('Failed to download WebView2 bootstrapper: ' + GetExceptionMessage);
+  end;
+
+  if not DownloadOK then
+  begin
+    MsgBox('Could not download the WebView2 Runtime. ' +
+           'wmux requires WebView2 to run. Please install it manually from ' +
+           'https://developer.microsoft.com/en-us/microsoft-edge/webview2/',
+           mbError, MB_OK);
+    Exit;
+  end;
+
+  { Run the bootstrapper silently. /silent /install runs without UI. }
+  if not Exec(BootstrapperPath, '/silent /install', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  begin
+    Log('Failed to launch WebView2 bootstrapper.');
+    MsgBox('Could not run the WebView2 Runtime installer. ' +
+           'Please install WebView2 manually from ' +
+           'https://developer.microsoft.com/en-us/microsoft-edge/webview2/',
+           mbError, MB_OK);
+  end
+  else
+  begin
+    if ResultCode <> 0 then
+      Log('WebView2 bootstrapper exited with code: ' + IntToStr(ResultCode))
+    else
+      Log('WebView2 Runtime installed successfully.');
+  end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+    InstallWebView2IfNeeded;
+end;
