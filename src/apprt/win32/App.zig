@@ -455,6 +455,21 @@ pub fn run(self: *App) !void {
                 }
             }
 
+            // Ctrl+W inside WebView2 content: the AcceleratorKeyPressed
+            // COM callback is unreliable on some WebView2 versions, so
+            // intercept the key here in the message loop. Walk up the
+            // parent chain from the focused HWND; if any ancestor is a
+            // browser host, post the deferred close message to it.
+            if (vk == 0x57 and w32.GetKeyState(@as(i32, w32.VK_CONTROL)) < 0 and
+                !(w32.GetKeyState(@as(i32, w32.VK_SHIFT)) < 0))
+            {
+                const found_host = self.findBrowserHostAncestor(msg.hwnd.?);
+                if (found_host) |host| {
+                    _ = w32.PostMessageW(host, BrowserPane.WM_BROWSER_CLOSE, 0, 0);
+                    continue :loop;
+                }
+            }
+
             // Bubble global keybindings from popup edit controls (tab
             // rename, command palette, search) up to the surface so that
             // e.g. `Ctrl+Shift+P` while renaming actually toggles the
@@ -1944,6 +1959,23 @@ fn isEditShortcutVk(vk: u16) bool {
         'A', 'C', 'V', 'X', 'Y', 'Z' => true,
         else => false,
     };
+}
+
+/// Walk up the parent chain from `hwnd` looking for a browser host
+/// window (class atom == browser_host_class_atom). Returns the host
+/// HWND if found, null otherwise. Stops after 16 levels to avoid
+/// infinite loops on circular parent chains.
+fn findBrowserHostAncestor(self: *const App, hwnd: w32.HWND) ?w32.HWND {
+    if (self.browser_host_class_atom == 0) return null;
+    var cur: ?w32.HWND = hwnd;
+    var depth: u32 = 0;
+    while (cur) |h| : (depth += 1) {
+        if (depth > 16) break;
+        const atom: u16 = @truncate(w32.GetClassLongW(h, w32.GCW_ATOM));
+        if (atom != 0 and atom == self.browser_host_class_atom) return h;
+        cur = w32.GetParent(h);
+    }
+    return null;
 }
 
 /// Register a system-wide hotkey for toggle_quick_terminal.

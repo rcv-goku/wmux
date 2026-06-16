@@ -40,7 +40,7 @@ const CLOSE_BASE: f32 = 24.0;
 /// Custom message: deferred close triggered by Ctrl+W inside the WebView2
 /// accelerator callback. We cannot call closeSplitPane synchronously from
 /// a COM callback (it frees `self` while the callback is on the stack).
-const WM_BROWSER_CLOSE: u32 = w32.WM_APP + 1;
+pub const WM_BROWSER_CLOSE: u32 = w32.WM_APP + 1;
 
 /// Max URL length in UTF-16 code units.
 const URL_MAX: usize = 2048;
@@ -395,7 +395,9 @@ fn onAcceleratorKey(
     const args = args_opt orelse return;
     if (self.state == .closing) return;
     const kind = args.getKeyEventKind() catch return;
-    if (kind != .key_down) return;
+    // Accept both key_down and system_key_down (the latter fires when
+    // a modifier is held in some WebView2 versions).
+    if (kind != .key_down and kind != .system_key_down) return;
     const vk = args.getVirtualKey() catch return;
     const ctrl_down = (@as(u16, @bitCast(w32.GetKeyState(w32.VK_CONTROL))) & 0x8000) != 0;
     // Ctrl+W: close this browser pane (matches terminal close_surface).
