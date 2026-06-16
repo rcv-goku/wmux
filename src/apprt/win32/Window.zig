@@ -614,7 +614,7 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
     self.workspace_count = 1;
     self.active_workspace = 0;
 
-    const style: u32 = if (options.is_quick_terminal) w32.WS_POPUP else w32.WS_OVERLAPPEDWINDOW;
+    const style: u32 = if (options.is_quick_terminal) w32.WS_POPUP else w32.WS_OVERLAPPEDWINDOW | w32.WS_CLIPCHILDREN;
     const ex_style: u32 = if (options.is_quick_terminal) w32.WS_EX_TOOLWINDOW else 0;
 
     // Window geometry. Defaults to a fixed 800x600 at the OS default
@@ -2742,7 +2742,7 @@ pub fn onPaneButtonClick(window: *anyopaque, pane: *Pane, action: PaneButtonsMod
         .new_terminal => _ = self.addTabInherit() catch |err| {
             log.err("corner New Terminal failed: {}", .{err});
         },
-        .new_browser => self.addBrowserTab() catch |err| {
+        .new_browser => self.newBrowserSplit(.right) catch |err| {
             log.err("corner New Browser failed: {}", .{err});
         },
         .split_right => self.newSplit(.right) catch |err| {

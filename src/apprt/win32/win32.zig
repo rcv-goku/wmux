@@ -87,6 +87,7 @@ pub const CS_DBLCLKS: u32 = 0x0008;
 // Window styles
 pub const WS_OVERLAPPEDWINDOW: u32 = 0x00CF0000;
 pub const WS_POPUP: u32 = 0x80000000;
+pub const WS_CLIPCHILDREN: u32 = 0x02000000;
 pub const WS_CAPTION: u32 = 0x00C00000;
 pub const WS_THICKFRAME: u32 = 0x00040000;
 
