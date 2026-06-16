@@ -82,16 +82,25 @@ pub fn add(
         },
         else => return err,
     };
-    defer file.close();
-
     // Lock
     // Causes a compile failure in the Zig std library on Windows, see:
     // https://github.com/ziglang/zig/issues/18430
-    if (comptime builtin.os.tag != .windows) _ = file.tryLock(.exclusive) catch return error.CacheLocked;
-    defer if (comptime builtin.os.tag != .windows) file.unlock();
+    if (comptime builtin.os.tag != .windows) _ = file.tryLock(.exclusive) catch {
+        file.close();
+        return error.CacheLocked;
+    };
 
-    var entries = try readEntries(alloc, file);
+    var entries = readEntries(alloc, file) catch |err| {
+        if (comptime builtin.os.tag != .windows) file.unlock();
+        file.close();
+        return err;
+    };
     defer deinitEntries(alloc, &entries);
+
+    // Close the file before writeCacheFile so the atomic rename does
+    // not fail with ACCESS_DENIED on Windows.
+    if (comptime builtin.os.tag != .windows) file.unlock();
+    file.close();
 
     // Update the timestamp of an existing entry, or insert a new one. For a
     // new entry, dupe both strings up front so a failed allocation never
@@ -132,18 +141,29 @@ pub fn remove(
         error.FileNotFound => return false,
         else => return err,
     };
-    defer file.close();
-    try fixupPermissions(file);
+    fixupPermissions(file) catch |err| {
+        file.close();
+        return err;
+    };
 
     // Lock
     // Causes a compile failure in the Zig std library on Windows, see:
     // https://github.com/ziglang/zig/issues/18430
-    if (comptime builtin.os.tag != .windows) _ = file.tryLock(.exclusive) catch return error.CacheLocked;
-    defer if (comptime builtin.os.tag != .windows) file.unlock();
+    if (comptime builtin.os.tag != .windows) _ = file.tryLock(.exclusive) catch {
+        file.close();
+        return error.CacheLocked;
+    };
 
     // Read existing entries
-    var entries = try readEntries(alloc, file);
+    var entries = readEntries(alloc, file) catch |err| {
+        if (comptime builtin.os.tag != .windows) file.unlock();
+        file.close();
+        return err;
+    };
     defer deinitEntries(alloc, &entries);
+
+    if (comptime builtin.os.tag != .windows) file.unlock();
+    file.close();
 
     // Remove the entry if it exists and ensure we free the memory
     const removed = if (entries.fetchRemove(key)) |kv| removed: {
@@ -172,18 +192,29 @@ pub fn prune(
         error.FileNotFound => return 0,
         else => return err,
     };
-    defer file.close();
-    try fixupPermissions(file);
+    fixupPermissions(file) catch |err| {
+        file.close();
+        return err;
+    };
 
     // Lock
     // Causes a compile failure in the Zig std library on Windows, see:
     // https://github.com/ziglang/zig/issues/18430
-    if (comptime builtin.os.tag != .windows) _ = file.tryLock(.exclusive) catch return error.CacheLocked;
-    defer if (comptime builtin.os.tag != .windows) file.unlock();
+    if (comptime builtin.os.tag != .windows) _ = file.tryLock(.exclusive) catch {
+        file.close();
+        return error.CacheLocked;
+    };
 
     // Read existing entries
-    var entries = try readEntries(alloc, file);
+    var entries = readEntries(alloc, file) catch |err| {
+        if (comptime builtin.os.tag != .windows) file.unlock();
+        file.close();
+        return err;
+    };
     defer deinitEntries(alloc, &entries);
+
+    if (comptime builtin.os.tag != .windows) file.unlock();
+    file.close();
 
     // Drop expired entries from the map, then persist what remains.
     const now = std.time.timestamp();
