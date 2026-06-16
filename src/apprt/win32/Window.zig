@@ -2754,7 +2754,8 @@ pub fn onPaneButtonClick(window: *anyopaque, pane: *Pane, action: PaneButtonsMod
     }
 }
 
-/// Paint divider lines between split panes in the active tab.
+/// Paint divider lines between split panes in the active tab,
+/// plus a colored border around the focused pane.
 fn paintDividers(self: *Window, hdc: w32.HDC) void {
     const ws = self.activeWorkspace();
     if (ws.tab_count == 0) return;
@@ -2763,6 +2764,40 @@ fn paintDividers(self: *Window, hdc: w32.HDC) void {
     if (tree.zoomed != null) return;
     const rect = self.surfaceRect();
     self.paintDividerNode(hdc, tree, .root, rect);
+    self.paintFocusBorder(hdc);
+}
+
+/// Paint a thin accent border in the divider gaps around the focused pane.
+fn paintFocusBorder(self: *Window, hdc: w32.HDC) void {
+    const active = self.getActivePane() orelse return;
+    const active_hwnd = active.hwnd() orelse return;
+    const parent_hwnd = self.hwnd orelse return;
+
+    var wr: w32.RECT = undefined;
+    if (w32.GetWindowRect(active_hwnd, &wr) == 0) return;
+    var tl = w32.POINT{ .x = wr.left, .y = wr.top };
+    var br = w32.POINT{ .x = wr.right, .y = wr.bottom };
+    _ = w32.ScreenToClient(parent_hwnd, &tl);
+    _ = w32.ScreenToClient(parent_hwnd, &br);
+
+    const bw: i32 = @max(@as(i32, @intFromFloat(@round(2.0 * self.scale))), 2);
+    const accent: u32 = 0x00C88030; // COLORREF 0x00BBGGRR — muted teal
+    const brush = w32.CreateSolidBrush(accent) orelse return;
+    defer _ = w32.DeleteObject(brush);
+
+    var r: w32.RECT = undefined;
+    // left
+    r = .{ .left = tl.x - bw, .top = tl.y - bw, .right = tl.x, .bottom = br.y + bw };
+    _ = w32.FillRect(hdc, &r, brush);
+    // right
+    r = .{ .left = br.x, .top = tl.y - bw, .right = br.x + bw, .bottom = br.y + bw };
+    _ = w32.FillRect(hdc, &r, brush);
+    // top
+    r = .{ .left = tl.x, .top = tl.y - bw, .right = br.x, .bottom = tl.y };
+    _ = w32.FillRect(hdc, &r, brush);
+    // bottom
+    r = .{ .left = tl.x, .top = br.y, .right = br.x, .bottom = br.y + bw };
+    _ = w32.FillRect(hdc, &r, brush);
 }
 
 fn paintDividerNode(self: *Window, hdc: w32.HDC, tree: SplitTree(Pane), handle: SplitTree(Pane).Node.Handle, rect: w32.RECT) void {
@@ -2799,6 +2834,26 @@ fn paintDividerNode(self: *Window, hdc: w32.HDC, tree: SplitTree(Pane), handle: 
             }
         },
     }
+}
+
+/// Repaint divider lines and the focus border. Called from focus change
+/// handlers so the accent border follows the active pane immediately.
+pub fn repaintDividers(self: *Window) void {
+    const hwnd = self.hwnd orelse return;
+    const ws = self.activeWorkspace();
+    if (ws.tab_count == 0) return;
+    const tree = ws.tab_trees[ws.active_tab];
+    if (!tree.isSplit()) return;
+    if (tree.zoomed != null) return;
+    const hdc = w32.GetDC(hwnd) orelse return;
+    defer _ = w32.ReleaseDC(hwnd, hdc);
+    // Clear the entire surface rect with the background so old focus
+    // borders in the gap area are erased before we repaint.
+    if (self.app.bg_brush) |brush| {
+        var sr = self.surfaceRect();
+        _ = w32.FillRect(hdc, &sr, brush);
+    }
+    self.paintDividers(hdc);
 }
 
 const DividerHit = struct {
@@ -3517,7 +3572,9 @@ fn updateTabBarVisibility(self: *Window) void {
     // sidebar.
     const should_show = switch (show_config) {
         .always => true,
-        .auto => self.activeWorkspace().tab_count > 1,
+        // wmux always shows the tab bar so the "+" new-tab button is
+        // reachable even with a single tab.
+        .auto => true,
         .never => false,
     };
     if (should_show != self.tab_bar_visible) {

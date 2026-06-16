@@ -5433,6 +5433,7 @@ fn surfaceWndProc(
                         loc.ws.tab_active_pane[loc.tab] = pane;
                     }
                 }
+                win.repaintDividers();
             }
             surface.handleFocus(true);
             return 0;

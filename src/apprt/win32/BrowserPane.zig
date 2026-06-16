@@ -37,6 +37,11 @@ const ADDRESS_BAR_BASE: f32 = 28.0;
 /// affordance feels identical across chrome surfaces.
 const CLOSE_BASE: f32 = 24.0;
 
+/// Custom message: deferred close triggered by Ctrl+W inside the WebView2
+/// accelerator callback. We cannot call closeSplitPane synchronously from
+/// a COM callback (it frees `self` while the callback is on the stack).
+const WM_BROWSER_CLOSE: u32 = w32.WM_APP + 1;
+
 /// Max URL length in UTF-16 code units.
 const URL_MAX: usize = 2048;
 
@@ -44,6 +49,7 @@ const ControllerHandler = wv2.ControllerCompletedHandler(BrowserPane);
 const NavHandler = wv2.NavigationCompletedEventHandler(BrowserPane);
 const TitleHandler = wv2.DocumentTitleChangedEventHandler(BrowserPane);
 const FocusHandler = wv2.FocusChangedEventHandler(BrowserPane);
+const AccelHandler = wv2.AcceleratorKeyPressedEventHandler(BrowserPane);
 
 /// The parent App.
 app: *App,
@@ -95,6 +101,7 @@ webview: ?*wv2.ICoreWebView2 = null,
 nav_token: wv2.EventRegistrationToken = .{},
 title_token: wv2.EventRegistrationToken = .{},
 focus_token: wv2.EventRegistrationToken = .{},
+accel_token: wv2.EventRegistrationToken = .{},
 
 /// URL to navigate to once the webview is ready (UTF-16, not
 /// NUL-terminated; navigatePending appends the NUL).
@@ -218,6 +225,7 @@ pub fn destroy(self: *BrowserPane, alloc: Allocator) void {
     }
     if (self.controller) |controller| {
         controller.removeGotFocus(self.focus_token) catch {};
+        controller.removeAcceleratorKeyPressed(self.accel_token) catch {};
         controller.close() catch {};
         controller.release();
         self.controller = null;
@@ -340,6 +348,12 @@ fn onControllerCreated(
         defer h.unref();
         self.focus_token = controller.addGotFocus(h) catch .{};
     } else |_| {}
+    // Intercept Ctrl+W so the user can close a browser pane with the
+    // same shortcut that closes a terminal pane.
+    if (AccelHandler.create(alloc, self, onAcceleratorKey)) |h| {
+        defer h.unref();
+        self.accel_token = controller.addAcceleratorKeyPressed(h) catch .{};
+    } else |_| {}
     if (NavHandler.create(alloc, self, onNavigationCompleted)) |h| {
         defer h.unref();
         self.nav_token = webview.addNavigationCompleted(h) catch .{};
@@ -369,6 +383,30 @@ fn onGotFocus(self: *BrowserPane, sender: ?*wv2.ICoreWebView2Controller, args: ?
     // another tab's slot.
     const loc = win.findLoc(pane) orelse return;
     loc.ws.tab_active_pane[loc.tab] = pane;
+    win.repaintDividers();
+}
+
+fn onAcceleratorKey(
+    self: *BrowserPane,
+    sender: ?*wv2.ICoreWebView2Controller,
+    args_opt: ?*wv2.ICoreWebView2AcceleratorKeyPressedEventArgs,
+) void {
+    _ = sender;
+    const args = args_opt orelse return;
+    if (self.state == .closing) return;
+    const kind = args.getKeyEventKind() catch return;
+    if (kind != .key_down) return;
+    const vk = args.getVirtualKey() catch return;
+    const ctrl_down = (@as(u16, @bitCast(w32.GetKeyState(w32.VK_CONTROL))) & 0x8000) != 0;
+    // Ctrl+W: close this browser pane (matches terminal close_surface).
+    // Deferred via PostMessage because closeSplitPane frees `self`.
+    if (ctrl_down and vk == 0x57) {
+        args.putHandled(true) catch {};
+        if (self.host_hwnd) |host| {
+            _ = w32.PostMessageW(host, WM_BROWSER_CLOSE, 0, 0);
+        }
+        return;
+    }
 }
 
 fn onNavigationCompleted(
@@ -1165,6 +1203,7 @@ pub fn hostWndProc(
                         loc.ws.tab_active_pane[loc.tab] = pane;
                     }
                 }
+                win.repaintDividers();
             }
             if (self.state == .ready) {
                 if (self.controller) |controller| {
@@ -1242,6 +1281,16 @@ pub fn hostWndProc(
                     // HWND and frees `self` (via Pane.unref ->
                     // BrowserPane.destroy). Nothing below may touch
                     // `self` or `hwnd` after this call.
+                    self.parent_window.closeSplitPane(pane);
+                    return 0;
+                }
+            }
+            return 0;
+        },
+
+        WM_BROWSER_CLOSE => {
+            if (!self.parent_window.closing) {
+                if (self.pane) |pane| {
                     self.parent_window.closeSplitPane(pane);
                     return 0;
                 }

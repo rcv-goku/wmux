@@ -6692,10 +6692,17 @@ pub const Keybinds = struct {
                 .{ .key = .{ .unicode = 'n' }, .mods = .{ .ctrl = true, .shift = true } },
                 .{ .new_window = {} },
             );
+            // Ctrl+W: close active pane (falls back to closing tab if unsplit).
+            try self.set.put(
+                alloc,
+                .{ .key = .{ .unicode = 'w' }, .mods = .{ .ctrl = true } },
+                .{ .close_surface = {} },
+            );
+            // Ctrl+Shift+W: close the whole tab.
             try self.set.put(
                 alloc,
                 .{ .key = .{ .unicode = 'w' }, .mods = .{ .ctrl = true, .shift = true } },
-                .{ .close_surface = {} },
+                .{ .close_tab = .this },
             );
             try self.set.put(
                 alloc,
@@ -6707,15 +6714,17 @@ pub const Keybinds = struct {
                 .{ .key = .{ .physical = .f4 }, .mods = .{ .alt = true } },
                 .{ .close_window = {} },
             );
+            // Ctrl+T: new tab (inherits active pane's backend).
+            try self.set.put(
+                alloc,
+                .{ .key = .{ .unicode = 't' }, .mods = .{ .ctrl = true } },
+                .{ .new_tab = {} },
+            );
+            // Ctrl+Shift+T also works (compat with other terminals).
             try self.set.put(
                 alloc,
                 .{ .key = .{ .unicode = 't' }, .mods = .{ .ctrl = true, .shift = true } },
                 .{ .new_tab = {} },
-            );
-            try self.set.put(
-                alloc,
-                .{ .key = .{ .unicode = 'w' }, .mods = .{ .ctrl = true, .shift = true } },
-                .{ .close_tab = .this },
             );
             try self.set.putFlags(
                 alloc,
