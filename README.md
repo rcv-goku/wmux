@@ -20,11 +20,13 @@ workspaces, splits, tabs, an embedded browser, and a full IPC/scripting API.
   own tabs and splits. Sidebar with status indicators, rename, drag-reorder,
   and resize.
 - **Splits & tabs** — horizontal/vertical splits, tab bar with close/reorder/
-  rename, keyboard shortcuts (`alt+1`–`alt+8`).
+  rename, keyboard shortcuts (`alt+1`–`alt+8`). Focus border highlights
+  the active pane in splits.
 - **Backend picker** — open tabs as your default shell, PowerShell, cmd, any
   installed WSL distribution (enumerated live), or an embedded browser.
 - **Browser panes (WebView2)** — Chromium-based browser as a split or tab,
-  with address bar. Requires WebView2 (see [Prerequisites](#prerequisites)).
+  with address bar and close button. Requires WebView2
+  (see [Prerequisites](#prerequisites)).
 - **IPC/scripting API** — drive everything over a named pipe
   (`\\.\pipe\wmux-ipc-<pid>`): create workspaces, tabs, splits; send
   keystrokes; read screen content; manage sessions; trigger notifications.
@@ -91,6 +93,22 @@ zig build install -Dapp-runtime=win32 -Dtarget=x86_64-windows-gnu -Doptimize=Rel
 ```powershell
 zig build test -Dapp-runtime=win32 -Dtarget=x86_64-windows-gnu
 ```
+
+## Keyboard Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+T` | New tab (inherits current pane's backend) |
+| `Ctrl+W` | Close active pane (closes tab if unsplit) |
+| `Ctrl+Shift+W` | Close entire tab |
+| `Ctrl+Shift+N` | New window |
+| `Ctrl+Shift+Q` | Quit |
+| `Alt+F4` | Close window |
+| `Ctrl+Shift+←` | Previous tab |
+| `Ctrl+Shift+→` | Next tab |
+| `Alt+1`–`Alt+8` | Switch to tab by number |
+
+All shortcuts are configurable via the Ghostty `keybind` config option.
 
 ## IPC Commands
 
