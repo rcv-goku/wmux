@@ -4,7 +4,7 @@
 //! ...`).
 //!
 //! Wire protocol: newline-delimited JSON over a message-type named pipe
-//! at \\.\pipe\ghostty-ipc-<pid>.
+//! at \\.\pipe\wmux-ipc-<pid>.
 //!
 //!   request:  {"id":1,"cmd":"open","args":{"url":"https://..."}}\n
 //!   response: {"id":1,"ok":true,"data":...}\n
@@ -746,13 +746,13 @@ const PipeSecurity = struct {
     }
 };
 
-/// Format the production pipe name "ghostty-ipc-<pid>" into buf. The CLI
+/// Format the production pipe name "wmux-ipc-<pid>" into buf. The CLI
 /// clients (+browser/+workspace/+tab/+send) resolve the target window's
-/// pid and open \\.\pipe\ghostty-ipc-<pid> with CreateFileW.
+/// pid and open \\.\pipe\wmux-ipc-<pid> with CreateFileW.
 pub fn defaultPipeName(buf: []u8) std.fmt.BufPrintError![]u8 {
     return std.fmt.bufPrint(
         buf,
-        "ghostty-ipc-{d}",
+        "wmux-ipc-{d}",
         .{windows.GetCurrentProcessId()},
     );
 }
@@ -1928,7 +1928,7 @@ test "ipc: end-to-end request and response over a named pipe" {
     var name_buf: [64]u8 = undefined;
     const name = try std.fmt.bufPrint(
         &name_buf,
-        "ghostty-ipc-test-{d}",
+        "wmux-ipc-test-{d}",
         .{windows.GetCurrentProcessId()},
     );
 
@@ -2056,7 +2056,7 @@ test "ipc: stop unblocks a pending read while a client is connected" {
     var name_buf: [64]u8 = undefined;
     const name = try std.fmt.bufPrint(
         &name_buf,
-        "ghostty-ipc-stoptest-{d}",
+        "wmux-ipc-stoptest-{d}",
         .{windows.GetCurrentProcessId()},
     );
 

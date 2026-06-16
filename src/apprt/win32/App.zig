@@ -49,22 +49,27 @@ const WM_APP_IPC_REQUEST: u32 = w32.WM_APP + 4;
 /// worker only reads its own owned Job, never live Window/App state.
 const WM_APP_WS_META: u32 = w32.WM_APP + 5;
 
+/// Posted by the setDefaultShell worker thread after the config file has
+/// been written successfully. Signals the UI thread to perform a
+/// reload_config so the new command takes effect. No payload.
+const WM_APP_SHELL_SET: u32 = w32.WM_APP + 6;
+
 /// Timer ID for the quit-after-last-window-closed delay.
 const QUIT_TIMER_ID: usize = 1;
 
 /// Window class for the top-level container (GDI painting, no CS_OWNDC).
-pub const WINDOW_CLASS_NAME = std.unicode.utf8ToUtf16LeStringLiteral("GhosttyWindow");
+pub const WINDOW_CLASS_NAME = std.unicode.utf8ToUtf16LeStringLiteral("WmuxWindow");
 
 /// Window class for terminal surfaces (OpenGL via WGL, needs CS_OWNDC).
-pub const TERMINAL_CLASS_NAME = std.unicode.utf8ToUtf16LeStringLiteral("GhosttyTerminal");
+pub const TERMINAL_CLASS_NAME = std.unicode.utf8ToUtf16LeStringLiteral("WmuxTerminal");
 
 /// Window class for the message-only HWND (WM_APP_WAKEUP, WM_TIMER).
-pub const MSG_CLASS_NAME = std.unicode.utf8ToUtf16LeStringLiteral("GhosttyMsg");
+pub const MSG_CLASS_NAME = std.unicode.utf8ToUtf16LeStringLiteral("WmuxMsg");
 
 /// Window class for browser pane host HWNDs (WebView2 + address bar).
 /// Must NOT be the terminal class: App.run skips TranslateMessage for
 /// the terminal class atom, which would break the address-bar Edit.
-pub const BROWSER_HOST_CLASS_NAME = std.unicode.utf8ToUtf16LeStringLiteral("GhosttyBrowserHost");
+pub const BROWSER_HOST_CLASS_NAME = std.unicode.utf8ToUtf16LeStringLiteral("WmuxBrowserHost");
 
 /// The core application.
 core_app: *CoreApp,
@@ -1732,41 +1737,96 @@ fn setCommandInConfigText(
 /// is the GUI exposure of the `command` config option, which the
 /// default-tab path already honors (see Exec.zig). `value` is written
 /// verbatim as the config value (e.g. "pwsh.exe").
+///
+/// The file I/O (read + transform + atomic write) is performed on a
+/// detached worker thread so the UI thread is never blocked by slow
+/// disks. On success the worker posts WM_APP_SHELL_SET back to
+/// msg_hwnd, where the UI thread triggers a reload_config.
 pub fn setDefaultShell(self: *App, value: []const u8) void {
     const alloc = self.core_app.alloc;
 
     // resolveConfigFile creates the file (with the template) when it is
-    // missing, so the read below always sees a real file.
+    // missing, so the read below always sees a real file. This is a
+    // quick stat + possible create of a small template — fast enough for
+    // the UI thread and required before the worker can read the file.
     const path = self.resolveConfigFile() orelse return;
-    defer alloc.free(path);
+
+    const value_copy = alloc.dupe(u8, value) catch {
+        alloc.free(path);
+        return;
+    };
+
+    const ctx = alloc.create(ShellSetCtx) catch {
+        alloc.free(path);
+        alloc.free(value_copy);
+        return;
+    };
+    ctx.* = .{
+        .alloc = alloc,
+        .path = path,
+        .value = value_copy,
+        .msg_hwnd = self.msg_hwnd,
+    };
+
+    const thread = std.Thread.spawn(.{}, shellSetWorker, .{ctx}) catch {
+        alloc.free(path);
+        alloc.free(value_copy);
+        alloc.destroy(ctx);
+        return;
+    };
+    thread.detach();
+}
+
+const ShellSetCtx = struct {
+    alloc: Allocator,
+    path: []const u8,
+    value: []const u8,
+    msg_hwnd: ?w32.HWND,
+};
+
+/// Worker-thread entry for setDefaultShell: reads the config, transforms
+/// it, writes it back atomically, then signals the UI thread. Touches
+/// only its owned ctx and the filesystem — never live App/Window state.
+fn shellSetWorker(ctx: *ShellSetCtx) void {
+    const alloc = ctx.alloc;
+    defer {
+        alloc.free(ctx.path);
+        alloc.free(ctx.value);
+        alloc.destroy(ctx);
+    }
 
     const source = std.fs.cwd().readFileAlloc(
         alloc,
-        path,
+        ctx.path,
         16 * 1024 * 1024,
     ) catch |err| {
-        log.err("set default shell: failed to read config={s} err={}", .{ path, err });
+        log.err("set default shell: failed to read config={s} err={}", .{ ctx.path, err });
         return;
     };
     defer alloc.free(source);
 
-    const updated = setCommandInConfigText(alloc, source, value) catch |err| {
+    const updated = setCommandInConfigText(alloc, source, ctx.value) catch |err| {
         log.err("set default shell: failed to build config text err={}", .{err});
         return;
     };
     defer alloc.free(updated);
 
-    // Write atomically so a failure mid-write can't truncate the user's
-    // config: write a sibling temp file, then rename over the original.
-    writeFileAtomic(alloc, path, updated) catch |err| {
-        log.err("set default shell: failed to write config={s} err={}", .{ path, err });
+    writeFileAtomic(alloc, ctx.path, updated) catch |err| {
+        log.err("set default shell: failed to write config={s} err={}", .{ ctx.path, err });
         return;
     };
 
-    log.info("set default shell: wrote command={s} to {s}", .{ value, path });
+    log.info("set default shell: wrote command={s} to {s}", .{ ctx.value, ctx.path });
 
-    // Hard reload from disk so the new command applies. Same path as the
-    // gear "Reload config" entry / reload_config keybind.
+    // Signal the UI thread to reload_config. No payload needed.
+    if (ctx.msg_hwnd) |hwnd| {
+        _ = w32.PostMessageW(hwnd, WM_APP_SHELL_SET, 0, 0);
+    }
+}
+
+/// UI-thread handler for WM_APP_SHELL_SET: the worker finished writing
+/// the config file, so reload it.
+fn handleShellSet(self: *App) void {
     self.core_app.performAction(self, .reload_config) catch |err| {
         log.err("set default shell: reload failed: {}", .{err});
     };
@@ -5413,6 +5473,13 @@ fn msgWndProc(
         // own it now and applyWorkspaceMetadata frees it.
         const result: *ws_meta.Result = @ptrFromInt(@as(usize, @bitCast(lparam)));
         app.applyWorkspaceMetadata(result);
+        return 0;
+    }
+
+    if (msg == WM_APP_SHELL_SET) {
+        // The setDefaultShell worker finished writing the config file;
+        // trigger a reload on the UI thread.
+        app.handleShellSet();
         return 0;
     }
 

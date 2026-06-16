@@ -24,9 +24,9 @@ workspaces, splits, tabs, an embedded browser, and a full IPC/scripting API.
 - **Backend picker** — open tabs as your default shell, PowerShell, cmd, any
   installed WSL distribution (enumerated live), or an embedded browser.
 - **Browser panes (WebView2)** — Chromium-based browser as a split or tab,
-  with address bar. Requires the [WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/).
+  with address bar. Requires WebView2 (see [Prerequisites](#prerequisites)).
 - **IPC/scripting API** — drive everything over a named pipe
-  (`\\.\pipe\ghostty-ipc-<pid>`): create workspaces, tabs, splits; send
+  (`\\.\pipe\wmux-ipc-<pid>`): create workspaces, tabs, splits; send
   keystrokes; read screen content; manage sessions; trigger notifications.
 - **Session save/restore** — persist and reload your workspace layout.
 - **Synchronized input** — type into all panes simultaneously.
@@ -40,6 +40,36 @@ workspaces, splits, tabs, an embedded browser, and a full IPC/scripting API.
 - **Window state persistence** — size, position, and maximized state restored
   across restarts.
 
+## Prerequisites
+
+### WebView2 Runtime (required for browser panes)
+
+Browser panes use Microsoft Edge WebView2. Most Windows 11 consumer editions
+include it, but Enterprise/LTSC editions may not. To install:
+
+```powershell
+winget install Microsoft.EdgeWebView2Runtime
+```
+
+Or download from [Microsoft's WebView2 page](https://developer.microsoft.com/en-us/microsoft-edge/webview2/).
+
+### WebView2Loader.dll (required at build time)
+
+The `WebView2Loader.dll` must be placed next to `wmux.exe`. It ships in
+the [Microsoft.Web.WebView2](https://www.nuget.org/packages/Microsoft.Web.WebView2)
+NuGet package under `build/native/x64/WebView2Loader.dll`.
+
+Quick fetch:
+```powershell
+$tmp = New-TemporaryFile | Rename-Item -NewName { $_.Name + '.zip' } -PassThru
+Invoke-WebRequest 'https://www.nuget.org/api/v2/package/Microsoft.Web.WebView2' -OutFile $tmp
+Expand-Archive $tmp -DestinationPath "$tmp-dir"
+Copy-Item "$tmp-dir\build\native\x64\WebView2Loader.dll" zig-out\bin\
+```
+
+If WebView2 is missing, wmux will start normally — terminal panes work
+fine — but browser panes will be disabled with a warning.
+
 ## Building
 
 Requires [Zig](https://ziglang.org/download/) **0.15.2**.
@@ -48,14 +78,12 @@ Requires [Zig](https://ziglang.org/download/) **0.15.2**.
 zig build -Dapp-runtime=win32 -Dtarget=x86_64-windows-gnu -Doptimize=ReleaseFast
 ```
 
-The binary lands at `zig-out\bin\ghostty.exe`. For browser panes, place
-`WebView2Loader.dll` (from the [Microsoft.Web.WebView2](https://www.nuget.org/packages/Microsoft.Web.WebView2)
-NuGet package) beside the executable.
+The binary lands at `zig-out\bin\wmux.exe`.
 
 ### Install
 
 ```powershell
-zig build install -Dapp-runtime=win32 -Dtarget=x86_64-windows-gnu -Doptimize=ReleaseFast -p "$env:LOCALAPPDATA\Programs\ghostty"
+zig build install -Dapp-runtime=win32 -Dtarget=x86_64-windows-gnu -Doptimize=ReleaseFast -p "$env:LOCALAPPDATA\Programs\wmux"
 ```
 
 ### Run tests
@@ -65,6 +93,9 @@ zig build test -Dapp-runtime=win32 -Dtarget=x86_64-windows-gnu
 ```
 
 ## IPC Commands
+
+All commands use the `wmux` binary (e.g. `wmux +version`). The IPC pipe
+is at `\\.\pipe\wmux-ipc-<pid>`.
 
 | Command | Description |
 |---------|-------------|

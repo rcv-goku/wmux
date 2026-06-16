@@ -796,21 +796,67 @@ pub fn savePlacement(self: *Window) void {
     // previously-good save with garbage.
     if (!state.validate()) return;
 
+    // Serialize the state into a stack buffer on the UI thread (fast),
+    // then hand the actual file I/O to a fire-and-forget worker thread
+    // so we never block the UI on slow disks. The serialized text is
+    // tiny (< 160 bytes) and fully self-contained.
+    var serialize_buf: [160]u8 = undefined;
+    const text = state.serialize(&serialize_buf) catch return;
+
     const alloc = self.app.core_app.alloc;
     const path = windowStatePath(alloc) catch return;
-    defer alloc.free(path);
+
+    const ctx = alloc.create(SavePlacementCtx) catch {
+        alloc.free(path);
+        return;
+    };
+    // Copy the serialized text into an owned buffer for the worker.
+    const text_copy = alloc.dupe(u8, text) catch {
+        alloc.free(path);
+        alloc.destroy(ctx);
+        return;
+    };
+    ctx.* = .{
+        .alloc = alloc,
+        .path = path,
+        .text = text_copy,
+    };
+
+    const thread = std.Thread.spawn(.{}, savePlacementWorker, .{ctx}) catch {
+        alloc.free(path);
+        alloc.free(text_copy);
+        alloc.destroy(ctx);
+        return;
+    };
+    thread.detach();
+    self.saved_placement_ok = true;
+}
+
+const SavePlacementCtx = struct {
+    alloc: std.mem.Allocator,
+    path: []const u8,
+    text: []const u8,
+};
+
+/// Worker-thread entry for savePlacement: writes the already-serialized
+/// state to disk. Fire-and-forget — the process is typically exiting
+/// (WM_CLOSE) or the user just finished a drag (WM_EXITSIZEMOVE), so
+/// there is nothing to signal back.
+fn savePlacementWorker(ctx: *SavePlacementCtx) void {
+    defer {
+        ctx.alloc.free(ctx.path);
+        ctx.alloc.free(ctx.text);
+        ctx.alloc.destroy(ctx);
+    }
 
     // Ensure the parent dir exists, then write atomically-ish via
     // truncate. The state is tiny so a partial write is implausible.
-    if (std.fs.path.dirname(path)) |parent| {
+    if (std.fs.path.dirname(ctx.path)) |parent| {
         std.fs.cwd().makePath(parent) catch {};
     }
-    const file = std.fs.cwd().createFile(path, .{ .truncate = true }) catch return;
+    const file = std.fs.cwd().createFile(ctx.path, .{ .truncate = true }) catch return;
     defer file.close();
-    var buf: [160]u8 = undefined;
-    const text = state.serialize(&buf) catch return;
-    file.writeAll(text) catch return;
-    self.saved_placement_ok = true;
+    file.writeAll(ctx.text) catch return;
 }
 
 /// Read and validate the persisted window state, clamped onto the

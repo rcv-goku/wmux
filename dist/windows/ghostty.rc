@@ -1,4 +1,4 @@
-// Ghostty for Windows — application resources.
+// wmux — application resources.
 // LANG_NEUTRAL(0), SUBLANG_NEUTRAL(0)
 LANGUAGE 0, 0
 
@@ -29,13 +29,13 @@ BEGIN
         // 0409 = U.S. English, 04B0 = Unicode codepage 1200
         BLOCK "040904B0"
         BEGIN
-            VALUE "CompanyName",      "Ghostty Windows"
-            VALUE "FileDescription",  "Ghostty terminal emulator"
+            VALUE "CompanyName",      "wmux"
+            VALUE "FileDescription",  "wmux — terminal multiplexer for Windows"
             VALUE "FileVersion",      "1.0.1.0"
-            VALUE "InternalName",     "ghostty"
+            VALUE "InternalName",     "wmux"
             VALUE "LegalCopyright",   "Original work copyright Mitchell Hashimoto. Windows port additions copyright Shiwei Song. MIT License."
-            VALUE "OriginalFilename", "ghostty.exe"
-            VALUE "ProductName",      "Ghostty"
+            VALUE "OriginalFilename", "wmux.exe"
+            VALUE "ProductName",      "wmux"
             VALUE "ProductVersion",   "1.0.1.0"
         END
     END
