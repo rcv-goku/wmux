@@ -73,7 +73,7 @@ This phase performs the foundational architectural change: moving tab ownership 
   - `moveTab(self, amount)` and `moveTabTo(self, from, to)`: Now operate on the focused PaneContainer's tab arrays via `tabArraysSwap`/shift. The logic is identical but uses `container.tabArrays()`.
   - `closeTab(self, pane)`: Find which container owns the pane, close that tab in that container. If container empties, remove from workspace tree.
 
-- [ ] Rework split operations to create/destroy PaneContainers in the workspace-level split tree. This is the core behavioral change — splits no longer create panes within a tab's tree, they create entirely new PaneContainers:
+- [x] Rework split operations to create/destroy PaneContainers in the workspace-level split tree. This is the core behavioral change — splits no longer create panes within a tab's tree, they create entirely new PaneContainers:
   - `newSplit(self, direction)`: Create a new PaneContainer with one fresh tab (a new terminal Surface). The new container is inserted into the workspace's `split_tree` next to the focused container:
     1. Find the focused container's handle in `ws.split_tree` via `ws.findContainerHandle(ws.focused_container)`
     2. Create new Surface, Pane, PaneContainer (container gets one tab)

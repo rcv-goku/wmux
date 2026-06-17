@@ -15,6 +15,7 @@ const agent_session = @import("agent_session.zig");
 const BrowserPane = @import("BrowserPane.zig");
 const ipc = @import("ipc.zig");
 const Pane = @import("Pane.zig");
+const PaneContainer = @import("PaneContainer.zig");
 const QuickTerminal = @import("QuickTerminal.zig");
 const SessionState = @import("SessionState.zig");
 const Surface = @import("Surface.zig");
@@ -1464,7 +1465,7 @@ pub fn performAction(
             switch (target) {
                 .app => {},
                 .surface => |core_surface| {
-                    const dir: SplitTree(Pane).Split.Direction = switch (value) {
+                    const dir: SplitTree(PaneContainer).Split.Direction = switch (value) {
                         .left => .left,
                         .right => .right,
                         .up => .up,
@@ -4189,7 +4190,7 @@ fn ipcNewSplit(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const dir_str = ipcArgString(req, "dir") orelse
         ipcArgString(req, "direction") orelse return IpcError.MissingDirection;
-    const direction: SplitTree(Pane).Split.Direction = if (std.mem.eql(u8, dir_str, "right"))
+    const direction: SplitTree(PaneContainer).Split.Direction = if (std.mem.eql(u8, dir_str, "right"))
         .right
     else if (std.mem.eql(u8, dir_str, "down"))
         .down
@@ -4235,7 +4236,6 @@ fn ipcNewSplit(self: *App, req: *ipc.Request) anyerror!void {
 
     const new_pane = try window.newSplitInWorkspace(
         target.ws_idx,
-        target.tab_idx,
         direction,
         command,
         focus,

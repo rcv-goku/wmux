@@ -416,8 +416,8 @@ saved_placement_ok: bool = false,
 
 /// Split divider drag state.
 dragging_split: bool = false,
-drag_split_handle: SplitTree(Pane).Node.Handle = .root,
-drag_split_layout: SplitTree(Pane).Split.Layout = .horizontal,
+drag_split_handle: SplitTree(PaneContainer).Node.Handle = .root,
+drag_split_layout: SplitTree(PaneContainer).Split.Layout = .horizontal,
 drag_start_rect: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
 
 /// Sidebar edge drag-resize state. The width override is in unscaled
@@ -2090,11 +2090,9 @@ pub fn closeWorkspace(self: *Window, idx: usize) void {
     if (arith == .close_window) {
         self.closing = true;
         const ws = &self.workspaces[idx];
-        for (ws.tab_trees[0..ws.tab_count]) |*tree| {
-            tree.deinit();
-            tree.* = .empty;
-        }
-        ws.tab_count = 0;
+        ws.split_tree.deinit();
+        ws.split_tree = .empty;
+        ws.focused_container = null;
         if (self.hwnd) |hwnd| _ = w32.PostMessageW(hwnd, w32.WM_CLOSE, 0, 0);
         return;
     }
@@ -2104,11 +2102,9 @@ pub fn closeWorkspace(self: *Window, idx: usize) void {
     // panes linger on screen during the deinit.
     if (idx == self.active_workspace) {
         const ws = &self.workspaces[idx];
-        if (ws.active_tab < ws.tab_count) {
-            var it = ws.tab_trees[ws.active_tab].iterator();
-            while (it.next()) |entry| {
-                if (entry.view.hwnd()) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
-            }
+        var it = ws.split_tree.iterator();
+        while (it.next()) |entry| {
+            if (entry.view.activePaneHwnd()) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
         }
     }
 
@@ -2138,13 +2134,12 @@ pub fn closeWorkspace(self: *Window, idx: usize) void {
     self.workspace_count = new_count;
     self.active_workspace = survivor;
 
-    // Tear down the closed workspace's trees from the value copy now that
-    // the live array no longer references them. Free its worktree binding
-    // here too: the shift moved every survivor's working_dir pointer down
-    // by value, so only this removed slot's copy is unreferenced.
-    for (dying.tab_trees[0..dying.tab_count]) |*tree| {
-        tree.deinit();
-    }
+    // Tear down the closed workspace's split tree from the value copy now
+    // that the live array no longer references it. Free its worktree
+    // binding here too: the shift moved every survivor's working_dir
+    // pointer down by value, so only this removed slot's copy is
+    // unreferenced.
+    dying.split_tree.deinit();
     dying.freeWorkingDir(self.app.core_app.alloc);
 
     // Lay out and focus the survivor. updateTabBarVisibility first (the
@@ -2197,24 +2192,24 @@ pub fn moveWorkspaceTo(self: *Window, from: usize, to: usize) void {
     self.invalidateSidebar();
 }
 
-/// Layout split panes for the active tab.
+/// Layout split panes for the active workspace.
 pub fn layoutSplits(self: *Window) void {
     const ws = self.activeWorkspace();
-    if (ws.tab_count == 0) return;
-    const tree = ws.tab_trees[ws.active_tab];
+    const tree = ws.split_tree;
+    if (tree == .empty) return;
     const rect = self.surfaceRect();
     if (tree.zoomed) |zoomed_handle| {
         var it = tree.iterator();
         while (it.next()) |entry| {
             if (entry.handle == zoomed_handle) {
-                if (entry.view.hwnd()) |h| {
+                if (entry.view.activePaneHwnd()) |h| {
                     const w = @max(rect.right - rect.left, 1);
                     const ht = @max(rect.bottom - rect.top, 1);
                     _ = w32.MoveWindow(h, rect.left, rect.top, @intCast(w), @intCast(ht), 1);
                     _ = w32.ShowWindow(h, w32.SW_SHOW);
                 }
             } else {
-                if (entry.view.hwnd()) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
+                if (entry.view.activePaneHwnd()) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
             }
         }
         return;
@@ -2239,11 +2234,11 @@ pub fn layoutSplits(self: *Window) void {
     self.updatePaneButtons();
 }
 
-fn layoutNode(self: *Window, tree: SplitTree(Pane), handle: SplitTree(Pane).Node.Handle, rect: w32.RECT) void {
+fn layoutNode(self: *Window, tree: SplitTree(PaneContainer), handle: SplitTree(PaneContainer).Node.Handle, rect: w32.RECT) void {
     if (handle.idx() >= tree.nodes.len) return;
     switch (tree.nodes[handle.idx()]) {
-        .leaf => |view| {
-            if (view.hwnd()) |h| {
+        .leaf => |container| {
+            if (container.activePaneHwnd()) |h| {
                 const w = @max(rect.right - rect.left, 1);
                 const ht = @max(rect.bottom - rect.top, 1);
                 _ = w32.MoveWindow(h, rect.left, rect.top, @intCast(w), @intCast(ht), 1);
@@ -2281,21 +2276,18 @@ fn layoutNode(self: *Window, tree: SplitTree(Pane), handle: SplitTree(Pane).Node
 /// Safe to call after any layout/attention/focus change; cheap when no
 /// pane needs a ring (every existing ring is simply hidden).
 pub fn updateAttentionRings(self: *Window) void {
-    // No chrome on a closing/zoomed/empty window: hide everything.
     const hwnd = self.hwnd orelse return self.hideAllRings();
     if (self.closing) return self.hideAllRings();
     const ws = self.activeWorkspace();
-    if (ws.tab_count == 0) return self.hideAllRings();
-    const tree = ws.tab_trees[ws.active_tab];
-    // A zoomed tab shows a single pane full-bleed; ringing it would frame
-    // the whole content area, so suppress rings while zoomed.
+    const tree = ws.split_tree;
+    if (tree == .empty) return self.hideAllRings();
     if (tree.zoomed != null) return self.hideAllRings();
 
-    const focused = ws.tab_active_pane[ws.active_tab];
+    const focused_container = ws.focusedContainerOrFirst() orelse return self.hideAllRings();
+    const focused = focused_container.activePane() orelse return self.hideAllRings();
     var next: usize = 0;
     self.attentionRingNode(hwnd, tree, .root, self.surfaceRect(), focused, &next);
 
-    // Hide any rings beyond the ones we just positioned this pass.
     var i = next;
     while (i < self.attention_rings.items.len) : (i += 1) {
         self.attention_rings.items[i].hide();
@@ -2326,24 +2318,24 @@ fn ringAt(self: *Window, idx: usize, hwnd: w32.HWND) ?*AttentionRing {
     return ring;
 }
 
-/// Walk the tab tree mirroring layoutNode's geometry; for each leaf pane
-/// that is an attention-flagged terminal other than `focused`, position a
-/// pool ring around its client rect (converted to screen coords).
-/// `next` is the running count of rings used this pass.
+/// Walk the workspace split tree mirroring layoutNode's geometry; for each
+/// leaf container whose active pane is attention-flagged and not the focused
+/// pane, position a pool ring around its client rect (screen coords).
 fn attentionRingNode(
     self: *Window,
     hwnd: w32.HWND,
-    tree: SplitTree(Pane),
-    handle: SplitTree(Pane).Node.Handle,
+    tree: SplitTree(PaneContainer),
+    handle: SplitTree(PaneContainer).Node.Handle,
     rect: w32.RECT,
     focused: *Pane,
     next: *usize,
 ) void {
     if (handle.idx() >= tree.nodes.len) return;
     switch (tree.nodes[handle.idx()]) {
-        .leaf => |view| {
-            if (view == focused) return;
-            const surface = view.surface() orelse return;
+        .leaf => |container| {
+            const pane = container.activePane() orelse return;
+            if (pane == focused) return;
+            const surface = pane.surface() orelse return;
             if (!surface.attention) return;
             const ring = self.ringAt(next.*, hwnd) orelse return;
             // Client rect → screen rect (the popup lives in screen coords).
@@ -2386,31 +2378,25 @@ fn attentionRingNode(
 /// shared top-right corner. Safe to call repeatedly; surplus overlays in
 /// the pool are hidden.
 pub fn updatePaneButtons(self: *Window) void {
-    // No chrome on a closing/empty window: hide everything.
     const hwnd = self.hwnd orelse return self.hideAllPaneButtons();
     if (self.closing) return self.hideAllPaneButtons();
-    // QuickTerminals are bare popups with no tab/pane chrome.
     if (self.is_quick_terminal) return self.hideAllPaneButtons();
     const ws = self.activeWorkspace();
-    if (ws.tab_count == 0) return self.hideAllPaneButtons();
+    const tree = ws.split_tree;
+    if (tree == .empty) return self.hideAllPaneButtons();
 
-    const tree = ws.tab_trees[ws.active_tab];
-    const focused = ws.tab_active_pane[ws.active_tab];
+    const focused_container = ws.focusedContainerOrFirst() orelse return self.hideAllPaneButtons();
+    const focused = focused_container.activePane() orelse return self.hideAllPaneButtons();
 
     var next: usize = 0;
 
-    // Locate the focused pane's content rect by walking the same split
-    // geometry layoutNode uses, then place one cluster at its top-right.
     if (tree.zoomed) |zoomed_handle| {
-        // A zoomed tab shows the focused pane full-bleed; place the
-        // cluster at the full surface rect's top-right.
         _ = zoomed_handle;
         self.placePaneButton(hwnd, focused, self.surfaceRect(), &next);
     } else {
         self.paneButtonsNode(hwnd, tree, .root, self.surfaceRect(), &next);
     }
 
-    // Hide any overlays beyond the one we positioned this pass.
     var i = next;
     while (i < self.pane_buttons.items.len) : (i += 1) {
         self.pane_buttons.items[i].hide();
@@ -2458,23 +2444,21 @@ fn placePaneButton(self: *Window, hwnd: w32.HWND, pane: *Pane, rect: w32.RECT, n
     next.* += 1;
 }
 
-/// Walk the tab tree mirroring layoutNode's geometry; place a corner
-/// cluster on EVERY leaf pane so the action icons are visible on all
-/// panes at all times (not just the focused one). Mirrors
-/// attentionRingNode's recursion exactly so the geometry agrees.
+/// Walk the workspace split tree mirroring layoutNode's geometry; place a
+/// corner cluster on EVERY leaf container's active pane.
 fn paneButtonsNode(
     self: *Window,
     hwnd: w32.HWND,
-    tree: SplitTree(Pane),
-    handle: SplitTree(Pane).Node.Handle,
+    tree: SplitTree(PaneContainer),
+    handle: SplitTree(PaneContainer).Node.Handle,
     rect: w32.RECT,
     next: *usize,
 ) void {
     if (handle.idx() >= tree.nodes.len) return;
     switch (tree.nodes[handle.idx()]) {
-        .leaf => |view| {
-            // Every leaf pane gets its own always-visible corner cluster.
-            self.placePaneButton(hwnd, view, rect, next);
+        .leaf => |container| {
+            const pane = container.activePane() orelse return;
+            self.placePaneButton(hwnd, pane, rect, next);
         },
         .split => |s| {
             const gap: i32 = @intFromFloat(@round(5.0 * self.scale));
@@ -2537,8 +2521,8 @@ pub fn onPaneButtonClick(window: *anyopaque, pane: *Pane, action: PaneButtonsMod
 /// plus a colored border around the focused pane.
 fn paintDividers(self: *Window, hdc: w32.HDC) void {
     const ws = self.activeWorkspace();
-    if (ws.tab_count == 0) return;
-    const tree = ws.tab_trees[ws.active_tab];
+    const tree = ws.split_tree;
+    if (tree == .empty) return;
     if (!tree.isSplit()) return;
     if (tree.zoomed != null) return;
     const rect = self.surfaceRect();
@@ -2579,7 +2563,7 @@ fn paintFocusBorder(self: *Window, hdc: w32.HDC) void {
     _ = w32.FillRect(hdc, &r, brush);
 }
 
-fn paintDividerNode(self: *Window, hdc: w32.HDC, tree: SplitTree(Pane), handle: SplitTree(Pane).Node.Handle, rect: w32.RECT) void {
+fn paintDividerNode(self: *Window, hdc: w32.HDC, tree: SplitTree(PaneContainer), handle: SplitTree(PaneContainer).Node.Handle, rect: w32.RECT) void {
     if (handle.idx() >= tree.nodes.len) return;
     switch (tree.nodes[handle.idx()]) {
         .leaf => {},
@@ -2620,8 +2604,8 @@ fn paintDividerNode(self: *Window, hdc: w32.HDC, tree: SplitTree(Pane), handle: 
 pub fn repaintDividers(self: *Window) void {
     const hwnd = self.hwnd orelse return;
     const ws = self.activeWorkspace();
-    if (ws.tab_count == 0) return;
-    const tree = ws.tab_trees[ws.active_tab];
+    const tree = ws.split_tree;
+    if (tree == .empty) return;
     if (!tree.isSplit()) return;
     if (tree.zoomed != null) return;
     const hdc = w32.GetDC(hwnd) orelse return;
@@ -2636,14 +2620,14 @@ pub fn repaintDividers(self: *Window) void {
 }
 
 const DividerHit = struct {
-    handle: SplitTree(Pane).Node.Handle,
-    layout: SplitTree(Pane).Split.Layout,
+    handle: SplitTree(PaneContainer).Node.Handle,
+    layout: SplitTree(PaneContainer).Split.Layout,
 };
 
 fn hitTestDivider(self: *Window, x: i32, y: i32) ?DividerHit {
     const ws = self.activeWorkspace();
-    if (ws.tab_count == 0) return null;
-    const tree = ws.tab_trees[ws.active_tab];
+    const tree = ws.split_tree;
+    if (tree == .empty) return null;
     if (!tree.isSplit()) return null;
     if (tree.zoomed != null) return null;
     const rect = self.surfaceRect();
@@ -2652,8 +2636,8 @@ fn hitTestDivider(self: *Window, x: i32, y: i32) ?DividerHit {
 
 fn hitTestDividerNode(
     self: *Window,
-    tree: SplitTree(Pane),
-    handle: SplitTree(Pane).Node.Handle,
+    tree: SplitTree(PaneContainer),
+    handle: SplitTree(PaneContainer).Node.Handle,
     rect: w32.RECT,
     x: i32,
     y: i32,
@@ -2690,7 +2674,7 @@ fn hitTestDividerNode(
     }
 }
 
-fn startDividerDrag(self: *Window, handle: SplitTree(Pane).Node.Handle, layout: SplitTree(Pane).Split.Layout) void {
+fn startDividerDrag(self: *Window, handle: SplitTree(PaneContainer).Node.Handle, layout: SplitTree(PaneContainer).Split.Layout) void {
     self.dragging_split = true;
     self.drag_split_handle = handle;
     self.drag_split_layout = layout;
@@ -2717,7 +2701,7 @@ fn updateDividerDrag(self: *Window, x: i32, y: i32) void {
     };
 
     const ws = self.activeWorkspace();
-    ws.tab_trees[ws.active_tab].resizeInPlace(handle, new_ratio);
+    ws.split_tree.resizeInPlace(handle, new_ratio);
     self.layoutSplits();
 }
 
@@ -2788,190 +2772,156 @@ fn sidebarDragTarget(self: *const Window, y: i32) usize {
     return target;
 }
 
-/// Create a new split in the active tab. Splits inherit the source
-/// pane's backend (Windows Terminal semantics): a split off a WSL or
-/// PowerShell tab opens the same shell. Browser panes have no terminal
-/// surface, so a split off one falls back to the configured default.
-pub fn newSplit(self: *Window, direction: SplitTree(Pane).Split.Direction) !void {
+/// Create a new split in the active workspace. Splits inherit the source
+/// pane's backend: a split off a WSL or PowerShell tab opens the same shell.
+/// Browser panes have no terminal surface, so a split off one falls back to
+/// the configured default. Creates a new PaneContainer as a sibling leaf.
+pub fn newSplit(self: *Window, direction: SplitTree(PaneContainer).Split.Direction) !void {
     const ws = self.activeWorkspace();
-    if (ws.tab_count == 0) return;
-    // Surface.init deep copies the argv, so borrowing the source
-    // surface's copy is fine.
-    const command: ?[]const []const u8 = if (ws.tab_active_pane[ws.active_tab].surface()) |src|
-        src.spawn_command
+    const container = ws.focusedContainerOrFirst() orelse return;
+    const command: ?[]const []const u8 = if (container.activePane()) |p|
+        if (p.surface()) |src| src.spawn_command else null
     else
         null;
     return self.newSplitWithCommand(direction, command);
 }
 
 /// Like newSplit, but with an explicit command override (the backend
-/// picker) instead of inheriting the source pane's backend. Null runs
-/// the configured default. The argv is copied by Surface.init, so the
-/// caller's memory may be freed once this returns. Splits the ACTIVE
-/// workspace's active tab and focuses the new pane (the interactive UX).
+/// picker) instead of inheriting the source pane's backend.
 pub fn newSplitWithCommand(
     self: *Window,
-    direction: SplitTree(Pane).Split.Direction,
+    direction: SplitTree(PaneContainer).Split.Direction,
     command: ?[]const []const u8,
 ) !void {
-    const ws = self.activeWorkspace();
-    if (ws.tab_count == 0) return;
-    _ = try self.newSplitInWorkspace(self.active_workspace, ws.active_tab, direction, command, true);
+    _ = try self.newSplitInWorkspace(self.active_workspace, direction, command, true);
 }
 
-/// Split the active pane of (ws_idx, tab_idx) — which need NOT be the
-/// active workspace/tab — in `direction`. With `focus` true this is the
-/// interactive split: the new pane is focused and the tab re-laid-out (the
-/// caller must have selected the workspace/tab so it is the active one).
-/// With `focus` false this is the background (agent `+split` without
-/// `--focus`) path: the new pane is created and inserted into the tab tree
-/// but the active workspace/tab/pane is NOT changed and the new pane's
-/// child HWND is kept hidden (it is shown on the next layoutSplits when its
-/// workspace+tab becomes active), so a programmatic split never yanks the
-/// user's focus or foreground. Returns the new pane. `command` mirrors
-/// newSplitWithCommand (null inherits/defaults; the argv is copied).
+/// Split the focused PaneContainer of workspace `ws_idx` in `direction`,
+/// creating a new PaneContainer with one terminal pane as a sibling leaf
+/// in the workspace split tree. With `focus` true, the new container is
+/// focused and laid out (interactive UX). With `focus` false, the new
+/// container is created hidden (agent `+split` without `--focus`).
+/// Returns the new pane.
 pub fn newSplitInWorkspace(
     self: *Window,
     ws_idx: usize,
-    tab_idx: usize,
-    direction: SplitTree(Pane).Split.Direction,
+    direction: SplitTree(PaneContainer).Split.Direction,
     command: ?[]const []const u8,
     focus: bool,
 ) !*Pane {
     if (self.closing) return error.WindowClosing;
     if (ws_idx >= self.workspace_count) return error.NoWindow;
     const ws = &self.workspaces[ws_idx];
-    if (tab_idx >= ws.tab_count) return error.UnknownTab;
     const alloc = self.app.core_app.alloc;
 
-    const active_pane = ws.tab_active_pane[tab_idx];
-    const handle = ws.findHandle(tab_idx, active_pane) orelse return error.UnknownPane;
+    const src_container = ws.focusedContainerOrFirst() orelse return error.UnknownPane;
+    const src_handle = ws.findContainerHandle(src_container) orelse return error.UnknownPane;
 
-    // Create new surface.
     const new_surface = try alloc.create(Surface);
     errdefer {
         new_surface.deinit();
         alloc.destroy(new_surface);
     }
-    // Splits inherit the source pane's live cwd via OSC 7 / pwd
-    // (split-inherit-working-directory), so they need no explicit
-    // worktree override here.
     try new_surface.init(self.app, self, .split, command, null);
 
-    // A background split (the target tab is not the visible active tab)
-    // must hide the child HWND Surface.init showed so it never paints over
-    // the active tab; layoutSplits shows it when this tab becomes active.
-    const is_visible = focus and ws_idx == self.active_workspace and tab_idx == ws.active_tab;
+    const is_visible = focus and ws_idx == self.active_workspace;
     if (!is_visible) {
         if (new_surface.hwnd) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
     }
 
-    // Create a single-node tree for the new surface's pane. The block
-    // scopes the pane errdefer to the window between Pane.create and
-    // the tree taking ownership via ref().
-    var inserted_pane: *Pane = undefined;
-    var insert_tree = blk: {
-        const new_pane = try Pane.create(alloc, new_surface);
-        errdefer alloc.destroy(new_pane);
-        const tree = try SplitTree(Pane).init(alloc, new_pane);
-        inserted_pane = new_pane;
-        break :blk tree;
+    const new_pane = try Pane.create(alloc, new_surface);
+    _ = new_pane.ref(alloc) catch |err| {
+        alloc.destroy(new_pane);
+        return err;
     };
+    errdefer new_pane.unref(alloc);
+
+    const new_container = try PaneContainer.create(alloc);
+    errdefer alloc.destroy(new_container);
+    new_container.tabs[0] = new_pane;
+    new_container.tab_count = 1;
+    new_container.active_tab = 0;
+    const default_title = std.unicode.utf8ToUtf16LeStringLiteral("Ghostty");
+    @memcpy(new_container.tab_titles[0][0..default_title.len], default_title);
+    new_container.tab_title_lens[0] = @intCast(default_title.len);
+
+    var insert_tree = try SplitTree(PaneContainer).init(alloc, new_container);
     defer insert_tree.deinit();
 
-    // Split the current tree at the active pane.
-    const new_tree = try ws.tab_trees[tab_idx].split(
+    const new_tree = try ws.split_tree.split(
         alloc,
-        handle,
+        src_handle,
         direction,
         @as(f16, 0.5),
         &insert_tree,
     );
 
-    // Replace old tree.
-    var old_tree = ws.tab_trees[tab_idx];
+    var old_tree = ws.split_tree;
     old_tree.deinit();
-    ws.tab_trees[tab_idx] = new_tree;
+    ws.split_tree = new_tree;
 
     if (focus) {
-        // Interactive: the new pane becomes the tab's active pane, the
-        // (active) tab is re-laid-out, and the new pane takes keyboard
-        // focus.
-        ws.tab_active_pane[tab_idx] = inserted_pane;
+        ws.focused_container = new_container;
         if (is_visible) self.layoutSplits();
-        inserted_pane.focus();
+        new_pane.focus();
     } else {
-        // Background: do NOT change the tab's active pane or focus. If the
-        // split happens to land in the currently-visible active tab,
-        // re-lay-it-out so the new pane appears without stealing focus;
-        // otherwise it stays hidden until its tab is shown.
-        if (ws_idx == self.active_workspace and tab_idx == ws.active_tab)
+        if (ws_idx == self.active_workspace)
             self.layoutSplits();
     }
     self.invalidateSidebar();
-    return inserted_pane;
+    return new_pane;
 }
 
-/// Create a new browser (WebView2) split in the active tab, in the
-/// given direction off the active pane.
-pub fn newBrowserSplit(self: *Window, direction: SplitTree(Pane).Split.Direction) !void {
+/// Create a new browser (WebView2) split in the active workspace, in
+/// the given direction off the focused container. Creates a new
+/// PaneContainer with the browser pane as its sole tab.
+pub fn newBrowserSplit(self: *Window, direction: SplitTree(PaneContainer).Split.Direction) !void {
     if (self.closing) return;
     const ws = self.activeWorkspace();
-    if (ws.tab_count == 0) {
-        // Not reachable from the current UI (the sidebar/context menu
-        // only exist on live windows, which always have >= 1 tab).
-        log.warn("newBrowserSplit: no tabs, ignoring", .{});
-        return;
-    }
-    // An in-progress inline tab rename owns an Edit control whose
-    // teardown re-enters via EN_KILLFOCUS; settle it before mutating
-    // the tree (same protocol as addTabWithCommand/selectTabIndex).
+    const src_container = ws.focusedContainerOrFirst() orelse return;
+    const src_handle = ws.findContainerHandle(src_container) orelse return;
     self.cancelTabRename();
 
     const alloc = self.app.core_app.alloc;
-    const tab = ws.active_tab;
 
-    const active_pane = ws.tab_active_pane[tab];
-    const handle = ws.findHandle(tab, active_pane) orelse return;
-
-    // Build the single-pane insert tree. The errdefers only cover the
-    // gap until the tree takes ownership via ref(); after the block,
-    // insert_tree.deinit() is the sole cleanup path (no double-free
-    // when split() fails).
-    var browser: *BrowserPane = undefined;
-    var browser_pane: *Pane = undefined;
-    var insert_tree = blk: {
-        const b = try BrowserPane.create(alloc, self.app, self);
-        errdefer b.destroy(alloc);
-        const new_pane = try Pane.createBrowser(alloc, b);
-        errdefer alloc.destroy(new_pane);
-        const tree = try SplitTree(Pane).init(alloc, new_pane);
-        browser = b;
-        browser_pane = new_pane;
-        break :blk tree;
+    const browser = try BrowserPane.create(alloc, self.app, self);
+    errdefer browser.destroy(alloc);
+    const browser_pane = try Pane.createBrowser(alloc, browser);
+    _ = browser_pane.ref(alloc) catch |err| {
+        alloc.destroy(browser_pane);
+        return err;
     };
+    errdefer browser_pane.unref(alloc);
+
+    const new_container = try PaneContainer.create(alloc);
+    errdefer alloc.destroy(new_container);
+    new_container.tabs[0] = browser_pane;
+    new_container.tab_count = 1;
+    new_container.active_tab = 0;
+    const default_title = std.unicode.utf8ToUtf16LeStringLiteral("Browser");
+    @memcpy(new_container.tab_titles[0][0..default_title.len], default_title);
+    new_container.tab_title_lens[0] = @intCast(default_title.len);
+
+    var insert_tree = try SplitTree(PaneContainer).init(alloc, new_container);
     defer insert_tree.deinit();
 
-    const new_tree = try ws.tab_trees[tab].split(
+    const new_tree = try ws.split_tree.split(
         alloc,
-        handle,
+        src_handle,
         direction,
         @as(f16, 0.5),
         &insert_tree,
     );
 
-    var old_tree = ws.tab_trees[tab];
+    var old_tree = ws.split_tree;
     old_tree.deinit();
-    ws.tab_trees[tab] = new_tree;
+    ws.split_tree = new_tree;
 
-    ws.tab_active_pane[tab] = browser_pane;
+    ws.focused_container = new_container;
     self.layoutSplits();
 
-    // Begin async WebView2 creation now that the tree owns the pane
-    // (the in-flight race guard refs it).
     browser.startCreation();
 
-    // Focus the address bar so the user can type a URL immediately.
     if (browser.address_edit) |edit| {
         _ = w32.SetFocus(edit);
     } else {
@@ -2982,15 +2932,12 @@ pub fn newBrowserSplit(self: *Window, direction: SplitTree(Pane).Split.Direction
 /// Navigate to a split in the given direction.
 pub fn gotoSplit(self: *Window, goto_target: apprt.action.GotoSplit) void {
     const ws = self.activeWorkspace();
-    if (ws.tab_count == 0) return;
     const alloc = self.app.core_app.alloc;
-    const tab = ws.active_tab;
-    const tree = &ws.tab_trees[tab];
+    const focused = ws.focusedContainerOrFirst() orelse return;
+    const handle = ws.findContainerHandle(focused) orelse return;
+    var tree = &ws.split_tree;
 
-    const active_pane = ws.tab_active_pane[tab];
-    const handle = ws.findHandle(tab, active_pane) orelse return;
-
-    const target: SplitTree(Pane).Goto = switch (goto_target) {
+    const target: SplitTree(PaneContainer).Goto = switch (goto_target) {
         .previous => .previous,
         .next => .next,
         .up => .{ .spatial = .up },
@@ -3002,9 +2949,9 @@ pub fn gotoSplit(self: *Window, goto_target: apprt.action.GotoSplit) void {
     const dest_handle = (tree.goto(alloc, handle, target) catch return) orelse return;
 
     switch (tree.nodes[dest_handle.idx()]) {
-        .leaf => |pane| {
-            ws.tab_active_pane[tab] = pane;
-            pane.focus();
+        .leaf => |container| {
+            ws.focused_container = container;
+            container.focus();
         },
         .split => {},
     }
@@ -3013,15 +2960,11 @@ pub fn gotoSplit(self: *Window, goto_target: apprt.action.GotoSplit) void {
 /// Swap the focused split with the split in the given direction.
 pub fn swapSplit(self: *Window, swap_target: apprt.action.GotoSplit) void {
     const ws = self.activeWorkspace();
-    if (ws.tab_count == 0) return;
     const alloc = self.app.core_app.alloc;
-    const tab = ws.active_tab;
-    const tree = &ws.tab_trees[tab];
+    const focused = ws.focusedContainerOrFirst() orelse return;
+    const src_handle = ws.findContainerHandle(focused) orelse return;
 
-    const active_pane = ws.tab_active_pane[tab];
-    const src_handle = ws.findHandle(tab, active_pane) orelse return;
-
-    const target: SplitTree(Pane).Goto = switch (swap_target) {
+    const target: SplitTree(PaneContainer).Goto = switch (swap_target) {
         .previous => .previous,
         .next => .next,
         .up => .{ .spatial = .up },
@@ -3030,17 +2973,17 @@ pub fn swapSplit(self: *Window, swap_target: apprt.action.GotoSplit) void {
         .right => .{ .spatial = .right },
     };
 
-    const dst_handle = (tree.goto(alloc, src_handle, target) catch return) orelse return;
+    const dst_handle = (ws.split_tree.goto(alloc, src_handle, target) catch return) orelse return;
 
-    const new_tree = tree.swap(alloc, src_handle, dst_handle) catch return;
-    var old_tree = ws.tab_trees[tab];
+    const new_tree = ws.split_tree.swap(alloc, src_handle, dst_handle) catch return;
+    var old_tree = ws.split_tree;
     old_tree.deinit();
-    ws.tab_trees[tab] = new_tree;
+    ws.split_tree = new_tree;
     self.layoutSplits();
 
-    const new_handle = ws.findHandle(tab, active_pane) orelse return;
-    switch (ws.tab_trees[tab].nodes[new_handle.idx()]) {
-        .leaf => |pane| pane.focus(),
+    const new_handle = ws.findContainerHandle(focused) orelse return;
+    switch (ws.split_tree.nodes[new_handle.idx()]) {
+        .leaf => |container| container.focus(),
         .split => {},
     }
 }
@@ -3048,15 +2991,11 @@ pub fn swapSplit(self: *Window, swap_target: apprt.action.GotoSplit) void {
 /// Resize the nearest split in the given direction by the given pixel amount.
 pub fn resizeSplit(self: *Window, rs: apprt.action.ResizeSplit) void {
     const ws = self.activeWorkspace();
-    if (ws.tab_count == 0) return;
     const alloc = self.app.core_app.alloc;
-    const tab = ws.active_tab;
-    const tree = &ws.tab_trees[tab];
+    const focused = ws.focusedContainerOrFirst() orelse return;
+    const handle = ws.findContainerHandle(focused) orelse return;
 
-    const active_pane = ws.tab_active_pane[tab];
-    const handle = ws.findHandle(tab, active_pane) orelse return;
-
-    const layout: SplitTree(Pane).Split.Layout = switch (rs.direction) {
+    const layout: SplitTree(PaneContainer).Split.Layout = switch (rs.direction) {
         .left, .right => .horizontal,
         .up, .down => .vertical,
     };
@@ -3072,56 +3011,52 @@ pub fn resizeSplit(self: *Window, rs: apprt.action.ResizeSplit) void {
     };
     const delta: f16 = @floatCast(sign * @as(f32, @floatFromInt(rs.amount)) / dimension);
 
-    const new_tree = tree.resize(alloc, handle, layout, delta) catch return;
-    var old_tree = ws.tab_trees[tab];
+    const new_tree = ws.split_tree.resize(alloc, handle, layout, delta) catch return;
+    var old_tree = ws.split_tree;
     old_tree.deinit();
-    ws.tab_trees[tab] = new_tree;
+    ws.split_tree = new_tree;
     self.layoutSplits();
 }
 
-/// Equalize all splits in the active tab.
+/// Equalize all splits in the active workspace.
 pub fn equalizeSplits(self: *Window) void {
     const ws = self.activeWorkspace();
-    if (ws.tab_count == 0) return;
+    if (ws.split_tree == .empty) return;
     const alloc = self.app.core_app.alloc;
-    const tab = ws.active_tab;
 
-    const new_tree = ws.tab_trees[tab].equalize(alloc) catch return;
-    var old_tree = ws.tab_trees[tab];
+    const new_tree = ws.split_tree.equalize(alloc) catch return;
+    var old_tree = ws.split_tree;
     old_tree.deinit();
-    ws.tab_trees[tab] = new_tree;
+    ws.split_tree = new_tree;
     self.layoutSplits();
 }
 
-/// Rearrange all splits in the active tab into a predefined layout.
+/// Rearrange all splits in the active workspace into a predefined layout.
 pub fn selectLayout(self: *Window, layout: apprt.action.SelectLayout) void {
     const ws = self.activeWorkspace();
-    if (ws.tab_count == 0) return;
+    if (ws.split_tree == .empty) return;
     const alloc = self.app.core_app.alloc;
-    const tab = ws.active_tab;
 
-    const Tree = SplitTree(Pane);
+    const Tree = SplitTree(PaneContainer);
     const tree_layout: Tree.PredefinedLayout = switch (layout) {
         inline else => |tag| @field(Tree.PredefinedLayout, @tagName(tag)),
     };
-    const new_tree = ws.tab_trees[tab].selectLayout(alloc, tree_layout) catch return;
-    var old_tree = ws.tab_trees[tab];
+    const new_tree = ws.split_tree.selectLayout(alloc, tree_layout) catch return;
+    var old_tree = ws.split_tree;
     old_tree.deinit();
-    ws.tab_trees[tab] = new_tree;
+    ws.split_tree = new_tree;
     self.layoutSplits();
 }
 
-/// Toggle zoom on the active split surface.
+/// Toggle zoom on the focused split container.
 pub fn toggleSplitZoom(self: *Window) void {
     const ws = self.activeWorkspace();
-    if (ws.tab_count == 0) return;
-    const tab = ws.active_tab;
-    var tree = &ws.tab_trees[tab];
-
+    var tree = &ws.split_tree;
+    if (tree.* == .empty) return;
     if (!tree.isSplit()) return;
 
-    const active_pane = ws.tab_active_pane[tab];
-    const handle = ws.findHandle(tab, active_pane) orelse return;
+    const focused = ws.focusedContainerOrFirst() orelse return;
+    const handle = ws.findContainerHandle(focused) orelse return;
 
     if (tree.zoomed) |z| {
         if (z == handle) {
@@ -4338,7 +4273,7 @@ fn havePwsh() bool {
 pub const BackendTarget = union(enum) {
     new_tab,
     new_workspace,
-    split: SplitTree(Pane).Split.Direction,
+    split: SplitTree(PaneContainer).Split.Direction,
 };
 
 /// The operation class showBackendMenu performs for a (selection,
@@ -4909,17 +4844,11 @@ pub fn close(self: *Window) void {
 /// Deinit and free all tab trees (which unrefs and frees surfaces)
 /// across every workspace.
 fn cleanupAllSurfaces(self: *Window) void {
-    // Deinit in place and reset to .empty. SplitTree.deinit sets self.*
-    // to undefined; deinit'ing a local copy would only mark the copy,
-    // leaving stale arena/node pointers in tab_trees that any post-WM_CLOSE
-    // message walking the slot could dereference.
     const alloc = self.app.core_app.alloc;
     for (self.workspaces[0..self.workspace_count]) |*ws| {
-        for (ws.tab_trees[0..ws.tab_count]) |*tree| {
-            tree.deinit();
-            tree.* = .empty;
-        }
-        ws.tab_count = 0;
+        ws.split_tree.deinit();
+        ws.split_tree = .empty;
+        ws.focused_container = null;
         ws.freeWorkingDir(alloc);
     }
 }
@@ -5053,9 +4982,9 @@ pub fn windowWndProc(
             // workspaces and tabs so hidden tabs/workspaces don't surface a
             // stale position when activated.
             for (window.workspaces[0..window.workspace_count]) |*ws| {
-                for (0..ws.tab_count) |i| {
-                    var it = ws.tab_trees[i].iterator();
-                    while (it.next()) |entry| switch (entry.view.content) {
+                var tree_it = ws.split_tree.iterator();
+                while (tree_it.next()) |entry| {
+                    for (entry.view.tabs[0..entry.view.tab_count]) |tab_pane| switch (tab_pane.content) {
                         .terminal => |s| if (s.scrollbar) |sb| {
                             _ = sb.repositionAndResize();
                         },
@@ -5086,23 +5015,25 @@ pub fn windowWndProc(
         },
         w32.WM_ENTERSIZEMOVE => {
             const ws = window.activeWorkspace();
-            if (ws.tab_count > 0) {
-                var it = ws.tab_trees[ws.active_tab].iterator();
-                while (it.next()) |entry| switch (entry.view.content) {
+            var it = ws.split_tree.iterator();
+            while (it.next()) |entry| {
+                const pane = entry.view.activePane() orelse continue;
+                switch (pane.content) {
                     .terminal => |s| s.in_live_resize = true,
                     .browser => {},
-                };
+                }
             }
             return 0;
         },
         w32.WM_EXITSIZEMOVE => {
             const ws = window.activeWorkspace();
-            if (ws.tab_count > 0) {
-                var it = ws.tab_trees[ws.active_tab].iterator();
-                while (it.next()) |entry| switch (entry.view.content) {
+            var it = ws.split_tree.iterator();
+            while (it.next()) |entry| {
+                const pane = entry.view.activePane() orelse continue;
+                switch (pane.content) {
                     .terminal => |s| s.in_live_resize = false,
                     .browser => {},
-                };
+                }
             }
             // Resize/move drag settled — persist the new geometry. This
             // debounces saves: nothing is written during the live drag
@@ -5227,7 +5158,7 @@ pub fn windowWndProc(
             }
             if (window.hitTestDivider(x, y)) |hit| {
                 const ws = window.activeWorkspace();
-                ws.tab_trees[ws.active_tab].resizeInPlace(hit.handle, @as(f16, 0.5));
+                ws.split_tree.resizeInPlace(hit.handle, @as(f16, 0.5));
                 window.layoutSplits();
                 return 0;
             }
@@ -6176,7 +6107,7 @@ test "unit: workspace close arithmetic exhaustive over count 1..4" {
 test "unit: backend dispatch ignores split direction and distro index" {
     // The split payload picks WHERE the split goes, never WHAT class
     // of operation runs; same for which distro index was picked.
-    const dirs = [_]SplitTree(Pane).Split.Direction{ .left, .right, .down, .up };
+    const dirs = [_]SplitTree(PaneContainer).Split.Direction{ .left, .right, .down, .up };
     for (dirs) |dir| {
         try testing.expectEqual(
             BackendDispatch.terminal_split,
