@@ -48,7 +48,7 @@ This phase performs the foundational architectural change: moving tab ownership 
   - Update `const SplitTree` usage — the file already imports SplitTree, but now it needs both `SplitTree(Pane)` (still used within PaneContainer for... actually NO — PaneContainers don't use SplitTree internally). The workspace uses `SplitTree(PaneContainer)`. Individual Pane refs are still used by PaneContainer directly
   - Keep all workspace-level fields unchanged: `name`, `name_len`, `description`, `description_len`, `working_dir`, git metadata fields, `meta_token`
 
-- [ ] Update the `Loc` struct and all find/location functions in Window.zig to work with PaneContainers instead of tab indices:
+- [x] Update the `Loc` struct and all find/location functions in Window.zig to work with PaneContainers instead of tab indices:
   - Change `Loc` from `struct { ws: *Workspace, tab: usize }` to `struct { ws: *Workspace, container: *PaneContainer, tab: usize }` — where `container` is the PaneContainer that owns the pane, and `tab` is the tab index within that container
   - Update `findLoc(self: *Window, pane: *Pane) ?Loc` — instead of scanning `tab_active_pane` arrays and `tab_trees`, iterate each workspace's split tree leaves (PaneContainers), then scan each container's `tabs[0..tab_count]` for pointer equality with `pane`. Return `Loc{ .ws = ws, .container = container, .tab = tab_index }`
   - Update `findLocOfSurface(self: *Window, surface: *Surface) ?Loc` — same approach but compare `tabs[i].surface() == surface`

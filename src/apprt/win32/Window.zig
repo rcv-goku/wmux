@@ -280,10 +280,11 @@ pub fn aggregateAttention(flags: []const bool) bool {
     return false;
 }
 
-/// A located tab: the workspace that owns it and its index within that
-/// workspace. Returned by findLoc/findLocOfSurface.
+/// A located pane: the workspace and PaneContainer that own it, plus
+/// the tab index within that container. Returned by findLoc/findLocOfSurface.
 pub const Loc = struct {
     ws: *Workspace,
+    container: *PaneContainer,
     tab: usize,
 };
 
@@ -1041,8 +1042,8 @@ pub fn workspaceIndex(self: *Window, ws: *Workspace) usize {
 /// Returns the currently active Pane, or null if there are no tabs.
 pub fn getActivePane(self: *Window) ?*Pane {
     const ws = self.activeWorkspace();
-    if (ws.tab_count == 0) return null;
-    return ws.tab_active_pane[ws.active_tab];
+    const container = ws.focusedContainerOrFirst() orelse return null;
+    return container.activePane();
 }
 
 /// Returns the currently active terminal Surface, or null if there are
@@ -1052,36 +1053,32 @@ pub fn getActiveSurface(self: *Window) ?*Surface {
     return pane.surface();
 }
 
-/// Find the workspace+tab containing a given pane, scanning every
-/// workspace. Checks tab_active_pane first, then scans all trees.
+/// Find the workspace+container+tab containing a given pane, scanning
+/// every workspace's PaneContainers.
 pub fn findLoc(self: *Window, pane: *Pane) ?Loc {
     for (self.workspaces[0..self.workspace_count]) |*ws| {
-        for (ws.tab_active_pane[0..ws.tab_count], 0..) |p, i| {
-            if (p == pane) return .{ .ws = ws, .tab = i };
-        }
-        for (0..ws.tab_count) |i| {
-            var it = ws.tab_trees[i].iterator();
-            while (it.next()) |entry| {
-                if (entry.view == pane) return .{ .ws = ws, .tab = i };
+        var it = ws.split_tree.iterator();
+        while (it.next()) |entry| {
+            const container = entry.view;
+            for (container.tabs[0..container.tab_count], 0..) |tab_pane, i| {
+                if (tab_pane == pane) return .{ .ws = ws, .container = container, .tab = i };
             }
         }
     }
     return null;
 }
 
-/// Find the workspace+tab containing a given terminal surface, scanning
-/// every workspace. Compares by address against live panes WITHOUT
-/// dereferencing `surface`, so callers validating possibly-dangling
-/// pointers (jumpToSurface) can use it safely.
+/// Find the workspace+container+tab containing a given terminal surface,
+/// scanning every workspace's PaneContainers. Compares by address
+/// against live panes WITHOUT dereferencing `surface`, so callers
+/// validating possibly-dangling pointers (jumpToSurface) can use it safely.
 pub fn findLocOfSurface(self: *Window, surface: *Surface) ?Loc {
     for (self.workspaces[0..self.workspace_count]) |*ws| {
-        for (ws.tab_active_pane[0..ws.tab_count], 0..) |p, i| {
-            if (p.surface() == surface) return .{ .ws = ws, .tab = i };
-        }
-        for (0..ws.tab_count) |i| {
-            var it = ws.tab_trees[i].iterator();
-            while (it.next()) |entry| {
-                if (entry.view.surface() == surface) return .{ .ws = ws, .tab = i };
+        var it = ws.split_tree.iterator();
+        while (it.next()) |entry| {
+            const container = entry.view;
+            for (container.tabs[0..container.tab_count], 0..) |tab_pane, i| {
+                if (tab_pane.surface() == surface) return .{ .ws = ws, .container = container, .tab = i };
             }
         }
     }
@@ -1487,92 +1484,107 @@ pub fn addBrowserTab(self: *Window) !void {
 /// deinits the tree, and adjusts the active tab index.
 pub fn closeTab(self: *Window, pane: *Pane) void {
     const loc = self.findLoc(pane) orelse return;
-    log.debug("closeTab called for pane={x} tab_count={}", .{ @intFromPtr(pane), loc.ws.tab_count });
+    log.debug("closeTab called for pane={x} tab_count={}", .{ @intFromPtr(pane), loc.container.tab_count });
     // The pane may live in a NON-active workspace (a background shell
     // exiting, an IPC-addressed browser closing): close the tab in the
-    // workspace that actually owns it, never the active one.
-    self.closeTabInWorkspace(self.workspaceIndex(loc.ws), loc.tab);
+    // container that actually owns it.
+    self.closeTabInContainer(self.workspaceIndex(loc.ws), loc.container, loc.tab);
 }
 
-/// Close a tab by index within the ACTIVE workspace (tab bar / context
-/// menu paths, where the index is always active-workspace-relative).
+/// Close a tab by index within the focused PaneContainer of the ACTIVE
+/// workspace (tab bar / context menu paths).
 fn closeTabByIndex(self: *Window, idx: usize) void {
-    self.closeTabInWorkspace(self.active_workspace, idx);
+    const ws = &self.workspaces[self.active_workspace];
+    const container = ws.focusedContainerOrFirst() orelse return;
+    self.closeTabInContainer(self.active_workspace, container, idx);
 }
 
-/// Pure active-tab fixup for closeTabInWorkspace: the tab at `idx` was
+/// Pure active-tab fixup for closeTabInContainer: the tab at `idx` was
 /// removed (arrays already shifted left) leaving `new_count` >= 1 tabs;
 /// return the post-close active index. A surviving active tab follows
 /// its shifted slot; closing the active tab selects the tab that slid
-/// into its slot, clamped to the new last index. HWND-free so it can be
-/// unit tested exhaustively.
+/// into its slot, clamped to the new last index.
 fn closeTabActiveFixup(new_count: usize, active: usize, idx: usize) usize {
     if (active >= new_count) return new_count - 1;
     if (active > idx) return active - 1;
     return active;
 }
 
-/// Close the tab at `idx` within workspace `ws_idx`, which need not be
-/// the active workspace (pane-pointer close paths resolve via findLoc).
-fn closeTabInWorkspace(self: *Window, ws_idx: usize, idx: usize) void {
+/// Close the tab at `idx` within the given PaneContainer in workspace
+/// `ws_idx`. If the container empties, it is removed from the workspace
+/// split tree (or the workspace/window is closed if nothing remains).
+fn closeTabInContainer(self: *Window, ws_idx: usize, container: *PaneContainer, idx: usize) void {
     if (ws_idx >= self.workspace_count) return;
     const ws = &self.workspaces[ws_idx];
-    if (idx >= ws.tab_count) return;
-    // Cancel any in-progress rename (the edit control may belong to this tab).
+    if (idx >= container.tab_count) return;
+    const alloc = self.app.core_app.alloc;
     self.cancelTabRename();
 
-    // Detach the tab from the window state BEFORE tree.deinit():
-    // deinit can destroy a browser host HWND, which moves focus
-    // synchronously and re-enters our wndprocs (WM_SETFOCUS &c).
-    // Those handlers read tab_trees/tab_active_pane/active_tab and
-    // must never observe the dying tab. The local copy stays valid:
-    // SplitTree is a value whose deinit frees the shared heap data.
-    var tree = ws.tab_trees[idx];
-    tabArraysRemove(ws.tabArrays(), ws.tab_count, idx);
-    ws.tab_count -= 1;
-    // The shift leaves a duplicate of the last tree past the new
-    // count; clear it so nothing can ever walk stale node pointers.
-    ws.tab_trees[ws.tab_count] = .empty;
+    // Detach the pane BEFORE unreffing: the unref can destroy a
+    // browser host HWND, which moves focus synchronously and
+    // re-enters our wndprocs. They must not see the dying pane.
+    const pane = container.tabs[idx];
+    tabArraysRemove(container.tabArrays(), container.tab_count, idx);
+    container.tab_count -= 1;
 
-    if (ws.tab_count == 0) {
-        if (self.workspace_count > 1) {
-            // The last tab of a workspace with siblings closed: collapse
-            // the now-empty workspace instead of the window. The tab was
-            // already detached above (tab_count is 0), so deinit its tree
-            // here, then closeWorkspace shifts the empty slot out and
-            // selects a survivor. closeWorkspace's own tab loop is a no-op
-            // at tab_count==0, so the tree is freed exactly once.
-            tree.deinit();
-            self.closeWorkspace(ws_idx);
+    if (container.tab_count == 0) {
+        // Container is empty — remove it from the workspace split tree.
+        pane.unref(alloc);
+        const handle = ws.findContainerHandle(container);
+        if (handle) |h| {
+            const new_tree = ws.split_tree.remove(alloc, h) catch {
+                log.err("failed to remove container from split tree", .{});
+                return;
+            };
+            var old_tree = ws.split_tree;
+            ws.split_tree = new_tree;
+            // Pick a new focused container before deiniting old tree.
+            ws.focused_container = ws.focusedContainerOrFirst();
+            old_tree.deinit();
+        } else {
+            // Container not in tree (shouldn't happen); unref it directly.
+            container.unref(alloc);
+        }
+
+        if (ws.containerCount() == 0) {
+            if (self.workspace_count > 1) {
+                self.closeWorkspace(ws_idx);
+                return;
+            }
+            self.closing = true;
+            if (self.hwnd) |hwnd| _ = w32.PostMessageW(hwnd, w32.WM_CLOSE, 0, 0);
             return;
         }
-        // Last tab of the only workspace → close the window. Set closing
-        // before deinit so re-entrant input/focus messages are dropped by
-        // the wndproc guards while panes are torn down.
-        self.closing = true;
-        tree.deinit(); // unrefs all panes → Pane.unref frees at ref_count=0
-        if (self.hwnd) |hwnd| _ = w32.PostMessageW(hwnd, w32.WM_CLOSE, 0, 0);
+
+        if (ws_idx == self.active_workspace) {
+            self.layoutSplits();
+            if (ws.focused_container) |fc| fc.focus();
+            self.updateTabBarVisibility();
+            self.updateWindowTitle();
+            self.invalidateTabBar();
+        }
+        self.invalidateSidebar();
         return;
     }
-    ws.active_tab = closeTabActiveFixup(ws.tab_count, ws.active_tab, idx);
-    tree.deinit();
+
+    container.active_tab = closeTabActiveFixup(container.tab_count, container.active_tab, idx);
+    pane.unref(alloc);
     if (ws_idx == self.active_workspace) {
-        self.selectTabIndex(ws.active_tab);
+        self.selectTabIndex(container.active_tab);
         self.updateTabBarVisibility();
     } else {
-        // Background workspace: its panes are hidden and stay hidden;
-        // selectWorkspace lays it out when it next becomes active. The
-        // sidebar dot may change (aggregateStatus over fewer tabs).
         self.invalidateSidebar();
     }
 }
 
-/// Public wrapper over closeTabInWorkspace for the agent IPC `tab-close`,
-/// which addresses a tab by (workspace index, tab index). Bounds are
-/// validated inside; closing the last tab of the only workspace closes
-/// the window, exactly as the UI close paths do.
+/// Public wrapper over closeTabInContainer for the agent IPC `tab-close`,
+/// which addresses a tab by (workspace index, tab index). Resolves the
+/// focused container of the target workspace.
 pub fn closeTabInWorkspaceForIpc(self: *Window, ws_idx: usize, idx: usize) void {
-    self.closeTabInWorkspace(ws_idx, idx);
+    if (ws_idx >= self.workspace_count) return;
+    const ws = &self.workspaces[ws_idx];
+    const container = ws.focusedContainerOrFirst() orelse return;
+    self.closeTabInContainer(ws_idx, container, idx);
 }
 
 /// Close tabs based on mode: this (current), other (all but current), right (all after current).
@@ -1580,18 +1592,17 @@ pub fn closeTabMode(self: *Window, mode: apprt.action.CloseTabMode, surface: *Su
     switch (mode) {
         .this => self.closeSplitSurface(surface),
         .other => {
-            // Operate on the workspace that owns the surface (which may
-            // not be active, e.g. an IPC-addressed surface). The loop
-            // never empties the workspace (current survives), so no
-            // workspaces[] shift can invalidate ws_idx mid-loop.
+            // Operate on the container that owns the surface. The loop
+            // never empties the container (current survives).
             const loc = self.findLocOfSurface(surface) orelse return;
             const ws_idx = self.workspaceIndex(loc.ws);
+            const container = loc.container;
             var current = loc.tab;
-            var i: usize = loc.ws.tab_count;
+            var i: usize = container.tab_count;
             while (i > 0) {
                 i -= 1;
                 if (i != current) {
-                    self.closeTabInWorkspace(ws_idx, i);
+                    self.closeTabInContainer(ws_idx, container, i);
                     if (i < current) current -= 1;
                 }
             }
@@ -1599,11 +1610,12 @@ pub fn closeTabMode(self: *Window, mode: apprt.action.CloseTabMode, surface: *Su
         .right => {
             const loc = self.findLocOfSurface(surface) orelse return;
             const ws_idx = self.workspaceIndex(loc.ws);
+            const container = loc.container;
             const current = loc.tab;
-            var i: usize = loc.ws.tab_count;
+            var i: usize = container.tab_count;
             while (i > current + 1) {
                 i -= 1;
-                self.closeTabInWorkspace(ws_idx, i);
+                self.closeTabInContainer(ws_idx, container, i);
             }
         },
     }
@@ -1615,258 +1627,123 @@ pub fn closeSplitSurface(self: *Window, surface: *Surface) void {
     self.closeSplitPane(pane);
 }
 
-/// Close a single pane within a split tree. If it's the last pane
-/// in the tab, close the entire tab instead.
+/// Close a single pane. In the new model, each tab is a single pane
+/// (splits are between PaneContainers, not within tabs), so this just
+/// closes the tab in the owning container.
 pub fn closeSplitPane(self: *Window, pane: *Pane) void {
-    const alloc = self.app.core_app.alloc;
     const loc = self.findLoc(pane) orelse {
-        log.debug("closeSplitPane: pane not found in any tab", .{});
+        log.debug("closeSplitPane: pane not found in any container", .{});
         return;
     };
-    const ws = loc.ws;
-    const tab = loc.tab;
-    const tree = &ws.tab_trees[tab];
-
-    if (!tree.isSplit()) {
-        log.debug("closeSplitPane: not split, closing whole tab", .{});
-        self.closeTab(pane);
-        return;
-    }
-
-    const handle = ws.findHandle(tab, pane) orelse {
-        log.debug("closeSplitPane: handle not found", .{});
-        return;
-    };
-    log.debug("closeSplitPane: removing handle={} from tab={}", .{ handle.idx(), tab });
-
-    // Find next focus target BEFORE removing.
-    const next_handle = (tree.goto(alloc, handle, .next) catch null) orelse
-        (tree.goto(alloc, handle, .previous) catch null);
-
-    // Extract the pane pointer from the next handle before we modify the tree.
-    const next_pane: ?*Pane = if (next_handle) |nh| blk: {
-        break :blk switch (tree.nodes[nh.idx()]) {
-            .leaf => |v| v,
-            .split => null,
-        };
-    } else null;
-    log.debug("closeSplitPane: has_next={}", .{next_pane != null});
-
-    const new_tree = tree.remove(alloc, handle) catch {
-        log.err("failed to remove pane from split tree", .{});
-        return;
-    };
-    log.debug("closeSplitPane: remove returned, new_tree nodes={}", .{new_tree.nodes.len});
-
-    // Publish the new tree and a surviving active pane BEFORE deiniting
-    // the old tree: the deinit can destroy a browser host HWND, which
-    // moves focus synchronously and re-enters wndprocs that read
-    // tab_trees/tab_active_pane. They must see post-removal state, not
-    // the dying pane.
-    var old_tree = ws.tab_trees[tab];
-    ws.tab_trees[tab] = new_tree;
-    const survivor: ?*Pane = next_pane orelse blk: {
-        var it = new_tree.iterator();
-        break :blk if (it.next()) |entry| entry.view else null;
-    };
-    if (survivor) |sp| ws.tab_active_pane[tab] = sp;
-    old_tree.deinit();
-
-    if (next_pane) |np| {
-        // Only lay out and move focus when the pane lives in the ACTIVE
-        // workspace: a background workspace's survivors stay hidden (the
-        // active-pane slot was already updated above) and focusing one
-        // would SetFocus a hidden HWND, stealing keyboard focus from the
-        // visible workspace.
-        if (ws == self.activeWorkspace()) {
-            log.debug("closeSplitPane: focusing next pane", .{});
-            self.layoutSplits();
-            np.focus();
-        }
-    } else {
-        log.debug("closeSplitPane: no next pane, closing tab", .{});
-        // `tab` is an index into loc.ws, which may not be the active
-        // workspace — close it where it lives.
-        self.closeTabInWorkspace(self.workspaceIndex(ws), tab);
-    }
+    log.debug("closeSplitPane: closing tab={} in container", .{loc.tab});
+    self.closeTabInContainer(self.workspaceIndex(loc.ws), loc.container, loc.tab);
 }
 
-/// Break the focused pane out of its split into a new tab in the same
-/// workspace. The pane's HWND/surface is NOT destroyed — it is detached
-/// from the source tree and becomes the sole root of a fresh tab. If the
-/// pane is the only pane in its tab (not split), this is a no-op.
+/// Break a tab out of a multi-tab PaneContainer into a new PaneContainer
+/// that becomes a sibling leaf in the workspace split tree. No-op if the
+/// container has only one tab. The pane's HWND/surface is NOT destroyed.
 pub fn breakPane(self: *Window, pane: *Pane) void {
     const alloc = self.app.core_app.alloc;
     const loc = self.findLoc(pane) orelse return;
     const ws = loc.ws;
+    const src_container = loc.container;
     const src_tab = loc.tab;
-    const tree = &ws.tab_trees[src_tab];
 
-    if (!tree.isSplit()) return;
-    if (ws.tab_count >= MAX_TABS) return;
+    if (src_container.tab_count <= 1) return;
 
-    const handle = ws.findHandle(src_tab, pane) orelse return;
+    const src_handle = ws.findContainerHandle(src_container) orelse return;
 
-    const next_handle = (tree.goto(alloc, handle, .next) catch null) orelse
-        (tree.goto(alloc, handle, .previous) catch null);
-    const next_pane: ?*Pane = if (next_handle) |nh| switch (tree.nodes[nh.idx()]) {
-        .leaf => |v| v,
-        .split => null,
-    } else null;
-
-    // Bump the pane's ref count: tree.remove will unref all surviving
-    // nodes (they get re-reffed into the new tree), and the removed node
-    // gets unreffed too. We need the pane to survive the remove+deinit
-    // cycle, so add an extra ref that balances the unref the old tree's
-    // deinit will perform on the removed node.
+    // Bump pane ref: removing from the source container will unref it.
     _ = pane.ref(alloc) catch return;
 
-    const new_tree = tree.remove(alloc, handle) catch {
+    // Remove the pane from the source container.
+    tabArraysRemove(src_container.tabArrays(), src_container.tab_count, src_tab);
+    src_container.tab_count -= 1;
+    if (src_container.active_tab >= src_container.tab_count and src_container.tab_count > 0)
+        src_container.active_tab = src_container.tab_count - 1;
+
+    // Create a new PaneContainer with the pane as its sole tab.
+    const new_container = PaneContainer.create(alloc) catch {
         pane.unref(alloc);
         return;
     };
+    new_container.tabs[0] = pane;
+    new_container.tab_count = 1;
+    new_container.active_tab = 0;
+    // Copy the source tab's title to the new container.
+    const title_len = src_container.tab_title_lens[src_tab];
+    @memcpy(new_container.tab_titles[0][0..title_len], src_container.tab_titles[src_tab][0..title_len]);
+    new_container.tab_title_lens[0] = title_len;
 
-    var old_tree = ws.tab_trees[src_tab];
-    ws.tab_trees[src_tab] = new_tree;
-    if (next_pane) |np| ws.tab_active_pane[src_tab] = np;
+    // Insert the new container into the workspace split tree as a sibling.
+    var new_tree = SplitTree(PaneContainer).init(alloc, new_container) catch {
+        pane.unref(alloc);
+        alloc.destroy(new_container);
+        return;
+    };
+    const split_result = ws.split_tree.split(alloc, src_handle, .right, @as(f16, 0.5), &new_tree) catch {
+        new_tree.deinit();
+        pane.unref(alloc);
+        return;
+    };
+    var old_tree = ws.split_tree;
+    ws.split_tree = split_result;
     old_tree.deinit();
 
-    // Build a single-node tree for the detached pane. SplitTree.init
-    // calls ref(), giving the pane a fresh ownership ref in the new tree.
-    const pane_tree = SplitTree(Pane).init(alloc, pane) catch {
-        pane.unref(alloc);
-        return;
-    };
-    // The extra ref we took above is no longer needed — the new tree's
-    // init ref now owns the pane. Drop the spare.
+    // The pane is now owned by new_container; drop the extra ref.
     pane.unref(alloc);
-
-    const pos: usize = src_tab + 1;
-    tabArraysInsertGap(ws.tabArrays(), ws.tab_count, pos);
-    ws.tab_trees[pos] = pane_tree;
-    ws.tab_active_pane[pos] = pane;
-    ws.tab_status[pos] = .normal;
-    ws.tab_attention[pos] = false;
-    ws.tab_status_text_len[pos] = 0;
-    ws.tab_progress[pos] = null;
-    ws.tab_log[pos].clear();
-    ws.tab_count += 1;
-
-    // Copy the source tab's title to the new tab.
-    @memcpy(
-        ws.tab_titles[pos][0..ws.tab_title_lens[src_tab]],
-        ws.tab_titles[src_tab][0..ws.tab_title_lens[src_tab]],
-    );
-    ws.tab_title_lens[pos] = ws.tab_title_lens[src_tab];
 
     const ws_idx = self.workspaceIndex(ws);
     if (ws_idx == self.active_workspace) {
-        // Re-layout the source tab (it lost a pane).
+        ws.focused_container = new_container;
         self.layoutSplits();
-        // Switch to the new tab.
-        self.selectTabIndex(pos);
+        new_container.focus();
         self.updateTabBarVisibility();
     } else {
-        ws.active_tab = pos;
         self.invalidateSidebar();
     }
 }
 
-/// Move the focused pane to an adjacent tab as a split. The pane is
-/// detached from its current tree without destroying its surface and
-/// joined into the target tab's tree. If it was the only pane in the
-/// source tab, that tab is closed.
+/// Move a pane (tab) within its container. `.new_tab` breaks it into a
+/// new PaneContainer; `.next_tab`/`.prev_tab` swap the tab position
+/// within the same container (since splits are between PaneContainers,
+/// not within tabs, there is no cross-tab merge).
 pub fn movePaneToTab(self: *Window, pane: *Pane, target_enum: apprt.action.MovePaneTarget) void {
-    const alloc = self.app.core_app.alloc;
     const loc = self.findLoc(pane) orelse return;
-    const ws = loc.ws;
+    const container = loc.container;
     const src_tab = loc.tab;
 
-    const target_tab: ?usize = switch (target_enum) {
-        .next_tab => if (src_tab + 1 < ws.tab_count) src_tab + 1 else null,
-        .prev_tab => if (src_tab > 0) src_tab - 1 else null,
+    switch (target_enum) {
         .new_tab => {
             self.breakPane(pane);
             return;
         },
-    };
-    const dst_tab = target_tab orelse return;
-
-    const is_split = ws.tab_trees[src_tab].isSplit();
-
-    // Bump ref to keep the pane alive through the tree rebuild.
-    _ = pane.ref(alloc) catch return;
-
-    if (is_split) {
-        const handle = ws.findHandle(src_tab, pane) orelse {
-            pane.unref(alloc);
-            return;
-        };
-        const next_handle = (ws.tab_trees[src_tab].goto(alloc, handle, .next) catch null) orelse
-            (ws.tab_trees[src_tab].goto(alloc, handle, .previous) catch null);
-        const next_pane: ?*Pane = if (next_handle) |nh| switch (ws.tab_trees[src_tab].nodes[nh.idx()]) {
-            .leaf => |v| v,
-            .split => null,
-        } else null;
-
-        const new_src = ws.tab_trees[src_tab].remove(alloc, handle) catch {
-            pane.unref(alloc);
-            return;
-        };
-        var old_src = ws.tab_trees[src_tab];
-        ws.tab_trees[src_tab] = new_src;
-        if (next_pane) |np| ws.tab_active_pane[src_tab] = np;
-        old_src.deinit();
+        .next_tab => {
+            if (src_tab + 1 < container.tab_count) {
+                tabArraysSwap(container.tabArrays(), src_tab, src_tab + 1);
+                container.active_tab = src_tab + 1;
+            }
+        },
+        .prev_tab => {
+            if (src_tab > 0) {
+                tabArraysSwap(container.tabArrays(), src_tab, src_tab - 1);
+                container.active_tab = src_tab - 1;
+            }
+        },
     }
 
-    // Build a single-node insert tree for the pane.
-    var insert_tree = SplitTree(Pane).init(alloc, pane) catch {
-        pane.unref(alloc);
-        return;
-    };
-    defer insert_tree.deinit();
-    // Drop the spare ref; the insert tree now owns one.
-    pane.unref(alloc);
-
-    // If the source tab was the only pane, close it BEFORE inserting
-    // into the destination so that tab indices remain consistent. The
-    // pane survives because SplitTree.init took a ref above.
-    var actual_dst = dst_tab;
-    if (!is_split) {
-        const ws_idx = self.workspaceIndex(ws);
-        self.closeTabInWorkspace(ws_idx, src_tab);
-        if (src_tab < dst_tab) actual_dst = dst_tab - 1;
+    if (loc.ws == self.activeWorkspace()) {
+        self.invalidateTabBar();
     }
-
-    // Insert into the destination tab's tree at its root.
-    const dst_tree = &ws.tab_trees[actual_dst];
-    const new_dst = dst_tree.split(
-        alloc,
-        .root,
-        .right,
-        @as(f16, 0.5),
-        &insert_tree,
-    ) catch return;
-
-    var old_dst = ws.tab_trees[actual_dst];
-    ws.tab_trees[actual_dst] = new_dst;
-    ws.tab_active_pane[actual_dst] = pane;
-    old_dst.deinit();
-
-    const ws_idx = self.workspaceIndex(ws);
-    if (ws_idx == self.active_workspace) {
-        self.selectTabIndex(actual_dst);
-        self.updateTabBarVisibility();
-    } else {
-        ws.active_tab = actual_dst;
-        self.invalidateSidebar();
-    }
+    self.invalidateSidebar();
 }
 
-/// Switch to the tab at the given index in the active workspace.
+/// Switch to the tab at the given index in the focused PaneContainer of
+/// the active workspace. Hides the old tab's pane and shows the new one.
 pub fn selectTabIndex(self: *Window, idx: usize) void {
     const ws = self.activeWorkspace();
-    if (idx >= ws.tab_count) return;
+    const container = ws.focusedContainerOrFirst() orelse return;
+    if (idx >= container.tab_count) return;
     self.cancelTabRename();
     // Clear any in-progress tab drag
     if (self.drag_tab >= 0) {
@@ -1882,20 +1759,14 @@ pub fn selectTabIndex(self: *Window, idx: usize) void {
         self.sidebar_drag_active = false;
         _ = w32.ReleaseCapture();
     }
-    if (ws.active_tab < ws.tab_count) {
-        var it = ws.tab_trees[ws.active_tab].iterator();
-        while (it.next()) |entry| {
-            if (entry.view.hwnd()) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
-        }
+    if (container.active_tab < container.tab_count) {
+        if (container.tabs[container.active_tab].hwnd()) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
     }
-    ws.active_tab = idx;
-    ws.tab_status[idx] = .normal;
-    // The tab is now visible: clear any pending attention ring on it
-    // (mirrors the bell/exited clear above). The pane.focus() below also
-    // clears the focused pane, but a backgrounded split pane in this tab
-    // must clear too — the user is looking at the whole tab now.
-    self.clearTabAttention(ws, idx);
-    const pane = ws.tab_active_pane[idx];
+    container.active_tab = idx;
+    container.tab_status[idx] = .normal;
+    // The tab is now visible: clear any pending attention ring on it.
+    self.clearTabAttention(container, idx);
+    const pane = container.tabs[idx];
     self.layoutSplits();
     pane.focus();
     self.updateWindowTitle();
@@ -1932,31 +1803,28 @@ pub fn selectWorkspace(self: *Window, idx: usize) void {
         _ = w32.ReleaseCapture();
     }
 
-    // Hide the outgoing workspace's active-tab panes (the only ones the
-    // layout has shown) before switching, mirroring selectTabIndex's
+    // Hide the outgoing workspace's visible panes (each container's
+    // active tab) before switching, mirroring selectTabIndex's
     // hide-before-show ordering.
     const old_ws = self.activeWorkspace();
-    if (old_ws.active_tab < old_ws.tab_count) {
-        var it = old_ws.tab_trees[old_ws.active_tab].iterator();
+    {
+        var it = old_ws.split_tree.iterator();
         while (it.next()) |entry| {
-            if (entry.view.hwnd()) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
+            const c = entry.view;
+            if (c.tab_count > 0) {
+                if (c.tabs[c.active_tab].hwnd()) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
+            }
         }
     }
 
     self.active_workspace = idx;
 
-    // The incoming active tab is now visible: clear its bell/exited
-    // status (mirrors selectTabIndex — status is "cleared when the tab
-    // is selected"), otherwise the sidebar dot sticks after the user
-    // has seen the tab.
+    // The incoming workspace's focused container's active tab is now
+    // visible: clear its bell/exited status and attention ring.
     const new_ws = self.activeWorkspace();
-    if (new_ws.tab_count > 0) {
-        new_ws.tab_status[new_ws.active_tab] = .normal;
-        // The incoming active tab is now visible — clear its attention
-        // ring too (mirrors the bell/exited clear). Other tabs of this
-        // workspace keep their attention so the sidebar row dot persists
-        // until each is actually viewed.
-        self.clearTabAttention(new_ws, new_ws.active_tab);
+    if (new_ws.focusedContainerOrFirst()) |fc| {
+        fc.tab_status[fc.active_tab] = .normal;
+        self.clearTabAttention(fc, fc.active_tab);
     }
 
     // The new workspace may have a different tab count, so the tab bar's
@@ -2082,7 +1950,7 @@ fn createWorkspaceSlot(self: *Window) ?usize {
 /// would otherwise paint the background workspace's pane over the visible
 /// one. The hidden pane is laid out and shown the first time
 /// selectWorkspace switches to this workspace, matching the
-/// background-workspace discipline used by closeTabInWorkspace /
+/// background-workspace discipline used by closeTabInContainer /
 /// closeSplitPane. The new tab becomes the workspace's own active_tab
 /// (index 0) so a later switch lands on it.
 fn addFirstTabBackground(self: *Window, ws_idx: usize, command: ?[]const []const u8) !void {
@@ -2666,15 +2534,14 @@ pub fn onPaneButtonClick(window: *anyopaque, pane: *Pane, action: PaneButtonsMod
     const self: *Window = @ptrCast(@alignCast(window));
     if (self.closing) return;
     // Validate the pane still exists in this window (by address) and
-    // bring its workspace/tab/pane to the foreground so the active-pane
+    // bring its workspace/container to the foreground so the active-pane
     // actions (New Terminal/Browser/Split Right/Split Down) target it.
     const loc = self.findLoc(pane) orelse return;
     const ws_idx = self.workspaceIndex(loc.ws);
     if (ws_idx != self.active_workspace) self.selectWorkspace(ws_idx);
-    if (loc.ws.active_tab != loc.tab) self.selectTabIndex(loc.tab);
-    // Make the clicked pane the focused one within its tab so the
-    // active-pane operations split/inherit from it.
-    loc.ws.tab_active_pane[loc.tab] = pane;
+    if (loc.container.active_tab != loc.tab) self.selectTabIndex(loc.tab);
+    // Focus the container that owns the clicked pane.
+    loc.ws.focused_container = loc.container;
     pane.focus();
 
     switch (action) {
@@ -3328,15 +3195,15 @@ pub fn selectTab(self: *Window, target: apprt.action.GotoTab) bool {
 /// Move the active tab by a relative offset, wrapping cyclically.
 pub fn moveTab(self: *Window, amount: isize) void {
     const ws = self.activeWorkspace();
-    if (ws.tab_count <= 1) return;
-    const n: isize = @intCast(ws.active_tab);
-    const count: isize = @intCast(ws.tab_count);
+    const container = ws.focusedContainerOrFirst() orelse return;
+    if (container.tab_count <= 1) return;
+    const n: isize = @intCast(container.active_tab);
+    const count: isize = @intCast(container.tab_count);
     const new_index: usize = @intCast(@mod(n + amount, count));
-    if (new_index == ws.active_tab) return;
+    if (new_index == container.active_tab) return;
 
-    // Swap all tab state between active_tab and new_index.
-    tabArraysSwap(ws.tabArrays(), ws.active_tab, new_index);
-    ws.active_tab = new_index;
+    tabArraysSwap(container.tabArrays(), container.active_tab, new_index);
+    container.active_tab = new_index;
     self.invalidateTabBar();
     self.invalidateSidebar();
 }
@@ -3345,10 +3212,10 @@ pub fn moveTab(self: *Window, amount: isize) void {
 fn updateWindowTitle(self: *Window) void {
     const hwnd = self.hwnd orelse return;
     const ws = self.activeWorkspace();
-    if (ws.tab_count == 0) return;
-    const len = ws.tab_title_lens[ws.active_tab];
+    const container = ws.focusedContainerOrFirst() orelse return;
+    const len = container.tab_title_lens[container.active_tab];
     var buf: [257]u16 = undefined;
-    @memcpy(buf[0..len], ws.tab_titles[ws.active_tab][0..len]);
+    @memcpy(buf[0..len], container.tab_titles[container.active_tab][0..len]);
     buf[len] = 0;
     _ = w32.SetWindowTextW(hwnd, @ptrCast(&buf));
 }
@@ -3364,7 +3231,7 @@ pub fn onTabTitleChanged(self: *Window, surface: *Surface, title: [:0]const u8) 
 /// and refreshes the window title bar / tab bar if needed.
 pub fn onPaneTitleChanged(self: *Window, pane: *Pane, title: [:0]const u8) void {
     const loc = self.findLoc(pane) orelse return;
-    const ws = loc.ws;
+    const container = loc.container;
     const tab_idx = loc.tab;
     var wbuf: [256]u16 = undefined;
     // utf8ToUtf16Le ASSERTS the destination is large enough (no
@@ -3375,9 +3242,9 @@ pub fn onPaneTitleChanged(self: *Window, pane: *Pane, title: [:0]const u8) void 
     // fit.
     const wlen = std.unicode.utf8ToUtf16Le(&wbuf, capUtf8(title, 255)) catch 0;
     const len: u16 = @intCast(@min(wlen, 255));
-    @memcpy(ws.tab_titles[tab_idx][0..len], wbuf[0..len]);
-    ws.tab_title_lens[tab_idx] = len;
-    if (ws == self.activeWorkspace() and tab_idx == ws.active_tab) self.updateWindowTitle();
+    @memcpy(container.tab_titles[tab_idx][0..len], wbuf[0..len]);
+    container.tab_title_lens[tab_idx] = len;
+    if (loc.ws == self.activeWorkspace() and container == loc.ws.focused_container and tab_idx == container.active_tab) self.updateWindowTitle();
     self.invalidateTabBar();
     self.invalidateSidebar();
 }
@@ -3396,29 +3263,19 @@ fn capUtf8(title: []const u8, max_bytes: usize) []const u8 {
 /// No-op if the surface is not in any tab of this window.
 pub fn setTabStatusForSurface(self: *Window, surface: *Surface, status: TabStatus) void {
     const loc = self.findLocOfSurface(surface) orelse return;
-    if (loc.ws.tab_status[loc.tab] == status) return;
-    loc.ws.tab_status[loc.tab] = status;
+    if (loc.container.tab_status[loc.tab] == status) return;
+    loc.container.tab_status[loc.tab] = status;
     self.invalidateSidebar();
 }
 
-/// Recompute `tab_attention[tab]` from the live panes of that tab: a tab
-/// is "attention" iff any of its terminal panes has Surface.attention.
+/// Recompute `tab_attention[tab]` from the pane of that tab: a tab
+/// shows attention iff its pane's Surface has the attention flag set.
 /// Called after any surface flag flips so the per-tab aggregate the
 /// sidebar/tab paint reads stays consistent with the per-pane source of
 /// truth. The ring overlay reads the Surface flags directly.
-fn recomputeTabAttention(self: *Window, ws: *Workspace, tab: usize) void {
+fn recomputeTabAttention(self: *Window, container: *PaneContainer, tab: usize) void {
     _ = self;
-    var any = false;
-    var it = ws.tab_trees[tab].iterator();
-    while (it.next()) |entry| {
-        if (entry.view.surface()) |s| {
-            if (s.attention) {
-                any = true;
-                break;
-            }
-        }
-    }
-    ws.tab_attention[tab] = any;
+    container.tab_attention[tab] = if (container.tabs[tab].surface()) |s| s.attention else false;
 }
 
 /// Flag (or clear) the notification ring on the pane wrapping `surface`.
@@ -3433,7 +3290,7 @@ pub fn setAttentionForSurface(self: *Window, surface: *Surface, on: bool) void {
     const loc = self.findLocOfSurface(surface) orelse return;
     if (surface.attention == on) return;
     surface.attention = on;
-    self.recomputeTabAttention(loc.ws, loc.tab);
+    self.recomputeTabAttention(loc.container, loc.tab);
     self.invalidateSidebar();
     self.invalidateTabBar();
     self.updateAttentionRings();
@@ -3451,14 +3308,11 @@ pub fn clearAttentionForSurface(self: *Window, surface: *Surface) void {
 /// the user is now looking at the whole tab, so any pane's pending ring
 /// is satisfied. Repainting/ring refresh is the caller's job (the select
 /// paths already invalidate + layout).
-fn clearTabAttention(self: *Window, ws: *Workspace, tab: usize) void {
+fn clearTabAttention(self: *Window, container: *PaneContainer, tab: usize) void {
     _ = self;
-    if (tab >= ws.tab_count) return;
-    var it = ws.tab_trees[tab].iterator();
-    while (it.next()) |entry| {
-        if (entry.view.surface()) |s| s.attention = false;
-    }
-    ws.tab_attention[tab] = false;
+    if (tab >= container.tab_count) return;
+    if (container.tabs[tab].surface()) |s| s.attention = false;
+    container.tab_attention[tab] = false;
 }
 
 /// Flash the currently focused pane with a brief semi-transparent
@@ -4082,8 +3936,9 @@ fn handleSidebarMiddleClick(self: *Window, x: i32, y: i32) void {
 /// Move a tab from one index to another, shifting intermediate tabs.
 fn moveTabTo(self: *Window, from: usize, to: usize) void {
     const ws = self.activeWorkspace();
+    const container = ws.focusedContainerOrFirst() orelse return;
     if (from == to) return;
-    if (from >= ws.tab_count or to >= ws.tab_count) return;
+    if (from >= container.tab_count or to >= container.tab_count) return;
 
     // Cancel any in-progress rename: the edit control's tab index
     // would otherwise point at the wrong tab after the move.
@@ -4091,9 +3946,9 @@ fn moveTabTo(self: *Window, from: usize, to: usize) void {
 
     // Lift the source tab out, shift the tabs between, drop it at the
     // destination.
-    tabArraysMove(ws.tabArrays(), from, to);
+    tabArraysMove(container.tabArrays(), from, to);
 
-    ws.active_tab = to;
+    container.active_tab = to;
     self.invalidateTabBar();
     self.invalidateSidebar();
 }

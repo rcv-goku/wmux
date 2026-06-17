@@ -382,7 +382,7 @@ fn onGotFocus(self: *BrowserPane, sender: ?*wv2.ICoreWebView2Controller, args: ?
     // it; a stale focus event must never plant a dangling pointer in
     // another tab's slot.
     const loc = win.findLoc(pane) orelse return;
-    loc.ws.tab_active_pane[loc.tab] = pane;
+    loc.ws.focused_container = loc.container;
     win.repaintDividers();
 }
 
@@ -1202,7 +1202,7 @@ pub fn hostWndProc(
                 // yet in a tree must not be recorded anywhere).
                 if (self.pane) |pane| {
                     if (win.findLoc(pane)) |loc| {
-                        loc.ws.tab_active_pane[loc.tab] = pane;
+                        loc.ws.focused_container = loc.container;
                     }
                 }
                 win.repaintDividers();

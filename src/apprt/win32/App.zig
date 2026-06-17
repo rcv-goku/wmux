@@ -746,13 +746,13 @@ pub fn performAction(
                     // the user already sees it.
                     const loc = parent_window.findLocOfSurface(rt_surface);
                     const active = if (loc) |l|
-                        l.ws == parent_window.activeWorkspace() and l.tab == l.ws.active_tab
+                        l.ws == parent_window.activeWorkspace() and l.container == l.ws.focused_container and l.tab == l.container.active_tab
                     else
                         false;
                     if (!active or !foreground) {
                         parent_window.setTabStatusForSurface(rt_surface, .bell);
                         const title: []const u16 = if (loc) |l|
-                            l.ws.tab_titles[l.tab][0..l.ws.tab_title_lens[l.tab]]
+                            l.container.tab_titles[l.tab][0..l.container.tab_title_lens[l.tab]]
                         else
                             std.unicode.utf8ToUtf16LeStringLiteral("Ghostty");
                         self.pushNotif(
@@ -1112,7 +1112,7 @@ pub fn performAction(
                     // when the shell exits.
                     parent_window.setTabStatusForSurface(rt_surface, .exited);
                     const title: []const u16 = if (parent_window.findLocOfSurface(rt_surface)) |l|
-                        l.ws.tab_titles[l.tab][0..l.ws.tab_title_lens[l.tab]]
+                        l.container.tab_titles[l.tab][0..l.container.tab_title_lens[l.tab]]
                     else
                         std.unicode.utf8ToUtf16LeStringLiteral("Ghostty");
                     self.pushNotif(
@@ -1447,7 +1447,8 @@ pub fn performAction(
                         // tab within it. Order matters.
                         if (win.findLocOfSurface(core_surface.rt_surface)) |loc| {
                             win.selectWorkspace(win.workspaceIndex(loc.ws));
-                            if (loc.tab != loc.ws.active_tab) win.selectTabIndex(loc.tab);
+                            loc.ws.focused_container = loc.container;
+                            if (loc.tab != loc.container.active_tab) win.selectTabIndex(loc.tab);
                         }
                         // Focus the surface's child HWND.
                         if (core_surface.rt_surface.hwnd) |sh| {
@@ -2723,9 +2724,10 @@ pub fn jumpToSurface(self: *App, window: *Window, surface: *Surface) bool {
     // taskbar button.
     forceForegroundWindow(win_hwnd);
     // Select the workspace containing the surface first (re-lays out for
-    // its tab count), then the tab within it. Order matters.
+    // its tab count), then the container and tab within it.
     win.selectWorkspace(win.workspaceIndex(loc.ws));
-    if (loc.tab != loc.ws.active_tab) win.selectTabIndex(loc.tab);
+    loc.ws.focused_container = loc.container;
+    if (loc.tab != loc.container.active_tab) win.selectTabIndex(loc.tab);
     if (surface.hwnd) |sh| _ = w32.SetFocus(sh);
     return true;
 }
@@ -3016,17 +3018,20 @@ fn buildMetaJob(self: *App, w: *Window, ws_idx: usize, want_pr: bool) ?ws_meta.J
     const alloc = self.core_app.alloc;
     const ws = &w.workspaces[ws_idx];
 
-    // Collect the per-tab ConPTY child PIDs (terminals only).
+    // Collect ConPTY child PIDs from all PaneContainers (terminals only).
     var pids: std.ArrayList(u32) = .empty;
     errdefer pids.deinit(alloc);
-    for (0..ws.tab_count) |t| {
-        var it = ws.tab_trees[t].iterator();
-        while (it.next()) |entry| {
-            const surface = switch (entry.view.content) {
-                .terminal => |s| s,
-                .browser => continue,
-            };
-            if (surface.childPid()) |pid| pids.append(alloc, pid) catch {};
+    {
+        var tree_it = ws.split_tree.iterator();
+        while (tree_it.next()) |tree_entry| {
+            const container = tree_entry.view;
+            for (container.tabs[0..container.tab_count]) |tab_pane| {
+                const surface = switch (tab_pane.content) {
+                    .terminal => |s| s,
+                    .browser => continue,
+                };
+                if (surface.childPid()) |pid| pids.append(alloc, pid) catch {};
+            }
         }
     }
 
@@ -3376,10 +3381,11 @@ fn ipcFindBrowser(self: *App, id: ?u32) ?*BrowserPane {
     for (self.windows.items) |w| {
         if (w.closing) continue;
         for (w.workspaces[0..w.workspace_count]) |*ws| {
-            for (0..ws.tab_count) |t| {
-                var it = ws.tab_trees[t].iterator();
-                while (it.next()) |entry| {
-                    const browser = switch (entry.view.content) {
+            var tree_it = ws.split_tree.iterator();
+            while (tree_it.next()) |tree_entry| {
+                const container = tree_entry.view;
+                for (container.tabs[0..container.tab_count]) |tab_pane| {
+                    const browser = switch (tab_pane.content) {
                         .browser => |b| b,
                         .terminal => continue,
                     };
@@ -3569,9 +3575,11 @@ fn ipcWorkspaceList(self: *App, req: *ipc.Request) anyerror!void {
         if (i > 0) try buf.append(alloc, ',');
         try buf.writer(alloc).print("{{\"index\":{d},\"name\":", .{i});
         try self.ipcWriteJsonUtf16(&buf, ws.name[0..ws.name_len]);
+        const fc = ws.focusedContainerOrFirst();
+        const tc: usize = if (fc) |c| c.tab_count else 0;
         try buf.writer(alloc).print(
             ",\"active\":{},\"tab_count\":{d}}}",
-            .{ i == window.active_workspace, ws.tab_count },
+            .{ i == window.active_workspace, tc },
         );
     }
     try buf.append(alloc, ']');
@@ -3693,24 +3701,27 @@ fn ipcWorkspaceSetDescription(self: *App, req: *ipc.Request) anyerror!void {
     server.sendOk(req.id, null) catch {};
 }
 
-/// tab-list {[workspace]} → [{index, title, active}] for the addressed
-/// (or active) workspace of the target window.
+/// tab-list {[workspace]} → [{index, title, active}] for the focused
+/// PaneContainer of the addressed (or active) workspace.
 fn ipcTabList(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const target = try self.ipcResolveWorkspace(req);
-    const ws = target.ws;
+    const container = target.ws.focusedContainerOrFirst() orelse {
+        server.sendOk(req.id, "[]") catch {};
+        return;
+    };
     const alloc = self.core_app.alloc;
 
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(alloc);
     try buf.append(alloc, '[');
-    for (0..ws.tab_count) |i| {
+    for (0..container.tab_count) |i| {
         if (i > 0) try buf.append(alloc, ',');
         try buf.writer(alloc).print("{{\"index\":{d},\"title\":", .{i});
-        try self.ipcWriteJsonUtf16(&buf, ws.tab_titles[i][0..ws.tab_title_lens[i]]);
+        try self.ipcWriteJsonUtf16(&buf, container.tab_titles[i][0..container.tab_title_lens[i]]);
         try buf.writer(alloc).print(
             ",\"active\":{}}}",
-            .{i == ws.active_tab},
+            .{i == container.active_tab},
         );
     }
     try buf.append(alloc, ']');
@@ -3785,7 +3796,8 @@ fn ipcTabSelect(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const target = try self.ipcResolveWorkspace(req);
     const idx = ipcArgU32(req, "index") orelse return IpcError.MissingIndex;
-    if (idx >= target.ws.tab_count) return IpcError.UnknownTab;
+    const container = target.ws.focusedContainerOrFirst() orelse return IpcError.UnknownTab;
+    if (idx >= container.tab_count) return IpcError.UnknownTab;
 
     if (target.ws_idx != target.window.active_workspace)
         target.window.selectWorkspace(target.ws_idx);
@@ -3793,14 +3805,14 @@ fn ipcTabSelect(self: *App, req: *ipc.Request) anyerror!void {
     server.sendOk(req.id, null) catch {};
 }
 
-/// tab-close {index, [workspace]} → close tab `index` in the addressed
-/// (or active) workspace. closeTabInWorkspace handles non-active
-/// workspaces and the last-tab/last-workspace collapse paths.
+/// tab-close {index, [workspace]} → close tab `index` in the focused
+/// PaneContainer of the addressed (or active) workspace.
 fn ipcTabClose(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const target = try self.ipcResolveWorkspace(req);
     const idx = ipcArgU32(req, "index") orelse return IpcError.MissingIndex;
-    if (idx >= target.ws.tab_count) return IpcError.UnknownTab;
+    const container = target.ws.focusedContainerOrFirst() orelse return IpcError.UnknownTab;
+    if (idx >= container.tab_count) return IpcError.UnknownTab;
     target.window.closeTabInWorkspaceForIpc(target.ws_idx, idx);
     server.sendOk(req.id, null) catch {};
 }
@@ -3814,12 +3826,12 @@ fn ipcSend(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const text = ipcArgString(req, "text") orelse return IpcError.MissingText;
     const target = try self.ipcResolveWorkspace(req);
-    const ws = target.ws;
+    const container = target.ws.focusedContainerOrFirst() orelse return IpcError.UnknownTab;
 
-    const tab_idx: usize = if (ipcArgU32(req, "tab")) |t| t else ws.active_tab;
-    if (tab_idx >= ws.tab_count) return IpcError.UnknownTab;
+    const tab_idx: usize = if (ipcArgU32(req, "tab")) |t| t else container.active_tab;
+    if (tab_idx >= container.tab_count) return IpcError.UnknownTab;
 
-    const pane = ws.tab_active_pane[tab_idx];
+    const pane = container.tabs[tab_idx];
     const surface = pane.surface() orelse return IpcError.NotATerminal;
 
     const enter = ipcArgBool(req, "enter") orelse false;
@@ -3869,11 +3881,11 @@ fn ipcNotify(self: *App, req: *ipc.Request) anyerror!void {
         return IpcError.BadAction;
 
     const target = try self.ipcResolveWorkspace(req);
-    const ws = target.ws;
-    const tab_idx: usize = if (ipcArgU32(req, "tab")) |t| t else ws.active_tab;
-    if (tab_idx >= ws.tab_count) return IpcError.UnknownTab;
+    const container = target.ws.focusedContainerOrFirst() orelse return IpcError.UnknownTab;
+    const tab_idx: usize = if (ipcArgU32(req, "tab")) |t| t else container.active_tab;
+    if (tab_idx >= container.tab_count) return IpcError.UnknownTab;
 
-    const pane = ws.tab_active_pane[tab_idx];
+    const pane = container.tabs[tab_idx];
     const surface = pane.surface() orelse return IpcError.NotATerminal;
     target.window.setAttentionForSurface(surface, on);
     server.sendOk(req.id, null) catch {};
@@ -4036,8 +4048,9 @@ const IpcTabTarget = struct {
 
 fn ipcResolveTab(self: *App, req: *ipc.Request) IpcError!IpcTabTarget {
     const t = try self.ipcResolveWorkspace(req);
-    const tab_idx: usize = if (ipcArgU32(req, "tab")) |tab| tab else t.ws.active_tab;
-    if (tab_idx >= t.ws.tab_count) return IpcError.UnknownTab;
+    const container = t.ws.focusedContainerOrFirst() orelse return IpcError.UnknownTab;
+    const tab_idx: usize = if (ipcArgU32(req, "tab")) |tab| tab else container.active_tab;
+    if (tab_idx >= container.tab_count) return IpcError.UnknownTab;
     return .{ .window = t.window, .ws = t.ws, .ws_idx = t.ws_idx, .tab_idx = tab_idx };
 }
 
@@ -4046,6 +4059,7 @@ fn ipcResolveTab(self: *App, req: *ipc.Request) IpcError!IpcTabTarget {
 const SurfaceLoc = struct {
     window: *Window,
     ws_idx: usize,
+    container: *PaneContainer,
     tab_idx: usize,
     surface: *Surface,
 };
@@ -4053,21 +4067,22 @@ const SurfaceLoc = struct {
 /// Find a terminal surface by its stable core id (GHOSTTY_SURFACE_ID)
 /// across all live windows. Only surfaces whose core is initialized have
 /// a valid id; the id is read WITHOUT touching unready cores. Returns the
-/// owning window + workspace/tab indices so callers can focus or address it.
+/// owning window + workspace/container/tab indices so callers can focus it.
 fn ipcFindSurfaceById(self: *App, want: u64) ?SurfaceLoc {
     for (self.windows.items) |w| {
         if (w.closing) continue;
         for (w.workspaces[0..w.workspace_count], 0..) |*ws, wi| {
-            for (0..ws.tab_count) |t| {
-                var it = ws.tab_trees[t].iterator();
-                while (it.next()) |entry| {
-                    const surface = switch (entry.view.content) {
+            var tree_it = ws.split_tree.iterator();
+            while (tree_it.next()) |tree_entry| {
+                const container = tree_entry.view;
+                for (container.tabs[0..container.tab_count], 0..) |tab_pane, t| {
+                    const surface = switch (tab_pane.content) {
                         .terminal => |s| s,
                         .browser => continue,
                     };
                     if (!surface.core_surface_initialized) continue;
                     if (surface.core_surface.id == want) {
-                        return .{ .window = w, .ws_idx = wi, .tab_idx = t, .surface = surface };
+                        return .{ .window = w, .ws_idx = wi, .container = container, .tab_idx = t, .surface = surface };
                     }
                 }
             }
@@ -4085,24 +4100,23 @@ fn ipcSurfaceId(pane: *Pane) ?u64 {
 }
 
 /// surface-list {[workspace],[tab]} → [{id, kind, focused, title}] for
-/// every pane in the addressed (or active) tab. `id` is the stable surface
-/// id for terminals (GHOSTTY_SURFACE_ID) and the ipc_id for browsers
-/// (disjoint spaces, but kind disambiguates); a terminal whose core isn't
-/// ready yet reports id 0. `focused` marks the tab's active pane.
+/// every tab (pane) in the focused PaneContainer of the addressed (or
+/// active) workspace. In the new model each tab is a single pane.
 fn ipcSurfaceList(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const target = try self.ipcResolveTab(req);
-    const ws = target.ws;
+    const container = target.ws.focusedContainerOrFirst() orelse {
+        server.sendOk(req.id, "[]") catch {};
+        return;
+    };
     const alloc = self.core_app.alloc;
-    const active = ws.tab_active_pane[target.tab_idx];
+    const active_pane = container.activePane();
 
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(alloc);
     try buf.append(alloc, '[');
     var first = true;
-    var it = ws.tab_trees[target.tab_idx].iterator();
-    while (it.next()) |entry| {
-        const pane = entry.view;
+    for (container.tabs[0..container.tab_count], 0..) |pane, t| {
         if (!first) try buf.append(alloc, ',');
         first = false;
         switch (pane.content) {
@@ -4110,20 +4124,17 @@ fn ipcSurfaceList(self: *App, req: *ipc.Request) anyerror!void {
                 const sid: u64 = if (surface.core_surface_initialized) surface.core_surface.id else 0;
                 try buf.writer(alloc).print(
                     "{{\"id\":{d},\"kind\":\"terminal\",\"focused\":{},\"title\":",
-                    .{ sid, pane == active },
+                    .{ sid, if (active_pane) |ap| pane == ap else false },
                 );
-                // The window-level title buffer reflects the active pane;
-                // per-pane terminals don't carry an independent title here,
-                // so report the tab title (best-effort display text).
-                try self.ipcWriteJsonUtf16(&buf, ws.tab_titles[target.tab_idx][0..ws.tab_title_lens[target.tab_idx]]);
+                try self.ipcWriteJsonUtf16(&buf, container.tab_titles[t][0..container.tab_title_lens[t]]);
                 try buf.append(alloc, '}');
             },
             .browser => |browser| {
                 try buf.writer(alloc).print(
                     "{{\"id\":{d},\"kind\":\"browser\",\"focused\":{},\"title\":",
-                    .{ browser.ipc_id, pane == active },
+                    .{ browser.ipc_id, if (active_pane) |ap| pane == ap else false },
                 );
-                try self.ipcWriteJsonUtf16(&buf, ws.tab_titles[target.tab_idx][0..ws.tab_title_lens[target.tab_idx]]);
+                try self.ipcWriteJsonUtf16(&buf, container.tab_titles[t][0..container.tab_title_lens[t]]);
                 try buf.append(alloc, '}');
             },
         }
@@ -4142,35 +4153,28 @@ fn ipcSurfaceFocus(self: *App, req: *ipc.Request) anyerror!void {
     if (ipcArgU64(req, "surface")) |sid| {
         const loc = self.ipcFindSurfaceById(sid) orelse return IpcError.UnknownSurface;
         loc.window.selectWorkspace(loc.ws_idx);
-        loc.window.selectTabIndex(loc.tab_idx);
-        // Focus the specific pane within the tab.
+        // Focus the container that owns this surface and select its tab.
         if (loc.ws_idx < loc.window.workspace_count) {
             const ws = &loc.window.workspaces[loc.ws_idx];
-            if (ws.findHandle(loc.tab_idx, loc.surface.pane orelse return IpcError.UnknownSurface)) |_| {
-                ws.tab_active_pane[loc.tab_idx] = loc.surface.pane.?;
-            }
+            ws.focused_container = loc.container;
         }
-        loc.surface.pane.?.focus();
+        loc.window.selectTabIndex(loc.tab_idx);
+        (loc.surface.pane orelse return IpcError.UnknownSurface).focus();
         server.sendOk(req.id, null) catch {};
         return;
     }
 
-    // Address by (workspace, tab, pane index in tree iteration order).
+    // Address by (workspace, tab, pane index). In the new model each tab
+    // IS a pane, so pane index maps to a tab index within the focused
+    // container.
     const target = try self.ipcResolveTab(req);
     const pane_idx = ipcArgU32(req, "pane") orelse return IpcError.MissingIndex;
-    var i: usize = 0;
-    var found: ?*Pane = null;
-    var it = target.ws.tab_trees[target.tab_idx].iterator();
-    while (it.next()) |entry| : (i += 1) {
-        if (i == pane_idx) {
-            found = entry.view;
-            break;
-        }
-    }
-    const pane = found orelse return IpcError.UnknownPane;
+    const container = target.ws.focusedContainerOrFirst() orelse return IpcError.UnknownPane;
+    if (pane_idx >= container.tab_count) return IpcError.UnknownPane;
+    const pane = container.tabs[pane_idx];
     target.window.selectWorkspace(target.ws_idx);
-    target.window.selectTabIndex(target.tab_idx);
-    target.ws.tab_active_pane[target.tab_idx] = pane;
+    target.ws.focused_container = container;
+    container.active_tab = pane_idx;
     pane.focus();
     server.sendOk(req.id, null) catch {};
 }
@@ -4205,7 +4209,10 @@ fn ipcNewSplit(self: *App, req: *ipc.Request) anyerror!void {
     const focus = ipcArgBool(req, "focus") orelse false;
     if (focus) {
         if (target.ws_idx != window.active_workspace) window.selectWorkspace(target.ws_idx);
-        if (target.tab_idx != target.ws.active_tab) window.selectTabIndex(target.tab_idx);
+        const fc = target.ws.focusedContainerOrFirst();
+        if (fc) |c| {
+            if (target.tab_idx != c.active_tab) window.selectTabIndex(target.tab_idx);
+        }
     }
 
     // Parse an optional explicit command once (split on whitespace); an
@@ -4218,10 +4225,11 @@ fn ipcNewSplit(self: *App, req: *ipc.Request) anyerror!void {
     }
     const explicit: ?[]const []const u8 = if (argv.items.len > 0) argv.items else null;
     // Inherit the source pane's backend when no explicit command (matching
-    // newSplit's inherit-from-active-pane behavior), read from the TARGET
-    // tab's active pane so a background split follows its own tab's shell.
+    // newSplit's inherit-from-active-pane behavior).
     const command: ?[]const []const u8 = explicit orelse blk: {
-        const src = target.ws.tab_active_pane[target.tab_idx].surface() orelse break :blk null;
+        const src_container = target.ws.focusedContainerOrFirst() orelse break :blk null;
+        const src_pane = src_container.activePane() orelse break :blk null;
+        const src = src_pane.surface() orelse break :blk null;
         break :blk src.spawn_command;
     };
 
@@ -4247,7 +4255,11 @@ fn ipcSetStatus(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const target = try self.ipcResolveTab(req);
     const text = ipcArgString(req, "text") orelse "";
-    target.ws.setTabStatusText(target.tab_idx, text);
+    const container = target.ws.focusedContainerOrFirst() orelse return IpcError.UnknownTab;
+    if (target.tab_idx >= container.tab_count) return IpcError.UnknownTab;
+    const n: u16 = @intCast(@min(text.len, Window.MAX_STATUS_BYTES));
+    @memcpy(container.tab_status_text[target.tab_idx][0..n], text[0..n]);
+    container.tab_status_text_len[target.tab_idx] = n;
     target.window.invalidateSidebar();
     server.sendOk(req.id, null) catch {};
 }
@@ -4257,11 +4269,13 @@ fn ipcSetStatus(self: *App, req: *ipc.Request) anyerror!void {
 fn ipcSetProgress(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const target = try self.ipcResolveTab(req);
+    const container = target.ws.focusedContainerOrFirst() orelse return IpcError.UnknownTab;
+    if (target.tab_idx >= container.tab_count) return IpcError.UnknownTab;
     const value = ipc.argI64Named(req, "value") orelse -1;
     if (value < 0) {
-        target.ws.setTabProgress(target.tab_idx, null);
+        container.tab_progress[target.tab_idx] = null;
     } else if (value <= 100) {
-        target.ws.setTabProgress(target.tab_idx, @intCast(value));
+        container.tab_progress[target.tab_idx] = @intCast(value);
     } else {
         return IpcError.BadProgress;
     }
@@ -4276,11 +4290,13 @@ fn ipcLog(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const text = ipcArgString(req, "text") orelse return IpcError.MissingText;
     const target = try self.ipcResolveTab(req);
-    target.ws.pushTabLog(target.tab_idx, text);
+    const container = target.ws.focusedContainerOrFirst() orelse return IpcError.UnknownTab;
+    if (target.tab_idx >= container.tab_count) return IpcError.UnknownTab;
+    container.tab_log[target.tab_idx].push(text);
 
     // Also surface it in the global notif panel (reuses pushNotif), tied
-    // to the addressed tab's active pane when it is a terminal.
-    const pane = target.ws.tab_active_pane[target.tab_idx];
+    // to the addressed tab's pane when it is a terminal.
+    const pane = container.tabs[target.tab_idx];
     if (pane.surface()) |surface| {
         const alloc = self.core_app.alloc;
         const body_w = std.unicode.utf8ToUtf16LeAlloc(alloc, text[0..@min(text.len, 128)]) catch null;
@@ -4305,7 +4321,9 @@ fn ipcLog(self: *App, req: *ipc.Request) anyerror!void {
 fn ipcReadScreen(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const target = try self.ipcResolveTab(req);
-    const pane = target.ws.tab_active_pane[target.tab_idx];
+    const container = target.ws.focusedContainerOrFirst() orelse return IpcError.UnknownTab;
+    if (target.tab_idx >= container.tab_count) return IpcError.UnknownTab;
+    const pane = container.tabs[target.tab_idx];
     const surface = pane.surface() orelse return IpcError.NotATerminal;
     if (!surface.core_surface_ready) return IpcError.CoreNotReady;
 
@@ -4367,7 +4385,9 @@ fn ipcReadScreen(self: *App, req: *ipc.Request) anyerror!void {
 fn ipcCapturePaneCmd(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const target = try self.ipcResolveTab(req);
-    const pane = target.ws.tab_active_pane[target.tab_idx];
+    const container = target.ws.focusedContainerOrFirst() orelse return IpcError.UnknownTab;
+    if (target.tab_idx >= container.tab_count) return IpcError.UnknownTab;
+    const pane = container.tabs[target.tab_idx];
     const surface = pane.surface() orelse return IpcError.NotATerminal;
     if (!surface.core_surface_ready) return IpcError.CoreNotReady;
 
@@ -4432,10 +4452,11 @@ pub fn saveAllScrollback(self: *App) void {
     for (self.windows.items) |w| {
         if (w.closing) continue;
         for (w.workspaces[0..w.workspace_count]) |*ws| {
-            for (0..ws.tab_count) |t| {
-                var it = ws.tab_trees[t].iterator();
-                while (it.next()) |entry| {
-                    const surface = switch (entry.view.content) {
+            var tree_it = ws.split_tree.iterator();
+            while (tree_it.next()) |tree_entry| {
+                const ctr = tree_entry.view;
+                for (ctr.tabs[0..ctr.tab_count]) |tab_pane| {
+                    const surface = switch (tab_pane.content) {
                         .terminal => |s| s,
                         .browser => continue,
                     };
@@ -4525,7 +4546,8 @@ fn ipcResolveSessionTarget(self: *App, req: *ipc.Request) IpcError!SessionTarget
         return .{ .id = sid, .surface = loc.surface };
     }
     const target = try self.ipcResolveTab(req);
-    const pane = target.ws.tab_active_pane[target.tab_idx];
+    const container = target.ws.focusedContainerOrFirst() orelse return IpcError.UnknownTab;
+    const pane = container.activePane() orelse return IpcError.UnknownPane;
     const surface = pane.surface() orelse return IpcError.NotATerminal;
     if (!surface.core_surface_initialized) return IpcError.CoreNotReady;
     return .{ .id = surface.core_surface.id, .surface = surface };
@@ -4613,16 +4635,16 @@ fn ipcSyncInput(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const action_str = ipcArgString(req, "action") orelse "toggle";
     const target = try self.ipcResolveWorkspace(req);
-    const ws = target.ws;
-    const tab_idx: usize = if (ipcArgU32(req, "tab")) |t| t else ws.active_tab;
-    if (tab_idx >= ws.tab_count) return IpcError.UnknownTab;
+    const container = target.ws.focusedContainerOrFirst() orelse return IpcError.UnknownTab;
+    const tab_idx: usize = if (ipcArgU32(req, "tab")) |t| t else container.active_tab;
+    if (tab_idx >= container.tab_count) return IpcError.UnknownTab;
 
     if (std.mem.eql(u8, action_str, "toggle")) {
-        ws.tab_synchronized[tab_idx] = !ws.tab_synchronized[tab_idx];
+        container.tab_synchronized[tab_idx] = !container.tab_synchronized[tab_idx];
     } else if (std.mem.eql(u8, action_str, "on")) {
-        ws.tab_synchronized[tab_idx] = true;
+        container.tab_synchronized[tab_idx] = true;
     } else if (std.mem.eql(u8, action_str, "off")) {
-        ws.tab_synchronized[tab_idx] = false;
+        container.tab_synchronized[tab_idx] = false;
     } else {
         return IpcError.BadAction;
     }
@@ -4635,7 +4657,9 @@ fn ipcSyncInput(self: *App, req: *ipc.Request) anyerror!void {
 fn ipcBreakPane(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const target = try self.ipcResolveTab(req);
-    const pane = target.ws.tab_active_pane[target.tab_idx];
+    const container = target.ws.focusedContainerOrFirst() orelse return IpcError.UnknownTab;
+    if (target.tab_idx >= container.tab_count) return IpcError.UnknownTab;
+    const pane = container.tabs[target.tab_idx];
     target.window.breakPane(pane);
     server.sendOk(req.id, null) catch {};
 }
@@ -4646,7 +4670,9 @@ fn ipcBreakPane(self: *App, req: *ipc.Request) anyerror!void {
 fn ipcMovePaneToTab(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const target = try self.ipcResolveTab(req);
-    const pane = target.ws.tab_active_pane[target.tab_idx];
+    const container = target.ws.focusedContainerOrFirst() orelse return IpcError.UnknownTab;
+    if (target.tab_idx >= container.tab_count) return IpcError.UnknownTab;
+    const pane = container.tabs[target.tab_idx];
 
     const dir_str: ?[]const u8 = if (req.args == .object)
         if (req.args.object.get("direction")) |v| switch (v) {
@@ -5073,13 +5099,13 @@ fn tick(self: *App) void {
 fn broadcastKeyEvent(source: *Surface, wparam: usize, lparam: isize, action: input.Action) void {
     const pw = source.parent_window;
     const ws = pw.activeWorkspace();
-    if (ws.tab_count == 0) return;
-    const tab = ws.active_tab;
-    if (!ws.tab_synchronized[tab]) return;
+    const container = ws.focusedContainerOrFirst() orelse return;
+    if (!container.tab_synchronized[container.active_tab]) return;
 
-    var it = ws.tab_trees[tab].iterator();
-    while (it.next()) |entry| {
-        const sibling = entry.view.surface() orelse continue;
+    // In the new model each tab is a single pane, so "synchronized"
+    // broadcasts across all tabs of this container.
+    for (container.tabs[0..container.tab_count]) |tab_pane| {
+        const sibling = tab_pane.surface() orelse continue;
         if (sibling == source) continue;
         sibling.sync_broadcast = true;
         _ = sibling.handleKeyEvent(wparam, lparam, action);
@@ -5091,13 +5117,11 @@ fn broadcastKeyEvent(source: *Surface, wparam: usize, lparam: isize, action: inp
 fn broadcastCharEvent(source: *Surface, wparam: usize) void {
     const pw = source.parent_window;
     const ws = pw.activeWorkspace();
-    if (ws.tab_count == 0) return;
-    const tab = ws.active_tab;
-    if (!ws.tab_synchronized[tab]) return;
+    const container = ws.focusedContainerOrFirst() orelse return;
+    if (!container.tab_synchronized[container.active_tab]) return;
 
-    var it = ws.tab_trees[tab].iterator();
-    while (it.next()) |entry| {
-        const sibling = entry.view.surface() orelse continue;
+    for (container.tabs[0..container.tab_count]) |tab_pane| {
+        const sibling = tab_pane.surface() orelse continue;
         if (sibling == source) continue;
         sibling.sync_broadcast = true;
         sibling.handleCharEvent(wparam);
@@ -5462,7 +5486,7 @@ fn surfaceWndProc(
             if (!win.closing) {
                 if (surface.pane) |pane| {
                     if (win.findLoc(pane)) |loc| {
-                        loc.ws.tab_active_pane[loc.tab] = pane;
+                        loc.ws.focused_container = loc.container;
                     }
                 }
                 win.repaintDividers();
