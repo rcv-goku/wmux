@@ -1164,9 +1164,10 @@ pub fn addTab(self: *Window) !*Surface {
 pub fn addTabInherit(self: *Window) !*Surface {
     const command: ?[]const []const u8 = blk: {
         const ws = self.activeWorkspace();
-        if (ws.tab_count == 0) break :blk null;
-        const src = ws.tab_active_pane[ws.active_tab].surface() orelse break :blk null;
-        break :blk src.spawn_command;
+        const container = ws.focusedContainerOrFirst() orelse break :blk null;
+        const src = container.activePane() orelse break :blk null;
+        const surface = src.surface() orelse break :blk null;
+        break :blk surface.spawn_command;
     };
     const title: ?[]const u8 = if (command) |argv| titleForCommand(argv) else null;
     return self.addTabWithCommand(command, title);
@@ -1207,85 +1208,72 @@ pub fn addTabWithCommand(
 ) !*Surface {
     if (self.closing) return error.WindowClosing;
     const ws = self.activeWorkspace();
-    if (ws.tab_count >= MAX_TABS) return error.TooManyTabs;
     self.cancelTabRename();
 
     const alloc = self.app.core_app.alloc;
+
+    // Resolve or create the target container.
+    const container = ws.focusedContainerOrFirst() orelse blk: {
+        // Empty workspace — create the first PaneContainer and init the
+        // workspace split tree with it.
+        const pc = try PaneContainer.create(alloc);
+        errdefer alloc.destroy(pc);
+        const tree = try SplitTree(PaneContainer).init(alloc, pc);
+        ws.split_tree = tree;
+        ws.focused_container = pc;
+        break :blk pc;
+    };
+    if (container.tab_count >= MAX_TABS) return error.TooManyTabs;
+
     const surface = try alloc.create(Surface);
-    // A workspace bound to a git worktree spawns every new tab in that
-    // directory; a null binding falls through to the configured/inherited
-    // cwd (current behavior).
     try surface.init(self.app, self, .tab, command, ws.working_dir);
-    // After surface.init succeeds, wrap it in a Pane and create the
-    // SplitTree which takes ownership via ref(). If this fails, we
-    // manually clean up.
     const pane = Pane.create(alloc, surface) catch |err| {
         surface.deinit();
         alloc.destroy(surface);
         return err;
     };
-    var tree = SplitTree(Pane).init(alloc, pane) catch |err| {
+    // The pane is owned by the container's tabs array; ref it for that
+    // ownership (matching the old SplitTree.init ref path).
+    _ = pane.ref(alloc) catch |err| {
         alloc.destroy(pane);
         surface.deinit();
         alloc.destroy(surface);
         return err;
     };
-    errdefer tree.deinit(); // tree.deinit() calls unref() which deinits+frees the pane
+    errdefer pane.unref(alloc);
 
-    // Determine insert position based on config.
-    const pos: usize = newTabInsertPos(self.app.config.@"window-new-tab-position", ws.tab_count, ws.active_tab);
+    const pos: usize = newTabInsertPos(self.app.config.@"window-new-tab-position", container.tab_count, container.active_tab);
 
-    // Shift elements right to make room at pos.
-    tabArraysInsertGap(ws.tabArrays(), ws.tab_count, pos);
-    ws.tab_trees[pos] = tree;
-    ws.tab_active_pane[pos] = pane;
-    ws.tab_status[pos] = .normal;
-    // Reset orchestration metadata for the freshly-occupied slot: the gap
-    // insert leaves the old [pos] values in place (it shifts toward the
-    // tail), so a new tab must not inherit a prior tab's status/progress/
-    // log, exactly as tab_status is reset above.
-    ws.tab_status_text_len[pos] = 0;
-    ws.tab_progress[pos] = null;
-    ws.tab_log[pos].clear();
-    ws.tab_count += 1;
+    tabArraysInsertGap(container.tabArrays(), container.tab_count, pos);
+    container.tabs[pos] = pane;
+    container.tab_status[pos] = .normal;
+    container.tab_status_text_len[pos] = 0;
+    container.tab_progress[pos] = null;
+    container.tab_log[pos].clear();
+    container.tab_count += 1;
 
-    // Set the initial title: the picked backend name when given (so the
-    // sidebar row is identifiable before the shell's OSC title arrives),
-    // otherwise the default. Truncated to the title buffer; an invalid
-    // UTF-8 title falls back to the default.
     const default_title = std.unicode.utf8ToUtf16LeStringLiteral("Ghostty");
-    @memcpy(ws.tab_titles[pos][0..default_title.len], default_title);
-    ws.tab_title_lens[pos] = @intCast(default_title.len);
+    @memcpy(container.tab_titles[pos][0..default_title.len], default_title);
+    container.tab_title_lens[pos] = @intCast(default_title.len);
     if (title) |t| {
         const wlen = std.unicode.utf8ToUtf16Le(
-            &ws.tab_titles[pos],
+            &container.tab_titles[pos],
             t[0..@min(t.len, 255)],
         ) catch 0;
-        if (wlen > 0) ws.tab_title_lens[pos] = @intCast(@min(wlen, 255));
+        if (wlen > 0) container.tab_title_lens[pos] = @intCast(@min(wlen, 255));
     }
 
-    if (ws.tab_count == 1) {
-        // First tab — show the parent window now that the terminal is ready.
-        // Quick terminal windows are shown by QuickTerminal.animateIn() instead.
-        // If restored state asked for a maximized window, show it maximized
-        // so the OS uses the persisted restored rect as the un-maximize size.
+    if (container.tab_count == 1) {
         if (!self.is_quick_terminal) {
             if (self.hwnd) |h| {
                 const cmd: i32 = if (self.restore_maximized) w32.SW_SHOWMAXIMIZED else w32.SW_SHOW;
-                // One-shot: consume the restore-maximized intent so it
-                // applies exactly once, during the initial window
-                // bring-up. Creating/selecting a workspace runs addTab on
-                // a fresh (tab_count==1) workspace and re-enters this
-                // branch — without clearing the flag that would
-                // re-maximize the window on every new workspace.
                 self.restore_maximized = false;
                 _ = w32.ShowWindow(h, cmd);
                 _ = w32.UpdateWindow(h);
             }
         }
-        ws.active_tab = pos;
+        container.active_tab = pos;
         self.updateWindowTitle();
-        // Set keyboard focus to the child surface so it receives input.
         if (!self.is_quick_terminal) {
             if (surface.hwnd) |h| _ = w32.SetFocus(h);
         }
@@ -1316,20 +1304,27 @@ pub fn addTabBackground(
 ) !usize {
     if (self.closing) return error.WindowClosing;
     if (ws_idx >= self.workspace_count) return error.NoWindow;
-    // Active workspace: identical to the interactive new-tab path (it
-    // both switches to and focuses the new tab — correct, since the user
-    // is already looking at this workspace and an explicit IPC add to the
-    // foreground workspace is reasonably a focus event there).
     if (ws_idx == self.active_workspace) {
         _ = try self.addTabWithCommand(command, title);
-        return self.activeWorkspace().active_tab;
+        const container = self.activeWorkspace().focusedContainerOrFirst() orelse return error.NoWindow;
+        return container.active_tab;
     }
 
     const ws = &self.workspaces[ws_idx];
-    if (ws.tab_count >= MAX_TABS) return error.TooManyTabs;
     self.cancelTabRename();
 
     const alloc = self.app.core_app.alloc;
+
+    const container = ws.focusedContainerOrFirst() orelse blk: {
+        const pc = try PaneContainer.create(alloc);
+        errdefer alloc.destroy(pc);
+        const tree = try SplitTree(PaneContainer).init(alloc, pc);
+        ws.split_tree = tree;
+        ws.focused_container = pc;
+        break :blk pc;
+    };
+    if (container.tab_count >= MAX_TABS) return error.TooManyTabs;
+
     const surface = try alloc.create(Surface);
     try surface.init(self.app, self, .tab, command, ws.working_dir);
     const pane = Pane.create(alloc, surface) catch |err| {
@@ -1337,49 +1332,38 @@ pub fn addTabBackground(
         alloc.destroy(surface);
         return err;
     };
-    var tree = SplitTree(Pane).init(alloc, pane) catch |err| {
+    _ = pane.ref(alloc) catch |err| {
         alloc.destroy(pane);
         surface.deinit();
         alloc.destroy(surface);
         return err;
     };
-    errdefer tree.deinit();
+    errdefer pane.unref(alloc);
 
-    // Background workspace: hide the child HWND Surface.init showed so it
-    // never paints over the visible workspace.
     if (surface.hwnd) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
 
-    const pos: usize = newTabInsertPos(self.app.config.@"window-new-tab-position", ws.tab_count, ws.active_tab);
+    const pos: usize = newTabInsertPos(self.app.config.@"window-new-tab-position", container.tab_count, container.active_tab);
 
-    tabArraysInsertGap(ws.tabArrays(), ws.tab_count, pos);
-    ws.tab_trees[pos] = tree;
-    ws.tab_active_pane[pos] = pane;
-    ws.tab_status[pos] = .normal;
-    // Reset orchestration metadata for the freshly-occupied slot (the gap
-    // insert shifts toward the tail, leaving the old [pos] values), matching
-    // addTabWithCommand so a background tab never inherits a prior tab's
-    // status/progress/log.
-    ws.tab_status_text_len[pos] = 0;
-    ws.tab_progress[pos] = null;
-    ws.tab_log[pos].clear();
-    ws.tab_count += 1;
+    tabArraysInsertGap(container.tabArrays(), container.tab_count, pos);
+    container.tabs[pos] = pane;
+    container.tab_status[pos] = .normal;
+    container.tab_status_text_len[pos] = 0;
+    container.tab_progress[pos] = null;
+    container.tab_log[pos].clear();
+    container.tab_count += 1;
 
     const default_title = std.unicode.utf8ToUtf16LeStringLiteral("Ghostty");
-    @memcpy(ws.tab_titles[pos][0..default_title.len], default_title);
-    ws.tab_title_lens[pos] = @intCast(default_title.len);
+    @memcpy(container.tab_titles[pos][0..default_title.len], default_title);
+    container.tab_title_lens[pos] = @intCast(default_title.len);
     if (title) |t| {
         const wlen = std.unicode.utf8ToUtf16Le(
-            &ws.tab_titles[pos],
+            &container.tab_titles[pos],
             t[0..@min(t.len, 255)],
         ) catch 0;
-        if (wlen > 0) ws.tab_title_lens[pos] = @intCast(@min(wlen, 255));
+        if (wlen > 0) container.tab_title_lens[pos] = @intCast(@min(wlen, 255));
     }
 
-    // Make the new tab the workspace's own active tab so a later switch
-    // lands on it (its panes stay hidden until then). The previously
-    // active tab of THIS background workspace is already hidden, so no
-    // hide is needed here.
-    ws.active_tab = pos;
+    container.active_tab = pos;
     self.invalidateSidebar();
     return pos;
 }
@@ -1392,9 +1376,10 @@ pub fn addTabInheritBackground(self: *Window, ws_idx: usize) !usize {
     if (ws_idx >= self.workspace_count) return error.NoWindow;
     const command: ?[]const []const u8 = blk: {
         const ws = &self.workspaces[ws_idx];
-        if (ws.tab_count == 0) break :blk null;
-        const src = ws.tab_active_pane[ws.active_tab].surface() orelse break :blk null;
-        break :blk src.spawn_command;
+        const container = ws.focusedContainerOrFirst() orelse break :blk null;
+        const src = container.activePane() orelse break :blk null;
+        const surface = src.surface() orelse break :blk null;
+        break :blk surface.spawn_command;
     };
     const title: ?[]const u8 = if (command) |argv| titleForCommand(argv) else null;
     return self.addTabBackground(ws_idx, command, title);
@@ -1407,59 +1392,51 @@ pub fn addTabInheritBackground(self: *Window, ws_idx: usize) !usize {
 /// surface, so no running-process check applies).
 pub fn addBrowserTab(self: *Window) !void {
     if (self.closing) return error.WindowClosing;
-    // Quick terminals are transient single-surface popups with no tab
-    // bar or sidebar; no UI path offers them a browser tab, but guard
-    // anyway so a future caller can't create unreachable chrome.
     if (self.is_quick_terminal) return error.QuickTerminal;
     const ws = self.activeWorkspace();
-    if (ws.tab_count >= MAX_TABS) return error.TooManyTabs;
     self.cancelTabRename();
 
     const alloc = self.app.core_app.alloc;
 
-    // Build the single-pane tree. The errdefers only cover the gap
-    // until the tree takes ownership via ref() (same shape as
-    // newBrowserSplit); past the block the insertion below cannot
-    // fail, so the tree is never deinit'd after tab_trees holds it.
-    var browser: *BrowserPane = undefined;
-    var browser_pane: *Pane = undefined;
-    const tree = blk: {
-        const b = try BrowserPane.create(alloc, self.app, self);
-        errdefer b.destroy(alloc);
-        const new_pane = try Pane.createBrowser(alloc, b);
-        errdefer alloc.destroy(new_pane);
-        const t = try SplitTree(Pane).init(alloc, new_pane);
-        browser = b;
-        browser_pane = new_pane;
-        break :blk t;
+    const container = ws.focusedContainerOrFirst() orelse blk: {
+        const pc = try PaneContainer.create(alloc);
+        errdefer alloc.destroy(pc);
+        const tree = try SplitTree(PaneContainer).init(alloc, pc);
+        ws.split_tree = tree;
+        ws.focused_container = pc;
+        break :blk pc;
     };
+    if (container.tab_count >= MAX_TABS) return error.TooManyTabs;
 
-    // Determine insert position based on config.
-    const pos: usize = newTabInsertPos(self.app.config.@"window-new-tab-position", ws.tab_count, ws.active_tab);
+    const browser = try BrowserPane.create(alloc, self.app, self);
+    errdefer browser.destroy(alloc);
+    const browser_pane = try Pane.createBrowser(alloc, browser);
+    _ = browser_pane.ref(alloc) catch |err| {
+        alloc.destroy(browser_pane);
+        return err;
+    };
+    errdefer browser_pane.unref(alloc);
 
-    // Shift elements right to make room at pos.
-    tabArraysInsertGap(ws.tabArrays(), ws.tab_count, pos);
-    ws.tab_trees[pos] = tree;
-    ws.tab_active_pane[pos] = browser_pane;
-    ws.tab_status[pos] = .normal;
-    ws.tab_status_text_len[pos] = 0;
-    ws.tab_progress[pos] = null;
-    ws.tab_log[pos].clear();
-    ws.tab_count += 1;
+    const pos: usize = newTabInsertPos(self.app.config.@"window-new-tab-position", container.tab_count, container.active_tab);
+
+    tabArraysInsertGap(container.tabArrays(), container.tab_count, pos);
+    container.tabs[pos] = browser_pane;
+    container.tab_status[pos] = .normal;
+    container.tab_status_text_len[pos] = 0;
+    container.tab_progress[pos] = null;
+    container.tab_log[pos].clear();
+    container.tab_count += 1;
 
     const default_title = std.unicode.utf8ToUtf16LeStringLiteral("Browser");
-    @memcpy(ws.tab_titles[pos][0..default_title.len], default_title);
-    ws.tab_title_lens[pos] = @intCast(default_title.len);
+    @memcpy(container.tab_titles[pos][0..default_title.len], default_title);
+    container.tab_title_lens[pos] = @intCast(default_title.len);
 
-    if (ws.tab_count == 1) {
-        // First tab — not reachable from the current UI (the picker
-        // only exists on live windows, which always have >= 1 tab),
-        // but mirror addTabWithCommand for robustness.
+    if (container.tab_count == 1) {
         if (self.hwnd) |h| {
             _ = w32.ShowWindow(h, w32.SW_SHOW);
             _ = w32.UpdateWindow(h);
         }
-        ws.active_tab = pos;
+        container.active_tab = pos;
         self.updateWindowTitle();
         self.layoutSplits();
     } else {
@@ -1468,11 +1445,8 @@ pub fn addBrowserTab(self: *Window) !void {
     self.updateTabBarVisibility();
     self.invalidateSidebar();
 
-    // Begin async WebView2 creation now that the tree owns the pane
-    // (the in-flight race guard refs it).
     browser.startCreation();
 
-    // Focus the address bar so the user can type a URL immediately.
     if (browser.address_edit) |edit| {
         _ = w32.SetFocus(edit);
     } else {
@@ -1957,7 +1931,7 @@ fn addFirstTabBackground(self: *Window, ws_idx: usize, command: ?[]const []const
     if (self.closing) return error.WindowClosing;
     if (ws_idx >= self.workspace_count) return error.NoWindow;
     const ws = &self.workspaces[ws_idx];
-    std.debug.assert(ws.tab_count == 0);
+    std.debug.assert(ws.containerCount() == 0);
 
     const alloc = self.app.core_app.alloc;
     const surface = try alloc.create(Surface);
@@ -1967,30 +1941,29 @@ fn addFirstTabBackground(self: *Window, ws_idx: usize, command: ?[]const []const
         alloc.destroy(surface);
         return err;
     };
-    var tree = SplitTree(Pane).init(alloc, pane) catch |err| {
+    _ = pane.ref(alloc) catch |err| {
         alloc.destroy(pane);
         surface.deinit();
         alloc.destroy(surface);
         return err;
     };
-    errdefer tree.deinit();
+    errdefer pane.unref(alloc);
 
-    // Hide the child HWND Surface.init just showed: this workspace is not
-    // active, so its pane must not be visible over the active workspace.
+    const container = try PaneContainer.create(alloc);
+    errdefer alloc.destroy(container);
+    const tree = try SplitTree(PaneContainer).init(alloc, container);
+    ws.split_tree = tree;
+    ws.focused_container = container;
+
     if (surface.hwnd) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
 
-    // First (and only) tab goes in slot 0. The slot was just value-inited
-    // by createWorkspaceSlot, so the orchestration metadata arrays
-    // (tab_status, tab_status_text_len, tab_progress, tab_log) already
-    // hold their clean defaults — no per-tab reset is needed here.
-    ws.tab_trees[0] = tree;
-    ws.tab_active_pane[0] = pane;
-    ws.tab_status[0] = .normal;
+    container.tabs[0] = pane;
+    container.tab_status[0] = .normal;
+    container.tab_count = 1;
+    container.active_tab = 0;
     const default_title = std.unicode.utf8ToUtf16LeStringLiteral("Ghostty");
-    @memcpy(ws.tab_titles[0][0..default_title.len], default_title);
-    ws.tab_title_lens[0] = @intCast(default_title.len);
-    ws.active_tab = 0;
-    ws.tab_count = 1;
+    @memcpy(container.tab_titles[0][0..default_title.len], default_title);
+    container.tab_title_lens[0] = @intCast(default_title.len);
 
     self.invalidateSidebar();
 }
