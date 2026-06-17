@@ -90,7 +90,7 @@ This phase performs the foundational architectural change: moving tab ownership 
   - `closeSplitSurface(self, surface)`: Unchanged — finds pane from surface, calls `closeSplitPane`
   - `breakPane(self, pane)`: In the new model, "break pane" extracts a tab from a multi-tab PaneContainer into a NEW PaneContainer that becomes a new leaf in the workspace split tree. Find the container owning the pane, remove the pane's tab from it, create a new PaneContainer with that pane as its sole tab, insert the new container into the workspace tree as a sibling split.
 
-- [ ] Update layout and pane navigation for the new PaneContainer split tree:
+- [x] Update layout and pane navigation for the new PaneContainer split tree:
   - `layoutSplits(self)`: Instead of walking `ws.tab_trees[ws.active_tab]`, walk `ws.split_tree` (a `SplitTree(PaneContainer)`). The `layoutNode` function needs a variant for PaneContainer leaves: when it reaches a leaf PaneContainer, it shows the active tab's pane HWND at the leaf's rect and hides all other tab panes. This means:
     - Rename or refactor `layoutNode` to handle `SplitTree(PaneContainer)` nodes
     - For a leaf node (PaneContainer): position `container.tabs[container.active_tab].hwnd()` at the rect, hide HWNDs of all other tabs in that container
@@ -106,7 +106,7 @@ This phase performs the foundational architectural change: moving tab ownership 
   - `updatePaneButtons(self)`: Walk `ws.split_tree` leaves for the per-pane corner buttons
   - `paintDividers(self, hdc)`: Walk `ws.split_tree` to find split positions for divider lines
 
-- [ ] Update the tab bar rendering in `paintTabBar` to read from the focused PaneContainer instead of workspace tab arrays:
+- [x] Update the tab bar rendering in `paintTabBar` to read from the focused PaneContainer instead of workspace tab arrays:
   - Get the focused PaneContainer via `ws.focusedContainerOrFirst()` instead of reading `ws.tab_count`, `ws.tab_titles`, etc.
   - Replace all `ws.tab_count` references with `container.tab_count`
   - Replace all `ws.tab_titles[i]` with `container.tab_titles[i]`
@@ -120,7 +120,7 @@ This phase performs the foundational architectural change: moving tab ownership 
   - `updateWindowTitle()`: read title from focused container's active tab
   - For now, keep a single tab bar at the top of the window (per-pane tab bars are Phase 02). The tab bar always shows the focused container's tabs.
 
-- [ ] Update workspace creation, closing, and selection to initialize/tear down PaneContainers:
+- [x] Update workspace creation, closing, and selection to initialize/tear down PaneContainers:
   - When creating a new workspace (`addWorkspace` / workspace-new IPC): create an initial PaneContainer with one tab (terminal Surface), init the workspace split tree with it, set `focused_container`
   - `closeWorkspace(self, ws_idx)`: iterate the workspace's split tree leaves and call `container.unref(alloc)` on each (which cascades to unref all panes). Then deinit the split tree. Shift workspace arrays as before.
   - `selectWorkspace(self, ws_idx)`: hide all panes of the old workspace (iterate old workspace's split tree leaves, hide each container's active tab HWND). Show panes of the new workspace via `layoutSplits()`. Ensure `ws.focused_container` is valid.

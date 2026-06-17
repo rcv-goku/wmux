@@ -3385,6 +3385,7 @@ fn paintTabBar(self: *Window, hdc_screen: w32.HDC) void {
     const hwnd = self.hwnd orelse return;
     // The top tab bar paints the active workspace's tabs.
     const ws = self.activeWorkspace();
+    const container = ws.focusedContainerOrFirst() orelse return;
 
     // If the tab bar is not visible, there is nothing to paint.
     if (!self.tab_bar_visible) return;
@@ -3468,7 +3469,7 @@ fn paintTabBar(self: *Window, hdc_screen: w32.HDC) void {
     const text_pad: i32 = @intFromFloat(@round(10.0 * self.scale));
     const accent_h: i32 = @intFromFloat(@round(2.0 * self.scale));
 
-    const tab_count_i32: i32 = @intCast(ws.tab_count);
+    const tab_count_i32: i32 = @intCast(container.tab_count);
     const available_w = client_w - new_tab_btn_w - dropdown_btn_w;
 
     // Calculate each tab's width: proportional, min 60px.
@@ -3484,12 +3485,12 @@ fn paintTabBar(self: *Window, hdc_screen: w32.HDC) void {
 
     // --- Draw each tab ---
     var x: i32 = 0;
-    for (0..ws.tab_count) |i| {
-        const is_active = (i == ws.active_tab);
+    for (0..container.tab_count) |i| {
+        const is_active = (i == container.active_tab);
         const is_hovered = (@as(isize, @intCast(i)) == self.hover_tab);
 
         // Last tab gets remainder width to fill the available area.
-        const this_tab_w: i32 = if (i == ws.tab_count - 1 and tab_count_i32 > 0)
+        const this_tab_w: i32 = if (i == container.tab_count - 1 and tab_count_i32 > 0)
             @max(available_w - x, min_tab_w)
         else
             tab_w;
@@ -3539,7 +3540,7 @@ fn paintTabBar(self: *Window, hdc_screen: w32.HDC) void {
         // visible one. The title is shifted right by the dot width so it
         // doesn't overlap. The active tab's pending attention is cleared
         // on select, so in practice the dot only shows on inactive tabs.
-        const attn_dot_w: i32 = if (ws.tab_attention[i]) @intFromFloat(@round(12.0 * self.scale)) else 0;
+        const attn_dot_w: i32 = if (container.tab_attention[i]) @intFromFloat(@round(12.0 * self.scale)) else 0;
         if (attn_dot_w > 0) {
             _ = w32.SetTextColor(mem_dc, accent_color);
             const dot_char = std.unicode.utf8ToUtf16LeStringLiteral("\u{25CF}");
@@ -3561,7 +3562,7 @@ fn paintTabBar(self: *Window, hdc_screen: w32.HDC) void {
         // Sync indicator: a small orange glyph when synchronized input
         // is active on this tab, drawn between the attention dot and the
         // title so the user has a persistent visual cue.
-        const sync_indicator_w: i32 = if (ws.tab_synchronized[i]) @intFromFloat(@round(14.0 * self.scale)) else 0;
+        const sync_indicator_w: i32 = if (container.tab_synchronized[i]) @intFromFloat(@round(14.0 * self.scale)) else 0;
         if (sync_indicator_w > 0) {
             _ = w32.SetTextColor(mem_dc, w32.RGB(0xE8, 0x9C, 0x20));
             const sync_char = std.unicode.utf8ToUtf16LeStringLiteral("\u{21C4}");
@@ -3581,7 +3582,7 @@ fn paintTabBar(self: *Window, hdc_screen: w32.HDC) void {
         }
 
         // Draw tab title text.
-        const title_len = ws.tab_title_lens[i];
+        const title_len = container.tab_title_lens[i];
         if (title_len > 0) {
             _ = w32.SetTextColor(mem_dc, if (is_active) active_text_color else inactive_text_color);
             var text_rect = w32.RECT{
@@ -3592,7 +3593,7 @@ fn paintTabBar(self: *Window, hdc_screen: w32.HDC) void {
             };
             _ = w32.DrawTextW(
                 mem_dc,
-                @ptrCast(&ws.tab_titles[i]),
+                @ptrCast(&container.tab_titles[i]),
                 @intCast(title_len),
                 &text_rect,
                 w32.DT_LEFT | w32.DT_VCENTER | w32.DT_SINGLELINE | w32.DT_END_ELLIPSIS | w32.DT_NOPREFIX,
@@ -3787,7 +3788,8 @@ fn handleTabBarClick(self: *Window, x: i16, y: i16) void {
     // Check each tab.
     const close_btn_w: i32 = @intFromFloat(@round(20.0 * self.scale));
     const text_pad: i32 = @intFromFloat(@round(10.0 * self.scale));
-    for (0..self.activeWorkspace().tab_count) |i| {
+    const container = self.activeWorkspace().focusedContainerOrFirst() orelse return;
+    for (0..container.tab_count) |i| {
         const rect = self.tab_rects[i];
         if (x >= rect.left and x < rect.right) {
             // Check close button area (right side of tab).
@@ -3817,7 +3819,8 @@ fn handleTabBarClick(self: *Window, x: i16, y: i16) void {
 fn handleTabBarMiddleClick(self: *Window, x: i16, y: i16) void {
     if (!self.tab_bar_visible) return;
     if (y >= self.tabBarHeight()) return;
-    for (0..self.activeWorkspace().tab_count) |i| {
+    const container = self.activeWorkspace().focusedContainerOrFirst() orelse return;
+    for (0..container.tab_count) |i| {
         const rect = self.tab_rects[i];
         if (x >= rect.left and x < rect.right) {
             self.closeTabByIndex(i);
@@ -3891,7 +3894,8 @@ fn handleTabBarMouseMove(self: *Window, x: i16, y: i16) void {
             // Check tabs.
             const close_btn_w: i32 = @intFromFloat(@round(20.0 * self.scale));
             const text_pad: i32 = @intFromFloat(@round(10.0 * self.scale));
-            for (0..self.activeWorkspace().tab_count) |i| {
+            const container = self.activeWorkspace().focusedContainerOrFirst() orelse return;
+            for (0..container.tab_count) |i| {
                 const rect = self.tab_rects[i];
                 if (x >= rect.left and x < rect.right) {
                     new_hover = @intCast(i);
@@ -4029,10 +4033,11 @@ fn showTabContextMenu(self: *Window, clicked_tab: ?usize, x: i32, y: i32) void {
     if (clicked_tab) |tab| {
         // Menu-construction reads only; never held across the modal
         // menu loop below (workspaces[] can shift while it pumps).
-        const ws = self.activeWorkspace();
+        const pre_container = self.activeWorkspace().focusedContainerOrFirst();
+        const pre_tc = if (pre_container) |c| c.tab_count else 0;
         _ = w32.AppendMenuW(menu, w32.MF_STRING, TAB_CTX_CLOSE, std.unicode.utf8ToUtf16LeStringLiteral("Close Tab"));
-        _ = w32.AppendMenuW(menu, if (ws.tab_count > 1) w32.MF_STRING else w32.MF_GRAYED, TAB_CTX_CLOSE_OTHERS, std.unicode.utf8ToUtf16LeStringLiteral("Close Other Tabs"));
-        _ = w32.AppendMenuW(menu, if (tab + 1 < ws.tab_count) w32.MF_STRING else w32.MF_GRAYED, TAB_CTX_CLOSE_RIGHT, std.unicode.utf8ToUtf16LeStringLiteral("Close Tabs to the Right"));
+        _ = w32.AppendMenuW(menu, if (pre_tc > 1) w32.MF_STRING else w32.MF_GRAYED, TAB_CTX_CLOSE_OTHERS, std.unicode.utf8ToUtf16LeStringLiteral("Close Other Tabs"));
+        _ = w32.AppendMenuW(menu, if (tab + 1 < pre_tc) w32.MF_STRING else w32.MF_GRAYED, TAB_CTX_CLOSE_RIGHT, std.unicode.utf8ToUtf16LeStringLiteral("Close Tabs to the Right"));
         _ = w32.AppendMenuW(menu, w32.MF_SEPARATOR, 0, null);
     }
     _ = w32.AppendMenuW(menu, w32.MF_STRING, TAB_CTX_NEW_TAB, std.unicode.utf8ToUtf16LeStringLiteral("New Tab"));
@@ -4056,16 +4061,17 @@ fn showTabContextMenu(self: *Window, clicked_tab: ?usize, x: i32, y: i32) void {
     // the active workspace and re-validate the clicked index before
     // acting; closeTabByIndex additionally bounds-checks each call.
     if (self.closing) return;
-    const ws = self.activeWorkspace();
+    const post_container = self.activeWorkspace().focusedContainerOrFirst();
     switch (@as(usize, @intCast(cmd))) {
         TAB_CTX_CLOSE => {
             if (clicked_tab) |tab| self.closeTabByIndex(tab);
         },
         TAB_CTX_CLOSE_OTHERS => {
             if (clicked_tab) |tab| {
-                if (tab >= ws.tab_count) return;
+                const tc = if (post_container) |c| c.tab_count else return;
+                if (tab >= tc) return;
                 var current = tab;
-                var i: usize = ws.tab_count;
+                var i: usize = tc;
                 while (i > 0) {
                     i -= 1;
                     if (i != current) {
@@ -4077,7 +4083,7 @@ fn showTabContextMenu(self: *Window, clicked_tab: ?usize, x: i32, y: i32) void {
         },
         TAB_CTX_CLOSE_RIGHT => {
             if (clicked_tab) |tab| {
-                var i: usize = ws.tab_count;
+                var i: usize = if (post_container) |c| c.tab_count else return;
                 while (i > tab + 1) {
                     i -= 1;
                     self.closeTabByIndex(i);
@@ -4626,11 +4632,11 @@ const RENAME_EDIT_ID: u16 = 300;
 /// Start inline editing of a tab title. Creates a small Edit control
 /// overlay on the tab and pre-fills it with the current title.
 pub fn startTabRename(self: *Window, tab_idx: usize) void {
-    const ws = self.activeWorkspace();
-    if (tab_idx >= ws.tab_count) return;
+    const container = self.activeWorkspace().focusedContainerOrFirst() orelse return;
+    if (tab_idx >= container.tab_count) return;
     const rect = self.tab_rects[tab_idx];
-    const tlen = ws.tab_title_lens[tab_idx];
-    self.startRename(rect, ws.tab_titles[tab_idx][0..tlen], .{ .tab = tab_idx });
+    const tlen = container.tab_title_lens[tab_idx];
+    self.startRename(rect, container.tab_titles[tab_idx][0..tlen], .{ .tab = tab_idx });
 }
 
 /// Start inline editing of a workspace name. Overlays the Edit control
@@ -4749,14 +4755,12 @@ pub fn finishTabRename(self: *Window) void {
         const len: u16 = @intCast(@min(wlen, 255));
         switch (target) {
             .tab => |tab_idx| {
-                const ws = self.activeWorkspace();
-                // The active workspace may have changed while the Edit was
-                // open (a keybind can switch workspaces); validate the
-                // index against the current workspace before writing.
-                if (tab_idx < ws.tab_count) {
-                    @memcpy(ws.tab_titles[tab_idx][0..len], wbuf[0..len]);
-                    ws.tab_title_lens[tab_idx] = len;
-                    if (tab_idx == ws.active_tab) self.updateWindowTitle();
+                if (self.activeWorkspace().focusedContainerOrFirst()) |rename_container| {
+                    if (tab_idx < rename_container.tab_count) {
+                        @memcpy(rename_container.tab_titles[tab_idx][0..len], wbuf[0..len]);
+                        rename_container.tab_title_lens[tab_idx] = len;
+                        if (tab_idx == rename_container.active_tab) self.updateWindowTitle();
+                    }
                 }
             },
             .workspace => |ws_idx| {
