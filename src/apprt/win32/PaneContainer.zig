@@ -57,6 +57,25 @@ tab_log: [MAX_TABS]ipc.LogRing = @splat(.{}),
 tab_synchronized: [MAX_TABS]bool = @splat(false),
 
 // -------------------------------------------------------------------------
+// Per-pane tab bar hit-test state
+// -------------------------------------------------------------------------
+
+/// Hit-test rectangles for each tab (in window client coords).
+tab_rects: [MAX_TABS]w32.RECT = std.mem.zeroes([MAX_TABS]w32.RECT),
+
+/// Number of valid entries in tab_rects (mirrors tab_count at paint time).
+tab_rect_count: usize = 0,
+
+/// Hit-test rectangle for the per-pane "+" (new tab) button.
+new_tab_btn_rect: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
+
+/// Hit-test rectangle for the per-pane "▾" (backend picker) button.
+new_tab_dropdown_rect: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
+
+/// Per-tab close button hit-test rectangles (in window client coords).
+close_btn_rects: [MAX_TABS]w32.RECT = std.mem.zeroes([MAX_TABS]w32.RECT),
+
+// -------------------------------------------------------------------------
 // Construction / destruction
 // -------------------------------------------------------------------------
 
@@ -163,6 +182,325 @@ pub fn hasAttention(self: *const PaneContainer) bool {
 /// Give keyboard focus to the active tab's pane.
 pub fn focus(self: *const PaneContainer) void {
     if (self.tab_count > 0) self.tabs[self.active_tab].focus();
+}
+
+// -------------------------------------------------------------------------
+// Per-pane tab bar rendering
+// -------------------------------------------------------------------------
+
+/// The unscaled tab bar height in pixels (matches Window.tabBarHeight logic).
+pub fn tabBarHeight(scale: f32) i32 {
+    return @intFromFloat(@round(32.0 * scale));
+}
+
+/// Paint a per-pane tab bar within the top portion of `rect`. Returns the
+/// height consumed (0 when no bar is drawn, e.g. <=1 tab). Stores hit-test
+/// rects on self in window client coords for later click/hover routing.
+///
+/// `is_focused` controls visual treatment: focused gets brighter text and
+/// an accent underline on the active tab; unfocused is dimmed.
+pub fn paintTabBar(
+    self: *PaneContainer,
+    hdc: w32.HDC,
+    rect: w32.RECT,
+    scale: f32,
+    config: anytype,
+    is_focused: bool,
+    tab_font: ?*anyopaque,
+    hovered_tab: ?usize,
+    hovered_close: ?usize,
+) i32 {
+    if (self.tab_count <= 1) {
+        self.tab_rect_count = 0;
+        return 0;
+    }
+
+    const bar_h = tabBarHeight(scale);
+    if (bar_h <= 0) return 0;
+
+    const bar_w = rect.right - rect.left;
+    if (bar_w <= 0) return 0;
+
+    // Double-buffer: create offscreen DC and bitmap.
+    const mem_dc = w32.CreateCompatibleDC(hdc) orelse return 0;
+    defer _ = w32.DeleteDC(mem_dc);
+
+    const mem_bmp = w32.CreateCompatibleBitmap(hdc, bar_w, bar_h) orelse return 0;
+    const old_bmp = w32.SelectObject(mem_dc, mem_bmp);
+    defer {
+        _ = w32.SelectObject(mem_dc, old_bmp);
+        _ = w32.DeleteObject(mem_bmp);
+    }
+
+    // --- Colors ---
+    const bg = config.background;
+    const bar_r: u8 = @min(@as(u16, bg.r) + 20, 255);
+    const bar_g: u8 = @min(@as(u16, bg.g) + 20, 255);
+    const bar_b: u8 = @min(@as(u16, bg.b) + 20, 255);
+
+    // Unfocused bar is dimmer (only +10 from terminal bg instead of +20).
+    const uf_r: u8 = @min(@as(u16, bg.r) + 10, 255);
+    const uf_g: u8 = @min(@as(u16, bg.g) + 10, 255);
+    const uf_b: u8 = @min(@as(u16, bg.b) + 10, 255);
+
+    const bar_color = if (is_focused) w32.RGB(bar_r, bar_g, bar_b) else w32.RGB(uf_r, uf_g, uf_b);
+
+    const hover_r: u8 = @min(@as(u16, bar_r) + 15, 255);
+    const hover_g: u8 = @min(@as(u16, bar_g) + 15, 255);
+    const hover_b: u8 = @min(@as(u16, bar_b) + 15, 255);
+    const hover_color = w32.RGB(hover_r, hover_g, hover_b);
+
+    const active_bg_color = w32.RGB(bg.r, bg.g, bg.b);
+    const accent_color = w32.RGB(0x3D, 0x8E, 0xF8);
+
+    const active_text_color = if (is_focused) w32.RGB(230, 230, 230) else w32.RGB(150, 150, 150);
+    const inactive_text_color = w32.RGB(150, 150, 150);
+
+    const close_normal_color = w32.RGB(150, 150, 150);
+    const close_hover_color = w32.RGB(232, 65, 65);
+
+    // --- Fill bar background ---
+    var bar_rect = w32.RECT{ .left = 0, .top = 0, .right = bar_w, .bottom = bar_h };
+    if (w32.CreateSolidBrush(bar_color)) |bar_brush| {
+        _ = w32.FillRect(mem_dc, &bar_rect, bar_brush);
+        _ = w32.DeleteObject(@ptrCast(bar_brush));
+    }
+
+    // --- Select font and set text mode ---
+    var old_font: ?*anyopaque = null;
+    if (tab_font) |font| {
+        old_font = w32.SelectObject(mem_dc, font);
+    }
+    defer {
+        if (old_font) |f| _ = w32.SelectObject(mem_dc, f);
+    }
+    _ = w32.SetBkMode(mem_dc, w32.TRANSPARENT);
+
+    // --- Calculate tab geometry ---
+    const new_tab_btn_w: i32 = @intFromFloat(@round(36.0 * scale));
+    const dropdown_btn_w: i32 = @intFromFloat(@round(20.0 * scale));
+    const close_btn_w: i32 = @intFromFloat(@round(20.0 * scale));
+    const text_pad: i32 = @intFromFloat(@round(10.0 * scale));
+    const accent_h: i32 = @intFromFloat(@round(2.0 * scale));
+
+    const tab_count_i32: i32 = @intCast(self.tab_count);
+    const available_w = bar_w - new_tab_btn_w - dropdown_btn_w;
+
+    const min_tab_w: i32 = @intFromFloat(@round(60.0 * scale));
+    const max_tab_w: i32 = @intFromFloat(@round(200.0 * scale));
+
+    var tab_w: i32 = if (tab_count_i32 > 0)
+        @divTrunc(available_w, tab_count_i32)
+    else
+        0;
+    tab_w = @max(tab_w, min_tab_w);
+    tab_w = @min(tab_w, max_tab_w);
+
+    // --- Draw each tab ---
+    var x: i32 = 0;
+    for (0..self.tab_count) |i| {
+        const is_active = (i == self.active_tab);
+        const is_hovered = if (hovered_tab) |ht| (ht == i) else false;
+
+        const this_tab_w: i32 = if (i == self.tab_count - 1 and tab_count_i32 > 0)
+            @max(available_w - x, min_tab_w)
+        else
+            tab_w;
+
+        // Store hit-test rect in window client coords.
+        self.tab_rects[i] = w32.RECT{
+            .left = rect.left + x,
+            .top = rect.top,
+            .right = rect.left + x + this_tab_w,
+            .bottom = rect.top + bar_h,
+        };
+
+        // Store close button hit-test rect.
+        const close_left = x + this_tab_w - close_btn_w - @divTrunc(text_pad, 2);
+        self.close_btn_rects[i] = w32.RECT{
+            .left = rect.left + close_left,
+            .top = rect.top,
+            .right = rect.left + close_left + close_btn_w + @divTrunc(text_pad, 2),
+            .bottom = rect.top + bar_h,
+        };
+
+        // Draw tab background.
+        if (is_active) {
+            var tab_rect = w32.RECT{ .left = x, .top = 0, .right = x + this_tab_w, .bottom = bar_h };
+            if (w32.CreateSolidBrush(active_bg_color)) |brush| {
+                _ = w32.FillRect(mem_dc, &tab_rect, brush);
+                _ = w32.DeleteObject(@ptrCast(brush));
+            }
+
+            // Accent line at bottom — only when focused.
+            if (is_focused) {
+                var accent_rect = w32.RECT{
+                    .left = x,
+                    .top = bar_h - accent_h,
+                    .right = x + this_tab_w,
+                    .bottom = bar_h,
+                };
+                if (w32.CreateSolidBrush(accent_color)) |brush| {
+                    _ = w32.FillRect(mem_dc, &accent_rect, brush);
+                    _ = w32.DeleteObject(@ptrCast(brush));
+                }
+            }
+        } else if (is_hovered) {
+            var hover_rect = w32.RECT{ .left = x, .top = 0, .right = x + this_tab_w, .bottom = bar_h };
+            if (w32.CreateSolidBrush(hover_color)) |brush| {
+                _ = w32.FillRect(mem_dc, &hover_rect, brush);
+                _ = w32.DeleteObject(@ptrCast(brush));
+            }
+        }
+
+        // Attention dot.
+        const attn_dot_w: i32 = if (self.tab_attention[i]) @intFromFloat(@round(12.0 * scale)) else 0;
+        if (attn_dot_w > 0) {
+            _ = w32.SetTextColor(mem_dc, accent_color);
+            const dot_char = std.unicode.utf8ToUtf16LeStringLiteral("\u{25CF}");
+            var dot_rect = w32.RECT{
+                .left = x + text_pad,
+                .top = 0,
+                .right = x + text_pad + attn_dot_w,
+                .bottom = bar_h,
+            };
+            _ = w32.DrawTextW(
+                mem_dc,
+                dot_char,
+                1,
+                &dot_rect,
+                w32.DT_LEFT | w32.DT_VCENTER | w32.DT_SINGLELINE | w32.DT_NOPREFIX,
+            );
+        }
+
+        // Sync indicator.
+        const sync_indicator_w: i32 = if (self.tab_synchronized[i]) @intFromFloat(@round(14.0 * scale)) else 0;
+        if (sync_indicator_w > 0) {
+            _ = w32.SetTextColor(mem_dc, w32.RGB(0xE8, 0x9C, 0x20));
+            const sync_char = std.unicode.utf8ToUtf16LeStringLiteral("\u{21C4}");
+            var sync_rect = w32.RECT{
+                .left = x + text_pad + attn_dot_w,
+                .top = 0,
+                .right = x + text_pad + attn_dot_w + sync_indicator_w,
+                .bottom = bar_h,
+            };
+            _ = w32.DrawTextW(
+                mem_dc,
+                sync_char,
+                1,
+                &sync_rect,
+                w32.DT_LEFT | w32.DT_VCENTER | w32.DT_SINGLELINE | w32.DT_NOPREFIX,
+            );
+        }
+
+        // Draw tab title text.
+        const title_len = self.tab_title_lens[i];
+        if (title_len > 0) {
+            _ = w32.SetTextColor(mem_dc, if (is_active) active_text_color else inactive_text_color);
+            var text_rect = w32.RECT{
+                .left = x + text_pad + attn_dot_w + sync_indicator_w,
+                .top = 0,
+                .right = x + this_tab_w - close_btn_w - text_pad,
+                .bottom = bar_h,
+            };
+            _ = w32.DrawTextW(
+                mem_dc,
+                @ptrCast(&self.tab_titles[i]),
+                @intCast(title_len),
+                &text_rect,
+                w32.DT_LEFT | w32.DT_VCENTER | w32.DT_SINGLELINE | w32.DT_END_ELLIPSIS | w32.DT_NOPREFIX,
+            );
+        }
+
+        // Draw close button (×) — visible on active or hovered tabs.
+        if (is_active or is_hovered) {
+            const is_close_hovered = if (hovered_close) |hc| (hc == i) else false;
+            const close_text_color = if (is_close_hovered)
+                close_hover_color
+            else
+                close_normal_color;
+
+            _ = w32.SetTextColor(mem_dc, close_text_color);
+            const x_char = std.unicode.utf8ToUtf16LeStringLiteral("\u{00D7}");
+            const close_y_center = @divTrunc(bar_h, 2);
+            var close_rect = w32.RECT{
+                .left = close_left,
+                .top = close_y_center - @divTrunc(close_btn_w, 2),
+                .right = close_left + close_btn_w,
+                .bottom = close_y_center + @divTrunc(close_btn_w, 2),
+            };
+            _ = w32.DrawTextW(
+                mem_dc,
+                x_char,
+                1,
+                &close_rect,
+                w32.DT_CENTER | w32.DT_VCENTER | w32.DT_SINGLELINE | w32.DT_NOPREFIX,
+            );
+        }
+
+        x += this_tab_w;
+    }
+
+    // --- Draw new-tab (+) button ---
+    {
+        const btn_left = x;
+        const btn_right = x + new_tab_btn_w;
+        self.new_tab_btn_rect = w32.RECT{
+            .left = rect.left + btn_left,
+            .top = rect.top,
+            .right = rect.left + btn_right,
+            .bottom = rect.top + bar_h,
+        };
+
+        _ = w32.SetTextColor(mem_dc, inactive_text_color);
+        const plus_char = std.unicode.utf8ToUtf16LeStringLiteral("+");
+        var plus_rect = w32.RECT{
+            .left = btn_left,
+            .top = 0,
+            .right = btn_right,
+            .bottom = bar_h,
+        };
+        _ = w32.DrawTextW(
+            mem_dc,
+            plus_char,
+            1,
+            &plus_rect,
+            w32.DT_CENTER | w32.DT_VCENTER | w32.DT_SINGLELINE | w32.DT_NOPREFIX,
+        );
+    }
+
+    // --- Draw backend picker (▾) segment beside the new-tab button ---
+    {
+        const dd_left = self.new_tab_btn_rect.right - rect.left;
+        self.new_tab_dropdown_rect = w32.RECT{
+            .left = rect.left + dd_left,
+            .top = rect.top,
+            .right = rect.left + dd_left + dropdown_btn_w,
+            .bottom = rect.top + bar_h,
+        };
+
+        _ = w32.SetTextColor(mem_dc, inactive_text_color);
+        const chevron_char = std.unicode.utf8ToUtf16LeStringLiteral("\u{25BE}");
+        var dd_rect_local = w32.RECT{
+            .left = dd_left,
+            .top = 0,
+            .right = dd_left + dropdown_btn_w,
+            .bottom = bar_h,
+        };
+        _ = w32.DrawTextW(
+            mem_dc,
+            chevron_char,
+            1,
+            &dd_rect_local,
+            w32.DT_CENTER | w32.DT_VCENTER | w32.DT_SINGLELINE | w32.DT_NOPREFIX,
+        );
+    }
+
+    // --- BitBlt to screen at the container's position ---
+    _ = w32.BitBlt(hdc, rect.left, rect.top, bar_w, bar_h, mem_dc, 0, 0, w32.SRCCOPY);
+
+    self.tab_rect_count = self.tab_count;
+    return bar_h;
 }
 
 // -------------------------------------------------------------------------
