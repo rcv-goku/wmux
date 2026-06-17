@@ -15,6 +15,7 @@ const BrowserPane = @import("BrowserPane.zig");
 const PaneButtonsMod = @import("PaneButtons.zig");
 const PaneButtons = PaneButtonsMod.PaneButtons;
 const Pane = @import("Pane.zig");
+const PaneContainer = @import("PaneContainer.zig");
 const RightSidebar = @import("RightSidebar.zig");
 const Sidebar = @import("Sidebar.zig");
 const Surface = @import("Surface.zig");
@@ -60,56 +61,16 @@ const RESHOW_STRIP_BASE: f32 = 8.0;
 /// Per-tab status indicator shown in the session sidebar.
 pub const TabStatus = enum { normal, bell, exited };
 
-/// A workspace owns one set of the per-tab parallel arrays: a window
-/// holds several workspaces (sidebar rows), each with its own top tab
-/// bar. The arrays are indexed by tab position and MUST stay aligned —
-/// every per-tab array is listed in tabArrays() so the shared
-/// insert/remove/move/swap helpers keep them in lockstep at all
-/// mutation sites. Slots MUST be value-initialized (`= .{}`), never left
-/// `undefined`: the tab_status @splat default only applies on value-init,
-/// and aggregateStatus()/paint read it.
+/// A workspace owns a single SplitTree of PaneContainers. Each
+/// PaneContainer is a leaf in the tree and manages its own set of tabs.
+/// Splits create new PaneContainers; tabs live within a single
+/// PaneContainer. The workspace tracks which container is focused
+/// (receives keyboard input and tab operations).
 pub const Workspace = struct {
-    /// Number of tabs in this workspace.
-    tab_count: usize = 0,
-    /// Index of the currently active (visible) tab.
-    active_tab: usize = 0,
-    /// Tab split trees owned by this workspace (first parallel array).
-    tab_trees: [MAX_TABS]SplitTree(Pane) = undefined,
-    /// The currently focused pane within each tab.
-    tab_active_pane: [MAX_TABS]*Pane = undefined,
-    /// UTF-16 title buffers for each tab (for painting the tab bar).
-    tab_titles: [MAX_TABS][256]u16 = undefined,
-    /// Length of each tab title in UTF-16 code units.
-    tab_title_lens: [MAX_TABS]u16 = undefined,
-    /// Per-tab sidebar status. Cleared to .normal when the tab is selected.
-    tab_status: [MAX_TABS]TabStatus = [_]TabStatus{.normal} ** MAX_TABS,
-    /// Per-tab "needs attention" flag (the notification ring), separate
-    /// from tab_status: a sticky "an agent here is waiting for input"
-    /// state set by the attention OSC or `+notify ring`, NOT a transient
-    /// bell/exited event. A tab's flag is the OR of its panes' Surface
-    /// attention flags; it is cleared when the tab becomes the visible
-    /// active tab (selectTabIndex/selectWorkspace), like tab_status. Must
-    /// be @splat(false) on value-init (see the struct doc), which the
-    /// `= @splat(false)` default guarantees alongside tab_status.
-    tab_attention: [MAX_TABS]bool = @splat(false),
-    /// Per-tab orchestration status string (set-status): a short
-    /// agent-pushed label ("running tests", "waiting", "blocked") the
-    /// sidebar renders. UTF-8 in an inline buffer (no alloc on push),
-    /// length-prefixed like tab titles. Empty (len 0) = no status. Set by
-    /// setTabStatusText; moves verbatim through tab-array shifts.
-    tab_status_text: [MAX_TABS][MAX_STATUS_BYTES]u8 = undefined,
-    tab_status_text_len: [MAX_TABS]u16 = @splat(0),
-    /// Per-tab progress percent (set-progress), 0..100, or null for none.
-    /// Rendered by the sidebar as a thin bar (Stage 2).
-    tab_progress: [MAX_TABS]?u8 = @splat(null),
-    /// Per-tab ring log buffer (log): the last few agent log lines, newest
-    /// first. The sidebar surfaces the latest line as the row's
-    /// "latest-notification" text (Stage 2). Pure ring lives in ipc.zig so
-    /// the wrap/truncation rules are unit-tested there.
-    tab_log: [MAX_TABS]ipc.LogRing = @splat(.{}),
-    /// Per-tab synchronized input flag. When true, keyboard input to the
-    /// focused pane is broadcast to all other terminal panes in the tab.
-    tab_synchronized: [MAX_TABS]bool = @splat(false),
+    /// The workspace's split tree whose leaves are PaneContainers.
+    split_tree: SplitTree(PaneContainer) = .empty,
+    /// The currently focused PaneContainer (receives keyboard input, tab operations).
+    focused_container: ?*PaneContainer = null,
     /// Workspace name shown on its sidebar row.
     name: [64]u16 = undefined,
     /// Length of the workspace name in UTF-16 code units.
@@ -156,46 +117,53 @@ pub const Workspace = struct {
     /// by markMetadataDirty on dispatch.
     meta_token: u64 = 0,
 
-    /// The parallel per-tab arrays as a tuple of array pointers. EVERY
-    /// per-tab array must be listed here: the mutation sites
-    /// (addTabWithCommand/addBrowserTab insert, closeTabByIndex remove,
-    /// moveTabTo reorder, moveTab swap) all operate on this tuple via the
-    /// tabArrays* helpers, so an array missing from this list silently
-    /// desynchronizes from tab indices.
-    pub fn tabArrays(self: *Workspace) struct {
-        *[MAX_TABS]SplitTree(Pane),
-        *[MAX_TABS]*Pane,
-        *[MAX_TABS][256]u16,
-        *[MAX_TABS]u16,
-        *[MAX_TABS]TabStatus,
-        *[MAX_TABS]bool,
-        *[MAX_TABS][MAX_STATUS_BYTES]u8,
-        *[MAX_TABS]u16,
-        *[MAX_TABS]?u8,
-        *[MAX_TABS]ipc.LogRing,
-        *[MAX_TABS]bool,
-    } {
-        return .{
-            &self.tab_trees,
-            &self.tab_active_pane,
-            &self.tab_titles,
-            &self.tab_title_lens,
-            &self.tab_status,
-            &self.tab_attention,
-            &self.tab_status_text,
-            &self.tab_status_text_len,
-            &self.tab_progress,
-            &self.tab_log,
-            &self.tab_synchronized,
-        };
+    /// The number of leaf PaneContainers in the workspace's split tree.
+    pub fn containerCount(self: *const Workspace) usize {
+        var count: usize = 0;
+        var it = self.split_tree.iterator();
+        while (it.next()) |_| {
+            count += 1;
+        }
+        return count;
     }
 
-    /// The worst status across this workspace's tabs, for the sidebar
-    /// dot: exited > bell > normal.
+    /// The focused container, falling back to the first leaf in the tree.
+    pub fn focusedContainerOrFirst(self: *Workspace) ?*PaneContainer {
+        if (self.focused_container) |fc| return fc;
+        var it = self.split_tree.iterator();
+        if (it.next()) |entry| return entry.view;
+        return null;
+    }
+
+    /// Find which PaneContainer owns a given pane by scanning all
+    /// containers' tab arrays.
+    pub fn findContainerOf(self: *Workspace, pane: *Pane) ?*PaneContainer {
+        var it = self.split_tree.iterator();
+        while (it.next()) |entry| {
+            const container = entry.view;
+            for (container.tabs[0..container.tab_count]) |tab_pane| {
+                if (tab_pane == pane) return container;
+            }
+        }
+        return null;
+    }
+
+    /// Find the split tree node handle for a given PaneContainer.
+    pub fn findContainerHandle(self: *Workspace, container: *PaneContainer) ?SplitTree(PaneContainer).Node.Handle {
+        var it = self.split_tree.iterator();
+        while (it.next()) |entry| {
+            if (entry.view.eql(container)) return entry.handle;
+        }
+        return null;
+    }
+
+    /// The worst status across all PaneContainers in this workspace,
+    /// for the sidebar dot: exited > bell > normal.
     pub fn aggregateStatus(self: *const Workspace) TabStatus {
         var worst: TabStatus = .normal;
-        for (self.tab_status[0..self.tab_count]) |s| {
-            switch (s) {
+        var it = self.split_tree.iterator();
+        while (it.next()) |entry| {
+            switch (entry.view.aggregateStatus()) {
                 .exited => return .exited,
                 .bell => worst = .bell,
                 .normal => {},
@@ -204,38 +172,14 @@ pub const Workspace = struct {
         return worst;
     }
 
-    /// Whether any of this workspace's tabs is flagged for attention (the
-    /// notification ring). Drives the blue dot/ring on the workspace's
-    /// sidebar row, orthogonal to aggregateStatus (a tab can be both
-    /// "exited" and "waiting"). Pure over tab_attention[0..tab_count] so
-    /// the cross-level surfacing rule is unit-testable.
+    /// Whether any PaneContainer in this workspace has a tab flagged
+    /// for attention.
     pub fn hasAttention(self: *const Workspace) bool {
-        return aggregateAttention(self.tab_attention[0..self.tab_count]);
-    }
-
-    /// Set (or clear, when `text` is empty) the orchestration status
-    /// string for tab `tab_idx`. UTF-8 byte-truncated to MAX_STATUS_BYTES.
-    /// Caller validates tab_idx < tab_count. No allocation.
-    pub fn setTabStatusText(self: *Workspace, tab_idx: usize, text: []const u8) void {
-        const n: u16 = @intCast(@min(text.len, MAX_STATUS_BYTES));
-        @memcpy(self.tab_status_text[tab_idx][0..n], text[0..n]);
-        self.tab_status_text_len[tab_idx] = n;
-    }
-
-    /// The status string for tab `tab_idx` (empty when none).
-    pub fn tabStatusText(self: *const Workspace, tab_idx: usize) []const u8 {
-        return self.tab_status_text[tab_idx][0..self.tab_status_text_len[tab_idx]];
-    }
-
-    /// Set or clear (null) the progress percent for tab `tab_idx`. A value
-    /// is clamped to 0..100.
-    pub fn setTabProgress(self: *Workspace, tab_idx: usize, value: ?u8) void {
-        self.tab_progress[tab_idx] = if (value) |v| @min(v, 100) else null;
-    }
-
-    /// Append a line to tab `tab_idx`'s ring log (newest-first; wraps).
-    pub fn pushTabLog(self: *Workspace, tab_idx: usize, text: []const u8) void {
-        self.tab_log[tab_idx].push(text);
+        var it = self.split_tree.iterator();
+        while (it.next()) |entry| {
+            if (entry.view.hasAttention()) return true;
+        }
+        return false;
     }
 
     /// The workspace description as a UTF-16 slice (empty when unset).
@@ -293,19 +237,14 @@ pub const Workspace = struct {
         if (self.git_branch_len > 0) return true;
         if (self.port_count > 0) return true;
         if (self.pr_state != .none) return true;
-        for (0..self.tab_count) |t| {
-            if (self.tab_status_text_len[t] > 0) return true;
+        var it = self.split_tree.iterator();
+        while (it.next()) |entry| {
+            const container = entry.view;
+            for (container.tab_status_text_len[0..container.tab_count]) |len| {
+                if (len > 0) return true;
+            }
         }
         return false;
-    }
-
-    /// Find the Node.Handle for a pane in this workspace's tab tree.
-    pub fn findHandle(self: *Workspace, tab_idx: usize, pane: *Pane) ?SplitTree(Pane).Node.Handle {
-        var it = self.tab_trees[tab_idx].iterator();
-        while (it.next()) |entry| {
-            if (entry.view == pane) return entry.handle;
-        }
-        return null;
     }
 
     /// Bind (or replace) this workspace's spawn working directory with an
