@@ -64,7 +64,7 @@ This phase performs the foundational architectural change: moving tab ownership 
   - Remove the code that creates `SplitTree(Pane)` per tab (`SplitTree(Pane).init(alloc, pane)`) — in the new model, panes are stored directly in PaneContainer.tabs, not wrapped in per-tab split trees. Pane ref counting is managed by PaneContainer (ref on add, unref on remove).
   - Update `updateTabBarVisibility()` to check the focused container's tab_count instead of the workspace's old tab_count
 
-- [ ] Rewire tab closing and selection to operate on PaneContainers:
+- [x] Rewire tab closing and selection to operate on PaneContainers:
   - `closeTabByIndex(self, idx)`: Now closes tab `idx` in the focused PaneContainer of the active workspace. Use `tabArraysRemove` on the container's `tabArrays()`. Decrement `container.tab_count`. Call `pane.unref(alloc)` on the removed pane. If `container.tab_count` reaches 0, remove the PaneContainer from the workspace split tree (see split close logic below).
   - `closeTabInWorkspace(self, ws_idx, idx)`: Same but targets a specific workspace. The container is identified by finding the container that owns the tab at the given index — or change the API so the caller provides the container reference.
   - `closeTabInWorkspaceForIpc`: Update to route through the new closing logic.

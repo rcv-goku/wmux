@@ -3137,27 +3137,25 @@ pub fn toggleSplitZoom(self: *Window) void {
 
 pub fn toggleSynchronizedInput(self: *Window) void {
     const ws = self.activeWorkspace();
-    if (ws.tab_count == 0) return;
-    const tab = ws.active_tab;
-    ws.tab_synchronized[tab] = !ws.tab_synchronized[tab];
+    const container = ws.focusedContainerOrFirst() orelse return;
+    container.tab_synchronized[container.active_tab] = !container.tab_synchronized[container.active_tab];
     self.invalidateTabBar();
 }
 
 /// Navigate to a tab by GotoTab target (previous, next, last, or index).
 pub fn selectTab(self: *Window, target: apprt.action.GotoTab) bool {
     const ws = self.activeWorkspace();
-    if (ws.tab_count <= 1) return false;
+    const container = ws.focusedContainerOrFirst() orelse return false;
+    if (container.tab_count <= 1) return false;
     const idx: usize = switch (target) {
-        .previous => if (ws.active_tab > 0) ws.active_tab - 1 else ws.tab_count - 1,
-        .next => if (ws.active_tab + 1 < ws.tab_count) ws.active_tab + 1 else 0,
-        .last => ws.tab_count - 1,
+        .previous => if (container.active_tab > 0) container.active_tab - 1 else container.tab_count - 1,
+        .next => if (container.active_tab + 1 < container.tab_count) container.active_tab + 1 else 0,
+        .last => container.tab_count - 1,
         _ => blk: {
-            // GotoTab carries a c_int; clamp non-negative before casting
-            // so a negative sentinel doesn't panic the @intCast.
             const raw = @intFromEnum(target);
             if (raw < 0) return false;
             const n: usize = @intCast(raw);
-            break :blk if (n < ws.tab_count) n else return false;
+            break :blk if (n < container.tab_count) n else return false;
         },
     };
     self.selectTabIndex(idx);
