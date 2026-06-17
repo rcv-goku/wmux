@@ -27,7 +27,7 @@ const w32 = @import("win32.zig");
 /// Maximum bytes of a per-tab status string (set-status). Inline, like
 /// tab titles, so set-status never allocates; over-long text is byte
 /// truncated by the setter.
-const MAX_STATUS_BYTES: usize = 96;
+pub const MAX_STATUS_BYTES: usize = 96;
 
 /// Maximum bytes of a workspace's cached git branch name (Stage 2 sidebar
 /// metadata). Inline so the async refresh result never allocates on apply;
@@ -47,7 +47,7 @@ pub const PrState = enum { none, open, draft, merged, closed };
 const log = std.log.scoped(.win32);
 
 /// Maximum number of tabs per workspace.
-const MAX_TABS: usize = 64;
+pub const MAX_TABS: usize = 64;
 
 /// Maximum number of workspaces per window.
 const MAX_WORKSPACES: usize = 16;
