@@ -6,6 +6,7 @@
 
 const std = @import("std");
 const w32 = @import("win32.zig");
+const PaneContainer = @import("PaneContainer.zig");
 const Window = @import("Window.zig");
 const testing = std.testing;
 
@@ -327,15 +328,9 @@ pub fn formatMetaLineUtf8(wsp: *const Window.Workspace, out: []u8) usize {
         }
     }
 
-    // Latest agent status text: the first non-empty per-tab status.
-    var status: []const u8 = "";
-    for (0..wsp.tab_count) |t| {
-        const s = wsp.tabStatusText(t);
-        if (s.len > 0) {
-            status = s;
-            break;
-        }
-    }
+    // Latest agent status text: the first non-empty per-tab status
+    // across all PaneContainers in the workspace.
+    const status = wsp.firstStatusText();
     if (status.len > 0) {
         if (len > 0) append(out, &len, sep);
         append(out, &len, status);
@@ -1936,7 +1931,9 @@ test "sidebar formatMetaLineUtf8: branch, ports, and status joined with separato
     var ws = metaTestWorkspace();
     ws.setGitBranch("main");
     ws.setPorts(&.{ 3000, 8080 });
-    ws.tab_count = 1;
+    var pc: PaneContainer = .{};
+    pc.tab_count = 1;
+    ws.focused_container = &pc;
     ws.setTabStatusText(0, "running tests");
     var buf: [256]u8 = undefined;
     const n = formatMetaLineUtf8(&ws, &buf);
@@ -1973,7 +1970,9 @@ test "sidebar formatMetaLineUtf8: truncates without overflowing the buffer" {
     var ws = metaTestWorkspace();
     ws.setGitBranch("a-very-long-branch-name-that-keeps-going");
     ws.setPorts(&.{ 3000, 3001, 3002, 3003 });
-    ws.tab_count = 1;
+    var pc: PaneContainer = .{};
+    pc.tab_count = 1;
+    ws.focused_container = &pc;
     ws.setTabStatusText(0, "a long status message that should be dropped");
     // Tiny buffer: composition must stop at the boundary, never overflow.
     var small: [12]u8 = undefined;

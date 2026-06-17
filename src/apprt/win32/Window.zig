@@ -247,6 +247,45 @@ pub const Workspace = struct {
         return false;
     }
 
+    /// The first non-empty per-tab status text across all PaneContainers.
+    pub fn firstStatusText(self: *const Workspace) []const u8 {
+        var it = self.split_tree.iterator();
+        while (it.next()) |entry| {
+            const c = entry.view;
+            for (0..c.tab_count) |t| {
+                if (c.tab_status_text_len[t] > 0) {
+                    return c.tab_status_text[t][0..c.tab_status_text_len[t]];
+                }
+            }
+        }
+        if (self.focused_container) |fc| {
+            for (0..fc.tab_count) |t| {
+                if (fc.tab_status_text_len[t] > 0) {
+                    return fc.tab_status_text[t][0..fc.tab_status_text_len[t]];
+                }
+            }
+        }
+        return "";
+    }
+
+    /// Get status text for tab `idx` of the focused container.
+    pub fn tabStatusText(self: *const Workspace, idx: usize) []const u8 {
+        const c = @constCast(self).focusedContainerOrFirst() orelse return "";
+        if (idx >= c.tab_count) return "";
+        const slen = c.tab_status_text_len[idx];
+        if (slen == 0) return "";
+        return c.tab_status_text[idx][0..slen];
+    }
+
+    /// Set status text for tab `idx` of the focused container.
+    pub fn setTabStatusText(self: *Workspace, idx: usize, text: []const u8) void {
+        const c = self.focusedContainerOrFirst() orelse return;
+        if (idx >= c.tab_count) return;
+        const n: u16 = @intCast(@min(text.len, MAX_STATUS_BYTES));
+        @memcpy(c.tab_status_text[idx][0..n], text[0..n]);
+        c.tab_status_text_len[idx] = n;
+    }
+
     /// Bind (or replace) this workspace's spawn working directory with an
     /// owned heap copy of `path`. Frees any previous binding first.
     pub fn setWorkingDir(self: *Workspace, alloc: Allocator, path: []const u8) Allocator.Error!void {
@@ -2196,7 +2235,7 @@ pub fn moveWorkspaceTo(self: *Window, from: usize, to: usize) void {
 pub fn layoutSplits(self: *Window) void {
     const ws = self.activeWorkspace();
     const tree = ws.split_tree;
-    if (tree == .empty) return;
+    if (tree.isEmpty()) return;
     const rect = self.surfaceRect();
     if (tree.zoomed) |zoomed_handle| {
         var it = tree.iterator();
@@ -2280,7 +2319,7 @@ pub fn updateAttentionRings(self: *Window) void {
     if (self.closing) return self.hideAllRings();
     const ws = self.activeWorkspace();
     const tree = ws.split_tree;
-    if (tree == .empty) return self.hideAllRings();
+    if (tree.isEmpty()) return self.hideAllRings();
     if (tree.zoomed != null) return self.hideAllRings();
 
     const focused_container = ws.focusedContainerOrFirst() orelse return self.hideAllRings();
@@ -2383,7 +2422,7 @@ pub fn updatePaneButtons(self: *Window) void {
     if (self.is_quick_terminal) return self.hideAllPaneButtons();
     const ws = self.activeWorkspace();
     const tree = ws.split_tree;
-    if (tree == .empty) return self.hideAllPaneButtons();
+    if (tree.isEmpty()) return self.hideAllPaneButtons();
 
     const focused_container = ws.focusedContainerOrFirst() orelse return self.hideAllPaneButtons();
     const focused = focused_container.activePane() orelse return self.hideAllPaneButtons();
@@ -2522,7 +2561,7 @@ pub fn onPaneButtonClick(window: *anyopaque, pane: *Pane, action: PaneButtonsMod
 fn paintDividers(self: *Window, hdc: w32.HDC) void {
     const ws = self.activeWorkspace();
     const tree = ws.split_tree;
-    if (tree == .empty) return;
+    if (tree.isEmpty()) return;
     if (!tree.isSplit()) return;
     if (tree.zoomed != null) return;
     const rect = self.surfaceRect();
@@ -2605,7 +2644,7 @@ pub fn repaintDividers(self: *Window) void {
     const hwnd = self.hwnd orelse return;
     const ws = self.activeWorkspace();
     const tree = ws.split_tree;
-    if (tree == .empty) return;
+    if (tree.isEmpty()) return;
     if (!tree.isSplit()) return;
     if (tree.zoomed != null) return;
     const hdc = w32.GetDC(hwnd) orelse return;
@@ -2627,7 +2666,7 @@ const DividerHit = struct {
 fn hitTestDivider(self: *Window, x: i32, y: i32) ?DividerHit {
     const ws = self.activeWorkspace();
     const tree = ws.split_tree;
-    if (tree == .empty) return null;
+    if (tree.isEmpty()) return null;
     if (!tree.isSplit()) return null;
     if (tree.zoomed != null) return null;
     const rect = self.surfaceRect();
@@ -3021,7 +3060,7 @@ pub fn resizeSplit(self: *Window, rs: apprt.action.ResizeSplit) void {
 /// Equalize all splits in the active workspace.
 pub fn equalizeSplits(self: *Window) void {
     const ws = self.activeWorkspace();
-    if (ws.split_tree == .empty) return;
+    if (ws.split_tree.isEmpty()) return;
     const alloc = self.app.core_app.alloc;
 
     const new_tree = ws.split_tree.equalize(alloc) catch return;
@@ -3034,7 +3073,7 @@ pub fn equalizeSplits(self: *Window) void {
 /// Rearrange all splits in the active workspace into a predefined layout.
 pub fn selectLayout(self: *Window, layout: apprt.action.SelectLayout) void {
     const ws = self.activeWorkspace();
-    if (ws.split_tree == .empty) return;
+    if (ws.split_tree.isEmpty()) return;
     const alloc = self.app.core_app.alloc;
 
     const Tree = SplitTree(PaneContainer);
@@ -3052,7 +3091,7 @@ pub fn selectLayout(self: *Window, layout: apprt.action.SelectLayout) void {
 pub fn toggleSplitZoom(self: *Window) void {
     const ws = self.activeWorkspace();
     var tree = &ws.split_tree;
-    if (tree.* == .empty) return;
+    if (tree.isEmpty()) return;
     if (!tree.isSplit()) return;
 
     const focused = ws.focusedContainerOrFirst() orelse return;
@@ -4011,8 +4050,9 @@ fn handleTabBarRightClick(self: *Window, x: i16, y: i16) void {
     }
 
     // Hit-test to find which tab was right-clicked.
+    const ctx_container = self.activeWorkspace().focusedContainerOrFirst() orelse return;
     var clicked_tab: ?usize = null;
-    for (0..self.activeWorkspace().tab_count) |i| {
+    for (0..ctx_container.tab_count) |i| {
         const rect = self.tab_rects[i];
         if (x >= rect.left and x < rect.right) {
             clicked_tab = i;
@@ -5151,7 +5191,8 @@ pub fn windowWndProc(
             }
             // Double-click on tab bar starts inline rename
             if (y < window.tabBarHeight()) {
-                for (0..window.activeWorkspace().tab_count) |i| {
+                const dbl_container = window.activeWorkspace().focusedContainerOrFirst() orelse return 0;
+                for (0..dbl_container.tab_count) |i| {
                     const rect = window.tab_rects[i];
                     if (x >= rect.left and x < rect.right) {
                         window.startTabRename(i);
@@ -5219,11 +5260,12 @@ pub fn windowWndProc(
                 if (!window.drag_active and dx > 5) {
                     window.drag_active = true;
                 }
-                if (window.drag_active and window.activeWorkspace().tab_count > 1) {
+                const drag_container = window.activeWorkspace().focusedContainerOrFirst();
+                if (window.drag_active and drag_container != null and drag_container.?.tab_count > 1) {
                     // Use uniform tab widths for drag target calculation,
                     // not the painted widths (the last tab gets stretched
                     // to fill remaining space, skewing its midpoint).
-                    const tab_count = window.activeWorkspace().tab_count;
+                    const tab_count = drag_container.?.tab_count;
                     const from: usize = @intCast(window.drag_tab);
                     // tab_rects are in client coords (offset by the sidebar
                     // width), so slot 0 starts at tab_rects[0].left, not 0.
@@ -5670,35 +5712,33 @@ test {
 // the file so concurrent Window.zig changes merge cleanly around them.
 // ---------------------------------------------------------------------------
 
-test "unit: workspace aggregate status of an empty workspace is normal" {
-    var ws: Workspace = .{};
-    try testing.expectEqual(TabStatus.normal, ws.aggregateStatus());
+test "unit: PaneContainer aggregate status of an empty container is normal" {
+    var pc: PaneContainer = .{};
+    try testing.expectEqual(TabStatus.normal, pc.aggregateStatus());
     // Status slots past tab_count are ignored even when dirty.
-    ws.tab_status[0] = .exited;
-    try testing.expectEqual(TabStatus.normal, ws.aggregateStatus());
+    pc.tab_status[0] = .exited;
+    try testing.expectEqual(TabStatus.normal, pc.aggregateStatus());
 }
 
-test "unit: workspace aggregate status all-normal stays normal" {
-    var ws: Workspace = .{};
-    ws.tab_count = 3;
-    try testing.expectEqual(TabStatus.normal, ws.aggregateStatus());
+test "unit: PaneContainer aggregate status all-normal stays normal" {
+    var pc: PaneContainer = .{};
+    pc.tab_count = 3;
+    try testing.expectEqual(TabStatus.normal, pc.aggregateStatus());
 }
 
-test "unit: workspace aggregate status exited beats bell" {
-    var ws: Workspace = .{};
-    ws.tab_count = 4;
-    ws.tab_status[1] = .bell;
-    try testing.expectEqual(TabStatus.bell, ws.aggregateStatus());
-    // Any exited tab wins regardless of position relative to the bell.
-    ws.tab_status[3] = .exited;
-    try testing.expectEqual(TabStatus.exited, ws.aggregateStatus());
-    ws.tab_status[3] = .normal;
-    ws.tab_status[0] = .exited;
-    try testing.expectEqual(TabStatus.exited, ws.aggregateStatus());
-    // Shrinking the live range back to one normal tab hides the rest.
-    ws.tab_status[0] = .normal;
-    ws.tab_count = 1;
-    try testing.expectEqual(TabStatus.normal, ws.aggregateStatus());
+test "unit: PaneContainer aggregate status exited beats bell" {
+    var pc: PaneContainer = .{};
+    pc.tab_count = 4;
+    pc.tab_status[1] = .bell;
+    try testing.expectEqual(TabStatus.bell, pc.aggregateStatus());
+    pc.tab_status[3] = .exited;
+    try testing.expectEqual(TabStatus.exited, pc.aggregateStatus());
+    pc.tab_status[3] = .normal;
+    pc.tab_status[0] = .exited;
+    try testing.expectEqual(TabStatus.exited, pc.aggregateStatus());
+    pc.tab_status[0] = .normal;
+    pc.tab_count = 1;
+    try testing.expectEqual(TabStatus.normal, pc.aggregateStatus());
 }
 
 test "unit: aggregateAttention is an OR over the slice" {
@@ -5713,70 +5753,66 @@ test "unit: aggregateAttention is an OR over the slice" {
     try testing.expect(aggregateAttention(flags[0..3]));
 }
 
-test "unit: workspace hasAttention ignores slots past tab_count" {
-    var ws: Workspace = .{};
-    // Empty workspace: no attention even with a dirty slot.
-    ws.tab_attention[0] = true;
-    try testing.expect(!ws.hasAttention());
-    // Becomes visible once the live range covers the set slot.
-    ws.tab_count = 1;
-    try testing.expect(ws.hasAttention());
-    // A set slot beyond the live range stays hidden.
-    ws.tab_attention[0] = false;
-    ws.tab_count = 2;
-    ws.tab_attention[5] = true;
-    try testing.expect(!ws.hasAttention());
-    ws.tab_attention[1] = true;
-    try testing.expect(ws.hasAttention());
+test "unit: PaneContainer hasAttention ignores slots past tab_count" {
+    var pc: PaneContainer = .{};
+    pc.tab_attention[0] = true;
+    try testing.expect(!pc.hasAttention());
+    pc.tab_count = 1;
+    try testing.expect(pc.hasAttention());
+    pc.tab_attention[0] = false;
+    pc.tab_count = 2;
+    pc.tab_attention[5] = true;
+    try testing.expect(!pc.hasAttention());
+    pc.tab_attention[1] = true;
+    try testing.expect(pc.hasAttention());
 }
 
-test "unit: workspace attention is orthogonal to bell/exited status" {
-    // A tab can be both exited and waiting; the two aggregates are
-    // independent so the sidebar can surface both.
-    var ws: Workspace = .{};
-    ws.tab_count = 3;
-    ws.tab_status[0] = .exited;
-    ws.tab_attention[2] = true;
-    try testing.expectEqual(TabStatus.exited, ws.aggregateStatus());
-    try testing.expect(ws.hasAttention());
-    // Clearing attention leaves the status untouched.
-    ws.tab_attention[2] = false;
-    try testing.expectEqual(TabStatus.exited, ws.aggregateStatus());
-    try testing.expect(!ws.hasAttention());
+test "unit: PaneContainer attention is orthogonal to bell/exited status" {
+    var pc: PaneContainer = .{};
+    pc.tab_count = 3;
+    pc.tab_status[0] = .exited;
+    pc.tab_attention[2] = true;
+    try testing.expectEqual(TabStatus.exited, pc.aggregateStatus());
+    try testing.expect(pc.hasAttention());
+    pc.tab_attention[2] = false;
+    try testing.expectEqual(TabStatus.exited, pc.aggregateStatus());
+    try testing.expect(!pc.hasAttention());
 }
 
-test "unit: workspace status/progress/log setters store and clear per tab" {
+test "unit: workspace status text via focused container" {
+    var pc: PaneContainer = .{};
+    pc.tab_count = 2;
     var ws: Workspace = .{};
-    ws.tab_count = 2;
+    ws.focused_container = &pc;
 
-    // Defaults: empty status, no progress, empty log.
     try testing.expectEqualStrings("", ws.tabStatusText(0));
-    try testing.expectEqual(@as(?u8, null), ws.tab_progress[0]);
-    try testing.expect(ws.tab_log[0].latest() == null);
 
     ws.setTabStatusText(0, "running tests");
     try testing.expectEqualStrings("running tests", ws.tabStatusText(0));
-    // Tab 1 is untouched.
     try testing.expectEqualStrings("", ws.tabStatusText(1));
-    // Empty text clears.
     ws.setTabStatusText(0, "");
     try testing.expectEqualStrings("", ws.tabStatusText(0));
+}
 
-    // Progress clamps to 0..100; null clears.
-    ws.setTabProgress(1, 42);
-    try testing.expectEqual(@as(?u8, 42), ws.tab_progress[1]);
-    ws.setTabProgress(1, 200);
-    try testing.expectEqual(@as(?u8, 100), ws.tab_progress[1]);
-    ws.setTabProgress(1, null);
-    try testing.expectEqual(@as(?u8, null), ws.tab_progress[1]);
+test "unit: PaneContainer progress and log store and clear per tab" {
+    var pc: PaneContainer = .{};
+    pc.tab_count = 2;
 
-    // Log ring newest-first per tab.
-    ws.pushTabLog(0, "line one");
-    ws.pushTabLog(0, "line two");
-    try testing.expectEqualStrings("line two", ws.tab_log[0].latest().?);
-    try testing.expectEqualStrings("line one", ws.tab_log[0].at(1).?);
-    // Tab 1's log is independent.
-    try testing.expect(ws.tab_log[1].latest() == null);
+    try testing.expectEqual(@as(?u8, null), pc.tab_progress[0]);
+    try testing.expect(pc.tab_log[0].latest() == null);
+
+    pc.tab_progress[1] = 42;
+    try testing.expectEqual(@as(?u8, 42), pc.tab_progress[1]);
+    pc.tab_progress[1] = 100;
+    try testing.expectEqual(@as(?u8, 100), pc.tab_progress[1]);
+    pc.tab_progress[1] = null;
+    try testing.expectEqual(@as(?u8, null), pc.tab_progress[1]);
+
+    pc.tab_log[0].push("line one");
+    pc.tab_log[0].push("line two");
+    try testing.expectEqualStrings("line two", pc.tab_log[0].latest().?);
+    try testing.expectEqualStrings("line one", pc.tab_log[0].at(1).?);
+    try testing.expect(pc.tab_log[1].latest() == null);
 }
 
 test "unit: workspace metadata setters store and report hasMetadata" {
@@ -5818,7 +5854,9 @@ test "unit: workspace metadata setters store and report hasMetadata" {
 
     // A per-tab status alone also counts as metadata (the second-line
     // status segment).
-    ws.tab_count = 1;
+    var pc: PaneContainer = .{};
+    pc.tab_count = 1;
+    ws.focused_container = &pc;
     ws.setTabStatusText(0, "waiting");
     try testing.expect(ws.hasMetadata());
 }
@@ -6128,31 +6166,26 @@ test "unit: backend dispatch ignores split direction and distro index" {
     );
 }
 
-test "unit: workspace aggregate status slot visibility at the count boundaries" {
-    var ws: Workspace = .{};
+test "unit: PaneContainer aggregate status slot visibility at the count boundaries" {
+    var pc: PaneContainer = .{};
 
-    // tab_count = 0: all 64 slots dirty, none live.
-    for (&ws.tab_status) |*s| s.* = .exited;
-    ws.tab_count = 0;
-    try testing.expectEqual(TabStatus.normal, ws.aggregateStatus());
+    for (&pc.tab_status) |*s| s.* = .exited;
+    pc.tab_count = 0;
+    try testing.expectEqual(TabStatus.normal, pc.aggregateStatus());
 
-    // tab_count = MAX_TABS: no slot is beyond the count, so dirt in
-    // the very last slot must be seen.
-    for (&ws.tab_status) |*s| s.* = .normal;
-    ws.tab_status[MAX_TABS - 1] = .exited;
-    ws.tab_count = MAX_TABS;
-    try testing.expectEqual(TabStatus.exited, ws.aggregateStatus());
+    for (&pc.tab_status) |*s| s.* = .normal;
+    pc.tab_status[MAX_TABS - 1] = .exited;
+    pc.tab_count = MAX_TABS;
+    try testing.expectEqual(TabStatus.exited, pc.aggregateStatus());
 
-    // One below capacity: the same slot is beyond the count again.
-    ws.tab_count = MAX_TABS - 1;
-    try testing.expectEqual(TabStatus.normal, ws.aggregateStatus());
+    pc.tab_count = MAX_TABS - 1;
+    try testing.expectEqual(TabStatus.normal, pc.aggregateStatus());
 
-    // Bell behaves the same at both boundaries.
-    ws.tab_status[MAX_TABS - 1] = .bell;
-    ws.tab_count = MAX_TABS;
-    try testing.expectEqual(TabStatus.bell, ws.aggregateStatus());
-    ws.tab_count = 0;
-    try testing.expectEqual(TabStatus.normal, ws.aggregateStatus());
+    pc.tab_status[MAX_TABS - 1] = .bell;
+    pc.tab_count = MAX_TABS;
+    try testing.expectEqual(TabStatus.bell, pc.aggregateStatus());
+    pc.tab_count = 0;
+    try testing.expectEqual(TabStatus.normal, pc.aggregateStatus());
 }
 
 test "unit: workspace move active fixup table" {

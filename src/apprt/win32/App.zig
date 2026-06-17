@@ -1579,7 +1579,8 @@ pub fn performAction(
                     // current tab. On Win32 there's no separate surface title
                     // UI — the tab title IS the surface identity.
                     const pw = core_surface.rt_surface.parent_window;
-                    pw.startTabRename(pw.activeWorkspace().active_tab);
+                    const rename_container = pw.activeWorkspace().focusedContainerOrFirst() orelse return true;
+                    pw.startTabRename(rename_container.active_tab);
                 },
             }
             return true;
@@ -3778,7 +3779,7 @@ fn ipcTabNew(self: *App, req: *ipc.Request) anyerror!void {
         } else {
             _ = try window.addTabInherit();
         }
-        break :blk window.activeWorkspace().active_tab;
+        break :blk if (window.activeWorkspace().focusedContainerOrFirst()) |c| c.active_tab else 0;
     } else if (command) |c|
         try window.addTabBackground(ws_idx, c, null)
     else

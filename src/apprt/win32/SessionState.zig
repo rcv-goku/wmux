@@ -1,8 +1,8 @@
 //! Persisted session layout for the Win32 runtime (tmux-resurrect style).
 //!
-//! Saves the entire workspace/tab/split layout with working directories
+//! Saves the entire workspace/tab layout with working directories
 //! to `%LOCALAPPDATA%\ghostty\session-state.json` so it can be restored
-//! on restart. Modeled after `WindowState.zig` for file I/O patterns.
+//! on restart.
 //!
 //! ## Limitations (v1)
 //!
@@ -16,8 +16,8 @@ const Allocator = std.mem.Allocator;
 
 const App = @import("App.zig");
 const Pane = @import("Pane.zig");
+const PaneContainer = @import("PaneContainer.zig");
 const Window = @import("Window.zig");
-const SplitTree = @import("../../datastruct/split_tree.zig").SplitTree;
 
 const log = std.log.scoped(.win32);
 
@@ -79,66 +79,25 @@ pub const SessionData = struct {
 
 // ── Save ────────────────────────────────────────────────────────────
 
-/// Walk a SplitTree and produce a SplitNodeData tree. Allocates into
-/// `alloc` (caller-owned lifetime, typically an arena).
-fn walkTree(alloc: Allocator, tree: *const SplitTree(Pane)) !SplitNodeData {
-    if (tree.nodes.len == 0) {
-        // Empty tree: return a leaf with no pane data.
-        return .{ .node_type = .leaf, .pane = .{} };
-    }
-    return walkNode(alloc, tree.nodes, .root);
-}
-
-fn walkNode(
-    alloc: Allocator,
-    nodes: []const SplitTree(Pane).Node,
-    handle: SplitTree(Pane).Node.Handle,
-) !SplitNodeData {
-    const idx = handle.idx();
-    if (idx >= nodes.len) return .{ .node_type = .leaf, .pane = .{} };
-
-    return switch (nodes[idx]) {
-        .leaf => |pane| blk: {
-            var pd: PaneData = .{};
-            switch (pane.content) {
-                .terminal => |surface| {
-                    pd.kind = .terminal;
-                    // Grab the pwd from the terminal. The core surface's
-                    // pwd() locks the renderer mutex and copies, so we
-                    // need an allocator. We'll dupe into the provided alloc.
-                    if (surface.core_surface_ready) {
-                        pd.cwd = surface.core_surface.pwd(alloc) catch null;
-                    }
-                },
-                .browser => {
-                    pd.kind = .browser;
-                },
+/// Build PaneData from a single Pane.
+fn paneDataFrom(alloc: Allocator, pane: *Pane) PaneData {
+    var pd: PaneData = .{};
+    switch (pane.content) {
+        .terminal => |surface| {
+            pd.kind = .terminal;
+            if (surface.core_surface_ready) {
+                pd.cwd = surface.core_surface.pwd(alloc) catch null;
             }
-            break :blk .{ .node_type = .leaf, .pane = pd };
         },
-        .split => |s| blk: {
-            const left_node = try alloc.create(SplitNodeData);
-            left_node.* = try walkNode(alloc, nodes, s.left);
-            const right_node = try alloc.create(SplitNodeData);
-            right_node.* = try walkNode(alloc, nodes, s.right);
-
-            break :blk .{
-                .node_type = .split,
-                .direction = switch (s.layout) {
-                    .horizontal => .horizontal,
-                    .vertical => .vertical,
-                },
-                .ratio = @floatCast(s.ratio),
-                .left = left_node,
-                .right = right_node,
-            };
+        .browser => {
+            pd.kind = .browser;
         },
-    };
+    }
+    return pd;
 }
 
 /// Save the current session state from `window` to disk.
 pub fn save(alloc: Allocator, window: *Window) !void {
-    // Use an arena for all intermediate allocations.
     var arena = std.heap.ArenaAllocator.init(alloc);
     defer arena.deinit();
     const a = arena.allocator();
@@ -148,36 +107,35 @@ pub fn save(alloc: Allocator, window: *Window) !void {
 
     for (0..ws_count) |wi| {
         const ws = &window.workspaces[wi];
-        const tab_count = ws.tab_count;
+        const container = ws.focusedContainerOrFirst();
+        const tab_count = if (container) |c| c.tab_count else 0;
         const tabs = try a.alloc(TabData, tab_count);
 
-        for (0..tab_count) |ti| {
-            var td: TabData = .{};
+        if (container) |c| {
+            for (0..tab_count) |ti| {
+                var td: TabData = .{};
 
-            // Tab title: convert from UTF-16 to UTF-8.
-            const title_len = ws.tab_title_lens[ti];
-            if (title_len > 0) {
-                const utf16 = ws.tab_titles[ti][0..title_len];
-                td.title = std.unicode.utf16LeToUtf8Alloc(a, utf16) catch null;
+                const title_len = c.tab_title_lens[ti];
+                if (title_len > 0) {
+                    const utf16 = c.tab_titles[ti][0..title_len];
+                    td.title = std.unicode.utf16LeToUtf8Alloc(a, utf16) catch null;
+                }
+
+                td.tree = .{ .node_type = .leaf, .pane = paneDataFrom(a, c.tabs[ti]) };
+                tabs[ti] = td;
             }
-
-            // Walk the split tree.
-            td.tree = walkTree(a, &ws.tab_trees[ti]) catch null;
-            tabs[ti] = td;
         }
 
         var wsd: WorkspaceData = .{
             .tabs = tabs,
-            .active_tab = ws.active_tab,
+            .active_tab = if (container) |c| c.active_tab else 0,
         };
 
-        // Workspace name: convert from UTF-16 to UTF-8.
         if (ws.name_len > 0) {
             const utf16 = ws.name[0..ws.name_len];
             wsd.name = std.unicode.utf16LeToUtf8Alloc(a, utf16) catch null;
         }
 
-        // Workspace working_dir (already UTF-8).
         wsd.working_dir = ws.working_dir;
 
         ws_data[wi] = wsd;
@@ -314,7 +272,7 @@ fn jsonString(v: ?std.json.Value) ?[]const u8 {
     };
 }
 
-/// Extract a usize from a `std.json.Value` integer, returning null for non-integer values.
+/// Extract a usize from a `std.json.Value` (integer only).
 fn jsonUsize(v: ?std.json.Value) ?usize {
     const val = v orelse return null;
     return switch (val) {
