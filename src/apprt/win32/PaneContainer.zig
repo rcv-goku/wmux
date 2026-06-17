@@ -75,6 +75,10 @@ new_tab_dropdown_rect: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 
 /// Per-tab close button hit-test rectangles (in window client coords).
 close_btn_rects: [MAX_TABS]w32.RECT = std.mem.zeroes([MAX_TABS]w32.RECT),
 
+/// Full layout rect assigned by layoutSplits (includes tab bar area).
+/// Used for painting per-pane tab bars and hit-testing in split mode.
+layout_rect: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
+
 // -------------------------------------------------------------------------
 // Construction / destruction
 // -------------------------------------------------------------------------

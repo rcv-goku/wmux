@@ -2240,6 +2240,7 @@ pub fn layoutSplits(self: *Window) void {
     if (tree.zoomed) |zoomed_handle| {
         var it = tree.iterator();
         while (it.next()) |entry| {
+            entry.view.layout_rect = rect;
             if (entry.handle == zoomed_handle) {
                 if (entry.view.activePaneHwnd()) |h| {
                     const w = @max(rect.right - rect.left, 1);
@@ -2277,10 +2278,18 @@ fn layoutNode(self: *Window, tree: SplitTree(PaneContainer), handle: SplitTree(P
     if (handle.idx() >= tree.nodes.len) return;
     switch (tree.nodes[handle.idx()]) {
         .leaf => |container| {
+            container.layout_rect = rect;
+
+            var content_rect = rect;
+            if (tree.isSplit() and container.tab_count > 1) {
+                const bar_h = PaneContainer.tabBarHeight(self.scale);
+                content_rect.top += bar_h;
+            }
+
             if (container.activePaneHwnd()) |h| {
-                const w = @max(rect.right - rect.left, 1);
-                const ht = @max(rect.bottom - rect.top, 1);
-                _ = w32.MoveWindow(h, rect.left, rect.top, @intCast(w), @intCast(ht), 1);
+                const w = @max(content_rect.right - content_rect.left, 1);
+                const ht = @max(content_rect.bottom - content_rect.top, 1);
+                _ = w32.MoveWindow(h, content_rect.left, content_rect.top, @intCast(w), @intCast(ht), 1);
                 _ = w32.ShowWindow(h, w32.SW_SHOW);
             }
         },
