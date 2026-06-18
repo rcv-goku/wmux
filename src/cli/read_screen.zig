@@ -25,10 +25,10 @@ pub const Options = struct {
 /// pane is showing (echo a sentinel in one pane, read it back from
 /// another), the foundation of supervised multi-agent flows.
 ///
-/// Usage: `ghostty +read-screen [--workspace I] [--tab J] [--lines N] [--scrollback]`
+/// Usage: `ghostty +read-screen [--workspace I] [--tab J] [--pane P] [--lines N] [--scrollback]`
 ///
-///   * `--workspace I` / `--tab J`: read the active pane of a tab other
-///     than the active one.
+///   * `--workspace I` / `--tab J` / `--pane P`: read the active pane of a
+///     tab in a specific pane container.
 ///   * `--lines N`: return only the last N physical lines of the dump.
 ///   * `--scrollback`: include the full scrollback history (default: only
 ///     the visible active screen).
@@ -91,10 +91,25 @@ const windows_impl = if (builtin.os.tag == .windows) struct {
 
         var workspace: ?u32 = null;
         var tab: ?u32 = null;
+        var pane: ?u32 = null;
         var lines: ?u32 = null;
         var scrollback = false;
         while (iter.next()) |arg| {
-            if (std.mem.startsWith(u8, arg, "--workspace=")) {
+            if (std.mem.startsWith(u8, arg, "--pane=")) {
+                pane = std.fmt.parseInt(u32, arg["--pane=".len..], 10) catch {
+                    try stderr.print("invalid --pane value\n", .{});
+                    return 1;
+                };
+            } else if (std.mem.eql(u8, arg, "--pane")) {
+                const v = iter.next() orelse {
+                    try stderr.print("--pane requires a value\n", .{});
+                    return 1;
+                };
+                pane = std.fmt.parseInt(u32, v, 10) catch {
+                    try stderr.print("invalid --pane value\n", .{});
+                    return 1;
+                };
+            } else if (std.mem.startsWith(u8, arg, "--workspace=")) {
                 workspace = std.fmt.parseInt(u32, arg["--workspace=".len..], 10) catch {
                     try stderr.print("invalid --workspace value\n", .{});
                     return 1;
@@ -157,6 +172,11 @@ const windows_impl = if (builtin.os.tag == .windows) struct {
         if (tab) |n| {
             if (!first) try argbuf.append(alloc, ',');
             try argbuf.writer(alloc).print("\"tab\":{d}", .{n});
+            first = false;
+        }
+        if (pane) |n| {
+            if (!first) try argbuf.append(alloc, ',');
+            try argbuf.writer(alloc).print("\"pane\":{d}", .{n});
             first = false;
         }
         if (lines) |n| {

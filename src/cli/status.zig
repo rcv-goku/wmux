@@ -25,8 +25,8 @@ pub const Options = struct {
 /// pipe — the agent-pushed metadata the session sidebar renders, alongside
 /// `+log` and `+notify`.
 ///
-/// Subcommands (both accept `--workspace I` and `--tab J` to target a tab
-/// other than the active one):
+/// Subcommands (both accept `--workspace I`, `--tab J`, and `--pane P` to
+/// target a tab in a specific pane container):
 ///
 ///   * `set <text>`: Set the addressed tab's status string ("running
 ///     tests", "waiting", "blocked", ...). An empty `""` clears it.
@@ -87,7 +87,7 @@ const windows_impl = if (builtin.os.tag == .windows) struct {
         defer iter.deinit();
 
         const sub_str = iter.next() orelse {
-            try stderr.print("usage: ghostty +status <set <text>|progress <0-100|clear>> [--workspace I] [--tab J]\n", .{});
+            try stderr.print("usage: ghostty +status <set <text>|progress <0-100|clear>> [--workspace I] [--tab J] [--pane P]\n", .{});
             return 1;
         };
         if (std.mem.eql(u8, sub_str, "--help") or std.mem.eql(u8, sub_str, "-h")) {
@@ -103,8 +103,23 @@ const windows_impl = if (builtin.os.tag == .windows) struct {
         var value: ?[]const u8 = null;
         var workspace: ?u32 = null;
         var tab: ?u32 = null;
+        var pane: ?u32 = null;
         while (iter.next()) |arg| {
-            if (std.mem.startsWith(u8, arg, "--workspace=")) {
+            if (std.mem.startsWith(u8, arg, "--pane=")) {
+                pane = std.fmt.parseInt(u32, arg["--pane=".len..], 10) catch {
+                    try stderr.print("invalid --pane value\n", .{});
+                    return 1;
+                };
+            } else if (std.mem.eql(u8, arg, "--pane")) {
+                const v = iter.next() orelse {
+                    try stderr.print("--pane requires a value\n", .{});
+                    return 1;
+                };
+                pane = std.fmt.parseInt(u32, v, 10) catch {
+                    try stderr.print("invalid --pane value\n", .{});
+                    return 1;
+                };
+            } else if (std.mem.startsWith(u8, arg, "--workspace=")) {
                 workspace = std.fmt.parseInt(u32, arg["--workspace=".len..], 10) catch {
                     try stderr.print("invalid --workspace value\n", .{});
                     return 1;
@@ -154,6 +169,7 @@ const windows_impl = if (builtin.os.tag == .windows) struct {
                 try argbuf.writer(alloc).print("{{\"text\":{f}", .{std.json.fmt(text, .{})});
                 if (workspace) |n| try argbuf.writer(alloc).print(",\"workspace\":{d}", .{n});
                 if (tab) |n| try argbuf.writer(alloc).print(",\"tab\":{d}", .{n});
+                if (pane) |n| try argbuf.writer(alloc).print(",\"pane\":{d}", .{n});
                 try argbuf.append(alloc, '}');
                 const request = try std.fmt.allocPrint(
                     alloc,
@@ -184,6 +200,7 @@ const windows_impl = if (builtin.os.tag == .windows) struct {
                 try argbuf.writer(alloc).print("{{\"value\":{d}", .{num});
                 if (workspace) |n| try argbuf.writer(alloc).print(",\"workspace\":{d}", .{n});
                 if (tab) |n| try argbuf.writer(alloc).print(",\"tab\":{d}", .{n});
+                if (pane) |n| try argbuf.writer(alloc).print(",\"pane\":{d}", .{n});
                 try argbuf.append(alloc, '}');
                 const request = try std.fmt.allocPrint(
                     alloc,

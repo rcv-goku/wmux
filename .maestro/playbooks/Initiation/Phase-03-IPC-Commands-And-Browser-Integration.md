@@ -45,13 +45,14 @@ With the PaneContainer architecture and per-pane tab bars in place, this phase u
   - Verify that the returned pane reference correctly maps to the new PaneContainer
   <!-- ipcNewSplit now supports all four directions (right, down, left, up) and accepts a --pane argument to target a specific PaneContainer by index (matching the pattern from ipcTabList/ipcTabNew/ipcTabSelect/ipcTabClose/ipcSend). Changed from ipcResolveTab to ipcResolveWorkspace since split operates on containers, not tabs. CLI split.zig updated: replaced --tab with --pane, added left/up direction validation, updated usage text and doc comment. newSplitInWorkspace correctly creates a new PaneContainer (tabs[0] = new_pane) and returns the new pane whose surface ID is returned to the caller. Build passes, no test regressions. -->
 
-- [ ] Update IPC status and metadata commands to target PaneContainers:
+- [x] Update IPC status and metadata commands to target PaneContainers:
   - `set-status` (sets tab status text): find the pane's container via `findLoc`, set `container.tab_status_text[loc.tab]` and `container.tab_status_text_len[loc.tab]`. Search for the current handler and update it.
   - `set-progress` (sets tab progress): same pattern — find container, set `container.tab_progress[loc.tab]`
   - `log` (appends to tab log): find container, append to `container.tab_log[loc.tab]`
   - `notify` (attention/ring): find container, set `container.tab_attention[loc.tab] = true`, then also set the container-level or workspace-level attention flag for the sidebar
   - `set-synchronized` (toggle synchronized input): find container, set `container.tab_synchronized[loc.tab]`
   - `read-screen` / `capture-pane`: these operate on individual surfaces, not tabs — they should work unchanged as long as the surface lookup is correct
+  <!-- All handlers already used focusedContainerOrFirst() from prior Phase 01 work. Centralized --pane support into ipcResolveTab by adding a container field to IpcTabTarget and parsing the "pane" IPC argument there. This gives all ipcResolveTab callers (ipcSetStatus, ipcSetProgress, ipcLog, ipcReadScreen, ipcCapturePaneCmd, ipcBreakPane, ipcMovePaneToTab, ipcResolveSessionTarget) automatic --pane targeting via containerAtIndex. Updated ipcNotify (ring/clear) and ipcSyncInput with inline --pane support matching the same pattern. Updated CLI subcommands (status.zig, log.zig, notify.zig, read_screen.zig, capture_pane.zig) to parse --pane flag and serialize it into the IPC JSON request. Updated usage text and doc comments. Build passes, containerAtIndex tests pass. -->
 
 - [ ] Integrate browser pane creation with the PaneContainer model. The `addBrowserTab` function (Window.zig:1472) was rewired in Phase 01, but verify the full browser lifecycle:
   - Browser tab creation: `addBrowserTab` creates a BrowserPane, wraps it in a Pane, adds to the focused container's tabs. The async WebView2 creation callback must still find the correct container (via the browser's back-pointer to its Pane, then `findLoc`).

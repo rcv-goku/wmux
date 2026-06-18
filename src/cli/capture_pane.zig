@@ -23,10 +23,10 @@ pub const Options = struct {
 /// in a running Ghostty instance — the tmux `capture-pane` equivalent for
 /// session restore. It communicates over the per-process agent IPC pipe.
 ///
-/// Usage: `ghostty +capture-pane [--workspace I] [--tab J] [--scrollback] [--file path]`
+/// Usage: `ghostty +capture-pane [--workspace I] [--tab J] [--pane P] [--scrollback] [--file path]`
 ///
-///   * `--workspace I` / `--tab J`: capture the active pane of a tab other
-///     than the active one.
+///   * `--workspace I` / `--tab J` / `--pane P`: capture the active pane of
+///     a tab in a specific pane container.
 ///   * `--scrollback`: include the full scrollback history (default: only
 ///     the visible active screen).
 ///   * `--file path`: write the dump to the given file instead of returning
@@ -88,10 +88,25 @@ const windows_impl = if (builtin.os.tag == .windows) struct {
 
         var workspace: ?u32 = null;
         var tab: ?u32 = null;
+        var pane: ?u32 = null;
         var scrollback = false;
         var file_path: ?[]const u8 = null;
         while (iter.next()) |arg| {
-            if (std.mem.startsWith(u8, arg, "--workspace=")) {
+            if (std.mem.startsWith(u8, arg, "--pane=")) {
+                pane = std.fmt.parseInt(u32, arg["--pane=".len..], 10) catch {
+                    try stderr.print("invalid --pane value\n", .{});
+                    return 1;
+                };
+            } else if (std.mem.eql(u8, arg, "--pane")) {
+                const v = iter.next() orelse {
+                    try stderr.print("--pane requires a value\n", .{});
+                    return 1;
+                };
+                pane = std.fmt.parseInt(u32, v, 10) catch {
+                    try stderr.print("invalid --pane value\n", .{});
+                    return 1;
+                };
+            } else if (std.mem.startsWith(u8, arg, "--workspace=")) {
                 workspace = std.fmt.parseInt(u32, arg["--workspace=".len..], 10) catch {
                     try stderr.print("invalid --workspace value\n", .{});
                     return 1;
@@ -148,6 +163,11 @@ const windows_impl = if (builtin.os.tag == .windows) struct {
         if (tab) |n| {
             if (!first) try argbuf.append(alloc, ',');
             try argbuf.writer(alloc).print("\"tab\":{d}", .{n});
+            first = false;
+        }
+        if (pane) |n| {
+            if (!first) try argbuf.append(alloc, ',');
+            try argbuf.writer(alloc).print("\"pane\":{d}", .{n});
             first = false;
         }
         if (scrollback) {

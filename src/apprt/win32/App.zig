@@ -3907,7 +3907,10 @@ fn ipcNotify(self: *App, req: *ipc.Request) anyerror!void {
         return IpcError.BadAction;
 
     const target = try self.ipcResolveWorkspace(req);
-    const container = target.ws.focusedContainerOrFirst() orelse return IpcError.UnknownTab;
+    const container = if (ipcArgU32(req, "pane")) |p|
+        target.ws.containerAtIndex(p) orelse return IpcError.UnknownPane
+    else
+        target.ws.focusedContainerOrFirst() orelse return IpcError.UnknownTab;
     const tab_idx: usize = if (ipcArgU32(req, "tab")) |t| t else container.active_tab;
     if (tab_idx >= container.tab_count) return IpcError.UnknownTab;
 
@@ -4069,15 +4072,19 @@ const IpcTabTarget = struct {
     window: *Window,
     ws: *Window.Workspace,
     ws_idx: usize,
+    container: *PaneContainer,
     tab_idx: usize,
 };
 
 fn ipcResolveTab(self: *App, req: *ipc.Request) IpcError!IpcTabTarget {
     const t = try self.ipcResolveWorkspace(req);
-    const container = t.ws.focusedContainerOrFirst() orelse return IpcError.UnknownTab;
+    const container = if (ipcArgU32(req, "pane")) |p|
+        t.ws.containerAtIndex(p) orelse return IpcError.UnknownPane
+    else
+        t.ws.focusedContainerOrFirst() orelse return IpcError.UnknownTab;
     const tab_idx: usize = if (ipcArgU32(req, "tab")) |tab| tab else container.active_tab;
     if (tab_idx >= container.tab_count) return IpcError.UnknownTab;
-    return .{ .window = t.window, .ws = t.ws, .ws_idx = t.ws_idx, .tab_idx = tab_idx };
+    return .{ .window = t.window, .ws = t.ws, .ws_idx = t.ws_idx, .container = container, .tab_idx = tab_idx };
 }
 
 /// A pane located across every live window, with the coordinates that
@@ -4287,8 +4294,7 @@ fn ipcSetStatus(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const target = try self.ipcResolveTab(req);
     const text = ipcArgString(req, "text") orelse "";
-    const container = target.ws.focusedContainerOrFirst() orelse return IpcError.UnknownTab;
-    if (target.tab_idx >= container.tab_count) return IpcError.UnknownTab;
+    const container = target.container;
     const n: u16 = @intCast(@min(text.len, Window.MAX_STATUS_BYTES));
     @memcpy(container.tab_status_text[target.tab_idx][0..n], text[0..n]);
     container.tab_status_text_len[target.tab_idx] = n;
@@ -4301,8 +4307,7 @@ fn ipcSetStatus(self: *App, req: *ipc.Request) anyerror!void {
 fn ipcSetProgress(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const target = try self.ipcResolveTab(req);
-    const container = target.ws.focusedContainerOrFirst() orelse return IpcError.UnknownTab;
-    if (target.tab_idx >= container.tab_count) return IpcError.UnknownTab;
+    const container = target.container;
     const value = ipc.argI64Named(req, "value") orelse -1;
     if (value < 0) {
         container.tab_progress[target.tab_idx] = null;
@@ -4322,8 +4327,7 @@ fn ipcLog(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const text = ipcArgString(req, "text") orelse return IpcError.MissingText;
     const target = try self.ipcResolveTab(req);
-    const container = target.ws.focusedContainerOrFirst() orelse return IpcError.UnknownTab;
-    if (target.tab_idx >= container.tab_count) return IpcError.UnknownTab;
+    const container = target.container;
     container.tab_log[target.tab_idx].push(text);
 
     // Also surface it in the global notif panel (reuses pushNotif), tied
@@ -4353,8 +4357,7 @@ fn ipcLog(self: *App, req: *ipc.Request) anyerror!void {
 fn ipcReadScreen(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const target = try self.ipcResolveTab(req);
-    const container = target.ws.focusedContainerOrFirst() orelse return IpcError.UnknownTab;
-    if (target.tab_idx >= container.tab_count) return IpcError.UnknownTab;
+    const container = target.container;
     const pane = container.tabs[target.tab_idx];
     const surface = pane.surface() orelse return IpcError.NotATerminal;
     if (!surface.core_surface_ready) return IpcError.CoreNotReady;
@@ -4417,8 +4420,7 @@ fn ipcReadScreen(self: *App, req: *ipc.Request) anyerror!void {
 fn ipcCapturePaneCmd(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const target = try self.ipcResolveTab(req);
-    const container = target.ws.focusedContainerOrFirst() orelse return IpcError.UnknownTab;
-    if (target.tab_idx >= container.tab_count) return IpcError.UnknownTab;
+    const container = target.container;
     const pane = container.tabs[target.tab_idx];
     const surface = pane.surface() orelse return IpcError.NotATerminal;
     if (!surface.core_surface_ready) return IpcError.CoreNotReady;
@@ -4578,8 +4580,7 @@ fn ipcResolveSessionTarget(self: *App, req: *ipc.Request) IpcError!SessionTarget
         return .{ .id = sid, .surface = loc.surface };
     }
     const target = try self.ipcResolveTab(req);
-    const container = target.ws.focusedContainerOrFirst() orelse return IpcError.UnknownTab;
-    const pane = container.activePane() orelse return IpcError.UnknownPane;
+    const pane = target.container.activePane() orelse return IpcError.UnknownPane;
     const surface = pane.surface() orelse return IpcError.NotATerminal;
     if (!surface.core_surface_initialized) return IpcError.CoreNotReady;
     return .{ .id = surface.core_surface.id, .surface = surface };
@@ -4667,7 +4668,10 @@ fn ipcSyncInput(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const action_str = ipcArgString(req, "action") orelse "toggle";
     const target = try self.ipcResolveWorkspace(req);
-    const container = target.ws.focusedContainerOrFirst() orelse return IpcError.UnknownTab;
+    const container = if (ipcArgU32(req, "pane")) |p|
+        target.ws.containerAtIndex(p) orelse return IpcError.UnknownPane
+    else
+        target.ws.focusedContainerOrFirst() orelse return IpcError.UnknownTab;
     const tab_idx: usize = if (ipcArgU32(req, "tab")) |t| t else container.active_tab;
     if (tab_idx >= container.tab_count) return IpcError.UnknownTab;
 
@@ -4689,9 +4693,7 @@ fn ipcSyncInput(self: *App, req: *ipc.Request) anyerror!void {
 fn ipcBreakPane(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const target = try self.ipcResolveTab(req);
-    const container = target.ws.focusedContainerOrFirst() orelse return IpcError.UnknownTab;
-    if (target.tab_idx >= container.tab_count) return IpcError.UnknownTab;
-    const pane = container.tabs[target.tab_idx];
+    const pane = target.container.tabs[target.tab_idx];
     target.window.breakPane(pane);
     server.sendOk(req.id, null) catch {};
 }
@@ -4702,9 +4704,7 @@ fn ipcBreakPane(self: *App, req: *ipc.Request) anyerror!void {
 fn ipcMovePaneToTab(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const target = try self.ipcResolveTab(req);
-    const container = target.ws.focusedContainerOrFirst() orelse return IpcError.UnknownTab;
-    if (target.tab_idx >= container.tab_count) return IpcError.UnknownTab;
-    const pane = container.tabs[target.tab_idx];
+    const pane = target.container.tabs[target.tab_idx];
 
     const dir_str: ?[]const u8 = if (req.args == .object)
         if (req.args.object.get("direction")) |v| switch (v) {
