@@ -25,13 +25,14 @@ pub const Options = struct {
 /// typed — the "send keystrokes" primitive for scripting/agentic control
 /// alongside `+workspace`, `+tab`, and `+browser`.
 ///
-///   `+send <text> [--workspace I] [--tab J] [--enter]`
+///   `+send <text> [--workspace I] [--tab J] [--pane P] [--enter]`
 ///
 /// The text is written to the child PTY of the active pane of the target
-/// tab. Without `--workspace`/`--tab` the active workspace's active tab is
-/// used. `--enter` appends a carriage return so the line is submitted (the
-/// Enter key's PTY encoding). The target pane must be a terminal — a
-/// browser pane has no PTY and is rejected.
+/// tab within the focused pane container (or container `P` if `--pane` is
+/// given). Without `--workspace`/`--tab` the active workspace's focused
+/// container's active tab is used. `--enter` appends a carriage return so
+/// the line is submitted (the Enter key's PTY encoding). The target pane
+/// must be a terminal — a browser pane has no PTY and is rejected.
 ///
 /// The target instance's IPC pipe is `ghostty-ipc-<pid>`. The pid is taken
 /// from the `GHOSTTY_PID` environment variable (exported into every shell
@@ -90,9 +91,24 @@ const windows_impl = if (builtin.os.tag == .windows) struct {
         var text: ?[]const u8 = null;
         var workspace: ?u32 = null;
         var tab: ?u32 = null;
+        var pane: ?u32 = null;
         var enter = false;
         while (iter.next()) |arg| {
-            if (std.mem.startsWith(u8, arg, "--workspace=")) {
+            if (std.mem.startsWith(u8, arg, "--pane=")) {
+                pane = std.fmt.parseInt(u32, arg["--pane=".len..], 10) catch {
+                    try stderr.print("invalid --pane value\n", .{});
+                    return 1;
+                };
+            } else if (std.mem.eql(u8, arg, "--pane")) {
+                const v = iter.next() orelse {
+                    try stderr.print("--pane requires a value\n", .{});
+                    return 1;
+                };
+                pane = std.fmt.parseInt(u32, v, 10) catch {
+                    try stderr.print("invalid --pane value\n", .{});
+                    return 1;
+                };
+            } else if (std.mem.startsWith(u8, arg, "--workspace=")) {
                 workspace = std.fmt.parseInt(u32, arg["--workspace=".len..], 10) catch {
                     try stderr.print("invalid --workspace value\n", .{});
                     return 1;
@@ -147,6 +163,7 @@ const windows_impl = if (builtin.os.tag == .windows) struct {
         try argbuf.writer(alloc).print("{{\"text\":{f}", .{std.json.fmt(send_text, .{})});
         if (workspace) |n| try argbuf.writer(alloc).print(",\"workspace\":{d}", .{n});
         if (tab) |n| try argbuf.writer(alloc).print(",\"tab\":{d}", .{n});
+        if (pane) |n| try argbuf.writer(alloc).print(",\"pane\":{d}", .{n});
         if (enter) try argbuf.appendSlice(alloc, ",\"enter\":true");
         try argbuf.append(alloc, '}');
 

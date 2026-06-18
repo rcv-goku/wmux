@@ -3849,7 +3849,10 @@ fn ipcSend(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const text = ipcArgString(req, "text") orelse return IpcError.MissingText;
     const target = try self.ipcResolveWorkspace(req);
-    const container = target.ws.focusedContainerOrFirst() orelse return IpcError.UnknownTab;
+    const container = if (ipcArgU32(req, "pane")) |p|
+        target.ws.containerAtIndex(p) orelse return IpcError.UnknownPane
+    else
+        target.ws.focusedContainerOrFirst() orelse return IpcError.UnknownTab;
 
     const tab_idx: usize = if (ipcArgU32(req, "tab")) |t| t else container.active_tab;
     if (tab_idx >= container.tab_count) return IpcError.UnknownTab;

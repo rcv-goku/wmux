@@ -24,11 +24,12 @@ With the PaneContainer architecture and per-pane tab bars in place, this phase u
   - `ipcTabClose`: validate `index` against the focused container's `tab_count`, then close the tab at that index. Add optional `--pane` argument. If closing the last tab in the container, the container is removed from the workspace split tree (handled by Phase 01 close logic).
   <!-- Both handlers already used focusedContainerOrFirst() and validated against container.tab_count from prior work. Added --pane argument following the same pattern as ipcTabList/ipcTabNew: ipcArgU32(req, "pane") → containerAtIndex(p) → redirect ws.focused_container. Updated CLI help text in tab.zig to document --pane for select and close subcommands. Build passes, no test regressions. -->
 
-- [ ] Update `ipcSend` in App.zig to send text to the correct pane. Currently it resolves a workspace and tab, then sends to `ws.tab_active_pane[tab]`:
+- [x] Update `ipcSend` in App.zig to send text to the correct pane. Currently it resolves a workspace and tab, then sends to `ws.tab_active_pane[tab]`:
   - Change to get the focused PaneContainer of the addressed workspace
   - Send to `container.activePane()` — the active tab's pane within the focused container
   - The `--tab` argument (if it exists) should select a tab within the focused container, not a workspace-level tab
   - Add optional `--pane` argument to target a specific PaneContainer by index
+  <!-- ipcSend already used focusedContainerOrFirst() and container.tabs[tab_idx] from prior work. Added --pane argument following the same containerAtIndex pattern as ipcTabList/ipcTabNew/ipcTabSelect/ipcTabClose. Updated CLI send.zig to parse --pane flag and serialize it into the IPC JSON request. Updated help text to document --pane. Build passes, no test regressions. -->
 
 - [ ] Update `ipcSurfaceList` and `ipcSurfaceFocus` (search for these in App.zig) to reflect the new hierarchy:
   - `surface-list`: iterate the workspace's split tree leaves (PaneContainers), then within each container iterate `tabs[0..tab_count]`. Output should include the container index for each surface, e.g. `{"pane":0, "tab":0, "type":"terminal", "focused":true, ...}`
