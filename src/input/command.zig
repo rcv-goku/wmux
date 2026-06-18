@@ -483,7 +483,7 @@ fn actionCommands(action: Action.Key) []const Command {
         .toggle_synchronized_input => comptime &.{.{
             .action = .toggle_synchronized_input,
             .title = "Toggle Synchronized Input",
-            .description = "Toggle synchronized input for all panes in the current tab.",
+            .description = "Toggle synchronized input for all tabs in the focused PaneContainer.",
         }},
 
         .save_session => comptime &.{.{

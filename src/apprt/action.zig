@@ -357,9 +357,9 @@ pub const Action = union(Key) {
     swap_split: GotoSplit,
     /// Rearrange all splits in the target window into a predefined layout.
     select_layout: SelectLayout,
-    /// Toggle synchronized input for the current tab (Windows apprt
-    /// only). When active, keyboard input to the focused pane is
-    /// broadcast to all terminal panes in the same tab.
+    /// Toggle synchronized input for the active tab in the focused
+    /// PaneContainer (Windows apprt only). When active, keyboard input
+    /// is broadcast to all other tabs in the same PaneContainer.
     toggle_synchronized_input,
     /// Break the focused pane out of its split into a new tab.
     break_pane,

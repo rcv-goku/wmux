@@ -703,9 +703,9 @@ pub const Action = union(enum) {
     ///     process is not running
     toggle_readonly,
 
-    /// Toggle synchronized input for the current tab. When active,
-    /// keyboard input to the focused pane is broadcast to all terminal
-    /// panes in the same tab simultaneously. Similar to tmux
+    /// Toggle synchronized input for the active tab in the focused
+    /// PaneContainer. When active, keyboard input is broadcast to all
+    /// other tabs in the same PaneContainer. Similar to tmux
     /// `synchronize-panes`.
     toggle_synchronized_input,
 

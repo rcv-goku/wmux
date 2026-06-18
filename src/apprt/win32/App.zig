@@ -4661,9 +4661,9 @@ fn ipcSelectLayout(self: *App, req: *ipc.Request) anyerror!void {
     server.sendOk(req.id, null) catch {};
 }
 
-/// sync-input {action:"toggle"|"on"|"off", [workspace], [tab]} → toggle or
-/// set synchronized input for the addressed tab. Defaults to active
-/// workspace/tab.
+/// sync-input {action:"toggle"|"on"|"off", [workspace], [tab], [pane]} →
+/// toggle or set synchronized input for the addressed tab. Defaults to
+/// active workspace and focused PaneContainer's active tab.
 fn ipcSyncInput(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const action_str = ipcArgString(req, "action") orelse "toggle";
@@ -5125,7 +5125,7 @@ fn tick(self: *App) void {
 }
 
 /// Broadcast a key event (WM_KEYDOWN/WM_KEYUP) from the focused surface
-/// to all other terminal panes in the same tab when synchronized input is
+/// to all other tabs in the same PaneContainer when synchronized input is
 /// active. Skipped when the surface is already receiving a broadcast (the
 /// sync_broadcast guard prevents infinite loops).
 fn broadcastKeyEvent(source: *Surface, wparam: usize, lparam: isize, action: input.Action) void {

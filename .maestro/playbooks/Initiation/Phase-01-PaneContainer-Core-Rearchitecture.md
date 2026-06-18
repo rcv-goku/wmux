@@ -127,7 +127,7 @@ This phase performs the foundational architectural change: moving tab ownership 
   - Sidebar rendering that reads workspace status: update to iterate PaneContainers instead of old tab arrays. The sidebar dot aggregation (`aggregateStatus`) now iterates containers.
   - `selectTabIndex` callers that switch both workspace and tab: ensure they switch workspace first, then operate on the new workspace's focused container
 
-- [ ] Build the project and fix all compilation errors. Work through each error methodically:
+- [x] Build the project and fix all compilation errors. Work through each error methodically:
   - Run `zig build` (or the project's build command — check `build.zig` for the build configuration)
   - Fix type mismatches where code still references old Workspace fields (`tab_trees`, `tab_active_pane`, `tab_count`, `active_tab`, etc.)
   - Fix references to `Loc.tab` that need updating to `Loc.container` + `Loc.tab`
