@@ -11,13 +11,13 @@ With Phase 01's rearchitecture complete, each PaneContainer owns its own tabs �
   - Return the tab bar height actually drawn (0 if the container has <=1 tab and the tab bar is hidden), so the caller knows how much vertical space the tab bar consumed
   - Store hit-test rects in PaneContainer for per-container click handling — add `tab_rects: [MAX_TABS]w32.RECT = undefined` and `tab_rect_count: usize = 0` fields, plus `new_tab_btn_rect: w32.RECT = undefined` and `close_btn_rects: [MAX_TABS]w32.RECT = undefined` for the "+" button and per-tab close buttons
 
-- [ ] Modify `layoutSplits` in Window.zig to account for per-pane tab bar height. When laying out PaneContainer leaves in the split tree:
+- [x] Modify `layoutSplits` in Window.zig to account for per-pane tab bar height. When laying out PaneContainer leaves in the split tree:
   - For each leaf PaneContainer, if it has >1 tab (tab bar visible), subtract `tabBarHeight()` from the top of the allocated rect. The tab bar occupies `rect.top` to `rect.top + bar_h`, and the content pane occupies `rect.top + bar_h` to `rect.bottom`
   - Store the full rect (including tab bar area) on the PaneContainer for later use in painting and hit-testing — add a `layout_rect: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 }` field to PaneContainer
   - Position the active tab's pane HWND at the content rect (below the tab bar), not the full rect
   - When there's only ONE PaneContainer in the workspace (no splits), DO NOT subtract tab bar height from the container's rect — the window-level tab bar at the top handles rendering. Set a flag or check `ws.split_tree.isSplit()` to distinguish this case
 
-- [ ] Replace the window-level `paintTabBar` with a dispatch that routes to per-container rendering when splits exist:
+- [x] Replace the window-level `paintTabBar` with a dispatch that routes to per-container rendering when splits exist:
   - If the workspace has only one PaneContainer (no splits): render using the existing window-top tab bar position and logic (delegates to the container's `paintTabBar` using the window-top rect). This preserves the current single-pane visual appearance exactly.
   - If the workspace has multiple PaneContainers (splits): skip the window-top tab bar entirely. Instead, during `WM_PAINT` / paint handling, iterate all PaneContainer leaves and call each container's `paintTabBar` using their `layout_rect`. Each container draws its own tab bar within its allocated space.
   - Update `updateTabBarVisibility()`: when splits exist, the window-level `tab_bar_visible` should be false (no window-top bar). Each container manages its own tab bar visibility internally based on its `tab_count`.

@@ -213,8 +213,11 @@ pub fn paintTabBar(
     tab_font: ?*anyopaque,
     hovered_tab: ?usize,
     hovered_close: ?usize,
+    force_visible: bool,
+    hovered_new_tab: bool,
+    hovered_dropdown: bool,
 ) i32 {
-    if (self.tab_count <= 1) {
+    if (!force_visible and self.tab_count <= 1) {
         self.tab_rect_count = 0;
         return 0;
     }
@@ -456,6 +459,14 @@ pub fn paintTabBar(
             .bottom = rect.top + bar_h,
         };
 
+        if (hovered_new_tab) {
+            var btn_rect = w32.RECT{ .left = btn_left, .top = 0, .right = btn_right, .bottom = bar_h };
+            if (w32.CreateSolidBrush(hover_color)) |brush| {
+                _ = w32.FillRect(mem_dc, &btn_rect, brush);
+                _ = w32.DeleteObject(@ptrCast(brush));
+            }
+        }
+
         _ = w32.SetTextColor(mem_dc, inactive_text_color);
         const plus_char = std.unicode.utf8ToUtf16LeStringLiteral("+");
         var plus_rect = w32.RECT{
@@ -483,14 +494,22 @@ pub fn paintTabBar(
             .bottom = rect.top + bar_h,
         };
 
-        _ = w32.SetTextColor(mem_dc, inactive_text_color);
-        const chevron_char = std.unicode.utf8ToUtf16LeStringLiteral("\u{25BE}");
         var dd_rect_local = w32.RECT{
             .left = dd_left,
             .top = 0,
             .right = dd_left + dropdown_btn_w,
             .bottom = bar_h,
         };
+
+        if (hovered_dropdown) {
+            if (w32.CreateSolidBrush(hover_color)) |brush| {
+                _ = w32.FillRect(mem_dc, &dd_rect_local, brush);
+                _ = w32.DeleteObject(@ptrCast(brush));
+            }
+        }
+
+        _ = w32.SetTextColor(mem_dc, if (hovered_dropdown) active_text_color else inactive_text_color);
+        const chevron_char = std.unicode.utf8ToUtf16LeStringLiteral("\u{25BE}");
         _ = w32.DrawTextW(
             mem_dc,
             chevron_char,

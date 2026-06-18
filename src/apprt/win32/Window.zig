@@ -2910,11 +2910,16 @@ pub fn newSplitInWorkspace(
 
     if (focus) {
         ws.focused_container = new_container;
-        if (is_visible) self.layoutSplits();
+        if (is_visible) {
+            self.updateTabBarVisibility();
+            self.layoutSplits();
+        }
         new_pane.focus();
     } else {
-        if (ws_idx == self.active_workspace)
+        if (ws_idx == self.active_workspace) {
+            self.updateTabBarVisibility();
             self.layoutSplits();
+        }
     }
     self.invalidateSidebar();
     return new_pane;
@@ -3311,6 +3316,16 @@ fn updateTabBarVisibility(self: *Window) void {
         self.tab_bar_visible = false;
         return;
     }
+    // When splits exist, the window-level tab bar is hidden — each
+    // PaneContainer paints its own tab bar within its layout_rect.
+    const ws = self.activeWorkspace();
+    if (ws.split_tree.isSplit()) {
+        if (self.tab_bar_visible) {
+            self.tab_bar_visible = false;
+            self.handleResize();
+        }
+        return;
+    }
     const show_config = self.app.config.@"window-show-tab-bar";
     // The top tab bar now COEXISTS with the sidebar: workspaces live in
     // the sidebar, and the tab bar shows the active workspace's tabs
@@ -3333,6 +3348,26 @@ fn updateTabBarVisibility(self: *Window) void {
 /// Invalidate the tab bar region so it gets repainted.
 pub fn invalidateTabBar(self: *Window) void {
     const hwnd = self.hwnd orelse return;
+    const ws = self.activeWorkspace();
+
+    if (ws.split_tree.isSplit()) {
+        var it = ws.split_tree.iterator();
+        while (it.next()) |entry| {
+            const container = entry.view;
+            if (container.tab_count > 1) {
+                const bar_h = PaneContainer.tabBarHeight(self.scale);
+                var r = w32.RECT{
+                    .left = container.layout_rect.left,
+                    .top = container.layout_rect.top,
+                    .right = container.layout_rect.right,
+                    .bottom = container.layout_rect.top + bar_h,
+                };
+                _ = w32.InvalidateRect(hwnd, &r, 0);
+            }
+        }
+        return;
+    }
+
     var rect = w32.RECT{
         .left = 0,
         .top = 0,
@@ -3427,339 +3462,80 @@ fn hitTestReshowStrip(self: *const Window, x: i32, y: i32) bool {
     return x >= 0 and x < self.sidebarReshowStripWidth() and y >= self.tabBarHeight();
 }
 
-/// Paint the tab bar using double-buffered GDI painting.
-/// Draws tab backgrounds, text labels, close buttons (x), and the new-tab (+) button.
+/// Paint the tab bar by dispatching to PaneContainer rendering.
+/// In split mode, each container paints its own tab bar within its layout_rect.
+/// In single-pane mode, the focused container paints at the window-top position.
 fn paintTabBar(self: *Window, hdc_screen: w32.HDC) void {
-    const hwnd = self.hwnd orelse return;
-    // The top tab bar paints the active workspace's tabs.
     const ws = self.activeWorkspace();
-    const container = ws.focusedContainerOrFirst() orelse return;
 
-    // If the tab bar is not visible, there is nothing to paint.
+    // When splits exist, each PaneContainer paints its own tab bar
+    // within its layout_rect. The window-top bar is hidden.
+    if (ws.split_tree.isSplit()) {
+        var it = ws.split_tree.iterator();
+        while (it.next()) |entry| {
+            const container = entry.view;
+            const is_focused = if (ws.focused_container) |fc| container.eql(fc) else false;
+            _ = container.paintTabBar(
+                hdc_screen,
+                container.layout_rect,
+                self.scale,
+                self.app.config,
+                is_focused,
+                self.tab_font,
+                null,
+                null,
+                false,
+                false,
+                false,
+            );
+        }
+        return;
+    }
+
+    // Single-pane mode: delegate to the container's paintTabBar using
+    // the window-top rect (offset by the sidebar width).
+    const container = ws.focusedContainerOrFirst() orelse return;
     if (!self.tab_bar_visible) return;
 
-    const bar_h = self.tabBarHeight();
-    if (bar_h <= 0) return;
-
-    // The tab bar shares the top strip with the sidebar: it starts at
-    // the sidebar's right edge and spans the remaining width. The
-    // offscreen bitmap is bar-local (x=0 is the bar's left edge), but the
-    // stored hit-test rects below add sidebar_w so they are in TRUE
-    // client coords — handleTabBarClick/MouseMove compare them against the
-    // raw client cursor X.
+    const hwnd = self.hwnd orelse return;
     const sidebar_w = self.sidebarWidth();
 
-    // Get client rect width and subtract the sidebar.
     var client_rect: w32.RECT = undefined;
     if (w32.GetClientRect(hwnd, &client_rect) == 0) return;
-    const client_w = client_rect.right - client_rect.left - sidebar_w;
-    if (client_w <= 0) return;
 
-    // Double-buffer: create offscreen DC and bitmap.
-    const mem_dc = w32.CreateCompatibleDC(hdc_screen) orelse return;
-    defer _ = w32.DeleteDC(mem_dc);
+    const bar_h = self.tabBarHeight();
+    const top_rect = w32.RECT{
+        .left = sidebar_w,
+        .top = 0,
+        .right = client_rect.right,
+        .bottom = bar_h,
+    };
 
-    const mem_bmp = w32.CreateCompatibleBitmap(hdc_screen, client_w, bar_h) orelse return;
-    const old_bmp = w32.SelectObject(mem_dc, mem_bmp);
-    defer {
-        _ = w32.SelectObject(mem_dc, old_bmp);
-        _ = w32.DeleteObject(mem_bmp);
+    // Convert Window hover state to PaneContainer-compatible format.
+    const ht: ?usize = if (self.hover_tab >= 0) @as(usize, @intCast(self.hover_tab)) else null;
+    const hc: ?usize = if (self.hover_close and self.hover_tab >= 0) @as(usize, @intCast(self.hover_tab)) else null;
+
+    _ = container.paintTabBar(
+        hdc_screen,
+        top_rect,
+        self.scale,
+        self.app.config,
+        true,
+        self.tab_font,
+        ht,
+        hc,
+        true,
+        self.hover_new_tab,
+        self.hover_new_tab_dropdown,
+    );
+
+    // Copy hit-test rects from the container back to Window fields so
+    // existing handleTabBarClick/handleTabBarMouseMove work unchanged.
+    for (0..container.tab_rect_count) |i| {
+        self.tab_rects[i] = container.tab_rects[i];
     }
-
-    // --- Colors ---
-    const bg = self.app.config.background;
-    // Bar background: terminal bg + 20 brightness per channel (slightly lighter).
-    const bar_r: u8 = @min(@as(u16, bg.r) + 20, 255);
-    const bar_g: u8 = @min(@as(u16, bg.g) + 20, 255);
-    const bar_b: u8 = @min(@as(u16, bg.b) + 20, 255);
-    const bar_color = w32.RGB(bar_r, bar_g, bar_b);
-
-    // Hover background: bar bg + 15 more (total +35 from terminal bg).
-    const hover_r: u8 = @min(@as(u16, bar_r) + 15, 255);
-    const hover_g: u8 = @min(@as(u16, bar_g) + 15, 255);
-    const hover_b: u8 = @min(@as(u16, bar_b) + 15, 255);
-    const hover_color = w32.RGB(hover_r, hover_g, hover_b);
-
-    // Active tab background: terminal bg (darker than bar).
-    const active_bg_color = w32.RGB(bg.r, bg.g, bg.b);
-
-    // Accent line color (blue).
-    const accent_color = w32.RGB(0x3D, 0x8E, 0xF8);
-
-    // Text colors.
-    const active_text_color = w32.RGB(230, 230, 230);
-    const inactive_text_color = w32.RGB(150, 150, 150);
-
-    // Close button colors.
-    const close_normal_color = w32.RGB(150, 150, 150);
-    const close_hover_color = w32.RGB(232, 65, 65);
-
-    // --- Fill bar background ---
-    var bar_rect = w32.RECT{ .left = 0, .top = 0, .right = client_w, .bottom = bar_h };
-    const bar_brush = w32.CreateSolidBrush(bar_color) orelse return;
-    _ = w32.FillRect(mem_dc, &bar_rect, bar_brush);
-    _ = w32.DeleteObject(@ptrCast(bar_brush));
-
-    // --- Select font and set text mode ---
-    var old_font: ?*anyopaque = null;
-    if (self.tab_font) |font| {
-        old_font = w32.SelectObject(mem_dc, font);
-    }
-    defer {
-        if (old_font) |f| _ = w32.SelectObject(mem_dc, f);
-    }
-    _ = w32.SetBkMode(mem_dc, w32.TRANSPARENT);
-
-    // --- Calculate tab geometry ---
-    const new_tab_btn_w: i32 = @intFromFloat(@round(36.0 * self.scale));
-    const dropdown_btn_w: i32 = @intFromFloat(@round(20.0 * self.scale));
-    const close_btn_w: i32 = @intFromFloat(@round(20.0 * self.scale));
-    const text_pad: i32 = @intFromFloat(@round(10.0 * self.scale));
-    const accent_h: i32 = @intFromFloat(@round(2.0 * self.scale));
-
-    const tab_count_i32: i32 = @intCast(container.tab_count);
-    const available_w = client_w - new_tab_btn_w - dropdown_btn_w;
-
-    // Calculate each tab's width: proportional, min 60px.
-    const min_tab_w: i32 = @intFromFloat(@round(60.0 * self.scale));
-    const max_tab_w: i32 = @intFromFloat(@round(200.0 * self.scale));
-
-    var tab_w: i32 = if (tab_count_i32 > 0)
-        @divTrunc(available_w, tab_count_i32)
-    else
-        0;
-    tab_w = @max(tab_w, min_tab_w);
-    tab_w = @min(tab_w, max_tab_w);
-
-    // --- Draw each tab ---
-    var x: i32 = 0;
-    for (0..container.tab_count) |i| {
-        const is_active = (i == container.active_tab);
-        const is_hovered = (@as(isize, @intCast(i)) == self.hover_tab);
-
-        // Last tab gets remainder width to fill the available area.
-        const this_tab_w: i32 = if (i == container.tab_count - 1 and tab_count_i32 > 0)
-            @max(available_w - x, min_tab_w)
-        else
-            tab_w;
-
-        // Store hit-test rect in TRUE client coords (the draw rects below
-        // stay bar-local; only the stored rect adds sidebar_w).
-        self.tab_rects[i] = w32.RECT{
-            .left = sidebar_w + x,
-            .top = 0,
-            .right = sidebar_w + x + this_tab_w,
-            .bottom = bar_h,
-        };
-
-        // Draw tab background. CreateSolidBrush failures are rare (GDI
-        // handle exhaustion) and must NOT skip the loop body's geometry
-        // update at the bottom — `continue`ing would leave subsequent
-        // tabs sharing the same x position.
-        if (is_active) {
-            var tab_rect = w32.RECT{ .left = x, .top = 0, .right = x + this_tab_w, .bottom = bar_h };
-            if (w32.CreateSolidBrush(active_bg_color)) |brush| {
-                _ = w32.FillRect(mem_dc, &tab_rect, brush);
-                _ = w32.DeleteObject(@ptrCast(brush));
-            }
-
-            // Draw accent line at bottom.
-            var accent_rect = w32.RECT{
-                .left = x,
-                .top = bar_h - accent_h,
-                .right = x + this_tab_w,
-                .bottom = bar_h,
-            };
-            if (w32.CreateSolidBrush(accent_color)) |brush| {
-                _ = w32.FillRect(mem_dc, &accent_rect, brush);
-                _ = w32.DeleteObject(@ptrCast(brush));
-            }
-        } else if (is_hovered) {
-            var hover_rect = w32.RECT{ .left = x, .top = 0, .right = x + this_tab_w, .bottom = bar_h };
-            if (w32.CreateSolidBrush(hover_color)) |brush| {
-                _ = w32.FillRect(mem_dc, &hover_rect, brush);
-                _ = w32.DeleteObject(@ptrCast(brush));
-            }
-        }
-
-        // Attention dot: a small blue glyph at the tab's left edge when a
-        // pane in this tab is waiting (the notification ring), surfacing
-        // the attention on the top tab bar even when the pane isn't the
-        // visible one. The title is shifted right by the dot width so it
-        // doesn't overlap. The active tab's pending attention is cleared
-        // on select, so in practice the dot only shows on inactive tabs.
-        const attn_dot_w: i32 = if (container.tab_attention[i]) @intFromFloat(@round(12.0 * self.scale)) else 0;
-        if (attn_dot_w > 0) {
-            _ = w32.SetTextColor(mem_dc, accent_color);
-            const dot_char = std.unicode.utf8ToUtf16LeStringLiteral("\u{25CF}");
-            var dot_rect = w32.RECT{
-                .left = x + text_pad,
-                .top = 0,
-                .right = x + text_pad + attn_dot_w,
-                .bottom = bar_h,
-            };
-            _ = w32.DrawTextW(
-                mem_dc,
-                dot_char,
-                1,
-                &dot_rect,
-                w32.DT_LEFT | w32.DT_VCENTER | w32.DT_SINGLELINE | w32.DT_NOPREFIX,
-            );
-        }
-
-        // Sync indicator: a small orange glyph when synchronized input
-        // is active on this tab, drawn between the attention dot and the
-        // title so the user has a persistent visual cue.
-        const sync_indicator_w: i32 = if (container.tab_synchronized[i]) @intFromFloat(@round(14.0 * self.scale)) else 0;
-        if (sync_indicator_w > 0) {
-            _ = w32.SetTextColor(mem_dc, w32.RGB(0xE8, 0x9C, 0x20));
-            const sync_char = std.unicode.utf8ToUtf16LeStringLiteral("\u{21C4}");
-            var sync_rect = w32.RECT{
-                .left = x + text_pad + attn_dot_w,
-                .top = 0,
-                .right = x + text_pad + attn_dot_w + sync_indicator_w,
-                .bottom = bar_h,
-            };
-            _ = w32.DrawTextW(
-                mem_dc,
-                sync_char,
-                1,
-                &sync_rect,
-                w32.DT_LEFT | w32.DT_VCENTER | w32.DT_SINGLELINE | w32.DT_NOPREFIX,
-            );
-        }
-
-        // Draw tab title text.
-        const title_len = container.tab_title_lens[i];
-        if (title_len > 0) {
-            _ = w32.SetTextColor(mem_dc, if (is_active) active_text_color else inactive_text_color);
-            var text_rect = w32.RECT{
-                .left = x + text_pad + attn_dot_w + sync_indicator_w,
-                .top = 0,
-                .right = x + this_tab_w - close_btn_w - text_pad,
-                .bottom = bar_h,
-            };
-            _ = w32.DrawTextW(
-                mem_dc,
-                @ptrCast(&container.tab_titles[i]),
-                @intCast(title_len),
-                &text_rect,
-                w32.DT_LEFT | w32.DT_VCENTER | w32.DT_SINGLELINE | w32.DT_END_ELLIPSIS | w32.DT_NOPREFIX,
-            );
-        }
-
-        // Draw close button (x) — visible on active or hovered tabs.
-        if (is_active or is_hovered) {
-            const close_x = x + this_tab_w - close_btn_w - @divTrunc(text_pad, 2);
-            const close_y_center = @divTrunc(bar_h, 2);
-            const close_text_color = if (is_hovered and self.hover_close and @as(isize, @intCast(i)) == self.hover_tab)
-                close_hover_color
-            else
-                close_normal_color;
-
-            _ = w32.SetTextColor(mem_dc, close_text_color);
-            const x_char = std.unicode.utf8ToUtf16LeStringLiteral("\u{00D7}"); // multiplication sign as close
-            var close_rect = w32.RECT{
-                .left = close_x,
-                .top = close_y_center - @divTrunc(close_btn_w, 2),
-                .right = close_x + close_btn_w,
-                .bottom = close_y_center + @divTrunc(close_btn_w, 2),
-            };
-            _ = w32.DrawTextW(
-                mem_dc,
-                x_char,
-                1,
-                &close_rect,
-                w32.DT_CENTER | w32.DT_VCENTER | w32.DT_SINGLELINE | w32.DT_NOPREFIX,
-            );
-        }
-
-        x += this_tab_w;
-    }
-
-    // --- Draw new-tab (+) button ---
-    // btn_left/btn_right are bar-local (for the offscreen draw); the
-    // stored hit-test rect adds sidebar_w to reach client coords.
-    {
-        const btn_left = x;
-        const btn_right = x + new_tab_btn_w;
-        self.new_tab_rect = w32.RECT{
-            .left = sidebar_w + btn_left,
-            .top = 0,
-            .right = sidebar_w + btn_right,
-            .bottom = bar_h,
-        };
-
-        // Hover highlight for new-tab button.
-        if (self.hover_new_tab) {
-            var btn_rect = w32.RECT{ .left = btn_left, .top = 0, .right = btn_right, .bottom = bar_h };
-            const nt_brush = w32.CreateSolidBrush(hover_color);
-            if (nt_brush) |brush| {
-                _ = w32.FillRect(mem_dc, &btn_rect, brush);
-                _ = w32.DeleteObject(@ptrCast(brush));
-            }
-        }
-
-        _ = w32.SetTextColor(mem_dc, inactive_text_color);
-        const plus_char = std.unicode.utf8ToUtf16LeStringLiteral("+");
-        var plus_rect = w32.RECT{
-            .left = btn_left,
-            .top = 0,
-            .right = btn_right,
-            .bottom = bar_h,
-        };
-        _ = w32.DrawTextW(
-            mem_dc,
-            plus_char,
-            1,
-            &plus_rect,
-            w32.DT_CENTER | w32.DT_VCENTER | w32.DT_SINGLELINE | w32.DT_NOPREFIX,
-        );
-    }
-
-    // --- Draw backend picker (▾) segment beside the new-tab button ---
-    // dd_left_local is bar-local (the "+" button's local right edge);
-    // the stored hit-test rect adds sidebar_w to reach client coords.
-    {
-        const dd_left_local = self.new_tab_rect.right - sidebar_w;
-        self.new_tab_dropdown_rect = w32.RECT{
-            .left = sidebar_w + dd_left_local,
-            .top = 0,
-            .right = sidebar_w + dd_left_local + dropdown_btn_w,
-            .bottom = bar_h,
-        };
-
-        var dd_rect_local = w32.RECT{
-            .left = dd_left_local,
-            .top = 0,
-            .right = dd_left_local + dropdown_btn_w,
-            .bottom = bar_h,
-        };
-
-        // Hover highlight, independent of the "+" half.
-        if (self.hover_new_tab_dropdown) {
-            if (w32.CreateSolidBrush(hover_color)) |brush| {
-                _ = w32.FillRect(mem_dc, &dd_rect_local, brush);
-                _ = w32.DeleteObject(@ptrCast(brush));
-            }
-        }
-
-        _ = w32.SetTextColor(mem_dc, if (self.hover_new_tab_dropdown)
-            active_text_color
-        else
-            inactive_text_color);
-        const chevron_char = std.unicode.utf8ToUtf16LeStringLiteral("\u{25BE}");
-        _ = w32.DrawTextW(
-            mem_dc,
-            chevron_char,
-            1,
-            &dd_rect_local,
-            w32.DT_CENTER | w32.DT_VCENTER | w32.DT_SINGLELINE | w32.DT_NOPREFIX,
-        );
-    }
-
-    // --- BitBlt to screen, offset right by the sidebar width ---
-    _ = w32.BitBlt(hdc_screen, sidebar_w, 0, client_w, bar_h, mem_dc, 0, 0, w32.SRCCOPY);
+    self.new_tab_rect = container.new_tab_btn_rect;
+    self.new_tab_dropdown_rect = container.new_tab_dropdown_rect;
 }
 
 /// Toggle fullscreen mode on the top-level window.
