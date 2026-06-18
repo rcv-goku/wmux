@@ -45,7 +45,7 @@ This final phase completes the rearchitecture by updating session persistence, s
   - The sidebar's status text line (agent-pushed label) should show the focused container's active tab's status text — this is the most relevant information for the user
   <!-- Already implemented in prior phases: Workspace.aggregateStatus() and hasAttention() walk the split_tree of PaneContainers; firstStatusText() prioritizes focused container's active tab; sidebar paint() uses these workspace-level methods; no tab count is shown in the sidebar. All sidebar tests pass. -->
 
-- [ ] Handle keyboard shortcuts and action dispatch for the new hierarchy. Search Window.zig for all action handlers that reference the old tab/split model and verify they work correctly:
+- [x] Handle keyboard shortcuts and action dispatch for the new hierarchy. Search Window.zig for all action handlers that reference the old tab/split model and verify they work correctly:
   - `Ctrl+Shift+T` (new tab): creates tab in focused container — verify
   - `Ctrl+W` or `Ctrl+Shift+W` (close tab/pane): closes focused container's active tab — verify
   - `Ctrl+Tab` / `Ctrl+Shift+Tab` (next/prev tab): cycles tabs within focused container — verify
@@ -55,6 +55,7 @@ This final phase completes the rearchitecture by updating session persistence, s
   - `Ctrl+Shift+Z` (toggle zoom): zooms the focused PaneContainer — verify
   - Tab rename (F2 or double-click): targets the correct tab in the focused container — verify
   - Search for any action handlers that still reference `ws.tab_trees`, `ws.tab_active_pane`, `ws.tab_count`, or `ws.active_tab` — these are bugs. Fix each one to use the PaneContainer.
+  <!-- Verified: all 14 tab handlers and 14 split handlers in Window.zig operate on PaneContainer fields via focusedContainerOrFirst(). App.performAction correctly routes all actions (.new_tab, .close_tab, .goto_tab, .move_tab, .new_split, .goto_split, .swap_split, .resize_split, .equalize_splits, .toggle_split_zoom, .toggle_synchronized_input) to Window methods. Zero references to ws.tab_trees, ws.tab_active_pane, ws.tab_count, or ws.active_tab found in code (only two stale comment references updated to reflect current field names). All unit tests pass. -->
 
 - [ ] Final integration testing and edge case verification:
   - Test the full lifecycle: launch → create tabs → split → create tabs in each split → close tabs → close splits → only one container left → app returns to single-pane mode

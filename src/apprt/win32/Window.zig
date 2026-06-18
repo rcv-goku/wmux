@@ -1169,7 +1169,7 @@ fn tabArraysInsertGap(arrays: anytype, count: usize, pos: usize) void {
 
 /// Shift entries (idx, count) left by one in every array, overwriting
 /// idx. The caller decrements its count (and clears the now-duplicate
-/// last slot where stale pointers matter, e.g. tab_trees).
+/// last slot where stale pointers matter, e.g. tabs).
 fn tabArraysRemove(arrays: anytype, count: usize, idx: usize) void {
     inline for (arrays) |arr| {
         var i: usize = idx;
@@ -2183,9 +2183,9 @@ pub fn closeWorkspace(self: *Window, idx: usize) void {
         self.workspaces[i] = self.workspaces[i + 1];
     }
     // The shift leaves a duplicate of the last workspace past the new
-    // count, whose tab_trees alias the live workspace's heap data;
+    // count, whose split_tree aliases the live workspace's heap data;
     // value-init the slot so nothing can ever walk it (mirrors
-    // closeTabByIndex clearing its duplicated tree slot).
+    // closeTabByIndex clearing its duplicated tab slot).
     self.workspaces[new_count] = .{};
     self.workspace_count = new_count;
     self.active_workspace = survivor;
