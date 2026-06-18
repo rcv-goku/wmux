@@ -3462,6 +3462,38 @@ fn hitTestReshowStrip(self: *const Window, x: i32, y: i32) bool {
     return x >= 0 and x < self.sidebarReshowStripWidth() and y >= self.tabBarHeight();
 }
 
+/// Hit-test a client point against per-pane tab bars in split mode.
+/// Returns the PaneContainer whose tab bar strip contains (x, y), or
+/// null if no container's bar is at that point (or no splits exist).
+fn hitTestSplitTabBar(self: *Window, x: i32, y: i32) ?*PaneContainer {
+    const ws = self.activeWorkspace();
+    if (!ws.split_tree.isSplit()) return null;
+    const bar_h = PaneContainer.tabBarHeight(self.scale);
+    var it = ws.split_tree.iterator();
+    while (it.next()) |entry| {
+        const container = entry.view;
+        if (container.tab_count <= 1) continue;
+        const lr = container.layout_rect;
+        if (x >= lr.left and x < lr.right and y >= lr.top and y < lr.top + bar_h) {
+            return container;
+        }
+    }
+    return null;
+}
+
+/// Clear per-container hover state on all PaneContainer leaves.
+fn clearAllContainerHover(self: *Window) void {
+    const ws = self.activeWorkspace();
+    var it = ws.split_tree.iterator();
+    while (it.next()) |entry| {
+        const c = entry.view;
+        c.hovered_tab_idx = null;
+        c.hovered_close_idx = null;
+        c.hovered_new_tab = false;
+        c.hovered_dropdown = false;
+    }
+}
+
 /// Paint the tab bar by dispatching to PaneContainer rendering.
 /// In split mode, each container paints its own tab bar within its layout_rect.
 /// In single-pane mode, the focused container paints at the window-top position.
@@ -3482,11 +3514,11 @@ fn paintTabBar(self: *Window, hdc_screen: w32.HDC) void {
                 self.app.config,
                 is_focused,
                 self.tab_font,
-                null,
-                null,
+                container.hovered_tab_idx,
+                container.hovered_close_idx,
                 false,
-                false,
-                false,
+                container.hovered_new_tab,
+                container.hovered_dropdown,
             );
         }
         return;
@@ -3589,18 +3621,59 @@ fn handleResize(self: *Window) void {
 /// Handle a left-button click in the tab bar region.
 /// Dispatches to addTab, closeTab, or selectTabIndex depending on hit position.
 fn handleTabBarClick(self: *Window, x: i16, y: i16) void {
+    const ws = self.activeWorkspace();
+
+    // Split mode: route click to the correct PaneContainer's tab bar.
+    if (ws.split_tree.isSplit()) {
+        const container = self.hitTestSplitTabBar(x, y) orelse return;
+        ws.focused_container = container;
+
+        if (x >= container.new_tab_dropdown_rect.left and x < container.new_tab_dropdown_rect.right) {
+            const bar_h = PaneContainer.tabBarHeight(self.scale);
+            self.showBackendMenu(container.new_tab_btn_rect.left, container.layout_rect.top + bar_h, .new_tab);
+            return;
+        }
+
+        if (x >= container.new_tab_btn_rect.left and x < container.new_tab_btn_rect.right) {
+            _ = self.addTabInherit() catch |err| {
+                log.err("failed to create new tab: {}", .{err});
+                return;
+            };
+            return;
+        }
+
+        for (0..container.tab_rect_count) |i| {
+            const rect = container.tab_rects[i];
+            if (x >= rect.left and x < rect.right) {
+                const close_btn_w: i32 = @intFromFloat(@round(20.0 * self.scale));
+                const text_pad: i32 = @intFromFloat(@round(10.0 * self.scale));
+                const close_left = rect.right - close_btn_w - @divTrunc(text_pad, 2);
+                if (x >= close_left) {
+                    self.closeTabByIndex(i);
+                } else {
+                    self.selectTabIndex(i);
+                    self.drag_tab = @intCast(i);
+                    self.drag_start_x = x;
+                    self.drag_active = false;
+                    if (self.hwnd) |h| _ = w32.SetCapture(h);
+                    self.invalidateTabBar();
+                }
+                return;
+            }
+        }
+        self.invalidateTabBar();
+        return;
+    }
+
+    // Single-pane mode: existing window-top tab bar hit-testing.
     if (!self.tab_bar_visible) return;
     if (y >= self.tabBarHeight()) return;
 
-    // Check the "▾" backend picker segment beside the new-tab button;
-    // anchor the picker under the split button, not at the click.
     if (x >= self.new_tab_dropdown_rect.left and x < self.new_tab_dropdown_rect.right) {
         self.showBackendMenu(self.new_tab_rect.left, self.tabBarHeight(), .new_tab);
         return;
     }
 
-    // Check new-tab button. Plain "+" inherits the active pane's
-    // backend; the "▾" picker beside it is the explicit override.
     if (x >= self.new_tab_rect.left and x < self.new_tab_rect.right) {
         _ = self.addTabInherit() catch |err| {
             log.err("failed to create new tab: {}", .{err});
@@ -3609,20 +3682,17 @@ fn handleTabBarClick(self: *Window, x: i16, y: i16) void {
         return;
     }
 
-    // Check each tab.
     const close_btn_w: i32 = @intFromFloat(@round(20.0 * self.scale));
     const text_pad: i32 = @intFromFloat(@round(10.0 * self.scale));
-    const container = self.activeWorkspace().focusedContainerOrFirst() orelse return;
+    const container = ws.focusedContainerOrFirst() orelse return;
     for (0..container.tab_count) |i| {
         const rect = self.tab_rects[i];
         if (x >= rect.left and x < rect.right) {
-            // Check close button area (right side of tab).
             const close_left = rect.right - close_btn_w - @divTrunc(text_pad, 2);
             if (x >= close_left) {
                 self.closeTabByIndex(i);
             } else {
                 self.selectTabIndex(i);
-                // Start tracking potential tab drag
                 self.drag_tab = @intCast(i);
                 self.drag_start_x = x;
                 self.drag_active = false;
@@ -3641,9 +3711,26 @@ fn handleTabBarClick(self: *Window, x: i16, y: i16) void {
 /// the button-down press, matching how handleTabBarClick fires the
 /// close 'x' on WM_LBUTTONDOWN.
 fn handleTabBarMiddleClick(self: *Window, x: i16, y: i16) void {
+    const ws = self.activeWorkspace();
+
+    // Split mode: route to the correct container's tab bar.
+    if (ws.split_tree.isSplit()) {
+        const container = self.hitTestSplitTabBar(x, y) orelse return;
+        ws.focused_container = container;
+        for (0..container.tab_rect_count) |i| {
+            const rect = container.tab_rects[i];
+            if (x >= rect.left and x < rect.right) {
+                self.closeTabByIndex(i);
+                return;
+            }
+        }
+        return;
+    }
+
+    // Single-pane mode.
     if (!self.tab_bar_visible) return;
     if (y >= self.tabBarHeight()) return;
-    const container = self.activeWorkspace().focusedContainerOrFirst() orelse return;
+    const container = ws.focusedContainerOrFirst() orelse return;
     for (0..container.tab_count) |i| {
         const rect = self.tab_rects[i];
         if (x >= rect.left and x < rect.right) {
@@ -3689,8 +3776,6 @@ fn moveTabTo(self: *Window, from: usize, to: usize) void {
 /// Handle mouse movement over the tab bar for hover effects.
 /// Registers TrackMouseEvent on first move so we get WM_MOUSELEAVE.
 fn handleTabBarMouseMove(self: *Window, x: i16, y: i16) void {
-    if (!self.tab_bar_visible) return;
-
     // Register for WM_MOUSELEAVE if not already tracking.
     if (!self.tracking_mouse) {
         var tme = w32.TRACKMOUSEEVENT{
@@ -3703,22 +3788,82 @@ fn handleTabBarMouseMove(self: *Window, x: i16, y: i16) void {
         self.tracking_mouse = true;
     }
 
+    const ws = self.activeWorkspace();
+
+    // Split mode: find which container's tab bar the mouse is over and
+    // update per-container hover state; clear hover on all others.
+    if (ws.split_tree.isSplit()) {
+        const hit_container = self.hitTestSplitTabBar(x, y);
+        var changed = false;
+        var it = ws.split_tree.iterator();
+        while (it.next()) |entry| {
+            const c = entry.view;
+            if (hit_container != null and c.eql(hit_container.?)) {
+                var new_tab: ?usize = null;
+                var new_close: ?usize = null;
+                var new_new_tab = false;
+                var new_dropdown = false;
+
+                if (x >= c.new_tab_btn_rect.left and x < c.new_tab_btn_rect.right) {
+                    new_new_tab = true;
+                } else if (x >= c.new_tab_dropdown_rect.left and x < c.new_tab_dropdown_rect.right) {
+                    new_dropdown = true;
+                } else {
+                    const close_btn_w: i32 = @intFromFloat(@round(20.0 * self.scale));
+                    const text_pad: i32 = @intFromFloat(@round(10.0 * self.scale));
+                    for (0..c.tab_rect_count) |i| {
+                        const rect = c.tab_rects[i];
+                        if (x >= rect.left and x < rect.right) {
+                            new_tab = i;
+                            const close_left = rect.right - close_btn_w - @divTrunc(text_pad, 2);
+                            if (x >= close_left) new_close = i;
+                            break;
+                        }
+                    }
+                }
+
+                if (new_tab != c.hovered_tab_idx or new_close != c.hovered_close_idx or
+                    new_new_tab != c.hovered_new_tab or new_dropdown != c.hovered_dropdown)
+                {
+                    c.hovered_tab_idx = new_tab;
+                    c.hovered_close_idx = new_close;
+                    c.hovered_new_tab = new_new_tab;
+                    c.hovered_dropdown = new_dropdown;
+                    changed = true;
+                }
+            } else {
+                if (c.hovered_tab_idx != null or c.hovered_close_idx != null or
+                    c.hovered_new_tab or c.hovered_dropdown)
+                {
+                    c.hovered_tab_idx = null;
+                    c.hovered_close_idx = null;
+                    c.hovered_new_tab = false;
+                    c.hovered_dropdown = false;
+                    changed = true;
+                }
+            }
+        }
+        if (changed) self.invalidateTabBar();
+        return;
+    }
+
+    // Single-pane mode: existing window-top hover logic.
+    if (!self.tab_bar_visible) return;
+
     var new_hover: isize = -1;
     var new_close = false;
     var new_new_tab = false;
     var new_dropdown = false;
 
     if (y < self.tabBarHeight()) {
-        // Check new-tab button and the "▾" segment beside it.
         if (x >= self.new_tab_rect.left and x < self.new_tab_rect.right) {
             new_new_tab = true;
         } else if (x >= self.new_tab_dropdown_rect.left and x < self.new_tab_dropdown_rect.right) {
             new_dropdown = true;
         } else {
-            // Check tabs.
             const close_btn_w: i32 = @intFromFloat(@round(20.0 * self.scale));
             const text_pad: i32 = @intFromFloat(@round(10.0 * self.scale));
-            const container = self.activeWorkspace().focusedContainerOrFirst() orelse return;
+            const container = ws.focusedContainerOrFirst() orelse return;
             for (0..container.tab_count) |i| {
                 const rect = self.tab_rects[i];
                 if (x >= rect.left and x < rect.right) {
@@ -3822,11 +3967,36 @@ fn distroMenuLabel(
 /// Handle a right-button click in the tab bar region.
 /// Shows a context menu for the clicked tab.
 fn handleTabBarRightClick(self: *Window, x: i16, y: i16) void {
+    const ws = self.activeWorkspace();
+
+    // Split mode: route to the correct container's tab bar.
+    if (ws.split_tree.isSplit()) {
+        const container = self.hitTestSplitTabBar(x, y) orelse return;
+        ws.focused_container = container;
+
+        if ((x >= container.new_tab_btn_rect.left and x < container.new_tab_btn_rect.right) or
+            (x >= container.new_tab_dropdown_rect.left and x < container.new_tab_dropdown_rect.right))
+        {
+            self.showBackendMenu(x, y, .new_tab);
+            return;
+        }
+
+        var clicked_tab: ?usize = null;
+        for (0..container.tab_rect_count) |i| {
+            const rect = container.tab_rects[i];
+            if (x >= rect.left and x < rect.right) {
+                clicked_tab = i;
+                break;
+            }
+        }
+        self.showTabContextMenu(clicked_tab, x, y);
+        return;
+    }
+
+    // Single-pane mode.
     if (!self.tab_bar_visible) return;
     if (y >= self.tabBarHeight()) return;
 
-    // Right-click on the "+" button or its "▾" segment opens the
-    // new-session backend picker instead of the tab context menu.
     if ((x >= self.new_tab_rect.left and x < self.new_tab_rect.right) or
         (x >= self.new_tab_dropdown_rect.left and x < self.new_tab_dropdown_rect.right))
     {
@@ -3834,8 +4004,7 @@ fn handleTabBarRightClick(self: *Window, x: i16, y: i16) void {
         return;
     }
 
-    // Hit-test to find which tab was right-clicked.
-    const ctx_container = self.activeWorkspace().focusedContainerOrFirst() orelse return;
+    const ctx_container = ws.focusedContainerOrFirst() orelse return;
     var clicked_tab: ?usize = null;
     for (0..ctx_container.tab_count) |i| {
         const rect = self.tab_rects[i];
@@ -3929,13 +4098,32 @@ fn showTabContextMenu(self: *Window, clicked_tab: ?usize, x: i32, y: i32) void {
 /// Handle WM_MOUSELEAVE: reset all hover state and repaint.
 fn handleTabBarMouseLeave(self: *Window) void {
     self.tracking_mouse = false;
+    var needs_repaint = false;
     if (self.hover_tab != -1 or self.hover_new_tab or self.hover_new_tab_dropdown) {
         self.hover_tab = -1;
         self.hover_close = false;
         self.hover_new_tab = false;
         self.hover_new_tab_dropdown = false;
-        self.invalidateTabBar();
+        needs_repaint = true;
     }
+    // Clear per-container hover state (split mode).
+    const ws = self.activeWorkspace();
+    if (ws.split_tree.isSplit()) {
+        var it = ws.split_tree.iterator();
+        while (it.next()) |entry| {
+            const c = entry.view;
+            if (c.hovered_tab_idx != null or c.hovered_close_idx != null or
+                c.hovered_new_tab or c.hovered_dropdown)
+            {
+                c.hovered_tab_idx = null;
+                c.hovered_close_idx = null;
+                c.hovered_new_tab = false;
+                c.hovered_dropdown = false;
+                needs_repaint = true;
+            }
+        }
+    }
+    if (needs_repaint) self.invalidateTabBar();
 }
 
 /// Hit-test a client point against the sidebar with this window's
@@ -4457,9 +4645,15 @@ const RENAME_EDIT_ID: u16 = 300;
 /// Start inline editing of a tab title. Creates a small Edit control
 /// overlay on the tab and pre-fills it with the current title.
 pub fn startTabRename(self: *Window, tab_idx: usize) void {
-    const container = self.activeWorkspace().focusedContainerOrFirst() orelse return;
+    const ws = self.activeWorkspace();
+    const container = ws.focusedContainerOrFirst() orelse return;
     if (tab_idx >= container.tab_count) return;
-    const rect = self.tab_rects[tab_idx];
+    // In split mode, use the container's own tab_rects; in single-pane
+    // mode, use the Window-level copies (synced during paint).
+    const rect = if (ws.split_tree.isSplit())
+        container.tab_rects[tab_idx]
+    else
+        self.tab_rects[tab_idx];
     const tlen = container.tab_title_lens[tab_idx];
     self.startRename(rect, container.tab_titles[tab_idx][0..tlen], .{ .tab = tab_idx });
 }
@@ -4933,7 +5127,9 @@ pub fn windowWndProc(
                 window.startDividerDrag(hit.handle, hit.layout);
                 return 0;
             }
-            if (y < window.tabBarHeight()) {
+            if (window.hitTestSplitTabBar(x, y) != null) {
+                window.handleTabBarClick(@truncate(x), @truncate(y));
+            } else if (y < window.tabBarHeight()) {
                 window.handleTabBarClick(@truncate(x), @truncate(y));
             }
             return 0;
@@ -4974,7 +5170,21 @@ pub fn windowWndProc(
                 }
                 return 0;
             }
-            // Double-click on tab bar starts inline rename
+            // Double-click on tab bar starts inline rename.
+            // Split mode: check per-container tab bars.
+            if (window.hitTestSplitTabBar(x, y)) |dbl_container| {
+                const ws = window.activeWorkspace();
+                ws.focused_container = dbl_container;
+                for (0..dbl_container.tab_rect_count) |i| {
+                    const rect = dbl_container.tab_rects[i];
+                    if (x >= rect.left and x < rect.right) {
+                        window.startTabRename(i);
+                        return 0;
+                    }
+                }
+                return 0;
+            }
+            // Single-pane mode: window-top tab bar.
             if (y < window.tabBarHeight()) {
                 const dbl_container = window.activeWorkspace().focusedContainerOrFirst() orelse return 0;
                 for (0..dbl_container.tab_count) |i| {
@@ -5001,6 +5211,10 @@ pub fn windowWndProc(
                 window.handleSidebarRightClick(x, y);
                 return 0;
             }
+            if (window.hitTestSplitTabBar(x, y) != null) {
+                window.handleTabBarRightClick(x, y);
+                return 0;
+            }
             if (y < window.tabBarHeight()) {
                 window.handleTabBarRightClick(x, y);
                 return 0;
@@ -5019,6 +5233,10 @@ pub fn windowWndProc(
             const y: i32 = @as(i16, @truncate((lparam >> 16) & 0xFFFF));
             if (x < window.sidebarWidth()) {
                 window.handleSidebarMiddleClick(x, y);
+                return 0;
+            }
+            if (window.hitTestSplitTabBar(x, y) != null) {
+                window.handleTabBarMiddleClick(@truncate(x), @truncate(y));
                 return 0;
             }
             if (y < window.tabBarHeight()) {
@@ -5112,7 +5330,12 @@ pub fn windowWndProc(
                 return 0;
             }
             window.clearSidebarHover();
-            if (y < window.tabBarHeight()) {
+            if (window.hitTestSplitTabBar(x, y) != null) {
+                window.handleTabBarMouseMove(@truncate(x), @truncate(y));
+            } else if (y < window.tabBarHeight()) {
+                window.handleTabBarMouseMove(@truncate(x), @truncate(y));
+            } else if (window.activeWorkspace().split_tree.isSplit()) {
+                // Mouse left all container tab bars — clear per-container hover.
                 window.handleTabBarMouseMove(@truncate(x), @truncate(y));
             }
             return 0;

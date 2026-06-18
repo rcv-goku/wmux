@@ -80,6 +80,22 @@ close_btn_rects: [MAX_TABS]w32.RECT = std.mem.zeroes([MAX_TABS]w32.RECT),
 layout_rect: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
 
 // -------------------------------------------------------------------------
+// Per-pane tab bar hover state (split mode only)
+// -------------------------------------------------------------------------
+
+/// Index of the tab being hovered in this container's tab bar (null = none).
+hovered_tab_idx: ?usize = null,
+
+/// Index of the tab whose close button is being hovered (null = none).
+hovered_close_idx: ?usize = null,
+
+/// Whether the "+" new-tab button in this container's tab bar is hovered.
+hovered_new_tab: bool = false,
+
+/// Whether the "▾" dropdown button in this container's tab bar is hovered.
+hovered_dropdown: bool = false,
+
+// -------------------------------------------------------------------------
 // Construction / destruction
 // -------------------------------------------------------------------------
 

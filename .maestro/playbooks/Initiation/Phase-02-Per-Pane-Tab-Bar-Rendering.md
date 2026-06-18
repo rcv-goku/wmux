@@ -23,7 +23,7 @@ With Phase 01's rearchitecture complete, each PaneContainer owns its own tabs �
   - Update `updateTabBarVisibility()`: when splits exist, the window-level `tab_bar_visible` should be false (no window-top bar). Each container manages its own tab bar visibility internally based on its `tab_count`.
   - The content area calculation (`surfaceRect()`) should not subtract tab bar height when splits exist — each container handles its own internally.
 
-- [ ] Update tab bar hit-testing for per-pane tab bars. When the workspace has splits, clicks need to route to the correct PaneContainer's tab bar:
+- [x] Update tab bar hit-testing for per-pane tab bars. When the workspace has splits, clicks need to route to the correct PaneContainer's tab bar:
   - `handleTabBarClick(self, x, y)`: if splits exist, iterate PaneContainer leaves and find which container's `layout_rect` top strip contains the click point (y is within `layout_rect.top` to `layout_rect.top + bar_h`). Then check that container's `tab_rects` for the specific tab clicked. Set that container as `ws.focused_container`, then perform the tab action (select, close, new).
   - `handleTabBarMouseMove(self, x, y)`: same routing — find which container's tab bar the mouse is over, update hover state for that container only. Clear hover state for all other containers.
   - If no splits, the existing window-top hit-testing works as before (single container).
