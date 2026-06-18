@@ -4211,12 +4211,12 @@ fn ipcSurfaceFocus(self: *App, req: *ipc.Request) anyerror!void {
     server.sendOk(req.id, null) catch {};
 }
 
-/// new-split {dir:"right"|"down", [workspace],[tab],[command]} → split the
-/// addressed (or active) tab's active pane and reply with the new pane's
-/// surface id. Selects the target workspace/tab first (newSplit* act on the
-/// active workspace), then splits. With `command`, the split runs that
-/// shell (split on whitespace); without it, it inherits the source pane's
-/// backend (matching the UI split UX).
+/// new-split {dir:"right"|"down"|"left"|"up", [workspace],[tab],[pane],[command]}
+/// → split the focused PaneContainer (or the one at `pane` index) of the
+/// addressed (or active) workspace and reply with the new pane's surface
+/// id. With `command`, the split runs that shell (split on whitespace);
+/// without it, it inherits the source pane's backend (matching the UI
+/// split UX).
 fn ipcNewSplit(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const dir_str = ipcArgString(req, "dir") orelse
@@ -4225,26 +4225,29 @@ fn ipcNewSplit(self: *App, req: *ipc.Request) anyerror!void {
         .right
     else if (std.mem.eql(u8, dir_str, "down"))
         .down
+    else if (std.mem.eql(u8, dir_str, "left"))
+        .left
+    else if (std.mem.eql(u8, dir_str, "up"))
+        .up
     else
         return IpcError.BadDirection;
 
-    const target = try self.ipcResolveTab(req);
+    const target = try self.ipcResolveWorkspace(req);
     const window = target.window;
     if (window.is_quick_terminal) return IpcError.QuickTerminal;
 
+    if (ipcArgU32(req, "pane")) |p| {
+        target.ws.focused_container = target.ws.containerAtIndex(p) orelse return IpcError.UnknownPane;
+    }
+
     // Programmatic split defaults to NON-FOCUS: the split is created in the
-    // target tab's pane tree but the active workspace/tab/pane and OS
-    // foreground are NOT changed (a background pane, hidden until its tab is
-    // shown). `--focus` (focus:true) selects the target workspace+tab and
-    // focuses the new pane, the interactive split UX. Matches the
-    // "create != focus" policy applied to every create verb.
+    // target workspace's focused PaneContainer but the active workspace/tab
+    // and OS foreground are NOT changed (a background pane). `--focus`
+    // (focus:true) selects the target workspace and focuses the new pane,
+    // the interactive split UX. Matches the "create != focus" policy.
     const focus = ipcArgBool(req, "focus") orelse false;
     if (focus) {
         if (target.ws_idx != window.active_workspace) window.selectWorkspace(target.ws_idx);
-        const fc = target.ws.focusedContainerOrFirst();
-        if (fc) |c| {
-            if (target.tab_idx != c.active_tab) window.selectTabIndex(target.tab_idx);
-        }
     }
 
     // Parse an optional explicit command once (split on whitespace); an
@@ -4256,8 +4259,6 @@ fn ipcNewSplit(self: *App, req: *ipc.Request) anyerror!void {
         while (it.next()) |tok| try argv.append(self.core_app.alloc, tok);
     }
     const explicit: ?[]const []const u8 = if (argv.items.len > 0) argv.items else null;
-    // Inherit the source pane's backend when no explicit command (matching
-    // newSplit's inherit-from-active-pane behavior).
     const command: ?[]const []const u8 = explicit orelse blk: {
         const src_container = target.ws.focusedContainerOrFirst() orelse break :blk null;
         const src_pane = src_container.activePane() orelse break :blk null;

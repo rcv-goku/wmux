@@ -36,13 +36,14 @@ With the PaneContainer architecture and per-pane tab bars in place, this phase u
   - `surface-focus`: accept a surface ID and find which container + tab it belongs to via `findLoc`. Set that container as focused and select that tab within it. If the surface is in a different workspace, select that workspace first.
   <!-- ipcSurfaceList now iterates all PaneContainers via ws.split_tree.iterator(), emitting {pane, tab, id, type, focused, title} for every tab in every container. ipcSurfaceFocus surface-id path unchanged (already correct via ipcFindSurfaceById). Position-based path now uses containerAtIndex(pane) to address by container index + optional tab index within that container. Updated ipc.zig comments and surface.zig CLI help text to match new output format. Build passes, pre-existing test failure in workspace metadata unrelated. -->
 
-- [ ] Update `ipcSplit` (the `+split` IPC command — search for it in App.zig) to create new PaneContainers:
+- [x] Update `ipcSplit` (the `+split` IPC command — search for it in App.zig) to create new PaneContainers:
   - The `+split` command should create a new PaneContainer (with one fresh tab) in the addressed workspace's split tree
   - The `--direction` argument determines split direction (right, down, left, up)
   - The `--command` argument specifies the shell command for the new tab
   - The `--focus` argument controls whether the new container becomes focused
   - This should call the rewired `window.newSplitInWorkspace()` from Phase 01
   - Verify that the returned pane reference correctly maps to the new PaneContainer
+  <!-- ipcNewSplit now supports all four directions (right, down, left, up) and accepts a --pane argument to target a specific PaneContainer by index (matching the pattern from ipcTabList/ipcTabNew/ipcTabSelect/ipcTabClose/ipcSend). Changed from ipcResolveTab to ipcResolveWorkspace since split operates on containers, not tabs. CLI split.zig updated: replaced --tab with --pane, added left/up direction validation, updated usage text and doc comment. newSplitInWorkspace correctly creates a new PaneContainer (tabs[0] = new_pane) and returns the new pane whose surface ID is returned to the caller. Build passes, no test regressions. -->
 
 - [ ] Update IPC status and metadata commands to target PaneContainers:
   - `set-status` (sets tab status text): find the pane's container via `findLoc`, set `container.tab_status_text[loc.tab]` and `container.tab_status_text_len[loc.tab]`. Search for the current handler and update it.

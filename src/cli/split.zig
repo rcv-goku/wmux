@@ -20,25 +20,25 @@ pub const Options = struct {
     }
 };
 
-/// The `+split` command splits a terminal pane of a running Ghostty
-/// instance over its per-process agent IPC pipe and prints the new pane's
-/// surface id — the primitive an orchestrator uses to spawn a teammate pane
-/// next to an existing one, alongside `+surface`, `+send`, and `+tab`.
+/// The `+split` command splits the focused PaneContainer (or the one at
+/// `--pane` index) of a running Ghostty instance over its per-process
+/// agent IPC pipe, creating a new PaneContainer as a sibling in the
+/// workspace split tree, and prints the new pane's surface id.
 ///
-/// Usage: `ghostty +split <right|down> [--workspace I] [--tab J] [--command "..."] [--focus]`
+/// Usage: `ghostty +split <right|down|left|up> [--workspace I] [--pane P] [--command "..."] [--focus]`
 ///
-///   * `<right|down>`: split the addressed (or active) pane horizontally
-///     (right) or vertically (down).
-///   * `--workspace I` / `--tab J`: address a tab other than the active one;
-///     its active pane is the one that gets split.
+///   * `<right|down|left|up>`: split direction for the new PaneContainer.
+///   * `--workspace I`: address a workspace other than the active one.
+///   * `--pane P`: target the PaneContainer at index P (0-based, by split
+///     tree leaf order) instead of the focused container.
 ///   * `--command "prog arg ..."`: run this command in the new pane (split
 ///     on whitespace). Without it, the new pane inherits the source pane's
 ///     backend (the same shell), matching the UI split behavior.
 ///   * `--focus`: by DEFAULT the split is created in the background — the
 ///     active workspace/tab/pane and the OS foreground are NOT changed (an
 ///     agent spawning a teammate pane never yanks you out of your current
-///     app or pane). Pass `--focus` to switch to the target workspace/tab
-///     and focus the new pane (the interactive split behavior).
+///     app or pane). Pass `--focus` to switch to the target workspace and
+///     focus the new pane (the interactive split behavior).
 ///
 /// On success, prints `{"id":<surface-id>}` — the new pane's stable surface
 /// id (the same value the pane's shell sees as `GHOSTTY_SURFACE_ID`), or 0
@@ -95,19 +95,21 @@ const windows_impl = if (builtin.os.tag == .windows) struct {
         defer iter.deinit();
 
         const dir_str = iter.next() orelse {
-            try stderr.print("usage: ghostty +split <right|down> [--workspace I] [--tab J] [--command \"...\"]\n", .{});
+            try stderr.print("usage: ghostty +split <right|down|left|up> [--workspace I] [--pane P] [--command \"...\"]\n", .{});
             return 1;
         };
         if (std.mem.eql(u8, dir_str, "--help") or std.mem.eql(u8, dir_str, "-h")) {
             return Action.help_error;
         }
-        if (!std.mem.eql(u8, dir_str, "right") and !std.mem.eql(u8, dir_str, "down")) {
-            try stderr.print("direction must be 'right' or 'down', got '{s}'\n", .{dir_str});
+        if (!std.mem.eql(u8, dir_str, "right") and !std.mem.eql(u8, dir_str, "down") and
+            !std.mem.eql(u8, dir_str, "left") and !std.mem.eql(u8, dir_str, "up"))
+        {
+            try stderr.print("direction must be 'right', 'down', 'left', or 'up', got '{s}'\n", .{dir_str});
             return 1;
         }
 
         var workspace: ?u32 = null;
-        var tab: ?u32 = null;
+        var pane: ?u32 = null;
         var command: ?[]const u8 = null;
         var focus = false;
         while (iter.next()) |arg| {
@@ -127,18 +129,18 @@ const windows_impl = if (builtin.os.tag == .windows) struct {
                     try stderr.print("invalid --workspace value\n", .{});
                     return 1;
                 };
-            } else if (std.mem.startsWith(u8, arg, "--tab=")) {
-                tab = std.fmt.parseInt(u32, arg["--tab=".len..], 10) catch {
-                    try stderr.print("invalid --tab value\n", .{});
+            } else if (std.mem.startsWith(u8, arg, "--pane=")) {
+                pane = std.fmt.parseInt(u32, arg["--pane=".len..], 10) catch {
+                    try stderr.print("invalid --pane value\n", .{});
                     return 1;
                 };
-            } else if (std.mem.eql(u8, arg, "--tab")) {
+            } else if (std.mem.eql(u8, arg, "--pane")) {
                 const v = iter.next() orelse {
-                    try stderr.print("--tab requires a value\n", .{});
+                    try stderr.print("--pane requires a value\n", .{});
                     return 1;
                 };
-                tab = std.fmt.parseInt(u32, v, 10) catch {
-                    try stderr.print("invalid --tab value\n", .{});
+                pane = std.fmt.parseInt(u32, v, 10) catch {
+                    try stderr.print("invalid --pane value\n", .{});
                     return 1;
                 };
             } else if (std.mem.startsWith(u8, arg, "--command=")) {
@@ -156,17 +158,14 @@ const windows_impl = if (builtin.os.tag == .windows) struct {
             }
         }
 
-        // Build the args object. dir is required; the rest are optional.
         var argbuf: std.ArrayList(u8) = .empty;
         defer argbuf.deinit(alloc);
         try argbuf.writer(alloc).print("{{\"dir\":\"{s}\"", .{dir_str});
         if (workspace) |n| try argbuf.writer(alloc).print(",\"workspace\":{d}", .{n});
-        if (tab) |n| try argbuf.writer(alloc).print(",\"tab\":{d}", .{n});
+        if (pane) |n| try argbuf.writer(alloc).print(",\"pane\":{d}", .{n});
         if (command) |c| {
             try argbuf.writer(alloc).print(",\"command\":{f}", .{std.json.fmt(c, .{})});
         }
-        // Non-focus is the default; only emit focus when opted in so a
-        // plain `split` stays a background create.
         if (focus) try argbuf.writer(alloc).print(",\"focus\":true", .{});
         try argbuf.append(alloc, '}');
 
