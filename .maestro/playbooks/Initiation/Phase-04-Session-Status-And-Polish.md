@@ -37,12 +37,13 @@ This final phase completes the rearchitecture by updating session persistence, s
     - `.right`: within the same PaneContainer, close all tabs to the right of the current one. Iterate from end toward current+1, close each.
   - These modes operate WITHIN a PaneContainer (not across containers). Cross-container close-all would be a different operation.
 
-- [ ] Update the sidebar rendering in `src/apprt/win32/Sidebar.zig` (or wherever the sidebar is rendered) to correctly reflect PaneContainer state:
+- [x] Update the sidebar rendering in `src/apprt/win32/Sidebar.zig` (or wherever the sidebar is rendered) to correctly reflect PaneContainer state:
   - Each workspace sidebar row should aggregate status across ALL PaneContainers in that workspace, not just one container
   - The sidebar dot color (normal/bell/exited) comes from the worst status across all containers' tabs
   - The sidebar workspace name, description, git branch, ports, and PR state remain workspace-level (unchanged)
   - If the sidebar shows a tab count or tab list preview per workspace, update to show the total tab count across all containers, or the focused container's tab count — whichever makes more sense for the UX
   - The sidebar's status text line (agent-pushed label) should show the focused container's active tab's status text — this is the most relevant information for the user
+  <!-- Already implemented in prior phases: Workspace.aggregateStatus() and hasAttention() walk the split_tree of PaneContainers; firstStatusText() prioritizes focused container's active tab; sidebar paint() uses these workspace-level methods; no tab count is shown in the sidebar. All sidebar tests pass. -->
 
 - [ ] Handle keyboard shortcuts and action dispatch for the new hierarchy. Search Window.zig for all action handlers that reference the old tab/split model and verify they work correctly:
   - `Ctrl+Shift+T` (new tab): creates tab in focused container — verify
