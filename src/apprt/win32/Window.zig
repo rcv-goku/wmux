@@ -157,6 +157,19 @@ pub const Workspace = struct {
         return null;
     }
 
+    /// Return the Nth leaf PaneContainer (0-based) by iterating the
+    /// split tree. Used by IPC `--pane` arguments to address a specific
+    /// container by positional index.
+    pub fn containerAtIndex(self: *Workspace, idx: usize) ?*PaneContainer {
+        var it = self.split_tree.iterator();
+        var n: usize = 0;
+        while (it.next()) |entry| {
+            if (n == idx) return entry.view;
+            n += 1;
+        }
+        return null;
+    }
+
     /// The worst status across all PaneContainers in this workspace,
     /// for the sidebar dot: exited > bell > normal.
     pub fn aggregateStatus(self: *const Workspace) TabStatus {
@@ -5708,6 +5721,12 @@ test "unit: default-shell menu ids match the reserved registry" {
     try testing.expectEqual(@as(usize, 9412), DEFAULT_SHELL_CMD);
     try testing.expectEqual(@as(usize, 9420), DEFAULT_SHELL_DISTRO_BASE);
     try testing.expectEqual(@as(usize, 9450), DEFAULT_SHELL_DISTRO_CAP);
+}
+
+test "unit: containerAtIndex empty workspace returns null" {
+    var ws: Workspace = .{};
+    try testing.expectEqual(@as(?*PaneContainer, null), ws.containerAtIndex(0));
+    try testing.expectEqual(@as(?*PaneContainer, null), ws.containerAtIndex(1));
 }
 
 // Pull the persisted window-state module's unit tests (serialize/parse

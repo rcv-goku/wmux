@@ -3703,15 +3703,19 @@ fn ipcWorkspaceSetDescription(self: *App, req: *ipc.Request) anyerror!void {
     server.sendOk(req.id, null) catch {};
 }
 
-/// tab-list {[workspace]} → [{index, title, active}] for the focused
-/// PaneContainer of the addressed (or active) workspace.
+/// tab-list {[workspace], [pane]} → [{index, title, active}] for the
+/// focused PaneContainer (or the one at `pane` index) of the addressed
+/// (or active) workspace.
 fn ipcTabList(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const target = try self.ipcResolveWorkspace(req);
-    const container = target.ws.focusedContainerOrFirst() orelse {
-        server.sendOk(req.id, "[]") catch {};
-        return;
-    };
+    const container = if (ipcArgU32(req, "pane")) |p|
+        target.ws.containerAtIndex(p) orelse return IpcError.UnknownPane
+    else
+        target.ws.focusedContainerOrFirst() orelse {
+            server.sendOk(req.id, "[]") catch {};
+            return;
+        };
     const alloc = self.core_app.alloc;
 
     var buf: std.ArrayList(u8) = .empty;

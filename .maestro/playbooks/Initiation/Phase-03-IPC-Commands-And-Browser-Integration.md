@@ -1,0 +1,58 @@
+# Phase 03: IPC Commands and Browser Integration
+
+With the PaneContainer architecture and per-pane tab bars in place, this phase updates all IPC commands and the browser pane integration to work correctly with the new hierarchy. IPC tab commands now target the focused PaneContainer (or an explicitly addressed one), surface listing reflects the workspace → PaneContainer → tab hierarchy, and browser panes integrate cleanly as tabs within PaneContainers.
+
+## Tasks
+
+- [x] Update `ipcTabList` in `src/apprt/win32/App.zig` to list tabs from the focused PaneContainer of the addressed workspace. Currently it iterates `ws.tab_count` reading `ws.tab_titles` and `ws.active_tab`. Change it to:
+  - Get the focused PaneContainer from the addressed workspace via `ws.focusedContainerOrFirst()`
+  - If no container exists (empty workspace), return an empty JSON array `[]`
+  - Iterate `container.tab_count` reading `container.tab_titles[i]`, `container.tab_title_lens[i]`, and `container.active_tab`
+  - The JSON output format stays the same: `[{"index":0,"title":"...","active":true}, ...]`
+  - Add an optional `--pane` argument: if provided, find the PaneContainer at that index (by iterating split tree leaves and counting) and list its tabs instead of the focused container's tabs
+
+- [ ] Update `ipcTabNew` in App.zig to create tabs within the focused PaneContainer:
+  - Currently calls `window.addTabWithCommand()` or `window.addTabBackground()`. These functions were already rewired in Phase 01 to operate on PaneContainers, so this handler should work correctly after Phase 01.
+  - Verify that the returned index is the new tab's index within the PaneContainer (not a global index)
+  - If `--focus` is true, ensure the new tab is created in the focused container of the now-active workspace
+  - If `--focus` is false, ensure the new tab is added to the target workspace's focused container without switching workspaces
+  - Add an optional `--pane` argument: if provided, create the tab in the specified PaneContainer (by index) rather than the focused one
+
+- [ ] Update `ipcTabSelect` and `ipcTabClose` in App.zig:
+  - `ipcTabSelect`: validate `index` against the focused container's `tab_count`, then call `window.selectTabIndex(idx)` which now operates on the focused container. Add optional `--pane` argument for targeting a specific container.
+  - `ipcTabClose`: validate `index` against the focused container's `tab_count`, then close the tab at that index. Add optional `--pane` argument. If closing the last tab in the container, the container is removed from the workspace split tree (handled by Phase 01 close logic).
+
+- [ ] Update `ipcSend` in App.zig to send text to the correct pane. Currently it resolves a workspace and tab, then sends to `ws.tab_active_pane[tab]`:
+  - Change to get the focused PaneContainer of the addressed workspace
+  - Send to `container.activePane()` — the active tab's pane within the focused container
+  - The `--tab` argument (if it exists) should select a tab within the focused container, not a workspace-level tab
+  - Add optional `--pane` argument to target a specific PaneContainer by index
+
+- [ ] Update `ipcSurfaceList` and `ipcSurfaceFocus` (search for these in App.zig) to reflect the new hierarchy:
+  - `surface-list`: iterate the workspace's split tree leaves (PaneContainers), then within each container iterate `tabs[0..tab_count]`. Output should include the container index for each surface, e.g. `{"pane":0, "tab":0, "type":"terminal", "focused":true, ...}`
+  - `surface-focus`: accept a surface ID and find which container + tab it belongs to via `findLoc`. Set that container as focused and select that tab within it. If the surface is in a different workspace, select that workspace first.
+
+- [ ] Update `ipcSplit` (the `+split` IPC command — search for it in App.zig) to create new PaneContainers:
+  - The `+split` command should create a new PaneContainer (with one fresh tab) in the addressed workspace's split tree
+  - The `--direction` argument determines split direction (right, down, left, up)
+  - The `--command` argument specifies the shell command for the new tab
+  - The `--focus` argument controls whether the new container becomes focused
+  - This should call the rewired `window.newSplitInWorkspace()` from Phase 01
+  - Verify that the returned pane reference correctly maps to the new PaneContainer
+
+- [ ] Update IPC status and metadata commands to target PaneContainers:
+  - `set-status` (sets tab status text): find the pane's container via `findLoc`, set `container.tab_status_text[loc.tab]` and `container.tab_status_text_len[loc.tab]`. Search for the current handler and update it.
+  - `set-progress` (sets tab progress): same pattern — find container, set `container.tab_progress[loc.tab]`
+  - `log` (appends to tab log): find container, append to `container.tab_log[loc.tab]`
+  - `notify` (attention/ring): find container, set `container.tab_attention[loc.tab] = true`, then also set the container-level or workspace-level attention flag for the sidebar
+  - `set-synchronized` (toggle synchronized input): find container, set `container.tab_synchronized[loc.tab]`
+  - `read-screen` / `capture-pane`: these operate on individual surfaces, not tabs — they should work unchanged as long as the surface lookup is correct
+
+- [ ] Integrate browser pane creation with the PaneContainer model. The `addBrowserTab` function (Window.zig:1472) was rewired in Phase 01, but verify the full browser lifecycle:
+  - Browser tab creation: `addBrowserTab` creates a BrowserPane, wraps it in a Pane, adds to the focused container's tabs. The async WebView2 creation callback must still find the correct container (via the browser's back-pointer to its Pane, then `findLoc`).
+  - Browser pane title updates: when the WebView2 reports a new page title, it calls back to set the tab title. Ensure this traces to the correct PaneContainer's `tab_titles[tab]`.
+  - Browser IPC commands (`browser open`, `browser navigate`, etc.): these target a specific browser by IPC ID. The browser lookup (`findBrowserById` or similar) should work independently of tab structure. Verify.
+  - Browser close: closing a browser tab should call the same tab-close path as terminal tabs. The BrowserPane's destroy path must correctly unref from the PaneContainer.
+  - Browser pane in split mode: a PaneContainer can contain both terminal and browser tabs. Verify switching between terminal and browser tabs within the same container works (the HWND hide/show logic).
+
+- [ ] Update the `+tab` CLI subcommand help text and any documentation strings in the IPC command registration (search `ipc.zig` for command descriptions) to reflect that tab commands now operate on the focused pane's tab list, not the workspace's tab list. Update the `+surface` help to mention pane containers. Verify that `wmux +tab list`, `wmux +tab new`, `wmux +tab select`, and `wmux +tab close` all work correctly via the CLI by testing interactively.

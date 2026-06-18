@@ -27,8 +27,10 @@ pub const Options = struct {
 /// Subcommands (all accept `--workspace I` to target a workspace other than
 /// the active one):
 ///
-///   * `list [--workspace I]`: Print a JSON array of the target
-///     workspace's tabs, one object per tab: `{index, title, active}`.
+///   * `list [--workspace I] [--pane P]`: Print a JSON array of the
+///     target workspace's focused pane container's tabs (or container
+///     `P` if `--pane` is given), one object per tab:
+///     `{index, title, active}`.
 ///
 ///   * `new [--workspace I] [--command "..."] [--focus]`: Add a tab and
 ///     print its index as `{index: N}`. With `--command` the tab runs that
@@ -115,11 +117,26 @@ const windows_impl = if (builtin.os.tag == .windows) struct {
 
         var positional: ?[]const u8 = null;
         var workspace: ?u32 = null;
+        var pane: ?u32 = null;
         var command: ?[]const u8 = null;
         var focus = false;
         while (iter.next()) |arg| {
             if (std.mem.eql(u8, arg, "--focus")) {
                 focus = true;
+            } else if (std.mem.startsWith(u8, arg, "--pane=")) {
+                pane = std.fmt.parseInt(u32, arg["--pane=".len..], 10) catch {
+                    try stderr.print("invalid --pane value\n", .{});
+                    return 1;
+                };
+            } else if (std.mem.eql(u8, arg, "--pane")) {
+                const v = iter.next() orelse {
+                    try stderr.print("--pane requires a value\n", .{});
+                    return 1;
+                };
+                pane = std.fmt.parseInt(u32, v, 10) catch {
+                    try stderr.print("invalid --pane value\n", .{});
+                    return 1;
+                };
             } else if (std.mem.startsWith(u8, arg, "--workspace=")) {
                 workspace = std.fmt.parseInt(u32, arg["--workspace=".len..], 10) catch {
                     try stderr.print("invalid --workspace value\n", .{});
@@ -171,6 +188,11 @@ const windows_impl = if (builtin.os.tag == .windows) struct {
         if (workspace) |n| {
             if (have_field) try argbuf.append(alloc, ',');
             try argbuf.writer(alloc).print("\"workspace\":{d}", .{n});
+            have_field = true;
+        }
+        if (pane) |n| {
+            if (have_field) try argbuf.append(alloc, ',');
+            try argbuf.writer(alloc).print("\"pane\":{d}", .{n});
             have_field = true;
         }
         if (sub == .new) {
