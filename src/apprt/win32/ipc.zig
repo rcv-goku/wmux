@@ -63,7 +63,9 @@ pub const Command = enum {
     click,
     fill,
 
-    // Workspace / tab / keystroke scripting.
+    // Workspace / tab / keystroke scripting.  Tab commands operate on
+    // the focused PaneContainer (split-tree leaf) of the addressed
+    // workspace; an optional "pane" arg overrides with a container index.
     @"workspace-list",
     @"workspace-new",
     @"workspace-select",
@@ -76,30 +78,32 @@ pub const Command = enum {
 
     // Notification ring: set/clear the per-pane "needs attention"
     // indicator (the agent-waiting ring). Args: {action:"ring"|"clear",
-    // [workspace], [tab]}.
+    // [workspace], [tab], [pane]}.
     notify,
 
     // Orchestration scripting (the agent-supervises-agent substrate). All
     // run synchronously on the GUI thread and reply directly, like the
     // workspace/tab verbs (they touch the live model). Indices follow the
-    // same defaulting as send/notify (absent workspace/tab => active).
+    // same defaulting as send/notify (absent workspace/tab/pane => active).
+    // All accept an optional "pane" arg to address a specific PaneContainer
+    // by split-tree leaf index instead of the focused container.
     //
     // surface-list {[workspace]} -> JSON of every tab in every
     //   PaneContainer of the addressed workspace:
     //   [{pane, tab, id, type:"terminal"|"browser", focused, title}].
     // surface-focus {surface | (workspace,pane,[tab])} -> focus a surface
     //   by its stable id, or by workspace/pane(container)/tab index.
-    // new-split {dir:"right"|"down", [workspace],[tab],[command]} -> split
-    //   the addressed (or active) pane; reply {id} of the new pane.
-    // set-status {[workspace],[tab], [text]} -> set/clear a per-tab status
-    //   string the sidebar renders (empty/absent text clears it).
-    // set-progress {[workspace],[tab], value:0..100|-1} -> set a per-tab
-    //   progress percent; -1 (or "clear") clears it.
-    // log {[workspace],[tab], text} -> append a line to the addressed tab's
-    //   ring log buffer (and the global notif panel).
-    // read-screen {[workspace],[tab],[lines],[scrollback]} -> the addressed
-    //   pane terminal's screen text as UTF-8 (visible screen, or full
-    //   scrollback when scrollback:true). THE agent-reads-agent verb.
+    // new-split {dir:"right"|"down"|"left"|"up", [workspace],[pane],
+    //   [command]} -> split the addressed container; reply {id} of new pane.
+    // set-status {[workspace],[tab],[pane], [text]} -> set/clear a per-tab
+    //   status string the sidebar renders (empty/absent text clears it).
+    // set-progress {[workspace],[tab],[pane], value:0..100|-1} -> set a
+    //   per-tab progress percent; -1 (or "clear") clears it.
+    // log {[workspace],[tab],[pane], text} -> append a line to the addressed
+    //   tab's ring log buffer (and the global notif panel).
+    // read-screen {[workspace],[tab],[pane],[lines],[scrollback]} -> the
+    //   addressed pane terminal's screen text as UTF-8 (visible screen, or
+    //   full scrollback when scrollback:true). THE agent-reads-agent verb.
     @"surface-list",
     @"surface-focus",
     @"new-split",
@@ -109,8 +113,8 @@ pub const Command = enum {
     log,
     @"read-screen",
 
-    // capture-pane {[workspace],[tab],[scrollback:bool],[file:path]} ->
-    //   dump the addressed pane's screen text (visible or full scrollback)
+    // capture-pane {[workspace],[tab],[pane],[scrollback:bool],[file:path]}
+    //   -> dump the addressed pane's screen text (visible or full scrollback)
     //   and either return it as the IPC response or write it to a file. The
     //   tmux `capture-pane` equivalent for session restore.
     @"capture-pane",
@@ -127,7 +131,8 @@ pub const Command = enum {
 
     @"select-layout",
     // Toggle synchronized input for a tab. Args: {action:"toggle"|"on"|
-    // "off", [workspace], [tab]}. Defaults to the active workspace/tab.
+    // "off", [workspace], [tab], [pane]}. Defaults to the active tab in
+    // the focused PaneContainer.
     @"sync-input",
     // Pane movement: break a pane out of its split into a new tab, or
     // move it to an adjacent/specific tab.

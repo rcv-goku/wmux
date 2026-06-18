@@ -21,10 +21,11 @@ pub const Options = struct {
 };
 
 /// The `+surface` command lists and focuses the terminal/browser panes of a
-/// running Ghostty instance over its per-process agent IPC pipe — the
+/// running wmux instance over its per-process agent IPC pipe — the
 /// addressing primitive an orchestrator uses to see and switch between the
 /// panes running agents, alongside `+workspace`, `+tab`, `+split`, and
-/// `+read-screen`.
+/// `+read-screen`. Surfaces are organized within PaneContainers (the
+/// split-tree leaves), each of which holds its own tab bar.
 ///
 /// Subcommands:
 ///
@@ -44,10 +45,10 @@ pub const Options = struct {
 ///     index in the split tree, T is the tab index within that container;
 ///     T defaults to the container's active tab).
 ///
-/// The target instance's IPC pipe is `ghostty-ipc-<pid>`. The pid is taken
+/// The target instance's IPC pipe is `wmux-ipc-<pid>`. The pid is taken
 /// from the `GHOSTTY_PID` environment variable (exported into every shell
-/// Ghostty spawns); if it is unset, `+surface` connects to the sole
-/// `ghostty-ipc-*` pipe present and errors if there are zero or more than
+/// wmux spawns); if it is unset, `+surface` connects to the sole
+/// `wmux-ipc-*` pipe present and errors if there are zero or more than
 /// one.
 ///
 /// Only supported on Windows.
@@ -97,7 +98,7 @@ const windows_impl = if (builtin.os.tag == .windows) struct {
         defer iter.deinit();
 
         const sub_str = iter.next() orelse {
-            try stderr.print("usage: ghostty +surface <list|focus> [...]\n", .{});
+            try stderr.print("usage: wmux +surface <list|focus> [...]\n", .{});
             return 1;
         };
         if (std.mem.eql(u8, sub_str, "--help") or std.mem.eql(u8, sub_str, "-h")) {

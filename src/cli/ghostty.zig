@@ -100,7 +100,7 @@ pub const Action = enum {
     // Use IPC to manage the running Ghostty's sidebar workspaces.
     workspace,
 
-    // Use IPC to manage the running Ghostty's per-workspace tabs.
+    // Use IPC to manage tabs within the focused PaneContainer.
     tab,
 
     // Use IPC to write text to a running Ghostty terminal pane.

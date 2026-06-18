@@ -21,11 +21,11 @@ pub const Options = struct {
 };
 
 /// The `+split` command splits the focused PaneContainer (or the one at
-/// `--pane` index) of a running Ghostty instance over its per-process
-/// agent IPC pipe, creating a new PaneContainer as a sibling in the
-/// workspace split tree, and prints the new pane's surface id.
+/// `--pane` index) of a running wmux instance over its per-process agent
+/// IPC pipe, creating a new PaneContainer as a sibling in the workspace
+/// split tree, and prints the new pane's surface id.
 ///
-/// Usage: `ghostty +split <right|down|left|up> [--workspace I] [--pane P] [--command "..."] [--focus]`
+/// Usage: `wmux +split <right|down|left|up> [--workspace I] [--pane P] [--command "..."] [--focus]`
 ///
 ///   * `<right|down|left|up>`: split direction for the new PaneContainer.
 ///   * `--workspace I`: address a workspace other than the active one.
@@ -44,10 +44,10 @@ pub const Options = struct {
 /// id (the same value the pane's shell sees as `GHOSTTY_SURFACE_ID`), or 0
 /// if its core has not finished starting up.
 ///
-/// The target instance's IPC pipe is `ghostty-ipc-<pid>`. The pid is taken
+/// The target instance's IPC pipe is `wmux-ipc-<pid>`. The pid is taken
 /// from the `GHOSTTY_PID` environment variable (exported into every shell
-/// Ghostty spawns); if it is unset, `+split` connects to the sole
-/// `ghostty-ipc-*` pipe present and errors if there are zero or more than
+/// wmux spawns); if it is unset, `+split` connects to the sole
+/// `wmux-ipc-*` pipe present and errors if there are zero or more than
 /// one.
 ///
 /// Only supported on Windows.
@@ -95,7 +95,7 @@ const windows_impl = if (builtin.os.tag == .windows) struct {
         defer iter.deinit();
 
         const dir_str = iter.next() orelse {
-            try stderr.print("usage: ghostty +split <right|down|left|up> [--workspace I] [--pane P] [--command \"...\"]\n", .{});
+            try stderr.print("usage: wmux +split <right|down|left|up> [--workspace I] [--pane P] [--command \"...\"]\n", .{});
             return 1;
         };
         if (std.mem.eql(u8, dir_str, "--help") or std.mem.eql(u8, dir_str, "-h")) {

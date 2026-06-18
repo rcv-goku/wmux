@@ -20,17 +20,18 @@ pub const Options = struct {
     }
 };
 
-/// The `+tab` command drives the per-workspace tabs of a running Ghostty
-/// instance over its per-process agent IPC pipe, enabling scripted/agentic
-/// control alongside `+workspace`, `+send`, and `+browser`.
+/// The `+tab` command drives the tabs within the focused PaneContainer
+/// (split-tree leaf) of a running wmux instance over its per-process agent
+/// IPC pipe, enabling scripted/agentic control alongside `+workspace`,
+/// `+send`, `+split`, and `+browser`.
 ///
 /// Subcommands (all accept `--workspace I` to target a workspace other than
-/// the active one):
+/// the active one, and `--pane P` to target a specific PaneContainer by
+/// split-tree leaf index instead of the focused container):
 ///
 ///   * `list [--workspace I] [--pane P]`: Print a JSON array of the
-///     target workspace's focused pane container's tabs (or container
-///     `P` if `--pane` is given), one object per tab:
-///     `{index, title, active}`.
+///     focused PaneContainer's tabs (or container `P` if `--pane` is
+///     given), one object per tab: `{index, title, active}`.
 ///
 ///   * `new [--workspace I] [--pane P] [--command "..."] [--focus]`: Add a tab and
 ///     print its index as `{index: N}`. With `--command` the tab runs that
@@ -40,22 +41,23 @@ pub const Options = struct {
 ///     active workspace/tab does not change and the window is not raised
 ///     (so an agent spawning tabs never yanks you out of your current
 ///     app). Pass `--focus` to switch to the tab's workspace and select
-///     the new tab. The printed index is relative to the target workspace
-///     — the same index `list`/`close` use for that workspace.
+///     the new tab. The printed index is relative to the target
+///     PaneContainer — the same index `list`/`close` use.
 ///
 ///   * `select <index> [--workspace I] [--pane P]`: Make tab `<index>`
-///     active in the focused pane container (or container `P` if
+///     active in the focused PaneContainer (or container `P` if
 ///     `--pane` is given).
 ///
 ///   * `close <index> [--workspace I] [--pane P]`: Close tab `<index>`
-///     in the focused pane container (or container `P` if `--pane` is
-///     given). Closing the last tab collapses its workspace (or closes
-///     the window if it was the only workspace).
+///     in the focused PaneContainer (or container `P` if `--pane` is
+///     given). Closing the last tab in a container removes it from the
+///     split tree; closing the last container collapses its workspace
+///     (or closes the window if it was the only workspace).
 ///
-/// The target instance's IPC pipe is `ghostty-ipc-<pid>`. The pid is taken
+/// The target instance's IPC pipe is `wmux-ipc-<pid>`. The pid is taken
 /// from the `GHOSTTY_PID` environment variable (exported into every shell
-/// Ghostty spawns); if it is unset, `+tab` connects to the sole
-/// `ghostty-ipc-*` pipe present and errors if there are zero or more than
+/// wmux spawns); if it is unset, `+tab` connects to the sole
+/// `wmux-ipc-*` pipe present and errors if there are zero or more than
 /// one.
 ///
 /// Only supported on Windows.
@@ -107,7 +109,7 @@ const windows_impl = if (builtin.os.tag == .windows) struct {
         defer iter.deinit();
 
         const sub_str = iter.next() orelse {
-            try stderr.print("usage: ghostty +tab <list|new|select|close> [args]\n", .{});
+            try stderr.print("usage: wmux +tab <list|new|select|close> [args]\n", .{});
             return 1;
         };
         if (std.mem.eql(u8, sub_str, "--help") or std.mem.eql(u8, sub_str, "-h")) {
