@@ -3800,13 +3800,19 @@ fn ipcTabNew(self: *App, req: *ipc.Request) anyerror!void {
     server.sendOk(req.id, data) catch {};
 }
 
-/// tab-select {index, [workspace]} → make tab `index` active in the
+/// tab-select {index, [workspace], [pane]} → make tab `index` active in
+/// the focused PaneContainer (or the one at `pane` index) of the
 /// addressed (or active) workspace. selectTabIndex acts on the active
 /// workspace, so a non-active target is selected first.
 fn ipcTabSelect(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const target = try self.ipcResolveWorkspace(req);
     const idx = ipcArgU32(req, "index") orelse return IpcError.MissingIndex;
+
+    if (ipcArgU32(req, "pane")) |p| {
+        target.ws.focused_container = target.ws.containerAtIndex(p) orelse return IpcError.UnknownPane;
+    }
+
     const container = target.ws.focusedContainerOrFirst() orelse return IpcError.UnknownTab;
     if (idx >= container.tab_count) return IpcError.UnknownTab;
 
@@ -3816,12 +3822,18 @@ fn ipcTabSelect(self: *App, req: *ipc.Request) anyerror!void {
     server.sendOk(req.id, null) catch {};
 }
 
-/// tab-close {index, [workspace]} → close tab `index` in the focused
-/// PaneContainer of the addressed (or active) workspace.
+/// tab-close {index, [workspace], [pane]} → close tab `index` in the
+/// focused PaneContainer (or the one at `pane` index) of the addressed
+/// (or active) workspace.
 fn ipcTabClose(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const target = try self.ipcResolveWorkspace(req);
     const idx = ipcArgU32(req, "index") orelse return IpcError.MissingIndex;
+
+    if (ipcArgU32(req, "pane")) |p| {
+        target.ws.focused_container = target.ws.containerAtIndex(p) orelse return IpcError.UnknownPane;
+    }
+
     const container = target.ws.focusedContainerOrFirst() orelse return IpcError.UnknownTab;
     if (idx >= container.tab_count) return IpcError.UnknownTab;
     target.window.closeTabInWorkspaceForIpc(target.ws_idx, idx);

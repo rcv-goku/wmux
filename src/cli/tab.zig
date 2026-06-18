@@ -32,7 +32,7 @@ pub const Options = struct {
 ///     `P` if `--pane` is given), one object per tab:
 ///     `{index, title, active}`.
 ///
-///   * `new [--workspace I] [--command "..."] [--focus]`: Add a tab and
+///   * `new [--workspace I] [--pane P] [--command "..."] [--focus]`: Add a tab and
 ///     print its index as `{index: N}`. With `--command` the tab runs that
 ///     command (split on whitespace into an argv); without it the tab
 ///     inherits the active pane's backend (the same behavior as the tab
@@ -43,11 +43,14 @@ pub const Options = struct {
 ///     the new tab. The printed index is relative to the target workspace
 ///     — the same index `list`/`close` use for that workspace.
 ///
-///   * `select <index> [--workspace I]`: Make tab `<index>` active.
+///   * `select <index> [--workspace I] [--pane P]`: Make tab `<index>`
+///     active in the focused pane container (or container `P` if
+///     `--pane` is given).
 ///
-///   * `close <index> [--workspace I]`: Close tab `<index>`. Closing the
-///     last tab collapses its workspace (or closes the window if it was
-///     the only workspace).
+///   * `close <index> [--workspace I] [--pane P]`: Close tab `<index>`
+///     in the focused pane container (or container `P` if `--pane` is
+///     given). Closing the last tab collapses its workspace (or closes
+///     the window if it was the only workspace).
 ///
 /// The target instance's IPC pipe is `ghostty-ipc-<pid>`. The pid is taken
 /// from the `GHOSTTY_PID` environment variable (exported into every shell

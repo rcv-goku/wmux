@@ -19,9 +19,10 @@ With the PaneContainer architecture and per-pane tab bars in place, this phase u
   - Add an optional `--pane` argument: if provided, create the tab in the specified PaneContainer (by index) rather than the focused one
   <!-- Verified: addTabWithCommand/addTabBackground/addTabInheritBackground all use focusedContainerOrFirst() internally. The --pane argument sets ws.focused_container to the target before calling them, matching the ipcTabList pattern. Returned index is container.active_tab (within-container). Build passes, no test regressions. -->
 
-- [ ] Update `ipcTabSelect` and `ipcTabClose` in App.zig:
+- [x] Update `ipcTabSelect` and `ipcTabClose` in App.zig:
   - `ipcTabSelect`: validate `index` against the focused container's `tab_count`, then call `window.selectTabIndex(idx)` which now operates on the focused container. Add optional `--pane` argument for targeting a specific container.
   - `ipcTabClose`: validate `index` against the focused container's `tab_count`, then close the tab at that index. Add optional `--pane` argument. If closing the last tab in the container, the container is removed from the workspace split tree (handled by Phase 01 close logic).
+  <!-- Both handlers already used focusedContainerOrFirst() and validated against container.tab_count from prior work. Added --pane argument following the same pattern as ipcTabList/ipcTabNew: ipcArgU32(req, "pane") → containerAtIndex(p) → redirect ws.focused_container. Updated CLI help text in tab.zig to document --pane for select and close subcommands. Build passes, no test regressions. -->
 
 - [ ] Update `ipcSend` in App.zig to send text to the correct pane. Currently it resolves a workspace and tab, then sends to `ws.tab_active_pane[tab]`:
   - Change to get the focused PaneContainer of the addressed workspace
