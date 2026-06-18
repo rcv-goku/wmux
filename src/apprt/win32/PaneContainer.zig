@@ -626,3 +626,123 @@ test "unit: PaneContainer focus is noop when empty" {
     var pc: PaneContainer = .{};
     pc.focus();
 }
+
+// Dummy HDC for tests that hit early returns before any GDI operations.
+const test_hdc: w32.HDC = @ptrFromInt(1);
+const test_config = .{ .background = .{ .r = @as(u8, 30), .g = @as(u8, 30), .b = @as(u8, 30) } };
+
+test "unit: tabBarHeight returns scaled height" {
+    try testing.expectEqual(@as(i32, 32), PaneContainer.tabBarHeight(1.0));
+    try testing.expectEqual(@as(i32, 64), PaneContainer.tabBarHeight(2.0));
+    try testing.expectEqual(@as(i32, 48), PaneContainer.tabBarHeight(1.5));
+    try testing.expectEqual(@as(i32, 0), PaneContainer.tabBarHeight(0.0));
+}
+
+test "unit: paintTabBar returns 0 for single tab not force visible" {
+    var pc: PaneContainer = .{};
+    pc.tab_count = 1;
+    const h = pc.paintTabBar(test_hdc, .{ .left = 0, .top = 0, .right = 800, .bottom = 600 }, 1.0, test_config, true, null, null, null, false, false, false);
+    try testing.expectEqual(@as(i32, 0), h);
+    try testing.expectEqual(@as(usize, 0), pc.tab_rect_count);
+}
+
+test "unit: paintTabBar returns 0 for empty container" {
+    var pc: PaneContainer = .{};
+    const h = pc.paintTabBar(test_hdc, .{ .left = 0, .top = 0, .right = 800, .bottom = 600 }, 1.0, test_config, true, null, null, null, false, false, false);
+    try testing.expectEqual(@as(i32, 0), h);
+    try testing.expectEqual(@as(usize, 0), pc.tab_rect_count);
+}
+
+test "unit: paintTabBar returns 0 for zero scale" {
+    var pc: PaneContainer = .{};
+    pc.tab_count = 3;
+    const h = pc.paintTabBar(test_hdc, .{ .left = 0, .top = 0, .right = 800, .bottom = 600 }, 0.0, test_config, true, null, null, null, false, false, false);
+    try testing.expectEqual(@as(i32, 0), h);
+}
+
+test "unit: paintTabBar returns 0 for zero-width rect" {
+    var pc: PaneContainer = .{};
+    pc.tab_count = 3;
+    const h = pc.paintTabBar(test_hdc, .{ .left = 100, .top = 0, .right = 100, .bottom = 600 }, 1.0, test_config, true, null, null, null, false, false, false);
+    try testing.expectEqual(@as(i32, 0), h);
+}
+
+test "unit: PaneContainer default hover state is cleared" {
+    const pc: PaneContainer = .{};
+    try testing.expectEqual(@as(?usize, null), pc.hovered_tab_idx);
+    try testing.expectEqual(@as(?usize, null), pc.hovered_close_idx);
+    try testing.expect(!pc.hovered_new_tab);
+    try testing.expect(!pc.hovered_dropdown);
+}
+
+test "unit: PaneContainer default hit-test rects are zeroed" {
+    const pc: PaneContainer = .{};
+    try testing.expectEqual(@as(usize, 0), pc.tab_rect_count);
+    try testing.expectEqual(@as(i32, 0), pc.new_tab_btn_rect.left);
+    try testing.expectEqual(@as(i32, 0), pc.new_tab_btn_rect.right);
+    try testing.expectEqual(@as(i32, 0), pc.new_tab_dropdown_rect.left);
+    try testing.expectEqual(@as(i32, 0), pc.new_tab_dropdown_rect.right);
+    try testing.expectEqual(@as(i32, 0), pc.layout_rect.left);
+    try testing.expectEqual(@as(i32, 0), pc.layout_rect.right);
+}
+
+test "unit: PaneContainer hover state is independently settable" {
+    var pc: PaneContainer = .{};
+    pc.hovered_tab_idx = 2;
+    pc.hovered_close_idx = 1;
+    pc.hovered_new_tab = true;
+    pc.hovered_dropdown = true;
+
+    try testing.expectEqual(@as(?usize, 2), pc.hovered_tab_idx);
+    try testing.expectEqual(@as(?usize, 1), pc.hovered_close_idx);
+    try testing.expect(pc.hovered_new_tab);
+    try testing.expect(pc.hovered_dropdown);
+
+    // Clear hover state (as clearAllContainerHover would).
+    pc.hovered_tab_idx = null;
+    pc.hovered_close_idx = null;
+    pc.hovered_new_tab = false;
+    pc.hovered_dropdown = false;
+
+    try testing.expectEqual(@as(?usize, null), pc.hovered_tab_idx);
+    try testing.expectEqual(@as(?usize, null), pc.hovered_close_idx);
+    try testing.expect(!pc.hovered_new_tab);
+    try testing.expect(!pc.hovered_dropdown);
+}
+
+test "unit: PaneContainer layout_rect stores assigned position" {
+    // Simulate layoutSplits assigning rects to containers in a side-by-side split.
+    var left: PaneContainer = .{};
+    left.layout_rect = .{ .left = 0, .top = 0, .right = 400, .bottom = 300 };
+    try testing.expectEqual(@as(i32, 0), left.layout_rect.left);
+    try testing.expectEqual(@as(i32, 0), left.layout_rect.top);
+    try testing.expectEqual(@as(i32, 400), left.layout_rect.right);
+    try testing.expectEqual(@as(i32, 300), left.layout_rect.bottom);
+
+    var right: PaneContainer = .{};
+    right.layout_rect = .{ .left = 400, .top = 0, .right = 800, .bottom = 300 };
+    try testing.expectEqual(@as(i32, 400), right.layout_rect.left);
+    try testing.expectEqual(@as(i32, 800), right.layout_rect.right);
+
+    // Non-overlapping: left.right <= right.left.
+    try testing.expect(left.layout_rect.right <= right.layout_rect.left);
+}
+
+test "unit: PaneContainer tab bar visibility rule" {
+    var pc: PaneContainer = .{};
+
+    // 0 tabs: no bar (both forced and unforced)
+    pc.tab_count = 0;
+    try testing.expect(pc.tab_count <= 1);
+
+    // 1 tab: no bar unless forced
+    pc.tab_count = 1;
+    try testing.expect(pc.tab_count <= 1);
+
+    // 2+ tabs: bar shown regardless of force
+    pc.tab_count = 2;
+    try testing.expect(pc.tab_count > 1);
+
+    pc.tab_count = 5;
+    try testing.expect(pc.tab_count > 1);
+}

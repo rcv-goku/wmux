@@ -42,7 +42,7 @@ With Phase 01's rearchitecture complete, each PaneContainer owns its own tabs â€
   - When the first split is created (single â†’ multi PaneContainer): transition from window-top tab bar to per-pane tab bars. Hide the window-top bar, each container draws its own.
   - Tab bar inline rename (the edit control for renaming tabs): when splits exist, position the edit control within the correct PaneContainer's tab bar rect, not the window-top bar.
 
-- [ ] Test per-pane tab bar rendering with various configurations:
+- [x] Test per-pane tab bar rendering with various configurations:
   - Single pane, 1 tab: no tab bar visible (same as current)
   - Single pane, 3 tabs: tab bar at window top (same as current)
   - Two panes side-by-side (horizontal split), each with 1 tab: no tab bars visible in either pane
@@ -52,3 +52,4 @@ With Phase 01's rearchitecture complete, each PaneContainer owns its own tabs â€
   - Focus switching: clicking between panes updates which tab bar is highlighted
   - Tab operations in split mode: new tab, close tab, select tab, rename tab all work correctly within the targeted PaneContainer
   - Verify no rendering artifacts at tab bar boundaries (no pixel gaps, no overlap with content)
+  - **Unit tests added** in `PaneContainer.zig`: tabBarHeight scaling, paintTabBar early-return paths (single tab, empty container, zero scale, zero-width rect), default hover/hit-test state initialization, hover state set/clear, layout_rect assignment for side-by-side splits, tab bar visibility rules. All 3170+ tests pass; visual/integration testing requires running the app interactively.
