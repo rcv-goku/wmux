@@ -5491,6 +5491,7 @@ fn surfaceWndProc(
                     }
                 }
                 win.repaintDividers();
+                win.invalidateTabBar();
             }
             surface.handleFocus(true);
             return 0;

@@ -3717,6 +3717,7 @@ fn handleTabBarMiddleClick(self: *Window, x: i16, y: i16) void {
     if (ws.split_tree.isSplit()) {
         const container = self.hitTestSplitTabBar(x, y) orelse return;
         ws.focused_container = container;
+        self.invalidateTabBar();
         for (0..container.tab_rect_count) |i| {
             const rect = container.tab_rects[i];
             if (x >= rect.left and x < rect.right) {
@@ -3973,6 +3974,7 @@ fn handleTabBarRightClick(self: *Window, x: i16, y: i16) void {
     if (ws.split_tree.isSplit()) {
         const container = self.hitTestSplitTabBar(x, y) orelse return;
         ws.focused_container = container;
+        self.invalidateTabBar();
 
         if ((x >= container.new_tab_btn_rect.left and x < container.new_tab_btn_rect.right) or
             (x >= container.new_tab_dropdown_rect.left and x < container.new_tab_dropdown_rect.right))
@@ -5175,6 +5177,7 @@ pub fn windowWndProc(
             if (window.hitTestSplitTabBar(x, y)) |dbl_container| {
                 const ws = window.activeWorkspace();
                 ws.focused_container = dbl_container;
+                window.invalidateTabBar();
                 for (0..dbl_container.tab_rect_count) |i| {
                     const rect = dbl_container.tab_rects[i];
                     if (x >= rect.left and x < rect.right) {

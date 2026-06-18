@@ -29,7 +29,7 @@ With Phase 01's rearchitecture complete, each PaneContainer owns its own tabs â€
   - If no splits, the existing window-top hit-testing works as before (single container).
   - Add per-container hover tracking: `hovered_tab_idx: ?usize = null` and `hovered_close_idx: ?usize = null` fields on PaneContainer. The Window's global `hovered_tab` fields are only used in single-pane mode.
 
-- [ ] Add visual focus indicator for multi-pane mode. When multiple PaneContainers are visible, the user needs to see which one is focused:
+- [x] Add visual focus indicator for multi-pane mode. When multiple PaneContainers are visible, the user needs to see which one is focused:
   - The focused container's tab bar renders with full brightness (active text color, accent underline on selected tab) â€” matching current single-pane appearance
   - Unfocused containers' tab bars render dimmed (all tabs at inactive text color, no accent underline, slightly darker background)
   - When a user clicks anywhere within a PaneContainer's area (tab bar or content), that container becomes focused: set `ws.focused_container = clicked_container`, invalidate all tab bars for repaint
