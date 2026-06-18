@@ -20,7 +20,7 @@ This final phase completes the rearchitecture by updating session persistence, s
     - Toggle via the existing keybinding or IPC command
   - Update the `handleKeyInput` or equivalent input dispatch to check `container.tab_synchronized[container.active_tab]` instead of `ws.tab_synchronized[ws.active_tab]`
 
-- [ ] Update attention and status propagation for the new hierarchy. Attention flows from Surface → Pane → PaneContainer → Workspace → Sidebar:
+- [x] Update attention and status propagation for the new hierarchy. Attention flows from Surface → Pane → PaneContainer → Workspace → Sidebar:
   - When a Surface sets its attention flag (OSC sequence or `+notify ring`): find the owning PaneContainer via `findLoc`, set `container.tab_attention[loc.tab] = true`. Then check if the container is the focused container AND the tab is the active tab — if so, the user is already looking at it, so clear the flag immediately. Otherwise leave it set.
   - Clearing attention: when a tab becomes active (`selectTabIndex`), clear `container.tab_attention[container.active_tab]`. When a container becomes focused, clear the active tab's attention.
   - Workspace-level attention for the sidebar: `ws.aggregateStatus()` and attention aggregation should iterate all PaneContainers' tabs. The sidebar dot shows if ANY tab in ANY container has attention or non-normal status.

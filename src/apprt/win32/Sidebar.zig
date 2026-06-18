@@ -328,8 +328,8 @@ pub fn formatMetaLineUtf8(wsp: *const Window.Workspace, out: []u8) usize {
         }
     }
 
-    // Latest agent status text: the first non-empty per-tab status
-    // across all PaneContainers in the workspace.
+    // Status text: focused container's active tab first, then any
+    // non-empty status across all containers as fallback.
     const status = wsp.firstStatusText();
     if (status.len > 0) {
         if (len > 0) append(out, &len, sep);

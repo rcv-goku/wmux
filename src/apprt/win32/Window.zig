@@ -250,18 +250,19 @@ pub const Workspace = struct {
         if (self.git_branch_len > 0) return true;
         if (self.port_count > 0) return true;
         if (self.pr_state != .none) return true;
-        var it = self.split_tree.iterator();
-        while (it.next()) |entry| {
-            const container = entry.view;
-            for (container.tab_status_text_len[0..container.tab_count]) |len| {
-                if (len > 0) return true;
-            }
-        }
+        if (self.firstStatusText().len > 0) return true;
         return false;
     }
 
-    /// The first non-empty per-tab status text across all PaneContainers.
+    /// Status text for the sidebar metadata line. Prioritizes the focused
+    /// container's active tab (most relevant to the user), then falls back
+    /// to the first non-empty status text across all containers.
     pub fn firstStatusText(self: *const Workspace) []const u8 {
+        if (self.focused_container) |fc| {
+            if (fc.active_tab < fc.tab_count and fc.tab_status_text_len[fc.active_tab] > 0) {
+                return fc.tab_status_text[fc.active_tab][0..fc.tab_status_text_len[fc.active_tab]];
+            }
+        }
         var it = self.split_tree.iterator();
         while (it.next()) |entry| {
             const c = entry.view;
@@ -271,6 +272,8 @@ pub const Workspace = struct {
                 }
             }
         }
+        // focused_container may not be in the split tree (transient state
+        // during init or in unit tests). Check its non-active tabs.
         if (self.focused_container) |fc| {
             for (0..fc.tab_count) |t| {
                 if (fc.tab_status_text_len[t] > 0) {
@@ -1566,6 +1569,7 @@ fn closeTabInContainer(self: *Window, ws_idx: usize, container: *PaneContainer, 
             ws.split_tree = new_tree;
             // Pick a new focused container before deiniting old tree.
             ws.focused_container = ws.focusedContainerOrFirst();
+            if (ws.focused_container) |fc| self.clearTabAttention(fc, fc.active_tab);
             old_tree.deinit();
         } else {
             // Container not in tree (shouldn't happen); unref it directly.
@@ -2984,6 +2988,7 @@ pub fn newBrowserSplit(self: *Window, direction: SplitTree(PaneContainer).Split.
     ws.split_tree = new_tree;
 
     ws.focused_container = new_container;
+    self.clearTabAttention(new_container, new_container.active_tab);
     self.updateTabBarVisibility();
     self.layoutSplits();
 
@@ -3264,6 +3269,19 @@ pub fn setAttentionForSurface(self: *Window, surface: *Surface, on: bool) void {
     if (surface.attention == on) return;
     surface.attention = on;
     self.recomputeTabAttention(loc.container, loc.tab);
+    // If the user is already looking at this tab (active tab of the
+    // focused container in the active workspace), clear immediately —
+    // no point flagging something the user can already see.
+    if (on) {
+        const ws = self.activeWorkspace();
+        if (loc.ws == ws) {
+            if (ws.focused_container) |fc| {
+                if (loc.container == fc and loc.tab == fc.active_tab) {
+                    self.clearTabAttention(fc, loc.tab);
+                }
+            }
+        }
+    }
     self.invalidateSidebar();
     self.invalidateTabBar();
     self.updateAttentionRings();
@@ -3641,6 +3659,7 @@ fn handleTabBarClick(self: *Window, x: i16, y: i16) void {
     if (ws.split_tree.isSplit()) {
         const container = self.hitTestSplitTabBar(x, y) orelse return;
         ws.focused_container = container;
+        self.clearTabAttention(container, container.active_tab);
 
         if (x >= container.new_tab_dropdown_rect.left and x < container.new_tab_dropdown_rect.right) {
             const bar_h = PaneContainer.tabBarHeight(self.scale);
@@ -3731,6 +3750,7 @@ fn handleTabBarMiddleClick(self: *Window, x: i16, y: i16) void {
     if (ws.split_tree.isSplit()) {
         const container = self.hitTestSplitTabBar(x, y) orelse return;
         ws.focused_container = container;
+        self.clearTabAttention(container, container.active_tab);
         self.invalidateTabBar();
         for (0..container.tab_rect_count) |i| {
             const rect = container.tab_rects[i];
@@ -3988,6 +4008,7 @@ fn handleTabBarRightClick(self: *Window, x: i16, y: i16) void {
     if (ws.split_tree.isSplit()) {
         const container = self.hitTestSplitTabBar(x, y) orelse return;
         ws.focused_container = container;
+        self.clearTabAttention(container, container.active_tab);
         self.invalidateTabBar();
 
         if ((x >= container.new_tab_btn_rect.left and x < container.new_tab_btn_rect.right) or
@@ -5191,6 +5212,7 @@ pub fn windowWndProc(
             if (window.hitTestSplitTabBar(x, y)) |dbl_container| {
                 const ws = window.activeWorkspace();
                 ws.focused_container = dbl_container;
+                window.clearTabAttention(dbl_container, dbl_container.active_tab);
                 window.invalidateTabBar();
                 for (0..dbl_container.tab_rect_count) |i| {
                     const rect = dbl_container.tab_rects[i];
@@ -5823,6 +5845,32 @@ test "unit: workspace status text via focused container" {
     try testing.expectEqualStrings("", ws.tabStatusText(1));
     ws.setTabStatusText(0, "");
     try testing.expectEqualStrings("", ws.tabStatusText(0));
+}
+
+test "unit: firstStatusText prioritises focused container active tab" {
+    var pc: PaneContainer = .{};
+    pc.tab_count = 2;
+    var ws: Workspace = .{};
+    ws.focused_container = &pc;
+
+    // No status set → empty.
+    try testing.expectEqualStrings("", ws.firstStatusText());
+
+    // Status on non-active tab (tab 1) → falls back to scanning.
+    const msg = "building";
+    @memcpy(pc.tab_status_text[1][0..msg.len], msg);
+    pc.tab_status_text_len[1] = msg.len;
+    try testing.expectEqualStrings("building", ws.firstStatusText());
+
+    // Status on active tab (tab 0) takes priority.
+    const msg2 = "testing";
+    @memcpy(pc.tab_status_text[0][0..msg2.len], msg2);
+    pc.tab_status_text_len[0] = msg2.len;
+    try testing.expectEqualStrings("testing", ws.firstStatusText());
+
+    // Clear active tab → falls back to tab 1.
+    pc.tab_status_text_len[0] = 0;
+    try testing.expectEqualStrings("building", ws.firstStatusText());
 }
 
 test "unit: PaneContainer progress and log store and clear per tab" {
