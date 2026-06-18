@@ -2971,6 +2971,7 @@ pub fn newBrowserSplit(self: *Window, direction: SplitTree(PaneContainer).Split.
     ws.split_tree = new_tree;
 
     ws.focused_container = new_container;
+    self.updateTabBarVisibility();
     self.layoutSplits();
 
     browser.startCreation();

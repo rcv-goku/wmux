@@ -35,7 +35,7 @@ With Phase 01's rearchitecture complete, each PaneContainer owns its own tabs â€
   - When a user clicks anywhere within a PaneContainer's area (tab bar or content), that container becomes focused: set `ws.focused_container = clicked_container`, invalidate all tab bars for repaint
   - The focus indicator integrates with the existing surface focus handling: when a terminal Surface receives `WM_SETFOCUS`, trace back to its PaneContainer and set it as focused
 
-- [ ] Handle tab bar visibility edge cases and transitions:
+- [x] Handle tab bar visibility edge cases and transitions:
   - When a container's tab_count drops from 2 to 1 (tab closed): if splits exist, the per-pane tab bar disappears and the content pane expands to fill the full container rect. Call `layoutSplits()` to reposition.
   - When a container's tab_count increases from 1 to 2 (tab added): if splits exist, the per-pane tab bar appears and the content pane shrinks. Call `layoutSplits()`.
   - When the last split is removed (back to single PaneContainer): transition from per-pane tab bars to the window-top tab bar. The content area calculation switches back to using `surfaceRect()` with tab bar height subtracted.
