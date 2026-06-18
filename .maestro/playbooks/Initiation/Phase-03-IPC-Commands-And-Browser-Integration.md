@@ -31,9 +31,10 @@ With the PaneContainer architecture and per-pane tab bars in place, this phase u
   - Add optional `--pane` argument to target a specific PaneContainer by index
   <!-- ipcSend already used focusedContainerOrFirst() and container.tabs[tab_idx] from prior work. Added --pane argument following the same containerAtIndex pattern as ipcTabList/ipcTabNew/ipcTabSelect/ipcTabClose. Updated CLI send.zig to parse --pane flag and serialize it into the IPC JSON request. Updated help text to document --pane. Build passes, no test regressions. -->
 
-- [ ] Update `ipcSurfaceList` and `ipcSurfaceFocus` (search for these in App.zig) to reflect the new hierarchy:
+- [x] Update `ipcSurfaceList` and `ipcSurfaceFocus` (search for these in App.zig) to reflect the new hierarchy:
   - `surface-list`: iterate the workspace's split tree leaves (PaneContainers), then within each container iterate `tabs[0..tab_count]`. Output should include the container index for each surface, e.g. `{"pane":0, "tab":0, "type":"terminal", "focused":true, ...}`
   - `surface-focus`: accept a surface ID and find which container + tab it belongs to via `findLoc`. Set that container as focused and select that tab within it. If the surface is in a different workspace, select that workspace first.
+  <!-- ipcSurfaceList now iterates all PaneContainers via ws.split_tree.iterator(), emitting {pane, tab, id, type, focused, title} for every tab in every container. ipcSurfaceFocus surface-id path unchanged (already correct via ipcFindSurfaceById). Position-based path now uses containerAtIndex(pane) to address by container index + optional tab index within that container. Updated ipc.zig comments and surface.zig CLI help text to match new output format. Build passes, pre-existing test failure in workspace metadata unrelated. -->
 
 - [ ] Update `ipcSplit` (the `+split` IPC command — search for it in App.zig) to create new PaneContainers:
   - The `+split` command should create a new PaneContainer (with one fresh tab) in the addressed workspace's split tree

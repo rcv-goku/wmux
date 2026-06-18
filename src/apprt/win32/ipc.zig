@@ -84,10 +84,11 @@ pub const Command = enum {
     // workspace/tab verbs (they touch the live model). Indices follow the
     // same defaulting as send/notify (absent workspace/tab => active).
     //
-    // surface-list {[workspace],[tab]} -> JSON of panes in the addressed
-    //   tab: [{id, kind:"terminal"|"browser", focused, title}].
-    // surface-focus {surface | (workspace,tab,pane)} -> focus a pane by its
-    //   stable surface id, or by workspace/tab/pane index.
+    // surface-list {[workspace]} -> JSON of every tab in every
+    //   PaneContainer of the addressed workspace:
+    //   [{pane, tab, id, type:"terminal"|"browser", focused, title}].
+    // surface-focus {surface | (workspace,pane,[tab])} -> focus a surface
+    //   by its stable id, or by workspace/pane(container)/tab index.
     // new-split {dir:"right"|"down", [workspace],[tab],[command]} -> split
     //   the addressed (or active) pane; reply {id} of the new pane.
     // set-status {[workspace],[tab], [text]} -> set/clear a per-tab status

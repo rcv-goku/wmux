@@ -4125,61 +4125,67 @@ fn ipcSurfaceId(pane: *Pane) ?u64 {
     return surface.core_surface.id;
 }
 
-/// surface-list {[workspace],[tab]} → [{id, kind, focused, title}] for
-/// every tab (pane) in the focused PaneContainer of the addressed (or
-/// active) workspace. In the new model each tab is a single pane.
+/// surface-list {[workspace]} → [{pane, tab, id, type, focused, title}]
+/// for every tab in every PaneContainer (split tree leaf) of the
+/// addressed (or active) workspace.
 fn ipcSurfaceList(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
-    const target = try self.ipcResolveTab(req);
-    const container = target.ws.focusedContainerOrFirst() orelse {
-        server.sendOk(req.id, "[]") catch {};
-        return;
-    };
+    const ws_target = try self.ipcResolveWorkspace(req);
+    const ws = ws_target.ws;
+    const focused_container = ws.focusedContainerOrFirst();
     const alloc = self.core_app.alloc;
-    const active_pane = container.activePane();
 
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(alloc);
     try buf.append(alloc, '[');
     var first = true;
-    for (container.tabs[0..container.tab_count], 0..) |pane, t| {
-        if (!first) try buf.append(alloc, ',');
-        first = false;
-        switch (pane.content) {
-            .terminal => |surface| {
-                const sid: u64 = if (surface.core_surface_initialized) surface.core_surface.id else 0;
-                try buf.writer(alloc).print(
-                    "{{\"id\":{d},\"kind\":\"terminal\",\"focused\":{},\"title\":",
-                    .{ sid, if (active_pane) |ap| pane == ap else false },
-                );
-                try self.ipcWriteJsonUtf16(&buf, container.tab_titles[t][0..container.tab_title_lens[t]]);
-                try buf.append(alloc, '}');
-            },
-            .browser => |browser| {
-                try buf.writer(alloc).print(
-                    "{{\"id\":{d},\"kind\":\"browser\",\"focused\":{},\"title\":",
-                    .{ browser.ipc_id, if (active_pane) |ap| pane == ap else false },
-                );
-                try self.ipcWriteJsonUtf16(&buf, container.tab_titles[t][0..container.tab_title_lens[t]]);
-                try buf.append(alloc, '}');
-            },
+    var tree_it = ws.split_tree.iterator();
+    var pane_idx: usize = 0;
+    while (tree_it.next()) |tree_entry| {
+        const container = tree_entry.view;
+        const is_focused_container = if (focused_container) |fc| container == fc else false;
+        const active_pane = container.activePane();
+        for (container.tabs[0..container.tab_count], 0..) |pane, t| {
+            if (!first) try buf.append(alloc, ',');
+            first = false;
+            const is_focused = is_focused_container and (if (active_pane) |ap| pane == ap else false);
+            switch (pane.content) {
+                .terminal => |surface| {
+                    const sid: u64 = if (surface.core_surface_initialized) surface.core_surface.id else 0;
+                    try buf.writer(alloc).print(
+                        "{{\"pane\":{d},\"tab\":{d},\"id\":{d},\"type\":\"terminal\",\"focused\":{},\"title\":",
+                        .{ pane_idx, t, sid, is_focused },
+                    );
+                    try self.ipcWriteJsonUtf16(&buf, container.tab_titles[t][0..container.tab_title_lens[t]]);
+                    try buf.append(alloc, '}');
+                },
+                .browser => |browser| {
+                    try buf.writer(alloc).print(
+                        "{{\"pane\":{d},\"tab\":{d},\"id\":{d},\"type\":\"browser\",\"focused\":{},\"title\":",
+                        .{ pane_idx, t, browser.ipc_id, is_focused },
+                    );
+                    try self.ipcWriteJsonUtf16(&buf, container.tab_titles[t][0..container.tab_title_lens[t]]);
+                    try buf.append(alloc, '}');
+                },
+            }
         }
+        pane_idx += 1;
     }
     try buf.append(alloc, ']');
     server.sendOk(req.id, buf.items) catch {};
 }
 
-/// surface-focus {surface} | {workspace, tab, pane} → focus a pane. With a
-/// `surface` id the owning window/workspace/tab is selected and the pane
-/// focused; otherwise the pane is addressed by (workspace, tab, pane-index
-/// within the tab tree, in iteration order).
+/// surface-focus {surface} | {workspace, pane, tab} → focus a surface.
+/// With a `surface` id the owning window/workspace/container is found
+/// via `ipcFindSurfaceById`, the container is set as focused, and the
+/// tab is selected. Otherwise `pane` (container index) and `tab` (tab
+/// index within that container) address the target directly.
 fn ipcSurfaceFocus(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
 
     if (ipcArgU64(req, "surface")) |sid| {
         const loc = self.ipcFindSurfaceById(sid) orelse return IpcError.UnknownSurface;
         loc.window.selectWorkspace(loc.ws_idx);
-        // Focus the container that owns this surface and select its tab.
         if (loc.ws_idx < loc.window.workspace_count) {
             const ws = &loc.window.workspaces[loc.ws_idx];
             ws.focused_container = loc.container;
@@ -4190,17 +4196,17 @@ fn ipcSurfaceFocus(self: *App, req: *ipc.Request) anyerror!void {
         return;
     }
 
-    // Address by (workspace, tab, pane index). In the new model each tab
-    // IS a pane, so pane index maps to a tab index within the focused
-    // container.
-    const target = try self.ipcResolveTab(req);
+    // Address by (workspace, pane, tab) — pane is the container index in
+    // the split tree, tab is the tab index within that container.
+    const ws_target = try self.ipcResolveWorkspace(req);
     const pane_idx = ipcArgU32(req, "pane") orelse return IpcError.MissingIndex;
-    const container = target.ws.focusedContainerOrFirst() orelse return IpcError.UnknownPane;
-    if (pane_idx >= container.tab_count) return IpcError.UnknownPane;
-    const pane = container.tabs[pane_idx];
-    target.window.selectWorkspace(target.ws_idx);
-    target.ws.focused_container = container;
-    container.active_tab = pane_idx;
+    const container = ws_target.ws.containerAtIndex(pane_idx) orelse return IpcError.UnknownPane;
+    const tab_idx: usize = ipcArgU32(req, "tab") orelse container.active_tab;
+    if (tab_idx >= container.tab_count) return IpcError.UnknownTab;
+    const pane = container.tabs[tab_idx];
+    ws_target.window.selectWorkspace(ws_target.ws_idx);
+    ws_target.ws.focused_container = container;
+    container.active_tab = tab_idx;
     pane.focus();
     server.sendOk(req.id, null) catch {};
 }

@@ -28,18 +28,21 @@ pub const Options = struct {
 ///
 /// Subcommands:
 ///
-///   * `list [--workspace I] [--tab J]`: Print a JSON array of the panes in
-///     the addressed (or active) tab: `[{id, kind, focused, title}]`. `id`
-///     is the stable surface id (the same value exported to shells as
-///     `GHOSTTY_SURFACE_ID`) for terminal panes, or the browser pane id for
-///     browser panes; `kind` is "terminal" or "browser" and disambiguates
-///     the id space. A terminal whose core has not finished starting up
-///     reports id 0.
+///   * `list [--workspace I]`: Print a JSON array of every tab in every
+///     PaneContainer (split-tree leaf) of the addressed (or active)
+///     workspace: `[{pane, tab, id, type, focused, title}]`. `pane` is the
+///     container index (0-based, split-tree iteration order), `tab` is the
+///     tab index within that container. `id` is the stable surface id
+///     (the same value exported to shells as `GHOSTTY_SURFACE_ID`) for
+///     terminal panes, or the browser pane id for browser panes; `type` is
+///     "terminal" or "browser" and disambiguates the id space. A terminal
+///     whose core has not finished starting up reports id 0.
 ///
 ///   * `focus <id>`: Focus the pane with stable surface `id`, selecting its
-///     window, workspace, and tab. Alternatively address a pane by position
-///     with `--workspace I --tab J --pane K` (K is the pane's index within
-///     the tab in split-tree iteration order).
+///     window, workspace, and container. Alternatively address a surface by
+///     position with `--workspace I --pane P [--tab T]` (P is the container
+///     index in the split tree, T is the tab index within that container;
+///     T defaults to the container's active tab).
 ///
 /// The target instance's IPC pipe is `ghostty-ipc-<pid>`. The pid is taken
 /// from the `GHOSTTY_PID` environment variable (exported into every shell
