@@ -553,3 +553,128 @@ fn jsonFloat(v: ?std.json.Value) ?f64 {
         else => null,
     };
 }
+
+// ── Tests ──────────────────────────────────────────────────────────
+
+const testing = std.testing;
+
+test "SessionState: jsonString extracts strings and rejects non-strings" {
+    try testing.expectEqualStrings("hello", jsonString(.{ .string = "hello" }).?);
+    try testing.expect(jsonString(.{ .integer = 42 }) == null);
+    try testing.expect(jsonString(.null) == null);
+    try testing.expect(jsonString(null) == null);
+}
+
+test "SessionState: jsonUsize extracts non-negative integers" {
+    try testing.expectEqual(@as(usize, 5), jsonUsize(.{ .integer = 5 }).?);
+    try testing.expectEqual(@as(usize, 0), jsonUsize(.{ .integer = 0 }).?);
+    try testing.expect(jsonUsize(.{ .integer = -1 }) == null);
+    try testing.expect(jsonUsize(.{ .string = "5" }) == null);
+    try testing.expect(jsonUsize(null) == null);
+}
+
+test "SessionState: jsonFloat extracts floats and integer-as-float" {
+    try testing.expectApproxEqAbs(@as(f64, 0.75), jsonFloat(.{ .float = 0.75 }).?, 0.001);
+    try testing.expectApproxEqAbs(@as(f64, 3.0), jsonFloat(.{ .integer = 3 }).?, 0.001);
+    try testing.expect(jsonFloat(.{ .string = "0.5" }) == null);
+    try testing.expect(jsonFloat(null) == null);
+}
+
+test "SessionState: PaneContainerData defaults" {
+    const d: PaneContainerData = .{};
+    try testing.expectEqual(@as(usize, 0), d.tabs.len);
+    try testing.expectEqual(@as(usize, 0), d.active_tab);
+}
+
+test "SessionState: TabData defaults to terminal with no title or cwd" {
+    const t: TabData = .{};
+    try testing.expect(t.title == null);
+    try testing.expect(t.cwd == null);
+    try testing.expect(t.kind == .terminal);
+}
+
+test "SessionState: SplitNodeData leaf vs split discriminant" {
+    const leaf: SplitNodeData = .{ .node_type = .leaf };
+    try testing.expect(leaf.node_type == .leaf);
+    try testing.expect(leaf.container == null);
+    try testing.expect(leaf.left == null);
+    try testing.expect(leaf.right == null);
+
+    const split: SplitNodeData = .{ .node_type = .split, .direction = .horizontal, .ratio = 0.5 };
+    try testing.expect(split.node_type == .split);
+    try testing.expect(split.direction.? == .horizontal);
+}
+
+test "SessionState: WorkspaceData defaults" {
+    const w: WorkspaceData = .{};
+    try testing.expect(w.name == null);
+    try testing.expect(w.split_tree == null);
+    try testing.expectEqual(@as(usize, 0), w.active_container);
+    try testing.expect(w.working_dir == null);
+}
+
+test "SessionState: SessionData defaults to version 2" {
+    const s: SessionData = .{};
+    try testing.expectEqual(@as(u32, 2), s.version);
+    try testing.expectEqual(@as(usize, 0), s.workspaces.len);
+    try testing.expectEqual(@as(usize, 0), s.active_workspace);
+}
+
+test "SessionState: focusedContainerIndex returns 0 for empty workspace" {
+    const ws: Window.Workspace = .{};
+    try testing.expectEqual(@as(usize, 0), focusedContainerIndex(&ws));
+}
+
+test "SessionState: focusedContainerIndex returns 0 when focused is null" {
+    var ws: Window.Workspace = .{};
+    ws.focused_container = null;
+    try testing.expectEqual(@as(usize, 0), focusedContainerIndex(&ws));
+}
+
+test "SessionState: focusedContainerIndex finds correct leaf in single-node tree" {
+    const alloc = testing.allocator;
+    var pc: PaneContainer = .{};
+    const tree = try SplitTree(PaneContainer).init(alloc, &pc);
+    defer {
+        var t = tree;
+        t.deinit();
+    }
+    var ws: Window.Workspace = .{};
+    ws.split_tree = tree;
+    ws.focused_container = &pc;
+    try testing.expectEqual(@as(usize, 0), focusedContainerIndex(&ws));
+}
+
+test "SessionState: containerDataFrom produces correct tab count and active index" {
+    const alloc = testing.allocator;
+    var pc: PaneContainer = .{};
+    pc.tab_count = 0;
+    pc.active_tab = 0;
+
+    const data = try containerDataFrom(alloc, &pc);
+    defer alloc.free(data.tabs);
+    try testing.expectEqual(@as(usize, 0), data.tabs.len);
+    try testing.expectEqual(@as(usize, 0), data.active_tab);
+}
+
+test "SessionState: serializeNode round-trips a single-leaf tree" {
+    const alloc = testing.allocator;
+    var pc: PaneContainer = .{};
+    pc.tab_count = 0;
+    const tree = try SplitTree(PaneContainer).init(alloc, &pc);
+    defer {
+        var t = tree;
+        t.deinit();
+    }
+
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const node = try serializeNode(a, tree, .root);
+    try testing.expect(node.node_type == .leaf);
+    try testing.expect(node.container != null);
+    try testing.expectEqual(@as(usize, 0), node.container.?.tabs.len);
+    try testing.expect(node.left == null);
+    try testing.expect(node.right == null);
+}
