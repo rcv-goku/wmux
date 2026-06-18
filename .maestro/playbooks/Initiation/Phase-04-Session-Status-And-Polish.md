@@ -29,7 +29,7 @@ This final phase completes the rearchitecture by updating session persistence, s
   - Progress (`tab_progress`): same pattern — per-tab per-container. Sidebar shows focused container's active tab progress.
   - Log (`tab_log`): per-tab per-container. Sidebar shows focused container's active tab's latest log line.
 
-- [ ] Update `breakPane` and `closeTabMode` for the new architecture:
+- [x] Update `breakPane` and `closeTabMode` for the new architecture:
   - `breakPane(self, pane)`: in the new model, "break pane" should extract a tab from a multi-tab PaneContainer into a NEW PaneContainer. Find the container owning the pane via `findLoc`. If the container has only 1 tab, this is a no-op (can't break the only tab). Remove the pane's tab from the source container (shift arrays, decrement tab_count). Create a new PaneContainer with that pane as its sole tab. Insert the new container into the workspace split tree as a sibling of the source container (split in a default direction, e.g., right). Focus the new container. Call `layoutSplits()`.
   - `closeTabMode(self, mode, surface)`: currently supports `.this` (close this tab), `.other` (close all other tabs), `.right` (close tabs to the right). In the new model:
     - `.this`: close the pane's tab in its container — same as `closeSplitPane`
