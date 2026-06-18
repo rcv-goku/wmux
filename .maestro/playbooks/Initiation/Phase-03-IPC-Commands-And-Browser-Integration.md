@@ -11,12 +11,13 @@ With the PaneContainer architecture and per-pane tab bars in place, this phase u
   - The JSON output format stays the same: `[{"index":0,"title":"...","active":true}, ...]`
   - Add an optional `--pane` argument: if provided, find the PaneContainer at that index (by iterating split tree leaves and counting) and list its tabs instead of the focused container's tabs
 
-- [ ] Update `ipcTabNew` in App.zig to create tabs within the focused PaneContainer:
+- [x] Update `ipcTabNew` in App.zig to create tabs within the focused PaneContainer:
   - Currently calls `window.addTabWithCommand()` or `window.addTabBackground()`. These functions were already rewired in Phase 01 to operate on PaneContainers, so this handler should work correctly after Phase 01.
   - Verify that the returned index is the new tab's index within the PaneContainer (not a global index)
   - If `--focus` is true, ensure the new tab is created in the focused container of the now-active workspace
   - If `--focus` is false, ensure the new tab is added to the target workspace's focused container without switching workspaces
   - Add an optional `--pane` argument: if provided, create the tab in the specified PaneContainer (by index) rather than the focused one
+  <!-- Verified: addTabWithCommand/addTabBackground/addTabInheritBackground all use focusedContainerOrFirst() internally. The --pane argument sets ws.focused_container to the target before calling them, matching the ipcTabList pattern. Returned index is container.active_tab (within-container). Build passes, no test regressions. -->
 
 - [ ] Update `ipcTabSelect` and `ipcTabClose` in App.zig:
   - `ipcTabSelect`: validate `index` against the focused container's `tab_count`, then call `window.selectTabIndex(idx)` which now operates on the focused container. Add optional `--pane` argument for targeting a specific container.

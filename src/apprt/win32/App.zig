@@ -3734,7 +3734,8 @@ fn ipcTabList(self: *App, req: *ipc.Request) anyerror!void {
     server.sendOk(req.id, buf.items) catch {};
 }
 
-/// tab-new {[workspace], [command]} → add a tab to the addressed (or
+/// tab-new {[workspace], [command], [pane]} → add a tab to the focused
+/// PaneContainer (or the one at `pane` index) of the addressed (or
 /// active) workspace and reply with its index. With `command` the tab
 /// runs that shell (split on spaces); without it the tab inherits the
 /// active pane's backend (matching the "+" new-tab UX). The Window tab
@@ -3754,12 +3755,16 @@ fn ipcTabNew(self: *App, req: *ipc.Request) anyerror!void {
     // and the "create != focus" policy.
     //
     // The returned index is the new tab's index WITHIN THE TARGET
-    // WORKSPACE, the same index `+tab list --workspace <ws>` shows and
-    // `+tab close --workspace <ws>` accepts (BUG 2: previously this read
-    // the window's active-workspace active_tab, which could disagree with
-    // the workspace tab-list/close query when they targeted different
-    // workspaces).
+    // PaneContainer, the same index `+tab list --workspace <ws>` shows and
+    // `+tab close --workspace <ws>` accepts.
     const focus = ipcArgBool(req, "focus") orelse false;
+
+    // --pane targets a specific PaneContainer by index. The tab creation
+    // functions read the workspace's focused container, so redirect it.
+    if (ipcArgU32(req, "pane")) |p| {
+        const ws = &window.workspaces[ws_idx];
+        ws.focused_container = ws.containerAtIndex(p) orelse return IpcError.UnknownPane;
+    }
 
     if (focus and ws_idx != window.active_workspace)
         window.selectWorkspace(ws_idx);
