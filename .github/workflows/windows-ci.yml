@@ -33,7 +33,7 @@ jobs:
 
       - name: Cache Zig 0.15.2
         id: cache-zig
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}\zig
           key: zig-0.15.2-windows-x86_64
