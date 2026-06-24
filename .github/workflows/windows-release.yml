@@ -75,7 +75,7 @@ jobs:
         run: dist\windows\release.ps1 -Version ${{ steps.ver.outputs.version }}
 
       - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: ghostty-win v${{ steps.ver.outputs.version }}
           tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', steps.ver.outputs.version) }}
