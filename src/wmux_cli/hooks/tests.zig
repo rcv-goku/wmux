@@ -141,6 +141,27 @@ test "unit: agents: payload malformed, non-object, empty and oversized inputs ne
     try testing.expect(o.oversized and !o.malformed);
 }
 
+test "unit: agents: payload of exactly the stdin cap is parsed, one byte more is not" {
+    const gpa = testing.allocator;
+    const head = "{\"session_id\":\"s-cap\",\"pad\":\"";
+    const tail = "\"}";
+    const doc = try gpa.alloc(u8, payload.max_payload_bytes + 1);
+    defer gpa.free(doc);
+    const at_cap = doc[0..payload.max_payload_bytes];
+    @memcpy(at_cap[0..head.len], head);
+    @memset(at_cap[head.len .. at_cap.len - tail.len], 'p');
+    @memcpy(at_cap[at_cap.len - tail.len ..], tail);
+    var p = try parseFixture(at_cap);
+    defer p.deinit();
+    try testing.expect(!p.oversized and !p.malformed);
+    try testing.expectEqualStrings("s-cap", p.session_id.?);
+
+    doc[doc.len - 1] = '\n';
+    var over = try parseFixture(doc);
+    defer over.deinit();
+    try testing.expect(over.oversized and over.session_id == null);
+}
+
 test "unit: agents: payload tolerates BOM, duplicate keys, nulls and wrong types" {
     var p = try parseFixture("\xEF\xBB\xBF{\"session_id\":\"old\",\"session_id\":\"new\",\"cwd\":null,\"tool_name\":7,\"message\":{\"x\":1}}");
     defer p.deinit();
@@ -705,6 +726,43 @@ test "unit: agents: last assistant message from a transcript tail" {
     try testing.expect((try normalize.lastAssistantMessage(a, "")) == null);
     try testing.expect((try normalize.lastAssistantMessage(a, "{\"type\":\"user\"}\n")) == null);
     try testing.expectEqualStrings("plain", (try normalize.lastAssistantMessage(a, "{\"type\":\"assistant\",\"message\":{\"content\":\"plain\"}}")).?);
+}
+
+test "unit: agents: last assistant message is capped on a code-point boundary" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // 3000 x 3-byte chars = 9000 bytes, over the 8192-byte text cap.
+    const line = try std.fmt.allocPrint(a, "{{\"type\":\"assistant\",\"message\":{{\"content\":\"{s}\"}}}}", .{"€" ** 3000});
+    const out = (try normalize.lastAssistantMessage(a, line)).?;
+    try testing.expectEqual(@as(usize, 2730 * 3), out.len);
+    try testing.expect(std.unicode.utf8ValidateSlice(out));
+}
+
+fn parseNormalizeFormat(gpa: std.mem.Allocator) !void {
+    var p = try payload.parse(gpa,
+        \\{"session_id":"s","hook_event_name":"StopFailure","cwd":"C:/src/demo","tool_name":"Bash",
+        \\ "toolArgs":"{\"command\":\"ls\"}","error":{"message":"overloaded"},"model":{"id":"m"},
+        \\ "workspace_roots":["/r"],"properties":{"info":{"id":"i"}},"tool_response":[["config_off"]],"prompt":"hé"}
+    );
+    defer p.deinit();
+    const n = normalize.normalize(.claude, "stop", &p).?;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    _ = try normalize.format(arena.allocator(), n, .{ .payload = &p, .stored_summary = "x" });
+    var q = try payload.parse(gpa, "{\"hook_event_name\":\"Notification\",\"message\":\"Allow edit?\"}");
+    defer q.deinit();
+    _ = try normalize.format(arena.allocator(), normalize.normalize(.pi, "notification", &q).?, .{ .payload = &q, .surface_title = "api" });
+    const wire = try normalize.hookParamsAlloc(gpa, n, .{ .seq = 1, .surface_id = "S", .background_pending = false });
+    defer gpa.free(wire);
+    const last = try normalize.lastAssistantMessage(gpa, "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"a\"}]}}\n");
+    defer if (last) |s| gpa.free(s);
+    const line = try normalize.singleLine(gpa, "a \n b \xff " ++ ("x" ** 300), normalize.max_body_chars);
+    defer gpa.free(line);
+}
+
+test "unit: agents: hook parsing and formatting leak nothing when an allocation fails" {
+    try testing.checkAllAllocationFailures(testing.allocator, parseNormalizeFormat, .{});
 }
 
 // ---------------------------------------------------------------------------

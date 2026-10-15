@@ -334,6 +334,24 @@ test "unit: agents: store caps huge strings and arguments" {
     try testing.expectEqual(@as(usize, 1), t.count());
 }
 
+fn parseMergeWrite(gpa: std.mem.Allocator) !void {
+    var s = try Store.parse(gpa,
+        \\{"version":1,"sessions":{"a":{"sessionId":"a","surfaceId":"S1","workspaceId":"W","x":[1,{"y":2}],
+        \\ "launchCommand":{"executable":"claude","arguments":["--model","opus"]},"updatedAt":1.5}},
+        \\ "activeSessionsBySurface":{"S1":"a"},"activeSessionsByWorkspace":{"W":"a"},"top":{"k":true}}
+    );
+    defer s.deinit();
+    try s.applyHook(.{ .session_id = "b", .now_ms = 5_000, .surface_id = "S1", .workspace_id = "W", .launch_command = .{ .executable = "claude", .arguments = &.{"--resume"} }, .turn = .begin, .turn_id = "t1" });
+    try s.applyHook(.{ .session_id = "b", .now_ms = 6_000, .turn = .settle, .last_body = "ok" });
+    _ = s.prune(.{ .now_ms = 7_000 });
+    const json = try s.toOwnedJson(gpa);
+    defer gpa.free(json);
+}
+
+test "unit: agents: store parse, merge and write leak nothing when an allocation fails" {
+    try testing.checkAllAllocationFailures(testing.allocator, parseMergeWrite, .{});
+}
+
 test "unit: agents: store timestamp decoding" {
     try testing.expectEqual(@as(?i64, 1_700_000_000_000), store.decodeTimestampMs(.{ .integer = 1_700_000_000 }));
     try testing.expectEqual(@as(?i64, 1_700_000_000_500), store.decodeTimestampMs(.{ .float = 1_700_000_000.5 }));
