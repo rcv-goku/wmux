@@ -1,0 +1,4 @@
+# Golden JSON files are compared byte for byte; keep LF on every platform.
+# Only *.json: a byte-exact fixture such as a .vt scrollback file needs
+# its own rule (-text) instead of LF normalization.
+*.json text eol=lf
