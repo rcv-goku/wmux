@@ -203,9 +203,10 @@ pub const Tracker = struct {
     }
 };
 
-/// Write the `ports=` value used by `sidebar-state` and custom sidebars:
-/// comma-separated ascending numbers, empty when none.
+/// Write the `ports=` value of `sidebar-state` (`ports=<p1,p2>|none`):
+/// comma-separated ascending numbers, or `none` when the list is empty.
 pub fn writeList(w: *std.Io.Writer, list: []const u16) std.Io.Writer.Error!void {
+    if (list.len == 0) return w.writeAll("none");
     for (list, 0..) |p, i| {
         if (i > 0) try w.writeByte(',');
         try w.print("{d}", .{p});
@@ -375,7 +376,11 @@ test "unit: meta: ports writeList formats the ports= value" {
     var aw: std.Io.Writer.Allocating = .init(gpa);
     defer aw.deinit();
     try writeList(&aw.writer, &.{});
-    try testing.expectEqualStrings("", aw.written());
+    try testing.expectEqualStrings("none", aw.written());
+    aw.clearRetainingCapacity();
+    try writeList(&aw.writer, &.{8000});
+    try testing.expectEqualStrings("8000", aw.written());
+    aw.clearRetainingCapacity();
     try writeList(&aw.writer, &.{ 3000, 8080, 65535 });
     try testing.expectEqualStrings("3000,8080,65535", aw.written());
 }
