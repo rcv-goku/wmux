@@ -6,12 +6,8 @@
 
 const refresh = @import("legacy_refresh.zig");
 
-pub const Result = @import("probes.zig").Result;
+/// Start the periodic refresh timer (App.init).
+pub const startRefreshTimer = refresh.startRefreshTimer;
 
-pub const WM_APP_WS_META = refresh.WM_APP_WS_META;
-pub const WS_META_TIMER_ID = refresh.WS_META_TIMER_ID;
-pub const WS_META_INTERVAL_MS = refresh.WS_META_INTERVAL_MS;
-
-pub const refreshWorkspaceMetadata = refresh.refreshWorkspaceMetadata;
+/// Refresh one workspace now (focus / worktree bind; Window.zig).
 pub const refreshWorkspaceMetadataNow = refresh.refreshWorkspaceMetadataNow;
-pub const applyWorkspaceMetadata = refresh.applyWorkspaceMetadata;

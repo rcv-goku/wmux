@@ -29,6 +29,8 @@ const web_env = @import("web/env.zig");
 const meta = @import("features/meta/api.zig");
 const updater = @import("features/updater/legacy_check.zig");
 const config_files = @import("settings/legacy_config_files.zig");
+const app_tasks = @import("app/tasks.zig");
+const app_timers = @import("app/timers.zig");
 const message_loop = @import("app/message_loop.zig");
 const perform_action = @import("app/perform_action.zig");
 const wv2 = @import("platform/webview2.zig");
@@ -45,16 +47,14 @@ pub const must_draw_from_app_thread = false;
 /// core_app.tick() is called.
 const WM_APP_WAKEUP: u32 = w32.WM_APP + 1;
 
-/// Timer ID for the quit-after-last-window-closed delay.
-const QUIT_TIMER_ID: usize = 1;
-
 /// Window class for the top-level container (GDI painting, no CS_OWNDC).
 pub const WINDOW_CLASS_NAME = std.unicode.utf8ToUtf16LeStringLiteral("WmuxWindow");
 
 /// Window class for terminal surfaces (OpenGL via WGL, needs CS_OWNDC).
 pub const TERMINAL_CLASS_NAME = std.unicode.utf8ToUtf16LeStringLiteral("WmuxTerminal");
 
-/// Window class for the message-only HWND (WM_APP_WAKEUP, WM_TIMER).
+/// Window class for the message-only HWND (WM_APP_WAKEUP, WM_APP_TASK,
+/// WM_TIMER for app.timers, WM_APP_TRAY).
 pub const MSG_CLASS_NAME = std.unicode.utf8ToUtf16LeStringLiteral("WmuxMsg");
 
 /// Window class for browser pane host HWNDs (WebView2 + address bar).
@@ -69,9 +69,16 @@ core_app: *CoreApp,
 /// updated in response to config_change actions.
 config: Config,
 
-/// A message-only window used to receive WM_APP_WAKEUP.
-/// This is not a visible window; it just participates in the message loop.
+/// A message-only window used to receive WM_APP_WAKEUP, app.tasks
+/// wakeups and app.timers ticks. This is not a visible window; it just
+/// participates in the message loop.
 msg_hwnd: ?w32.HWND = null,
+
+/// UI-thread work posted from other threads (ARCHITECTURE.md ADR-1.6).
+tasks: app_tasks.Tasks = .{},
+
+/// UI-thread timers on msg_hwnd (ARCHITECTURE.md ADR-1.6).
+timers: app_timers.Timers = .{},
 
 /// The HINSTANCE for this module.
 hinstance: w32.HINSTANCE,
@@ -96,6 +103,9 @@ bg_brush: ?w32.HBRUSH = null,
 /// - expired: delay has elapsed, quit on next tick
 quit_timer_state: enum { off, active, expired } = .off,
 
+/// The app.timers timer behind quit_timer_state == .active (0 = none).
+quit_timer: app_timers.TimerId = 0,
+
 /// Whether quit has been requested.
 quit_requested: bool = false,
 
@@ -113,6 +123,13 @@ desktop_notifs: [notifications.NOTIF_DESKTOP_SLOTS]?notifications.DesktopNotif =
 
 /// Next desktop-notification slot to use (rotates through the range).
 desktop_notif_next: usize = 0,
+
+/// Per-slot app.timers cleanup timer of each in-flight desktop balloon
+/// (0 = none).
+desktop_notif_timers: [notifications.NOTIF_DESKTOP_SLOTS]app_timers.TimerId = @splat(0),
+
+/// The update balloon's app.timers cleanup timer (0 = none).
+update_balloon_timer: app_timers.TimerId = 0,
 
 /// Ring buffer of recent notifications listed in the sidebar's
 /// notifications panel (newest first). Slots are nulled when their
@@ -159,11 +176,10 @@ com_initialized: bool = false,
 
 /// Named-pipe IPC server for agent control (`ghostty +browser ...`).
 /// Started after msg_hwnd exists; its pipe thread parses requests and
-/// PostMessageW's each *ipc.Request to msg_hwnd
-/// (legacy_pipe.WM_APP_IPC_REQUEST),
-/// so all browser driving happens on this UI thread. Stopped before
-/// msg_hwnd is destroyed in terminate(). Null if startup failed (e.g.
-/// a stale pipe of the same name): IPC is then simply unavailable.
+/// posts each *ipc.Request to this UI thread through app.tasks, so all
+/// browser driving happens on this UI thread. Stopped before msg_hwnd
+/// is destroyed in terminate(). Null if startup failed (e.g. a stale
+/// pipe of the same name): IPC is then simply unavailable.
 ipc_server: ?*legacy_pipe.Server = null,
 
 /// Monotonic source of stable browser-pane ids handed back over IPC so
@@ -361,6 +377,10 @@ pub fn init(
     // Store self pointer in msg_hwnd's GWLP_USERDATA for msgWndProc access
     _ = w32.SetWindowLongPtrW(self.msg_hwnd.?, w32.GWLP_USERDATA, @bitCast(@intFromPtr(self)));
 
+    // app.tasks and app.timers deliver to msg_hwnd from here on.
+    self.tasks.init(alloc, self.msg_hwnd);
+    self.timers.init(alloc, self.msg_hwnd);
+
     // Start the agent IPC server now that msg_hwnd exists (the pipe
     // thread posts requests to it). A failure here only disables the
     // `ghostty +browser` CLI, so log and continue.
@@ -369,7 +389,7 @@ pub fn init(
     // Start the periodic sidebar-metadata refresh (git branch / ports /
     // PR). The timer fires on this msg_hwnd; each tick spawns a worker
     // thread for the actual git/gh/TCP-table work.
-    _ = w32.SetTimer(self.msg_hwnd.?, meta.WS_META_TIMER_ID, meta.WS_META_INTERVAL_MS, null);
+    meta.startRefreshTimer(self);
 
     // Register global hotkey for quick terminal (if configured).
     self.registerGlobalHotkey();
@@ -425,10 +445,10 @@ pub fn terminate(self: *App) void {
     }
 
     // Stop the IPC server BEFORE destroying msg_hwnd: the pipe thread's
-    // callback PostMessageW's to msg_hwnd, and stop() joins that thread,
-    // so no request can be posted to a dead window afterward. Any
-    // request already queued is drained by the loop exiting; if one is
-    // mid-flight in msgWndProc it completes before terminate() proceeds
+    // callback posts app.tasks to msg_hwnd, and stop() joins that thread,
+    // so no request can be posted afterward. Any request still queued is
+    // destroyed (unanswered) by tasks.deinit below; if one is mid-flight
+    // in msgWndProc it completes before terminate() proceeds
     // (single-threaded UI). sendOk/sendError after stop() is impossible
     // because the GUI thread is here, not in msgWndProc.
     if (self.ipc_server) |server| {
@@ -440,8 +460,13 @@ pub fn terminate(self: *App) void {
     // the IPC server stopped: no pipe-thread callback can still touch it.
     self.session_store.deinit();
 
+    // Kill every app timer and destroy every task still queued (without
+    // running it) while msg_hwnd is alive. A detached worker posting
+    // after this point has its task destroyed on arrival.
+    self.timers.deinit();
+    self.tasks.deinit();
+
     if (self.msg_hwnd) |hwnd| {
-        _ = w32.KillTimer(hwnd, meta.WS_META_TIMER_ID);
         // Clear GWLP_USERDATA before destroying so msgWndProc sees
         // userdata=0 and falls through to DefWindowProc for any
         // messages during destruction (e.g. WM_DESTROY).
@@ -643,13 +668,11 @@ pub fn startQuitTimer(self: *App) void {
     // Check if we should quit at all.
     if (!self.config.@"quit-after-last-window-closed") return;
 
-    // If a delay is configured, start a Win32 timer.
+    // If a delay is configured, start a one-shot app timer.
     if (self.config.@"quit-after-last-window-closed-delay") |v| {
         const ms = v.asMilliseconds();
-        if (self.msg_hwnd) |hwnd| {
-            _ = w32.SetTimer(hwnd, QUIT_TIMER_ID, ms, null);
-            self.quit_timer_state = .active;
-        }
+        self.quit_timer = self.timers.start(ms, .{}, 0, onQuitTimer);
+        if (self.quit_timer != 0) self.quit_timer_state = .active;
     } else {
         // No delay — quit immediately.
         self.quit_timer_state = .expired;
@@ -675,12 +698,20 @@ pub fn stopQuitTimer(self: *App) void {
             self.quit_requested = false;
         },
         .active => {
-            if (self.msg_hwnd) |hwnd| {
-                _ = w32.KillTimer(hwnd, QUIT_TIMER_ID);
-            }
+            self.timers.stop(self.quit_timer);
+            self.quit_timer = 0;
             self.quit_timer_state = .off;
         },
     }
+}
+
+/// app.timers callback: the quit-after-last-window-closed delay elapsed.
+fn onQuitTimer(self: *App, ctx: usize) void {
+    _ = ctx;
+    self.quit_timer = 0;
+    self.quit_timer_state = .expired;
+    self.quit_requested = true;
+    w32.PostQuitMessage(0);
 }
 
 /// Whether the current foreground window belongs to THIS process. The
@@ -1168,33 +1199,10 @@ fn msgWndProc(
         return 0;
     }
 
-    if (msg == legacy_pipe.WM_APP_IPC_REQUEST) {
-        // lparam is the *ipc.Request handed over by the pipe thread; we
-        // own it now and legacy_pipe.handleRequest destroys it.
-        const req: *ipc.Request = @ptrFromInt(@as(usize, @bitCast(lparam)));
-        legacy_pipe.handleRequest(app, req);
-        return 0;
-    }
-
-    if (msg == meta.WM_APP_WS_META) {
-        // lparam is the *meta.Result handed over by a worker thread; we
-        // own it now and applyWorkspaceMetadata frees it.
-        const result: *meta.Result = @ptrFromInt(@as(usize, @bitCast(lparam)));
-        meta.applyWorkspaceMetadata(app, result);
-        return 0;
-    }
-
-    if (msg == config_files.WM_APP_SHELL_SET) {
-        // The setDefaultShell worker finished writing the config file;
-        // trigger a reload on the UI thread.
-        config_files.handleShellSet(app);
-        return 0;
-    }
-
-    if (msg == updater.WM_APP_UPDATE_AVAILABLE) {
-        // wparam = heap pointer to the version string, lparam = length;
-        // the handler owns and frees the buffer.
-        updater.onUpdateAvailable(app, wparam, lparam);
+    // Work posted by other threads (IPC requests, metadata results, the
+    // update check, the default-shell writer): drain the whole batch.
+    if (msg == app_tasks.WM_APP_TASK) {
+        app.tasks.drain(app);
         return 0;
     }
 
@@ -1214,42 +1222,9 @@ fn msgWndProc(
         return 0;
     }
 
-    if (msg == w32.WM_TIMER and wparam == QUIT_TIMER_ID) {
-        _ = w32.KillTimer(hwnd, QUIT_TIMER_ID);
-        app.quit_timer_state = .expired;
-        app.quit_requested = true;
-        w32.PostQuitMessage(0);
-        return 0;
-    }
-
-    // Timer ID 3: quick terminal animation tick.
-    if (msg == w32.WM_TIMER and wparam == QuickTerminal.ANIM_TIMER_ID) {
-        if (app.quick_terminal) |qt| qt.onAnimationTick();
-        return 0;
-    }
-
-    // Sidebar metadata refresh tick: kick off the off-thread git/port/PR
-    // scan for the visible workspaces.
-    if (msg == w32.WM_TIMER and wparam == meta.WS_META_TIMER_ID) {
-        meta.refreshWorkspaceMetadata(app);
-        return 0;
-    }
-
-    // Notification icon cleanup timers. Each notification kind has its
-    // own (uID, timer-id) pair so an in-flight balloon isn't removed by
-    // an unrelated timeout.
-    if (msg == w32.WM_TIMER and wparam == updater.NOTIF_UPDATE_TIMER_ID) {
-        updater.onBalloonTimer(hwnd);
-        return 0;
-    }
-
-    if (msg == w32.WM_TIMER and
-        wparam >= notifications.NOTIF_DESKTOP_TIMER_BASE and
-        wparam < notifications.NOTIF_DESKTOP_TIMER_BASE + notifications.NOTIF_DESKTOP_SLOTS)
-    {
-        notifications.clearDesktopNotif(app, wparam - notifications.NOTIF_DESKTOP_TIMER_BASE);
-        return 0;
-    }
+    // Every msg_hwnd timer is an app.timers timer (quit delay, quick
+    // terminal animation, metadata refresh, balloon cleanups).
+    if (msg == w32.WM_TIMER and app.timers.dispatch(app, wparam)) return 0;
 
     return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
 }
@@ -1274,4 +1249,6 @@ test {
     _ = @import("features/status/log_ring.zig");
     _ = @import("features/notifications/legacy_ring.zig");
     _ = config_files;
+    _ = app_tasks;
+    _ = app_timers;
 }

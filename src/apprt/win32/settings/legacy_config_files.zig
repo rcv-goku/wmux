@@ -12,14 +12,28 @@ const Allocator = std.mem.Allocator;
 
 const App = @import("../App.zig");
 const configpkg = @import("../../../config.zig");
+const tasks = @import("../app/tasks.zig");
 const w32 = @import("../platform/win32.zig");
 
 const log = std.log.scoped(.win32);
 
-/// Posted by the setDefaultShell worker thread after the config file has
-/// been written successfully. Signals the UI thread to perform a
-/// reload_config so the new command takes effect. No payload.
-pub const WM_APP_SHELL_SET: u32 = w32.WM_APP + 6;
+/// Posted (through app.tasks) by the setDefaultShell worker thread after
+/// the config file has been written successfully. Makes the UI thread
+/// perform a reload_config so the new command takes effect. No payload.
+const ShellSetTask = struct {
+    task: tasks.Task = .{ .run = run, .destroy = destroy },
+    alloc: Allocator,
+
+    fn run(app: *App, task: *tasks.Task) void {
+        _ = task;
+        handleShellSet(app);
+    }
+
+    fn destroy(task: *tasks.Task) void {
+        const self: *ShellSetTask = @fieldParentPtr("task", task);
+        self.alloc.destroy(self);
+    }
+};
 
 /// Template written when the config file is missing at open time so the
 /// editor has something to show. Config.load writes a fuller template at
@@ -133,8 +147,8 @@ fn setCommandInConfigText(
 ///
 /// The file I/O (read + transform + atomic write) is performed on a
 /// detached worker thread so the UI thread is never blocked by slow
-/// disks. On success the worker posts WM_APP_SHELL_SET back to
-/// msg_hwnd, where the UI thread triggers a reload_config.
+/// disks. On success the worker posts a ShellSetTask back to the UI
+/// thread, which triggers a reload_config.
 pub fn setDefaultShell(self: *App, value: []const u8) void {
     const alloc = self.core_app.alloc;
 
@@ -158,7 +172,7 @@ pub fn setDefaultShell(self: *App, value: []const u8) void {
         .alloc = alloc,
         .path = path,
         .value = value_copy,
-        .msg_hwnd = self.msg_hwnd,
+        .app = self,
     };
 
     const thread = std.Thread.spawn(.{}, shellSetWorker, .{ctx}) catch {
@@ -174,12 +188,14 @@ const ShellSetCtx = struct {
     alloc: Allocator,
     path: []const u8,
     value: []const u8,
-    msg_hwnd: ?w32.HWND,
+    /// Only used to post the completion task (app.tasks is thread-safe).
+    app: *App,
 };
 
 /// Worker-thread entry for setDefaultShell: reads the config, transforms
 /// it, writes it back atomically, then signals the UI thread. Touches
-/// only its owned ctx and the filesystem — never live App/Window state.
+/// only its owned ctx, the filesystem and the thread-safe task queue —
+/// never live App/Window state.
 fn shellSetWorker(ctx: *ShellSetCtx) void {
     const alloc = ctx.alloc;
     defer {
@@ -212,14 +228,14 @@ fn shellSetWorker(ctx: *ShellSetCtx) void {
     log.info("set default shell: wrote command={s} to {s}", .{ ctx.value, ctx.path });
 
     // Signal the UI thread to reload_config. No payload needed.
-    if (ctx.msg_hwnd) |hwnd| {
-        _ = w32.PostMessageW(hwnd, WM_APP_SHELL_SET, 0, 0);
-    }
+    const task = alloc.create(ShellSetTask) catch return;
+    task.* = .{ .alloc = alloc };
+    ctx.app.tasks.post(&task.task);
 }
 
-/// UI-thread handler for WM_APP_SHELL_SET: the worker finished writing
+/// UI-thread handler for the ShellSetTask: the worker finished writing
 /// the config file, so reload it.
-pub fn handleShellSet(self: *App) void {
+fn handleShellSet(self: *App) void {
     self.core_app.performAction(self, .reload_config) catch |err| {
         log.err("set default shell: reload failed: {}", .{err});
     };

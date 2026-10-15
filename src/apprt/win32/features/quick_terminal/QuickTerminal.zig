@@ -9,14 +9,10 @@ const configpkg = @import("../../../../config.zig");
 const App = @import("../../App.zig");
 const Window = @import("../../Window.zig");
 const Surface = @import("../../Surface.zig");
+const timers = @import("../../app/timers.zig");
 const w32 = @import("../../platform/win32.zig");
 
 const log = std.log.scoped(.win32_quick_terminal);
-
-/// Animation timer ID. Runs on app.msg_hwnd, so it must stay unique
-/// against App's QUIT_TIMER_ID=1, NOTIF_UPDATE_TIMER_ID=4, and the
-/// NOTIF_DESKTOP_TIMER_BASE=100 range.
-pub const ANIM_TIMER_ID: usize = 3;
 
 /// Animation tick interval in milliseconds (~60fps).
 const ANIM_TICK_MS: u32 = 16;
@@ -25,6 +21,8 @@ app: *App,
 window: *Window,
 visible: bool = false,
 animating: bool = false,
+/// The repeating app.timers animation tick while animating (0 = none).
+anim_timer: timers.TimerId = 0,
 animation_direction: enum { in, out } = .in,
 animation_start_time: i64 = 0,
 animation_duration: f64 = 0.2,
@@ -68,7 +66,7 @@ pub fn deinit(self: *QuickTerminal) void {
 
     // Kill animation timer if running.
     if (self.animating) {
-        _ = w32.KillTimer(app.msg_hwnd, ANIM_TIMER_ID);
+        self.stopAnimTimer();
         self.animating = false;
     }
 
@@ -140,7 +138,7 @@ fn animateIn(self: *QuickTerminal) void {
     self.animation_direction = .in;
     self.animation_start_time = self.now();
     self.animating = true;
-    _ = w32.SetTimer(self.app.msg_hwnd, ANIM_TIMER_ID, ANIM_TICK_MS, null);
+    self.startAnimTimer();
 }
 
 fn animateOut(self: *QuickTerminal) void {
@@ -156,10 +154,28 @@ fn animateOut(self: *QuickTerminal) void {
     self.animation_direction = .out;
     self.animation_start_time = self.now();
     self.animating = true;
-    _ = w32.SetTimer(self.app.msg_hwnd, ANIM_TIMER_ID, ANIM_TICK_MS, null);
+    self.startAnimTimer();
 }
 
-/// Called from App's WM_TIMER handler on each animation tick.
+/// (Re)start the repeating animation tick, replacing a running one (as
+/// SetTimer with the same id used to).
+fn startAnimTimer(self: *QuickTerminal) void {
+    self.app.timers.stop(self.anim_timer);
+    self.anim_timer = self.app.timers.start(ANIM_TICK_MS, .{ .repeat = true }, 0, onAnimTimer);
+}
+
+fn stopAnimTimer(self: *QuickTerminal) void {
+    self.app.timers.stop(self.anim_timer);
+    self.anim_timer = 0;
+}
+
+/// app.timers callback: one animation tick.
+fn onAnimTimer(app: *App, ctx: usize) void {
+    _ = ctx;
+    if (app.quick_terminal) |qt| qt.onAnimationTick();
+}
+
+/// Called on each animation tick (onAnimTimer).
 pub fn onAnimationTick(self: *QuickTerminal) void {
     if (!self.animating) return;
 
@@ -182,7 +198,7 @@ pub fn onAnimationTick(self: *QuickTerminal) void {
 
     if (progress >= 1.0) {
         // Animation complete.
-        _ = w32.KillTimer(self.app.msg_hwnd, ANIM_TIMER_ID);
+        self.stopAnimTimer();
         self.animating = false;
 
         if (self.animation_direction == .in) {
@@ -210,10 +226,10 @@ pub fn onWindowDestroyed(self: *QuickTerminal) void {
     const alloc = self.app.core_app.alloc;
     const app = self.app;
 
-    // Kill the animation timer unconditionally — `self.animating` may
-    // be false but a stray WM_TIMER could already be queued. Once `self`
-    // is freed below, dispatching that timer would touch freed memory.
-    _ = w32.KillTimer(app.msg_hwnd, ANIM_TIMER_ID);
+    // Stop the animation timer unconditionally. (A WM_TIMER already
+    // queued for it finds no app.timers entry once stopped and is
+    // ignored, so it can never touch `self` after the free below.)
+    self.stopAnimTimer();
 
     alloc.destroy(self.window);
     app.quick_terminal = null;

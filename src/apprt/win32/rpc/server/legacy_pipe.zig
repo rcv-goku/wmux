@@ -538,17 +538,34 @@ pub const Server = struct {
 
 const App = @import("../../App.zig");
 const legacy_table = @import("../compat/legacy_table.zig");
-const w32 = @import("../../platform/win32.zig");
+const tasks = @import("../../app/tasks.zig");
 
 const app_log = std.log.scoped(.win32);
 
-/// Posted by the IPC server's pipe thread (onRequest) to hand a parsed
-/// *Request to the GUI thread, which owns all HWND/WebView2 access.
-/// lparam carries the request pointer.
-pub const WM_APP_IPC_REQUEST: u32 = w32.WM_APP + 4;
+/// A parsed request travelling from the pipe thread to the UI thread
+/// (which owns all HWND/WebView2 access) through `app.tasks`.
+const RequestTask = struct {
+    task: tasks.Task = .{ .run = run, .destroy = destroy },
+    gpa: Allocator,
+    /// Owned until `run` hands it to handleRequest (which destroys it).
+    req: ?*Request,
+
+    fn run(app: *App, task: *tasks.Task) void {
+        const self: *RequestTask = @fieldParentPtr("task", task);
+        const req = self.req orelse return;
+        self.req = null;
+        handleRequest(app, req);
+    }
+
+    fn destroy(task: *tasks.Task) void {
+        const self: *RequestTask = @fieldParentPtr("task", task);
+        if (self.req) |req| req.destroy();
+        self.gpa.destroy(self);
+    }
+};
 
 /// Start the named-pipe IPC server on pipe wmux-ipc-<pid>. The pipe
-/// thread parses requests and posts each to msg_hwnd; the UI thread
+/// thread parses requests and posts each to the UI thread; the UI thread
 /// drives the browser/workspace/tab/send commands in handleRequest.
 /// Failure (e.g. a stale pipe) leaves ipc_server null — the CLI is then
 /// unavailable but the app runs.
@@ -570,8 +587,8 @@ pub fn start(self: *App) void {
     };
 }
 
-/// Pipe-thread callback: hand the parsed request to the UI thread. On a
-/// PostMessageW failure (msg_hwnd gone, queue full) the request would
+/// Pipe-thread callback: hand the parsed request to the UI thread as an
+/// `app.tasks` task. If the task cannot be allocated the request would
 /// otherwise leak, so destroy it here. ctx is the *App.
 ///
 /// A command's optional `prepare` stage runs HERE, on the pipe thread,
@@ -591,16 +608,15 @@ fn onRequest(ctx: ?*anyopaque, req: *Request) void {
         }
     }
 
-    const hwnd = self.msg_hwnd orelse {
+    const task = req.gpa.create(RequestTask) catch {
         req.destroy();
         return;
     };
-    if (w32.PostMessageW(hwnd, WM_APP_IPC_REQUEST, 0, @bitCast(@intFromPtr(req))) == 0) {
-        req.destroy();
-    }
+    task.* = .{ .gpa = req.gpa, .req = req };
+    self.tasks.post(&task.task);
 }
 
-/// Handle one IPC request on the UI thread (from WM_APP_IPC_REQUEST):
+/// Handle one IPC request on the UI thread (from its RequestTask):
 /// look the command up in the legacy table, enforce read-only mode, run
 /// its handler (which answers via the server), name any returned error
 /// to the client, then destroy the request. Async handlers (eval,

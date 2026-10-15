@@ -10,7 +10,6 @@ const ring = @import("legacy_ring.zig");
 // State types still embedded in App (W0-A3 moves them to ext state).
 pub const NOTIF_DESKTOP_SLOTS = ring.NOTIF_DESKTOP_SLOTS;
 pub const NOTIF_DESKTOP_UID_BASE = ring.NOTIF_DESKTOP_UID_BASE;
-pub const NOTIF_DESKTOP_TIMER_BASE = ring.NOTIF_DESKTOP_TIMER_BASE;
 pub const NOTIF_LOG_CAP = ring.NOTIF_LOG_CAP;
 pub const DesktopNotif = ring.DesktopNotif;
 pub const NotifEntry = ring.NotifEntry;

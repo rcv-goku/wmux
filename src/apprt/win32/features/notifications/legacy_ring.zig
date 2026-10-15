@@ -23,10 +23,10 @@ const log = std.log.scoped(.win32);
 /// Desktop notifications rotate through a small range of slots so that
 /// several balloons can be in flight at once, each with its own tray
 /// uID, cleanup timer, and recorded click target. Slot `i` uses uID
-/// NOTIF_DESKTOP_UID_BASE+i and timer NOTIF_DESKTOP_TIMER_BASE+i.
+/// NOTIF_DESKTOP_UID_BASE+i and the app.timers timer in
+/// App.desktop_notif_timers[i].
 pub const NOTIF_DESKTOP_SLOTS: usize = 8;
 pub const NOTIF_DESKTOP_UID_BASE: u32 = 100;
-pub const NOTIF_DESKTOP_TIMER_BASE: usize = 100;
 
 /// Click target recorded for an in-flight desktop notification. The
 /// pointers may dangle by the time the balloon is clicked (tab or
@@ -314,7 +314,7 @@ pub fn showDesktopNotification(
     // Record which surface notified so a click on the balloon can jump
     // back to it. Slots rotate; if all are in flight the oldest balloon
     // is replaced (NIM_ADD fails silently, NIM_MODIFY updates in place,
-    // SetTimer with the same id restarts the old timer).
+    // and the slot's cleanup timer is restarted).
     const slot = self.desktop_notif_next;
     self.desktop_notif_next = (slot + 1) % NOTIF_DESKTOP_SLOTS;
     self.desktop_notifs[slot] = sender;
@@ -350,9 +350,17 @@ pub fn showDesktopNotification(
     // Update the taskbar unread-count overlay to match the new entry.
     refreshTaskbarBadges(self);
 
-    // Schedule icon removal via a timer (distinct from the update
-    // notification's timer so the two don't trample each other).
-    _ = w32.SetTimer(hwnd, NOTIF_DESKTOP_TIMER_BASE + slot, 6000, null);
+    // Schedule icon removal via a per-slot app.timers timer (distinct
+    // from the update notification's timer so the two don't trample each
+    // other); reusing a slot restarts its timer.
+    self.timers.stop(self.desktop_notif_timers[slot]);
+    self.desktop_notif_timers[slot] = self.timers.start(6000, .{}, slot, onDesktopNotifTimer);
+}
+
+/// app.timers callback: desktop-balloon slot `slot`'s 6 s cleanup elapsed.
+fn onDesktopNotifTimer(self: *App, slot: usize) void {
+    self.desktop_notif_timers[slot] = 0;
+    clearDesktopNotif(self, slot);
 }
 
 /// A desktop-notification balloon was clicked: jump to the surface that
@@ -603,8 +611,9 @@ pub fn notifAt(self: *const App, display_idx: usize) ?*const NotifEntry {
 /// and free the slot.
 pub fn clearDesktopNotif(self: *App, slot: usize) void {
     self.desktop_notifs[slot] = null;
+    self.timers.stop(self.desktop_notif_timers[slot]);
+    self.desktop_notif_timers[slot] = 0;
     const hwnd = self.msg_hwnd orelse return;
-    _ = w32.KillTimer(hwnd, NOTIF_DESKTOP_TIMER_BASE + slot);
     var nid: w32.NOTIFYICONDATAW = std.mem.zeroes(w32.NOTIFYICONDATAW);
     nid.cbSize = @sizeOf(w32.NOTIFYICONDATAW);
     nid.hWnd = hwnd;

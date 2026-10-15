@@ -1,12 +1,13 @@
 //! Sidebar workspace metadata (Stage 2): off-thread git branch / ports / PR.
 //!
-//! refreshWorkspaceMetadata runs on the UI thread (WS_META_TIMER_ID). It
-//! snapshots each visible workspace into a self-contained ws_meta.Job (an
-//! owned working_dir copy + the tabs' child PIDs read lock-free), stamps the
-//! workspace with a fresh token, and spawns ONE detached worker thread for
-//! the batch. The worker runs git/gh/the TCP table (never touching live
-//! Window/App state) and PostMessageW's a *ws_meta.Result per workspace back
-//! to msg_hwnd, where applyWorkspaceMetadata revalidates + stores it.
+//! refreshWorkspaceMetadata runs on the UI thread (a repeating app.timers
+//! timer). It snapshots each visible workspace into a self-contained
+//! ws_meta.Job (an owned working_dir copy + the tabs' child PIDs read
+//! lock-free), stamps the workspace with a fresh token, and spawns ONE
+//! detached worker thread for the batch. The worker runs git/gh/the TCP
+//! table (never touching live Window/App state) and posts a *ws_meta.Result
+//! per workspace back to the UI thread through app.tasks, where
+//! applyWorkspaceMetadata revalidates + stores it.
 //!
 //! Moved verbatim from App.zig in W0-A1 (ARCHITECTURE.md ADR-1.8). W2-6
 //! replaces the probes with watched `.git\HEAD` + job-based ports.
@@ -16,22 +17,49 @@ const Allocator = std.mem.Allocator;
 
 const App = @import("../../App.zig");
 const Window = @import("../../Window.zig");
-const w32 = @import("../../platform/win32.zig");
+const tasks = @import("../../app/tasks.zig");
 const ws_meta = @import("probes.zig");
 
 const log = std.log.scoped(.win32);
 
-/// Posted by a sidebar-metadata worker thread to hand a completed
-/// *ws_meta.Result to the GUI thread, which owns all Window/Workspace
-/// state. lparam carries the result pointer (ownership transferred). The
-/// worker only reads its own owned Job, never live Window/App state.
-pub const WM_APP_WS_META: u32 = w32.WM_APP + 5;
+/// Hands a completed *ws_meta.Result from a sidebar-metadata worker
+/// thread to the GUI thread, which owns all Window/Workspace state
+/// (ownership of the result transfers with the task). The worker only
+/// reads its own owned Job, never live Window/App state.
+const ResultTask = struct {
+    task: tasks.Task = .{ .run = run, .destroy = destroy },
+    alloc: Allocator,
+    /// Owned until `run` hands it to applyWorkspaceMetadata (which frees
+    /// it).
+    result: ?*ws_meta.Result,
 
-/// Periodic timer that refreshes the sidebar workspace metadata (git
-/// branch, listening ports, PR status). Fires on the UI thread; the actual
-/// git/gh/TCP-table work runs on a worker thread spawned per tick. Shares
-/// the msg_hwnd WM_TIMER namespace, distinct from the IDs above.
-pub const WS_META_TIMER_ID: usize = 5;
+    fn run(app: *App, task: *tasks.Task) void {
+        const self: *ResultTask = @fieldParentPtr("task", task);
+        const result = self.result orelse return;
+        self.result = null;
+        applyWorkspaceMetadata(app, result);
+    }
+
+    fn destroy(task: *tasks.Task) void {
+        const self: *ResultTask = @fieldParentPtr("task", task);
+        if (self.result) |result| self.alloc.destroy(result);
+        self.alloc.destroy(self);
+    }
+};
+
+/// Start the periodic sidebar-metadata refresh (git branch / ports / PR):
+/// a repeating app.timers timer on the UI thread; each tick spawns a
+/// worker thread for the actual git/gh/TCP-table work. Called once from
+/// App.init.
+pub fn startRefreshTimer(app: *App) void {
+    _ = app.timers.start(WS_META_INTERVAL_MS, .{ .repeat = true }, 0, onRefreshTimer);
+}
+
+/// app.timers callback: one metadata refresh tick.
+fn onRefreshTimer(app: *App, ctx: usize) void {
+    _ = ctx;
+    refreshWorkspaceMetadata(app);
+}
 
 /// Refresh cadence for sidebar metadata, in milliseconds. The git/port
 /// scan is cheap and runs every tick; the gh PR probe (network) runs only
@@ -165,9 +193,9 @@ fn freeMetaJobs(alloc: Allocator, jobs: []ws_meta.Job) void {
 }
 
 /// Worker-thread entry: run every job and post each result back to the UI
-/// thread. Touches only `ctx` (its own owned jobs) and the allocator —
-/// NEVER live Window/App state. msg_hwnd is read once; it is stable for the
-/// app's lifetime. On a PostMessageW failure the result is freed here.
+/// thread through app.tasks. Touches only `ctx` (its own owned jobs), the
+/// allocator and the thread-safe task queue — NEVER live Window/App
+/// state. If a task cannot be allocated the result is freed here.
 fn metaWorkerMain(ctx: *MetaWorkerCtx) void {
     const self = ctx.app;
     const alloc = self.core_app.alloc;
@@ -176,12 +204,14 @@ fn metaWorkerMain(ctx: *MetaWorkerCtx) void {
         alloc.destroy(ctx);
     }
 
-    const hwnd = self.msg_hwnd orelse return;
     for (ctx.jobs) |*job| {
         const result = ws_meta.run(alloc, job) catch continue;
-        if (w32.PostMessageW(hwnd, WM_APP_WS_META, 0, @bitCast(@intFromPtr(result))) == 0) {
+        const task = alloc.create(ResultTask) catch {
             alloc.destroy(result);
-        }
+            continue;
+        };
+        task.* = .{ .alloc = alloc, .result = result };
+        self.tasks.post(&task.task);
     }
 }
 

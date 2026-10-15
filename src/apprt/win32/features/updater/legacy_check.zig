@@ -6,9 +6,11 @@
 //! `updater` WP replaces it (correct repo URL, ADR-14.6).
 
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 
 const App = @import("../../App.zig");
 const build_config = @import("../../../../build_config.zig");
+const tasks = @import("../../app/tasks.zig");
 const w32 = @import("../../platform/win32.zig");
 
 const log = std.log.scoped(.win32);
@@ -16,21 +18,33 @@ const log = std.log.scoped(.win32);
 /// GitHub releases API URL for this fork.
 const UPDATE_URL = "https://api.github.com/repos/InsipidPoint/ghostty-windows/releases/latest";
 
-/// Custom message posted from the update thread to the message loop.
-pub const WM_APP_UPDATE_AVAILABLE: u32 = w32.WM_APP + 2;
-
 /// User-facing GitHub releases page that the update balloon links to.
 const RELEASES_URL = "https://github.com/InsipidPoint/ghostty-windows/releases/latest";
 
-/// Tray icon and timer IDs for notifications. Distinct IDs mean the
-/// desktop and update balloons can coexist without one's auto-cleanup
-/// removing the other's icon. Timer IDs share the msg_hwnd WM_TIMER
-/// namespace with QUIT_TIMER_ID=1 and QuickTerminal.ANIM_TIMER_ID=3 and
-/// must stay unique across all of them (the update timer was 3, which
-/// the anim-timer check shadowed whenever a quick terminal existed,
-/// leaving the update tray icon undeleted).
+/// Tray icon ID of the update balloon. Distinct from the desktop
+/// notification uIDs (100..107) so the two kinds of balloon can coexist
+/// without one's auto-cleanup removing the other's icon. (Its cleanup
+/// timer is an app.timers timer: App.update_balloon_timer.)
 pub const NOTIF_UPDATE_UID: u32 = 2;
-pub const NOTIF_UPDATE_TIMER_ID: usize = 4;
+
+/// Hands the newer version string found by the update thread to the UI
+/// thread (ownership of `version` transfers with the task).
+const UpdateTask = struct {
+    task: tasks.Task = .{ .run = run, .destroy = destroy },
+    alloc: Allocator,
+    version: []u8,
+
+    fn run(app: *App, task: *tasks.Task) void {
+        const self: *UpdateTask = @fieldParentPtr("task", task);
+        showUpdateNotification(app, self.version);
+    }
+
+    fn destroy(task: *tasks.Task) void {
+        const self: *UpdateTask = @fieldParentPtr("task", task);
+        self.alloc.free(self.version);
+        self.alloc.destroy(self);
+    }
+};
 
 /// Minimum interval between update checks, in seconds. The check
 /// timestamp is persisted in %LOCALAPPDATA%/ghostty/update_check_at.
@@ -122,28 +136,24 @@ fn updateCheckThread(app: *App) void {
         current_sv.major, current_sv.minor, current_sv.patch, latest_ver,
     });
 
-    const hwnd = app.msg_hwnd orelse return;
-
-    // Allocate a heap copy and hand ownership to the message handler via
-    // wparam/lparam. This avoids a static-buffer race between this worker
-    // thread writing the version and the message thread reading it.
+    // Allocate a heap copy and hand ownership to the UI thread through an
+    // app.tasks task. This avoids a static-buffer race between this worker
+    // thread writing the version and the UI thread reading it.
     const alloc = app.core_app.alloc;
     const owned = alloc.dupe(u8, latest_ver) catch {
         log.warn("oom allocating update version", .{});
         return;
     };
-    const wparam: usize = @intFromPtr(owned.ptr);
-    const lparam: isize = @intCast(owned.len);
-    if (w32.PostMessageW(hwnd, WM_APP_UPDATE_AVAILABLE, wparam, lparam) == 0) {
-        // PostMessage failed (e.g., HWND already destroyed). Free the
-        // buffer here since the handler will never run.
+    const task = alloc.create(UpdateTask) catch {
         alloc.free(owned);
-    }
+        return;
+    };
+    task.* = .{ .alloc = alloc, .version = owned };
+    app.tasks.post(&task.task);
 }
 
-/// Show a notification balloon that an update is available. The handler
-/// owns `ver` (heap-allocated by updateCheckThread) and is responsible
-/// for freeing it.
+/// Show a notification balloon that an update is available. `ver` is
+/// owned by the caller (the UpdateTask frees it).
 pub fn showUpdateNotification(self: *App, ver: []const u8) void {
     const hwnd = self.msg_hwnd orelse return;
     if (ver.len == 0) return;
@@ -180,7 +190,9 @@ pub fn showUpdateNotification(self: *App, ver: []const u8) void {
 
     _ = w32.Shell_NotifyIconW(w32.NIM_ADD, &nid);
     _ = w32.Shell_NotifyIconW(w32.NIM_MODIFY, &nid);
-    _ = w32.SetTimer(hwnd, NOTIF_UPDATE_TIMER_ID, 10000, null);
+    // (Re)start the 10 s icon cleanup (a re-shown balloon restarts it).
+    self.timers.stop(self.update_balloon_timer);
+    self.update_balloon_timer = self.timers.start(10000, .{}, 0, onBalloonTimer);
 }
 
 const VersionResult = struct { tag: [128]u8, len: usize };
@@ -228,19 +240,6 @@ fn fetchLatestVersion() !VersionResult {
     return result;
 }
 
-/// UI-thread handler for WM_APP_UPDATE_AVAILABLE (moved from
-/// App.msgWndProc): wparam = heap pointer to the version string, lparam =
-/// length. We own the buffer and must free it after use.
-pub fn onUpdateAvailable(app: *App, wparam: usize, lparam: isize) void {
-    if (wparam != 0 and lparam > 0) {
-        const ptr: [*]u8 = @ptrFromInt(wparam);
-        const len: usize = @intCast(lparam);
-        const ver = ptr[0..len];
-        defer app.core_app.alloc.free(ver);
-        showUpdateNotification(app, ver);
-    }
-}
-
 /// A click on the update balloon (WM_APP_TRAY with NOTIF_UPDATE_UID)
 /// opens the GitHub releases page. (Moved from App.msgWndProc.)
 pub fn openReleasesPage() void {
@@ -257,10 +256,12 @@ pub fn openReleasesPage() void {
     );
 }
 
-/// NOTIF_UPDATE_TIMER_ID fired on msg_hwnd: remove the update balloon's
-/// tray icon. (Moved from App.msgWndProc.)
-pub fn onBalloonTimer(hwnd: w32.HWND) void {
-    _ = w32.KillTimer(hwnd, NOTIF_UPDATE_TIMER_ID);
+/// app.timers callback: the update balloon's 10 s cleanup elapsed; remove
+/// its tray icon. (Moved from App.msgWndProc.)
+fn onBalloonTimer(app: *App, ctx: usize) void {
+    _ = ctx;
+    app.update_balloon_timer = 0;
+    const hwnd = app.msg_hwnd orelse return;
     var nid: w32.NOTIFYICONDATAW = std.mem.zeroes(w32.NOTIFYICONDATAW);
     nid.cbSize = @sizeOf(w32.NOTIFYICONDATAW);
     nid.hWnd = hwnd;
