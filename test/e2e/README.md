@@ -77,10 +77,15 @@ launch a `wmux.exe` that lacks `WMUX_TEST_HIDDEN` support (the test is skipped i
 
 ## Transitional behavior (until W1-1a, W1-2 and W0-A1 land)
 
-* Protocol detection: when `\\.\pipe\wmux-ipc-<pid>` appears and answers
-  `{"id":1,"cmd":"workspace-list"}`, the instance is `Protocol = 'legacy'`; otherwise the v2
-  pipe from `state\run\instance.json` or the D.2.6 name `wmux-<channel>-<sidhash8>-s<session>`
-  is used with readiness `wmux.debug.ready`. A v2 pipe wins when both exist.
+* Protocol detection: when `\\.\pipe\wmux-ipc-<pid>` appears and answers a `workspace-list`
+  request, the instance is `Protocol = 'legacy'`; otherwise the v2 pipe from
+  `state\run\instance.json` or the D.2.6 name `wmux-<channel>-<sidhash8>-s<session>` is used with
+  readiness `wmux.debug.ready`. A v2 pipe wins when both exist.
+* The legacy pipe has a single instance and the app writes each reply to whichever connection
+  is open when its UI thread gets to it, so the reply to a request that timed out (typically a
+  readiness probe sent before the message loop runs) arrives on a later connection. The harness
+  remembers the ids of unanswered requests per instance and skips such late replies; give raw
+  JSON lines unique ids.
 * v2-only helpers throw `[WmuxRpcError]` code `harness_legacy_protocol` on a legacy instance; the
   smoke suite therefore speaks legacy JSON through `Invoke-WmuxRawLine`.
 * `Invoke-WmuxCli` relays a small allowlist of legacy `+verbs` through `wmux.exe` (with

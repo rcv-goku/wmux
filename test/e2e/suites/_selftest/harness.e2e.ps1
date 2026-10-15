@@ -123,10 +123,20 @@ while ($true) {
         } else {
             $req = ConvertFrom-Json -InputObject $line
             if ($null -ne $req.cmd) {
-                Send-Json $writer ([ordered]@{ id = $req.id; ok = $true; data = @([ordered]@{ index = 0; name = 'legacy'; active = $true; tab_count = 1 }) })
+                if ($req.cmd -eq 'stale-pair') {
+                    # A late reply to an earlier request, then the reply to this one, in one write.
+                    $writer.Write((ConvertTo-Json -InputObject ([ordered]@{ id = $req.args.stale; ok = $true; data = 'late' }) -Compress) + "`n" +
+                        (ConvertTo-Json -InputObject ([ordered]@{ id = $req.id; ok = $true; data = 'fresh' }) -Compress) + "`n")
+                } else {
+                    Send-Json $writer ([ordered]@{ id = $req.id; ok = $true; data = @([ordered]@{ index = 0; name = 'legacy'; active = $true; tab_count = 1 }) })
+                }
             } else {
                 $id = $req.id
                 switch ($req.method) {
+                    'stale.pair' {
+                        $writer.Write((ConvertTo-Json -InputObject ([ordered]@{ id = $req.params.stale; ok = $true; result = 'late' }) -Compress) + "`n" +
+                            (ConvertTo-Json -InputObject ([ordered]@{ id = $id; ok = $true; result = 'fresh' }) -Compress) + "`n")
+                    }
                     'system.ping' { Send-Json $writer ([ordered]@{ id = $id; ok = $true; result = [ordered]@{ pong = $true; echo = $req.params } }) }
                     'wmux.debug.ready' { Send-Json $writer ([ordered]@{ id = $id; ok = $true; result = [ordered]@{ ready = $true } }) }
                     'boom' { Send-Json $writer ([ordered]@{ id = $id; ok = $false; error = [ordered]@{ code = 'not_found'; message = 'Workspace not found'; data = [ordered]@{ selector = 'workspace_id' } } }) }
@@ -171,6 +181,85 @@ while ($true) {
     }
     if ($stop) { break }
 }
+'@
+
+$script:SlowLegacyServerScript = @'
+param([int]$StartupDelayMs = 3000, [int]$PerRequestMs = 250, [int]$LifetimeSec = 120)
+# Model of the legacy server on master (ipc.zig + App.zig): \\.\pipe\wmux-ipc-<pid> has one
+# instance and exists before the UI thread pumps messages; the pipe thread queues each request
+# for the UI thread, which answers on whatever connection is open at that moment and drops the
+# reply when none is.
+$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @"
+using System;
+using System.Collections.Concurrent;
+using System.IO;
+using System.IO.Pipes;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading;
+
+public static class SlowLegacyServer
+{
+    static readonly object Gate = new object();
+    static NamedPipeServerStream Current;
+    static readonly BlockingCollection<string> Queue = new BlockingCollection<string>();
+
+    public static void Start(string name, int startupDelayMs, int perRequestMs)
+    {
+        var ui = new Thread(() => {
+            Thread.Sleep(startupDelayMs);
+            foreach (string id in Queue.GetConsumingEnumerable())
+            {
+                Thread.Sleep(perRequestMs);
+                byte[] b = Encoding.UTF8.GetBytes("{\"id\":" + id + ",\"ok\":true,\"data\":[{\"index\":0,\"name\":\"w\",\"active\":true,\"tab_count\":1}]}\n");
+                lock (Gate)
+                {
+                    if (Current == null) continue;
+                    try { Current.Write(b, 0, b.Length); Current.Flush(); } catch { }
+                }
+            }
+        });
+        ui.IsBackground = true;
+        ui.Start();
+        var pipe = new Thread(() => Serve(name));
+        pipe.IsBackground = true;
+        pipe.Start();
+    }
+
+    static void Serve(string name)
+    {
+        while (true)
+        {
+            var s = new NamedPipeServerStream(name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+            s.WaitForConnection();
+            lock (Gate) { Current = s; }
+            var acc = new MemoryStream();
+            var buf = new byte[4096];
+            try
+            {
+                int n;
+                while ((n = s.Read(buf, 0, buf.Length)) > 0)
+                {
+                    for (int i = 0; i < n; i++)
+                    {
+                        if (buf[i] != 10) { acc.WriteByte(buf[i]); continue; }
+                        Match m = Regex.Match(Encoding.UTF8.GetString(acc.ToArray()), "\"id\"\\s*:\\s*(\\d+)");
+                        acc.SetLength(0);
+                        Queue.Add(m.Success ? m.Groups[1].Value : "0");
+                    }
+                }
+            }
+            catch { }
+            lock (Gate) { Current = null; }
+            try { s.Disconnect(); } catch { }
+            s.Dispose();
+        }
+    }
+}
+"@
+[SlowLegacyServer]::Start("wmux-ipc-$PID", $StartupDelayMs, $PerRequestMs)
+Start-Sleep -Seconds $LifetimeSec
 '@
 
 function Start-FakeServerProcess {
@@ -588,6 +677,33 @@ Test-Case 'transport helpers against a fake v2 server: rpc, raw lines, errors' {
     $null = Assert-Throws -Code 'harness_instance_stopped' { Invoke-WmuxRpc $w 'system.ping' }
 }
 
+Test-Case 'late replies to timed-out requests are skipped; other replies are returned as is' {
+    $srv = Get-FakeServer
+    $w = New-FakeInstance -Pipe $srv.Pipe
+    try {
+        # As if request 41 had timed out: its reply now arrives ahead of the reply to 42.
+        $null = $w.OutstandingIds.Add('n:41')
+        $r = Invoke-WmuxRawLine $w '{"id":42,"cmd":"stale-pair","args":{"stale":41}}' | ConvertFrom-Json
+        Assert-Equal 42 $r.id 'the late reply to 41 was skipped'
+        Assert-Equal 'fresh' $r.data
+        Assert-Equal 0 $w.OutstandingIds.Count 'both requests are settled'
+        # A reply with an id the harness is not waiting for is returned unchanged.
+        $r = Invoke-WmuxRawLine $w '{"id":44,"cmd":"stale-pair","args":{"stale":43}}' | ConvertFrom-Json
+        Assert-Equal 43 $r.id
+        $w.OutstandingIds.Clear()
+        # v2 string ids and the module's own legacy commands.
+        $null = $w.OutstandingIds.Add('s:timed-out-request')
+        Assert-Equal 'fresh' (Invoke-WmuxRpc $w 'stale.pair' @{ stale = 'timed-out-request' })
+        Assert-Equal 0 $w.OutstandingIds.Count
+        $legacyData = InModule { param($i) Invoke-WmuxLegacyCommand -Instance $i -Cmd 'workspace-list' } $w
+        Assert-Equal 'legacy' @($legacyData)[0].name
+        # Lines without an id (text-v1) are not matched.
+        Assert-Equal 'PONG' (Invoke-WmuxRawLine $w 'ping')
+    } finally {
+        Stop-WmuxInstance $w
+    }
+}
+
 Test-Case 'event helpers against a fake v2 server: stream, read, wait' {
     $srv = Get-FakeServer
     $w = New-FakeInstance -Pipe $srv.Pipe
@@ -780,6 +896,33 @@ Test-Case 'protocol detection: legacy pipe, computed v2 pipe, marker file, early
         Assert-Match ([regex]::Escape("wmux-ipc-$($idle.Id)")) $e.Message
     } finally { Stop-WmuxInstance $f }
     Assert-True $idle.HasExited 'Stop-WmuxInstance killed the idle process'
+}
+
+Test-Case 'legacy readiness and later requests stay in step when the app answers late' {
+    # The legacy app answers queued requests only once its message loop runs, on whatever
+    # connection is open then. Readiness probes that time out must not shift later replies.
+    $scriptPath = Write-TempFile 'slow-legacy-server.ps1' $script:SlowLegacyServerScript
+    $p = Start-ChildPwsh -Arguments @('-File', $scriptPath, '-StartupDelayMs', '3000', '-PerRequestMs', '300', '-LifetimeSec', '240')
+    $job = [WmuxTestHarness.JobObject]::Create()
+    $null = [WmuxTestHarness.JobObject]::Assign($job, $p.Handle)
+    $inst = New-FakeInstance -Protocol '' -Pipe $null
+    $inst.LogDir = Join-Path $inst.Root 'logs'
+    $null = New-Item -ItemType Directory -Force -Path $inst.LogDir, (Join-Path $inst.StateDir 'run')
+    $inst.Pid = $p.Id
+    $inst.Process = $p
+    try {
+        InModule { param($i) Wait-WmuxInstanceReady -Instance $i -TimeoutSec 120 } $inst
+        Assert-Equal 'legacy' $inst.Protocol
+        foreach ($n in 1..6) {
+            $reply = Invoke-WmuxRawLine $inst ('{"id":' + $n + ',"cmd":"workspace-list"}') -TimeoutSec 30 | ConvertFrom-Json
+            Assert-Equal $n $reply.id "request $n is answered by its own reply"
+        }
+        $data = InModule { param($i) Invoke-WmuxLegacyCommand -Instance $i -Cmd 'workspace-list' -TimeoutSec 30 } $inst
+        Assert-Equal 'w' @($data)[0].name
+    } finally {
+        [WmuxTestHarness.JobObject]::Close($job)
+        Stop-WmuxInstance $inst
+    }
 }
 
 Test-Case 'Test-Case isolates failures and reports skip, watchdog timeout and focus theft' {

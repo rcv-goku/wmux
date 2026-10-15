@@ -17,7 +17,7 @@
 
     Transitional behavior until W1-1a lands the v2 server and the new pipe names:
       * Start-WmuxInstance detects the protocol. When the legacy pipe \\.\pipe\wmux-ipc-<pid>
-        appears and answers {"id":1,"cmd":"workspace-list"} with ok, the instance gets
+        appears and answers a {"id":<n>,"cmd":"workspace-list"} request with ok, the instance gets
         Protocol = 'legacy' and Pipe points at that pipe. Otherwise the v2 control pipe named
         by state\run\instance.json (or computed with the D.2.6 algorithm) is used and readiness
         is wmux.debug.ready returning {ready:true}. A v2 pipe always wins when both exist.
@@ -54,7 +54,7 @@ $ErrorActionPreference = 'Stop'
 # `catch [WmuxRpcError]`; helpers live in the WmuxTestHarness namespace.
 # ---------------------------------------------------------------------------
 
-$script:HarnessTypesVersion = '2'
+$script:HarnessTypesVersion = '3'
 
 $script:HarnessTypeSource = @'
 using System;
@@ -151,6 +151,8 @@ public class WmuxInstance
     public Process Process;
     public IntPtr JobHandle;
     public List<object> Streams = new List<object>();
+    /// Ids ("n:<number>" / "s:<string>") of requests whose reply has not arrived yet.
+    public HashSet<string> OutstandingIds = new HashSet<string>();
 
     public override string ToString()
     {
@@ -349,7 +351,7 @@ namespace WmuxTestHarness
 {
     public static class Native
     {
-        public const string Version = "2";
+        public const string Version = "3";
 
         [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
         [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
@@ -512,7 +514,7 @@ namespace WmuxTestHarness
             }
         }
 
-        private static void WaitOrThrow(Task t, int ms, CancellationTokenSource cts, string what)
+        internal static void WaitOrThrow(Task t, int ms, CancellationTokenSource cts, string what)
         {
             bool done;
             try
@@ -546,49 +548,123 @@ namespace WmuxTestHarness
 
         public static string ReadLine(Stream s, int timeoutMs)
         {
-            var sw = Stopwatch.StartNew();
-            var acc = new MemoryStream();
-            var buf = new byte[65536];
-            while (true)
-            {
-                using (var cts = new CancellationTokenSource())
-                {
-                    Task<int> t = s.ReadAsync(buf, 0, buf.Length, cts.Token);
-                    WaitOrThrow(t, Remaining(sw, timeoutMs), cts, "waiting for a reply line");
-                    int n = t.Result;
-                    if (n <= 0)
-                    {
-                        if (acc.Length > 0) return Decode(acc.ToArray());
-                        throw new EndOfStreamException("pipe closed by the server before a reply line was received");
-                    }
-                    int nl = Array.IndexOf(buf, (byte)10, 0, n);
-                    if (nl >= 0)
-                    {
-                        acc.Write(buf, 0, nl);
-                        return Decode(acc.ToArray());
-                    }
-                    acc.Write(buf, 0, n);
-                    if (acc.Length > (256L << 20)) throw new InvalidDataException("reply line exceeds 256 MiB");
-                }
-            }
+            return new LineReader(s).ReadLine(timeoutMs);
         }
 
-        private static string Decode(byte[] b)
+        internal static string Decode(byte[] b)
         {
             int len = b.Length;
             if (len > 0 && b[len - 1] == 13) len--;
             return Encoding.UTF8.GetString(b, 0, len);
         }
 
+        /// "n:<number>" or "s:<string>" for the "id" of a JSON object line; null otherwise.
+        public static string JsonId(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return null;
+            int i = 0;
+            while (i < text.Length && char.IsWhiteSpace(text[i])) i++;
+            if (i >= text.Length || text[i] != '{') return null;
+            try
+            {
+                using (JsonDocument doc = JsonDocument.Parse(text))
+                {
+                    JsonElement id;
+                    if (doc.RootElement.ValueKind != JsonValueKind.Object || !doc.RootElement.TryGetProperty("id", out id)) return null;
+                    if (id.ValueKind == JsonValueKind.Number) return "n:" + id.GetRawText();
+                    if (id.ValueKind == JsonValueKind.String) return "s:" + id.GetString();
+                }
+            }
+            catch (JsonException) { }
+            return null;
+        }
+
         /// Connect, write one line, read one reply line, disconnect.
         public static string RoundTrip(string pipe, string line, int timeoutMs)
         {
+            return RoundTrip(pipe, line, timeoutMs, null);
+        }
+
+        /// Connect, write one line, read the reply line, disconnect. outstanding holds the ids
+        /// of earlier requests to the same instance whose reply never arrived: the legacy server
+        /// (one pipe instance, replies written by the UI thread to whatever connection is open
+        /// when it answers) delivers those late replies to a later connection, ahead of the reply
+        /// to this request. They are skipped here so request and reply never drift apart.
+        public static string RoundTrip(string pipe, string line, int timeoutMs, ISet<string> outstanding)
+        {
+            string myId = outstanding != null ? JsonId(line) : null;
             var sw = Stopwatch.StartNew();
             using (var c = Connect(pipe, timeoutMs))
             {
+                if (myId != null) outstanding.Add(myId);
                 WriteLine(c, line, Remaining(sw, timeoutMs));
-                return ReadLine(c, Remaining(sw, timeoutMs));
+                var reader = new LineReader(c);
+                while (true)
+                {
+                    string reply = reader.ReadLine(Remaining(sw, timeoutMs));
+                    if (myId == null) return reply;
+                    bool others = outstanding.Count > (outstanding.Contains(myId) ? 1 : 0);
+                    if (others)
+                    {
+                        string id = JsonId(reply);
+                        if (id != null && id != myId && outstanding.Remove(id)) continue;
+                    }
+                    outstanding.Remove(myId);
+                    return reply;
+                }
             }
+        }
+    }
+
+    /// Newline-delimited reader that keeps the bytes after a newline for the next line.
+    public sealed class LineReader
+    {
+        private readonly Stream _s;
+        private readonly byte[] _buf = new byte[65536];
+        private readonly MemoryStream _acc = new MemoryStream();
+        private int _pos, _len;
+
+        public LineReader(Stream s) { _s = s; }
+
+        public string ReadLine(int timeoutMs)
+        {
+            var sw = Stopwatch.StartNew();
+            while (true)
+            {
+                if (_pos < _len)
+                {
+                    int nl = Array.IndexOf(_buf, (byte)10, _pos, _len - _pos);
+                    if (nl >= 0)
+                    {
+                        _acc.Write(_buf, _pos, nl - _pos);
+                        _pos = nl + 1;
+                        return Take();
+                    }
+                    _acc.Write(_buf, _pos, _len - _pos);
+                    _pos = _len = 0;
+                    if (_acc.Length > (256L << 20)) throw new InvalidDataException("reply line exceeds 256 MiB");
+                }
+                using (var cts = new CancellationTokenSource())
+                {
+                    Task<int> t = _s.ReadAsync(_buf, 0, _buf.Length, cts.Token);
+                    PipeIO.WaitOrThrow(t, PipeIO.Remaining(sw, timeoutMs), cts, "waiting for a reply line");
+                    int n = t.Result;
+                    if (n <= 0)
+                    {
+                        if (_acc.Length > 0) return Take();
+                        throw new EndOfStreamException("pipe closed by the server before a reply line was received");
+                    }
+                    _pos = 0;
+                    _len = n;
+                }
+            }
+        }
+
+        private string Take()
+        {
+            string line = PipeIO.Decode(_acc.ToArray());
+            _acc.SetLength(0);
+            return line;
         }
     }
 
@@ -981,7 +1057,8 @@ $script:State = @{
     CurrentTest   = $null
     FailMark      = $false
     StreamCounter = 0
-    LegacyId      = 100
+    # Ids of harness-generated legacy requests; far above the small ids tests pick themselves.
+    LegacyId      = 1000000
     HiddenSupport = @{}
 }
 
@@ -1577,7 +1654,8 @@ function Invoke-WmuxPipeLine {
     param([Parameter(Mandatory)][WmuxInstance]$Instance, [Parameter(Mandatory)][string]$Line, [double]$TimeoutSec = 15, [string]$Method = 'line', [string]$Pipe)
     if (-not $Pipe) { $Pipe = $Instance.Pipe }
     try {
-        return [WmuxTestHarness.PipeIO]::RoundTrip($Pipe, $Line, [int]([Math]::Max(1, $TimeoutSec * 1000)))
+        # OutstandingIds: late replies to earlier timed-out requests are skipped (see PipeIO.RoundTrip).
+        return [WmuxTestHarness.PipeIO]::RoundTrip($Pipe, $Line, [int]([Math]::Max(1, $TimeoutSec * 1000)), $Instance.OutstandingIds)
     } catch {
         $ex = Get-WmuxInnerException $_.Exception
         $code = 'harness_transport'
@@ -1617,6 +1695,10 @@ function Invoke-WmuxLegacyCommand {
     $line = ConvertTo-WmuxJsonText $req
     $replyLine = Invoke-WmuxPipeLine -Instance $Instance -Line $line -TimeoutSec $TimeoutSec -Method $Cmd -Pipe $(if ($Instance.LegacyPipe) { $Instance.LegacyPipe } else { $Instance.Pipe })
     $reply = ConvertFrom-WmuxLegacyReply $replyLine
+    $replyId = Get-WmuxProp $reply 'id'
+    if (-not (Test-WmuxValueEqual ([long]$id) $replyId)) {
+        throw [WmuxRpcError]::new('harness_id_mismatch', "legacy '$Cmd' (id $id) was answered with id $(Format-WmuxValue $replyId): $(Format-WmuxValue $replyLine)", $null, $Cmd, $id, $replyLine, $null, $null)
+    }
     if (-not $reply.ok) {
         throw [WmuxRpcError]::new('legacy_error', [string](Get-WmuxProp $reply 'error'), $null, $Cmd, $id, $replyLine, (Get-WmuxProp $reply 'error'), $null)
     }
@@ -1655,7 +1737,7 @@ function Wait-WmuxInstanceReady {
             try {
                 $id = [guid]::NewGuid().ToString()
                 $line = New-WmuxRpcRequestLine -Method 'wmux.debug.ready' -Params $null -Id $id
-                $reply = [WmuxTestHarness.PipeIO]::RoundTrip($v2Pipe, $line, 2000)
+                $reply = [WmuxTestHarness.PipeIO]::RoundTrip($v2Pipe, $line, 2000, $Instance.OutstandingIds)
                 $result = ConvertFrom-WmuxRpcReply -Line $reply -RequestId $id -Method 'wmux.debug.ready'
                 if ((Get-WmuxProp $result 'ready') -eq $true) {
                     $Instance.Protocol = 'v2'
@@ -1670,9 +1752,14 @@ function Wait-WmuxInstanceReady {
             }
         } elseif ($pipes -contains $legacyName) {
             try {
-                $reply = [WmuxTestHarness.PipeIO]::RoundTrip($legacyName, '{"id":1,"cmd":"workspace-list"}', 2000)
+                # The legacy app creates its pipe before the window and the message loop exist, so
+                # early probes time out and their replies arrive later on another connection: every
+                # probe gets its own id and late replies are skipped (OutstandingIds).
+                $script:State.LegacyId++
+                $probeId = $script:State.LegacyId
+                $reply = [WmuxTestHarness.PipeIO]::RoundTrip($legacyName, ('{"id":' + $probeId + ',"cmd":"workspace-list"}'), 2000, $Instance.OutstandingIds)
                 $parsed = ConvertFrom-WmuxLegacyReply $reply
-                if ($parsed.ok -eq $true) {
+                if ($parsed.ok -eq $true -and (Test-WmuxValueEqual ([long]$probeId) (Get-WmuxProp $parsed 'id'))) {
                     $Instance.Protocol = 'legacy'
                     $Instance.Pipe = ConvertTo-WmuxFullPipePath $legacyName
                     $Instance.LegacyPipe = $Instance.Pipe
