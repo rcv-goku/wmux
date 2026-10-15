@@ -175,10 +175,13 @@ pub fn render(gpa: Allocator, tree: *const Tree, table: *refs.RefTable, opts: Op
     try writeSanitized(gpa, w, tree.title, name_max_chars);
     w.writeByte('"') catch return error.OutOfMemory;
 
+    // A ref scope can sit inside a container hidden since the ref was issued
+    // (a closed dialog): nothing in it is visible, so nothing is listed.
+    const scope_hidden = tree.isHidden(scope);
     const Item = struct { idx: NodeIndex, depth: u32 };
     var stack: std.ArrayList(Item) = .empty;
     defer stack.deinit(gpa);
-    try stack.append(gpa, .{ .idx = scope, .depth = 0 });
+    if (!scope_hidden) try stack.append(gpa, .{ .idx = scope, .depth = 0 });
     var emitted: usize = 0;
     var cursor_emitted: usize = 0;
     const scope_is_page = opts.selector == null;
@@ -228,8 +231,8 @@ pub fn render(gpa: Allocator, tree: *const Tree, table: *refs.RefTable, opts: Op
     }
 
     if (emitted == 0) {
-        const body = try tree.innerText(gpa, scope, body_excerpt_chars, false);
-        defer gpa.free(body);
+        const body: []const u8 = if (scope_hidden) "" else try tree.innerText(gpa, scope, body_excerpt_chars, false);
+        defer if (!scope_hidden) gpa.free(body);
         if (body.len > 0) {
             w.writeAll("\n- text \"") catch return error.OutOfMemory;
             try writeSanitized(gpa, w, body, body_excerpt_chars);

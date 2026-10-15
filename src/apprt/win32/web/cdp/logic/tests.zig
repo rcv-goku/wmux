@@ -654,6 +654,28 @@ test "unit: browser: snapshot selector scoping by css and by ref" {
     try testing.expectEqual(@as(usize, 1), table.count());
 }
 
+test "unit: browser: snapshot scoped to a ref inside a hidden container lists nothing" {
+    // e1 was issued while the dialog was open; it has been hidden since.
+    // Only the node's own flag used to be checked, so its hidden content was
+    // listed (with refs) as if visible.
+    const j =
+        \\{"root":{"nodeType":9,"children":[{"nodeType":1,"localName":"body","children":[
+        \\ {"nodeType":1,"localName":"div","attributes":["role","dialog","style","display:none"],"children":[
+        \\  {"nodeType":1,"localName":"form","backendNodeId":5,"children":[
+        \\   {"nodeType":1,"localName":"button","backendNodeId":6,"children":[{"nodeType":3,"nodeValue":"Delete account"}]}]}]},
+        \\ {"nodeType":1,"localName":"button","backendNodeId":7,"children":[{"nodeType":3,"nodeValue":"Open"}]}]}]}}
+    ;
+    var tree = try ax.parseDomDocument(gpa, j, .{});
+    defer tree.deinit();
+    var table = refs.RefTable.init(gpa);
+    defer table.deinit();
+    _ = try table.add(.{ .backend_node_id = 5 });
+    const text = try renderText(&tree, &table, .{ .selector = "@e1" });
+    defer gpa.free(text);
+    try testing.expectEqualStrings("- document \"\"\n- (empty)", text);
+    try testing.expectEqual(@as(usize, 0), table.count());
+}
+
 fn axDoc(comptime body: []const u8) []const u8 {
     return "{\"nodes\":[{\"nodeId\":\"1\",\"role\":{\"type\":\"internalRole\",\"value\":\"RootWebArea\"},\"name\":{\"type\":\"computedString\",\"value\":\"T\"},\"childIds\":[\"2\"]}," ++ body ++ "]}";
 }
