@@ -42,7 +42,8 @@ pub const Options = struct {
 
 pub const Error = error{
     OutOfMemory,
-    /// Not JSON, not an object, or no `workspaces` array.
+    /// Not JSON, not an object, over the size or nesting limits, or no
+    /// `workspaces` array.
     Corrupt,
     /// The file already is a v3 (or foreign) `schema` document.
     NotLegacy,
@@ -60,6 +61,7 @@ pub const Result = struct {
 /// Converts a legacy file into a v3 session allocated in `arena`.
 pub fn migrate(arena: Allocator, bytes: []const u8, opts: Options) Error!Result {
     if (bytes.len > limits.max_file_bytes) return error.Corrupt;
+    if (limits.exceedsJsonDepth(bytes, limits.max_json_depth)) return error.Corrupt;
     const root = std.json.parseFromSliceLeaky(Value, arena, bytes, .{
         .duplicate_field_behavior = .use_last,
         .allocate = .alloc_always,
@@ -388,6 +390,41 @@ test "unit: session: migration refuses corrupt, v3 and future legacy files" {
     for (0..v2.len) |n| {
         if (migrate(a, v2[0..n], seeded(&prng))) |_| return error.TestUnexpectedResult else |err| try testing.expectEqual(error.Corrupt, err);
     }
+}
+
+/// A v2 file whose split tree is a right-leaning chain of `splits` splits,
+/// each with a one-tab leaf on the left.
+fn chainV2(gpa: Allocator, splits: usize) ![]u8 {
+    var aw: std.Io.Writer.Allocating = .init(gpa);
+    errdefer aw.deinit();
+    const leaf = "{\"node_type\":\"leaf\",\"container\":{\"tabs\":[{}]}}";
+    try aw.writer.writeAll("{\"version\":2,\"workspaces\":[{\"split_tree\":");
+    for (0..splits) |_| try aw.writer.writeAll("{\"node_type\":\"split\",\"left\":" ++ leaf ++ ",\"right\":");
+    try aw.writer.writeAll(leaf);
+    for (0..splits) |_| try aw.writer.writeAll("}");
+    try aw.writer.writeAll("}]}");
+    return aw.toOwnedSlice();
+}
+
+test "unit: session: deep v2 split trees are bounded" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    var prng: std.Random.DefaultPrng = undefined;
+
+    // Deeper than `max_layout_depth`: the part below the cap is dropped and
+    // the leaves at depths 1 through `max_layout_depth` remain.
+    const deep = try chainV2(testing.allocator, 100);
+    defer testing.allocator.free(deep);
+    const r = try migrate(arena.allocator(), deep, seeded(&prng));
+    const ws = r.session.windows[0].workspaces[0];
+    try testing.expect(ws.layout.?.depth() <= limits.max_layout_depth);
+    try testing.expectEqual(limits.max_layout_depth, ws.panes.len);
+    for (ws.panes) |pane| try testing.expect(schema.layoutContains(ws.layout.?, pane.id.?));
+
+    // Nested past `max_json_depth`: refused before parsing.
+    const hostile = try chainV2(testing.allocator, limits.max_json_depth);
+    defer testing.allocator.free(hostile);
+    try testing.expectError(error.Corrupt, migrate(arena.allocator(), hostile, seeded(&prng)));
 }
 
 test "unit: session: migration applies the snapshot limits" {

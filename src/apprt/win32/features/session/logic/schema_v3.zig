@@ -340,7 +340,8 @@ pub fn parseTimestamp(s: []const u8) ?i64 {
 
 pub const ParseError = error{
     OutOfMemory,
-    /// Not JSON, not an object, or a `wmux-session` header that is invalid.
+    /// Not JSON, not an object, over the size or nesting limits, or a
+    /// `wmux-session` header that is invalid.
     Corrupt,
     /// Valid JSON object with a `schema` that is not `wmux-session`.
     NotSession,
@@ -389,6 +390,7 @@ pub fn parse(gpa: Allocator, bytes: []const u8, opts: ParseOptions, diag: ?*Diag
 /// Parses into `arena`; every returned slice is owned by `arena`.
 pub fn parseLeaky(arena: Allocator, bytes: []const u8, opts: ParseOptions, diag: ?*Diagnostics) ParseError!Session {
     if (bytes.len > limits.max_file_bytes) return error.Corrupt;
+    if (limits.exceedsJsonDepth(bytes, limits.max_json_depth)) return error.Corrupt;
     const root = std.json.parseFromSliceLeaky(Value, arena, bytes, .{
         .duplicate_field_behavior = .use_last,
         .allocate = .alloc_always,
@@ -1439,7 +1441,10 @@ test "unit: session: pathologically deep layouts are bounded" {
     var aw: std.Io.Writer.Allocating = .init(testing.allocator);
     defer aw.deinit();
     const w = &aw.writer;
-    const depth = 300;
+    // Deeper than `max_layout_depth` splits yet within `max_json_depth`
+    // (each split adds two JSON levels below the workspace's five).
+    const depth = 90;
+    comptime std.debug.assert(depth > limits.max_layout_depth and 6 + 2 * depth <= limits.max_json_depth);
     try w.writeAll("{\"schema\":\"wmux-session\",\"version\":3,\"windows\":[{\"workspaces\":[{\"layout\":");
     for (0..depth) |i| try w.print("{{\"split\":{{\"a\":{{\"pane\":\"44444444-4444-4444-8444-{d:0>12}\"}},\"b\":", .{i});
     try w.print("{{\"pane\":\"44444444-4444-4444-8444-{d:0>12}\"}}", .{depth});
@@ -1460,6 +1465,43 @@ test "unit: session: pathologically deep layouts are bounded" {
     var p2 = try parse(testing.allocator, out, .{}, null);
     defer p2.deinit();
     try testing.expectEqual(ws.panes.len, p2.session.windows[0].workspaces[0].panes.len);
+}
+
+/// `{"schema":"wmux-session","version":3,"windows":[{"ext":{"x":[[…]]}}]}`
+/// whose deepest array sits at JSON level `4 + arrays`.
+fn deepExtDoc(gpa: Allocator, arrays: usize) ![]u8 {
+    var aw: std.Io.Writer.Allocating = .init(gpa);
+    errdefer aw.deinit();
+    try aw.writer.writeAll("{\"schema\":\"wmux-session\",\"version\":3,\"windows\":[{\"ext\":{\"x\":");
+    for (0..arrays) |_| try aw.writer.writeAll("[");
+    for (0..arrays) |_| try aw.writer.writeAll("]");
+    try aw.writer.writeAll("}}]}");
+    return aw.toOwnedSlice();
+}
+
+test "unit: session: documents nested past the JSON depth limit are corrupt" {
+    // At the limit: parses, and the passed-through `ext` value writes back
+    // (the writer's nesting check would trip on a deeper one).
+    const at_limit = try deepExtDoc(testing.allocator, limits.max_json_depth - 4);
+    defer testing.allocator.free(at_limit);
+    var p = try parse(testing.allocator, at_limit, .{}, null);
+    defer p.deinit();
+    const out = try writeAlloc(testing.allocator, &p.session, .{ .pretty = true });
+    defer testing.allocator.free(out);
+    _ = fingerprint(&p.session);
+    var p2 = try parse(testing.allocator, out, .{}, null);
+    p2.deinit();
+
+    // One level more is refused before parsing.
+    const too_deep = try deepExtDoc(testing.allocator, limits.max_json_depth - 3);
+    defer testing.allocator.free(too_deep);
+    try testing.expectError(error.Corrupt, parse(testing.allocator, too_deep, .{}, null));
+
+    // A 1 MiB bracket flood is refused without building a parse stack.
+    const flood = try testing.allocator.alloc(u8, 1 << 20);
+    defer testing.allocator.free(flood);
+    @memset(flood, '[');
+    try testing.expectError(error.Corrupt, parse(testing.allocator, flood, .{}, null));
 }
 
 test "unit: session: huge text fields are capped on a code-point boundary" {

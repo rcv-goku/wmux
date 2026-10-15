@@ -31,6 +31,13 @@ pub const max_file_bytes: usize = 32 * 1024 * 1024;
 /// wmux: split levels kept in a layout; deeper subtrees are dropped so
 /// recursion and the JSON writer's nesting limit stay bounded.
 pub const max_layout_depth: usize = 64;
+/// wmux: `[`/`{` nesting levels accepted in a session file; deeper files
+/// are corrupt. A written file stays well below it (a layout of
+/// `max_layout_depth` splits reaches about 135 levels). The bound keeps the
+/// parse stack small and every value the writer passes through untouched
+/// (`ext`, web panel state, unknown panels) under `std.json.Stringify`'s
+/// 256-level nesting check.
+pub const max_json_depth: usize = 200;
 
 pub const min_split_ratio: f64 = 0.01;
 pub const max_split_ratio: f64 = 0.99;
@@ -53,6 +60,38 @@ pub fn truncateUtf8(s: []const u8, max: usize) []const u8 {
 
 fn isContinuation(b: u8) bool {
     return b & 0xC0 == 0x80;
+}
+
+/// True when the JSON text nests `[`/`{` deeper than `max` (brackets inside
+/// strings do not count). One linear pass without allocation, so a hostile
+/// file is refused before `std.json` builds its parse stack. Malformed text
+/// is left for the parser to reject.
+pub fn exceedsJsonDepth(bytes: []const u8, max: usize) bool {
+    var depth: usize = 0;
+    var in_string = false;
+    var escaped = false;
+    for (bytes) |c| {
+        if (in_string) {
+            if (escaped) {
+                escaped = false;
+            } else if (c == '\\') {
+                escaped = true;
+            } else if (c == '"') {
+                in_string = false;
+            }
+            continue;
+        }
+        switch (c) {
+            '"' => in_string = true,
+            '[', '{' => {
+                depth += 1;
+                if (depth > max) return true;
+            },
+            ']', '}' => depth -|= 1,
+            else => {},
+        }
+    }
+    return false;
 }
 
 /// The tail of a terminal history that fits the cmux caps: at most
@@ -183,6 +222,30 @@ test "unit: session: truncateUtf8 never splits a code point" {
     try testing.expectEqualStrings("", truncateUtf8("😀", 3)); // 4 bytes
     try testing.expectEqualStrings("😀", truncateUtf8("😀x", 4));
     try testing.expectEqualStrings("", truncateUtf8("abc", 0));
+}
+
+test "unit: session: JSON nesting depth check ignores brackets in strings" {
+    try testing.expect(!exceedsJsonDepth("", 0));
+    try testing.expect(!exceedsJsonDepth("3", 0));
+    try testing.expect(exceedsJsonDepth("[]", 0));
+    try testing.expect(!exceedsJsonDepth("[]", 1));
+    try testing.expect(!exceedsJsonDepth("{\"a\":[1,{}],\"b\":{}}", 3));
+    try testing.expect(exceedsJsonDepth("{\"a\":[1,{}],\"b\":{}}", 2));
+    // Brackets in strings, escaped quotes and escaped backslashes.
+    try testing.expect(!exceedsJsonDepth("[\"[[[{{{\"]", 1));
+    try testing.expect(!exceedsJsonDepth("[\"\\\"[[[\"]", 1));
+    try testing.expect(exceedsJsonDepth("[\"\\\\\",[[]]]", 2));
+    // Unbalanced or truncated text never underflows.
+    try testing.expect(!exceedsJsonDepth("]]]}}}[", 1));
+    try testing.expect(exceedsJsonDepth("[[[", 2));
+
+    // A huge flat document is fine; one nesting level too many is not.
+    var aw: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer aw.deinit();
+    for (0..max_json_depth) |_| try aw.writer.writeAll("[");
+    for (0..max_json_depth) |_| try aw.writer.writeAll("]");
+    try testing.expect(!exceedsJsonDepth(aw.written(), max_json_depth));
+    try testing.expect(exceedsJsonDepth(aw.written(), max_json_depth - 1));
 }
 
 test "unit: session: scrollback tail keeps the newest lines" {
