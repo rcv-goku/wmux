@@ -176,7 +176,7 @@ fn extract(p: *Payload, a: Allocator, root: std.json.ObjectMap) Allocator.Error!
     }
     if (p.tool_command == null) p.tool_command = try findString(a, scopes, &.{"command"}, max_text_bytes);
 
-    if (findRaw(scopes, &keys_tool_response)) |v| p.push_skipped = valueMentionsSkip(v);
+    if (findRaw(scopes, &keys_tool_response)) |v| p.push_skipped = valueMentionsSkip(v, 0);
 }
 
 fn collectScopes(root: std.json.ObjectMap, buf: []std.json.ObjectMap) []const std.json.ObjectMap {
@@ -319,21 +319,28 @@ fn isEmptyValue(v: std.json.Value) bool {
     };
 }
 
-/// True when a tool response (string, or object with string members) names
-/// one of the PushNotification skip outcomes.
-fn valueMentionsSkip(v: std.json.Value) bool {
+/// Array nesting levels of a tool response searched for a skip outcome.
+/// std.json parses any depth, so the scan must stop on its own: a payload
+/// of nested arrays under the stdin cap would otherwise overflow the stack.
+const max_skip_scan_depth: usize = 8;
+
+/// True when a tool response (a string, the string members of an object,
+/// or such values inside arrays up to `max_skip_scan_depth` levels deep)
+/// names one of the PushNotification skip outcomes.
+fn valueMentionsSkip(v: std.json.Value, depth: usize) bool {
     switch (v) {
         .string => |s| return std.mem.indexOf(u8, s, "user_present") != null or
             std.mem.indexOf(u8, s, "config_off") != null,
         .object => |o| {
             var it = o.iterator();
             while (it.next()) |e| {
-                if (e.value_ptr.* == .string and valueMentionsSkip(e.value_ptr.*)) return true;
+                if (e.value_ptr.* == .string and valueMentionsSkip(e.value_ptr.*, depth)) return true;
             }
             return false;
         },
         .array => |arr| {
-            for (arr.items) |item| if (valueMentionsSkip(item)) return true;
+            if (depth >= max_skip_scan_depth) return false;
+            for (arr.items) |item| if (valueMentionsSkip(item, depth + 1)) return true;
             return false;
         },
         else => return false,

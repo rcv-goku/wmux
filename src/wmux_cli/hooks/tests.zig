@@ -184,6 +184,44 @@ test "unit: agents: payload nested notification text, error objects and push ski
     try testing.expectEqualStrings("rate limited", p.error_text.?);
 }
 
+/// `{"<key>":` + `depth` x `[` + `inner` + `depth` x `]` + `}`; caller frees.
+fn nestedArrayDoc(key: []const u8, depth: usize, inner: []const u8) ![]u8 {
+    const gpa = testing.allocator;
+    var doc: std.ArrayList(u8) = .empty;
+    errdefer doc.deinit(gpa);
+    try doc.print(gpa, "{{\"{s}\":", .{key});
+    try doc.appendNTimes(gpa, '[', depth);
+    try doc.appendSlice(gpa, inner);
+    try doc.appendNTimes(gpa, ']', depth);
+    try doc.append(gpa, '}');
+    return doc.toOwnedSlice(gpa);
+}
+
+test "unit: agents: payload survives a tool response nested to the stdin cap" {
+    // Half a million nested arrays fit under the 1 MiB cap and std.json
+    // parses them; scanning them for a push skip outcome must not recurse
+    // once per level.
+    const deep = try nestedArrayDoc("tool_response", 500_000, "");
+    defer testing.allocator.free(deep);
+    try testing.expect(deep.len <= payload.max_payload_bytes);
+    var p = try parseFixture(deep);
+    defer p.deinit();
+    try testing.expect(!p.malformed and !p.oversized and !p.push_skipped);
+
+    // Skip outcomes a few arrays down are still found; deeper ones are not
+    // searched.
+    const shallow = try nestedArrayDoc("tool_response", 3, "{\"reason\":\"user_present\"}");
+    defer testing.allocator.free(shallow);
+    var s = try parseFixture(shallow);
+    defer s.deinit();
+    try testing.expect(s.push_skipped);
+    const buried = try nestedArrayDoc("tool_response", 50, "\"config_off\"");
+    defer testing.allocator.free(buried);
+    var b = try parseFixture(buried);
+    defer b.deinit();
+    try testing.expect(!b.push_skipped);
+}
+
 test "unit: agents: payload detects subagent markers" {
     var a = try parseFixture("{\"session_id\":\"c\",\"parent_session_id\":\"p\"}");
     defer a.deinit();
