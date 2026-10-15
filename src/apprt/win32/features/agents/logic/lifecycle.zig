@@ -254,8 +254,11 @@ pub const Registry = struct {
     }
 
     fn indexOf(self: *const Registry, surface_id: []const u8) ?usize {
+        // Stored ids are capped, so compare the capped form: an over-long id
+        // must find its own entry instead of creating a second one.
+        const key = truncateUtf8(surface_id, max_id_bytes);
         for (self.sessions.items, 0..) |s, i| {
-            if (std.mem.eql(u8, s.surface_id, surface_id)) return i;
+            if (std.mem.eql(u8, s.surface_id, key)) return i;
         }
         return null;
     }
@@ -275,7 +278,9 @@ pub const Registry = struct {
             // Any event that carries a session id (or a session-start)
             // creates the binding; hooks may be installed mid-session.
             if (in.event != .session_start and in.session_id == null) return .ignored_no_session;
-            try self.sessions.append(self.gpa, .{ .surface_id = try dupeCapped(self.gpa, surface_id, max_id_bytes) });
+            const owned = try dupeCapped(self.gpa, surface_id, max_id_bytes);
+            errdefer self.gpa.free(owned);
+            try self.sessions.append(self.gpa, .{ .surface_id = owned });
         }
         const s = &self.sessions.items[idx orelse self.sessions.items.len - 1];
         const created = idx == null;

@@ -299,8 +299,34 @@ test "unit: agents: lifecycle caps huge and unicode ids" {
     try testing.expect(s.session_id.?.len <= lifecycle.max_id_bytes);
     try testing.expect(std.unicode.utf8ValidateSlice(s.session_id.?));
     try testing.expectEqualStrings("C:/Users/Jöhn/日本語/t.jsonl", s.transcript_path.?);
-    // The same (capped) id is recognized as the same session.
+    // The uncapped ids still reach the same entry and the same session.
     try testing.expectEqual(lifecycle.Outcome.changed, try r.apply(huge, .{ .event = .prompt_submit, .now_ms = 2, .session_id = huge }));
+    try testing.expectEqual(@as(usize, 1), r.count());
+    try testing.expectEqual(State.running, r.get(huge).?.state);
+    try testing.expectEqual(lifecycle.Outcome.unchanged, try r.apply(huge, .{ .event = .pre_tool_use, .now_ms = 3, .session_id = huge }));
+    // Found (no pid recorded, so stale) rather than ignored_no_session.
+    try testing.expectEqual(lifecycle.Outcome.ignored_stale_process, r.onProcessExit(huge, 1, null, 4));
+    try testing.expect(r.remove(huge));
+    try testing.expectEqual(@as(usize, 0), r.count());
+}
+
+fn applySequence(gpa: std.mem.Allocator) !void {
+    var r = Registry.init(gpa);
+    defer r.deinit();
+    var start = ev(.session_start, 1);
+    start.workspace_id = workspace;
+    start.kind = "codex";
+    start.transcript_path = "/t/sess-1.jsonl";
+    _ = try r.apply(surface, start);
+    _ = try r.apply(surface, ev(.prompt_submit, 2));
+    var next = ev(.session_start, 3);
+    next.session_id = "sess-2";
+    _ = try r.apply(surface, next);
+    _ = try r.apply("other-surface", ev(.prompt_submit, 4));
+}
+
+test "unit: agents: lifecycle apply leaks nothing when an allocation fails" {
+    try testing.checkAllAllocationFailures(testing.allocator, applySequence, .{});
 }
 
 test "unit: agents: lifecycle wire event mapping" {

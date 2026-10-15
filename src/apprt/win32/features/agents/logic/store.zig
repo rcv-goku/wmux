@@ -454,13 +454,14 @@ pub const Store = struct {
         if (sid_in.len == 0) return error.MissingSessionId;
         const sid = truncateUtf8(sid_in, max_id_bytes);
 
-        const gop = try self.sessions.getOrPut(a, sid);
-        if (!gop.found_existing) {
+        if (!self.sessions.contains(sid)) {
+            // Copy the key before inserting: a failed copy after getOrPut
+            // would leave an entry with a borrowed key and an undefined
+            // value behind.
             const key = try a.dupe(u8, sid);
-            gop.key_ptr.* = key;
-            gop.value_ptr.* = .{ .session_id = key, .started_at_ms = u.now_ms };
+            try self.sessions.put(a, key, .{ .session_id = key, .started_at_ms = u.now_ms });
         }
-        const r = gop.value_ptr;
+        const r = self.sessions.getPtr(sid).?;
 
         try setStr(a, &r.workspace_id, u.workspace_id, max_id_bytes);
         try setStr(a, &r.surface_id, u.surface_id, max_id_bytes);
