@@ -1,0 +1,32 @@
+# Known environment-specific failures of the FULL, unfiltered test suite
+# (docs/arch/ARCHITECTURE.md ADR-12.2):
+#
+#   zig build test -Dapp-runtime=win32 -Dtarget=x86_64-windows-gnu
+#
+# `scripts/gate.ps1 -FullTest` (nightly and before wave tags) fails on any test failure
+# NOT matched here and reports entries that no longer fail, so they can be pruned.
+# The filtered runs used by CI and the gates ("unit: ", sidebar, wsl, win-pwd, ipc:)
+# must stay green: never list a test that those filters select.
+#
+# Format: one fully qualified Zig test name per line, exactly as the test runner prints
+# it in "error: '<name>' failed", i.e. <source path below src/ with dots>.test.<test name>.
+# A trailing '*' turns the entry into a prefix match. The reason follows " # ".
+# Compile errors cannot be allowlisted: the test binary must always compile. The
+# windows-ci.yml comment also mentions tests that pull the GTK apprt in at comptime; on
+# 2026-10-15 the unfiltered win32 test binary compiled cleanly (Zig 0.15.2, master aa1f532).
+#
+# Status 2026-10-15: the unfiltered suite passed locally on Windows 11 (x86_64-windows-gnu,
+# master aa1f532): 3173/3228 tests passed, 55 skipped, 0 failed (scripts/gate.ps1
+# -FullTest). The entries below come from the windows-ci.yml
+# comment, which records cli.ssh-cache.DiskCache failures of the gnu test binary on the
+# CI runner; commit 2b18067 (DiskCache atomic rename on Windows) fixed them locally.
+# Prune them once the unfiltered suite is green on windows-latest.
+cli.ssh-cache.DiskCache.test.disk cache default path  # CI runner only (windows-ci.yml comment); passes locally
+cli.ssh-cache.DiskCache.test.disk cache clear  # CI runner only (windows-ci.yml comment); passes locally
+cli.ssh-cache.DiskCache.test.disk cache operations  # CI runner only (windows-ci.yml comment); passes locally
+cli.ssh-cache.DiskCache.test.disk cache cleans up temp files  # CI runner only (windows-ci.yml comment); passes locally
+cli.ssh-cache.DiskCache.test.disk cache prune  # CI runner only (windows-ci.yml comment); passes locally
+cli.ssh-cache.DiskCache.test.disk cache prune missing file  # CI runner only (windows-ci.yml comment); passes locally
+cli.ssh-cache.DiskCache.test.disk cache reads duplicate keys  # CI runner only (windows-ci.yml comment); passes locally
+cli.ssh-cache.DiskCache.test.disk cache reads survive allocation failure  # CI runner only (windows-ci.yml comment); passes locally
+cli.ssh-cache.DiskCache.test.disk cache add survives allocation failure  # CI runner only (windows-ci.yml comment); passes locally
