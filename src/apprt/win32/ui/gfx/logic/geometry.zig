@@ -244,10 +244,13 @@ pub const PixelRect = extern struct {
     }
 };
 
+/// Saturating f32 -> i32 (NaN = 0). The upper bound is the largest f32 below
+/// 2^31: `maxInt(i32)` itself rounds up to 2^31 as an f32, which
+/// `@intFromFloat` rejects.
 fn toI32(v: f32) i32 {
     if (math.isNan(v)) return 0;
     const lo: f32 = @floatFromInt(math.minInt(i32));
-    const hi: f32 = @floatFromInt(math.maxInt(i32));
+    const hi: f32 = 2147483520.0; // 2^31 - 128
     return @intFromFloat(math.clamp(v, lo, hi));
 }
 
@@ -262,8 +265,10 @@ pub const Dpi = struct {
         return .{ .value = if (value == 0) 96 else value };
     }
 
+    /// Scale factor (1.0 = 96 DPI), clamped to [0.1, 64]; NaN reads as 1.
     pub fn fromScale(s: f32) Dpi {
-        return init(@intFromFloat(@round(@max(s, 0.1) * 96)));
+        const c: f32 = if (math.isNan(s)) 1 else math.clamp(s, 0.1, 64);
+        return init(@intFromFloat(@round(c * 96)));
     }
 
     /// Device pixels per DIP.
@@ -553,10 +558,10 @@ pub fn scrollToReveal(offset: f32, viewport: f32, item_top: f32, item_bottom: f3
 const testing = std.testing;
 
 fn expectRect(expected: Rect, actual: Rect) !void {
-    if (!expected.approxEql(actual, 1e-4)) {
-        std.debug.print("expected {any}, got {any}\n", .{ expected, actual });
-        return error.TestExpectedEqual;
-    }
+    try testing.expectApproxEqAbs(expected.left, actual.left, 1e-4);
+    try testing.expectApproxEqAbs(expected.top, actual.top, 1e-4);
+    try testing.expectApproxEqAbs(expected.right, actual.right, 1e-4);
+    try testing.expectApproxEqAbs(expected.bottom, actual.bottom, 1e-4);
 }
 
 test "unit: gfx: rect basics and half-open containment" {
@@ -636,6 +641,21 @@ test "unit: gfx: dpi scaling at 1.0, 1.25, 1.5 and 2.0" {
     const px = d.rectToPx(Rect.xywh(0.5, 0.5, 10, 10));
     try testing.expectEqual(PixelRect{ .left = 0, .top = 0, .right = 14, .bottom = 14 }, px);
     try expectRect(Rect.xywh(0, 0, 80, 40), d.rectToDip(.{ .left = 0, .top = 0, .right = 100, .bottom = 50 }));
+}
+
+test "unit: gfx: pixel conversions saturate instead of overflowing" {
+    const d = Dpi.init(96);
+    const max_px: i32 = 2147483520; // largest f32 below 2^31
+    try testing.expectEqual(max_px, d.pxRound(math.inf(f32)));
+    try testing.expectEqual(max_px, d.pxRound(3.0e9));
+    try testing.expectEqual(@as(i32, math.minInt(i32)), d.pxRound(-math.inf(f32)));
+    try testing.expectEqual(@as(i32, 0), d.pxRound(math.nan(f32)));
+    const huge = d.rectToPx(.{ .left = -math.inf(f32), .top = 0, .right = math.inf(f32), .bottom = 1.0e12 });
+    try testing.expectEqual(PixelRect{ .left = math.minInt(i32), .top = 0, .right = max_px, .bottom = max_px }, huge);
+    // Scale factors no monitor has clamp instead of overflowing.
+    try testing.expectEqual(@as(u32, 96), Dpi.fromScale(math.nan(f32)).value);
+    try testing.expectEqual(@as(u32, 6144), Dpi.fromScale(math.inf(f32)).value);
+    try testing.expectEqual(@as(u32, 10), Dpi.fromScale(-3).value);
 }
 
 test "unit: gfx: snapping lands on device pixels" {
