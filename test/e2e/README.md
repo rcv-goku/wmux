@@ -56,7 +56,8 @@ Outputs go to `test-results/` (gitignored): `e2e.json`, `e2e.junit.xml`, `logs/`
 dialogs). A failed file is retried once and reported `flaky` when the retry passes. Every
 Test-Case has a 120 s watchdog (`-TestTimeoutSec`); a file whose process outlives its budget is
 killed and reported `timeout`. Exit codes: 0 pass, 1 failures, 2 usage / nothing matched,
-3 build or environment failure. `-Build Release` builds into `zig-out\release`.
+3 build or environment failure. `-Build Release` builds into `zig-out\release`. A custom
+`-ResultsDir` must be new, empty or a previous run's output (marker `.wmux-e2e-results`).
 
 ## Isolation and safety
 

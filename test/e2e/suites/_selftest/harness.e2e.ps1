@@ -1144,6 +1144,14 @@ Test-Case 'run.ps1 lists quarantine on request and exits 2 when nothing matches'
     $none = Invoke-ChildPwsh -Arguments @('-File', $run, '-SuitesRoot', $script:RunnerSuite, '-Suite', '_quarantine', '-ResultsDir', (Join-Path $script:TempRoot 'runner\results3'))
     Assert-Equal 2 $none.ExitCode "quarantine is skipped by default and an empty selection is a usage error. stdout: $($none.Stdout)"
     Assert-Match 'no test file matched' $none.Stdout
+    # A non-empty -ResultsDir that run.ps1 did not create is refused, so its logs\ and
+    # artifacts\ folders are never deleted.
+    $foreign = Join-Path $script:TempRoot 'runner\foreign'
+    $keep = Write-TempFile 'runner\foreign\logs\keep.txt' 'not test output'
+    $refused = Invoke-ChildPwsh -Arguments @('-File', $run, '-SuitesRoot', $script:RunnerSuite, '-Suite', 'a', '-ResultsDir', $foreign)
+    Assert-Equal 2 $refused.ExitCode "stdout: $($refused.Stdout)"
+    Assert-Match 'was not created by run\.ps1' $refused.Stdout
+    Assert-True (Test-Path -LiteralPath $keep) 'files in a foreign -ResultsDir are left alone'
 }
 
 # ---------------------------------------------------------------------------

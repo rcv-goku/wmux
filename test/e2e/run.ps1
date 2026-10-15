@@ -152,7 +152,16 @@ if ($List) {
 # Output directory and optional build
 # ---------------------------------------------------------------------------
 
+# The stale outputs below are deleted recursively: only ever in the default directory or in one
+# that a previous run marked, never in an unrelated folder passed as -ResultsDir.
+$resultsMarker = Join-Path $ResultsDir '.wmux-e2e-results'
+$defaultResultsDir = Join-Path $repoRoot 'test-results'
+if ($ResultsDir -ne $defaultResultsDir -and (Test-Path -LiteralPath $ResultsDir) -and -not (Test-Path -LiteralPath $resultsMarker) -and
+    @(Get-ChildItem -LiteralPath $ResultsDir -Force -ErrorAction SilentlyContinue).Count -gt 0) {
+    Stop-Run 2 "-ResultsDir $ResultsDir is not empty and was not created by run.ps1 (no .wmux-e2e-results marker); pass an empty or new directory"
+}
 $null = New-Item -ItemType Directory -Force -Path $ResultsDir
+[IO.File]::WriteAllText($resultsMarker, "Output directory of test/e2e/run.ps1; each run replaces e2e.json, e2e.junit.xml, raw, logs and artifacts here.`n", [Text.UTF8Encoding]::new($false))
 foreach ($stale in @('e2e.json', 'e2e.junit.xml', 'raw', 'logs', 'artifacts')) {
     $p = Join-Path $ResultsDir $stale
     if (Test-Path -LiteralPath $p) {
