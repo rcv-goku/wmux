@@ -322,8 +322,8 @@ test "unit: session: apply enforces window, workspace and surface caps" {
     for (windows) |*w| w.* = .{ .id = try mint(arena, prng.random()) };
     const wss = try arena.alloc(schema.Workspace, max_workspaces_per_window + 2);
     for (wss) |*ws| ws.* = .{ .id = try mint(arena, prng.random()) };
-    // Workspace 0: two panes of 300 tabs each → 88 tabs and nothing of
-    // pane 2 beyond the cap... pane 3 vanishes entirely.
+    // Workspace 0: three panes of 300 tabs. Under the 512 cap the first
+    // keeps 300, the second 212, and the third none, so it vanishes.
     const panes = try arena.alloc(schema.Pane, 3);
     for (panes) |*p| {
         const tabs = try arena.alloc(schema.Tab, 300);
