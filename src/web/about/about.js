@@ -7,7 +7,9 @@
  *
  *   panel.about.info {} -> {
  *     product: "wmux",
- *     version: "1.2.0",            // the same string `wmux --version` prints
+ *     version: "1.2.0",            // the same string `wmux --version` prints and
+ *                                  // system.capabilities -> capabilities.wmux.version
+ *                                  // reports (the W1-6 e2e compares them)
  *     channel: "stable",           // optional
  *     commit: "aa1f532...",        // optional
  *     build: {                     // optional; string/number/boolean values. Known keys are

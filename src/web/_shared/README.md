@@ -337,7 +337,13 @@ Beyond ADR-6.5 the shared assets rely on:
 1. `panel.forward_key {strokes: [string] (1 or 2), sequence: bool}` →
    `{handled: bool, action?: string}`: match the canonical strokes through the
    KeyRouter in the sending panel's context; with `sequence: true`, continue the
-   pending chord.
+   pending chord. The page can be compromised (it may render untrusted
+   content), so treat the strokes as untrusted input: match only bindings whose
+   when-clause holds for this panel, and reject a request unless at least one
+   stroke is one WebView2 cannot report through `AcceleratorKeyPressed`: no
+   Ctrl, Alt or Win and a letter, digit, punctuation, `enter`, `tab`, `space` or
+   `backspace` key, or any `mouse4`/`mouse5` stroke. The page never forwards
+   anything else.
 2. Event `panel.key_sequence {active: bool, timeout_ms?: number}` to the focused
    panel when a chord prefix from its `AcceleratorKeyPressed` was consumed, and
    `{active: false}` when the sequence ends.
