@@ -26,6 +26,18 @@ pub const families = .{
     @import("workspace_group.zig"),
 };
 
+// A line duplicated by a union merge fails the build here (ADR-0.4).
+comptime {
+    @setEvalBranchQuota(1_000_000);
+    for (0..families.len) |i| {
+        for (0..i) |j| {
+            if (families[i] == families[j]) {
+                @compileError("duplicate family in src/wmux_cli/commands/manifest.zig: " ++ @typeName(families[i]));
+            }
+        }
+    }
+}
+
 test {
     inline for (families) |f| _ = f;
 }

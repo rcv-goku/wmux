@@ -24,6 +24,18 @@ pub const agents = .{
     @import("rovodev.zig"),
 };
 
+// A line duplicated by a union merge fails the build here (ADR-0.4).
+comptime {
+    @setEvalBranchQuota(1_000_000);
+    for (0..agents.len) |i| {
+        for (0..i) |j| {
+            if (agents[i] == agents[j]) {
+                @compileError("duplicate agent in src/wmux_cli/agents/manifest.zig: " ++ @typeName(agents[i]));
+            }
+        }
+    }
+}
+
 test {
     inline for (agents) |a| _ = a;
 }
