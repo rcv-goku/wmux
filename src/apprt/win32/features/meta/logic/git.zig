@@ -124,7 +124,12 @@ pub fn normalize(gpa: Allocator, p: []const u8, sep: u8) Allocator.Error![]u8 {
 pub fn resolvePath(gpa: Allocator, base: []const u8, rel: []const u8) Allocator.Error![]u8 {
     if (isAbsolute(rel)) return normalize(gpa, rel, preferredSep(rel));
     const sep = preferredSep(base);
-    const joined = try std.mem.concat(gpa, u8, &.{ base, &[_]u8{sep}, rel });
+    // No second separator after a base that already ends in one (`/`, `\`,
+    // `C:\`): `//x` and `\\x` would read as UNC roots. An empty base keeps
+    // `rel` relative.
+    const sep_buf = [1]u8{sep};
+    const glue: []const u8 = if (base.len == 0 or isSep(base[base.len - 1])) "" else &sep_buf;
+    const joined = try std.mem.concat(gpa, u8, &.{ base, glue, rel });
     defer gpa.free(joined);
     return normalize(gpa, joined, sep);
 }
@@ -596,6 +601,24 @@ test "unit: meta: git resolvePath joins relative and keeps absolute" {
     try testing.expect(isAbsolute("\\\\srv\\share"));
 }
 
+test "unit: meta: git resolvePath at a root adds no second separator" {
+    const gpa = testing.allocator;
+    // `//.git` or `\\.git` would be a UNC path to a server named `.git`.
+    const cases = [_][3][]const u8{
+        .{ "/", ".git", "/.git" },
+        .{ "\\", ".git", "\\.git" },
+        .{ "C:\\", ".git", "C:\\.git" },
+        .{ "\\\\srv\\share\\", ".git", "\\\\srv\\share\\.git" },
+        .{ "/home/u/", "x", "/home/u/x" },
+        .{ "", ".git", ".git" },
+    };
+    for (cases) |c| {
+        const got = try resolvePath(gpa, c[0], c[1]);
+        defer gpa.free(got);
+        try testing.expectEqualStrings(c[2], got);
+    }
+}
+
 test "unit: meta: git parentDir walks to the root and stops" {
     try testing.expectEqualStrings("/a", parentDir("/a/b").?);
     try testing.expectEqualStrings("/", parentDir("/a").?);
@@ -658,6 +681,18 @@ test "unit: meta: git resolve walks up from a nested cwd" {
     defer loc.deinit(gpa);
     try testing.expectEqualStrings("C:\\src\\proj", loc.worktree_root);
     try testing.expectEqualStrings("C:\\src\\proj\\.git", loc.common_dir);
+}
+
+test "unit: meta: git resolve finds a repo at the file-system root" {
+    const gpa = testing.allocator;
+    var fake: FakeFs = .{ .dirs = &.{"/.git"}, .files = &.{} };
+    var loc = (try resolve(gpa, "/srv/app", fake.fs())).?;
+    defer loc.deinit(gpa);
+    try testing.expectEqualStrings("/", loc.worktree_root);
+    try testing.expectEqualStrings("/.git", loc.git_dir);
+    var drive = try resolveFromDotGit(gpa, "C:\\", null, null);
+    defer drive.deinit(gpa);
+    try testing.expectEqualStrings("C:\\.git", drive.git_dir);
 }
 
 test "unit: meta: git resolve follows .git file and commondir" {
