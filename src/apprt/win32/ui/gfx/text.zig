@@ -416,7 +416,9 @@ pub const TextLayout = struct {
     }
 
     /// Rectangles covering a UTF-16 range, offset by `origin` (link hover
-    /// areas, selection, highlights). Returns the filled prefix of `out`.
+    /// areas, selection, highlights). Returns the filled prefix of `out`, or
+    /// `error.BufferTooSmall` when the range needs more than
+    /// `@min(out.len, 32)` rectangles (one per line and bidi run).
     pub fn rangeRects(self: TextLayout, position: u32, length: u32, origin: Point, out: []Rect) com.Error![]Rect {
         var buf: [32]dwrite.DWRITE_HIT_TEST_METRICS = undefined;
         const cap = @min(out.len, buf.len);

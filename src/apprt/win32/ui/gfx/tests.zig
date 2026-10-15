@@ -539,6 +539,7 @@ test "gfx: headless: text hit testing, carets and range rectangles" {
     const r = try l.rangeRects(1, 3, .{ .x = 10, .y = 20 }, &rects);
     try testing.expectEqual(@as(usize, 1), r.len);
     try testing.expect(r[0].width() > 0 and r[0].left >= 10 and r[0].top >= 20);
+    try testing.expectError(error.BufferTooSmall, l.rangeRects(1, 3, .{}, rects[0..0]));
 
     // UTF-8 byte offsets map to DirectWrite's UTF-16 positions.
     const s = "a\u{1F600}b";
