@@ -694,7 +694,7 @@ pub fn parseDomDocument(gpa: Allocator, json: []const u8, opts: ParseOptions) Pa
 
     tree.nodes = nodes.items;
     tree.url = try a.dupe(u8, opts.url);
-    try finishDom(&tree);
+    try finishDom(gpa, &tree);
     if (tree.url.len == 0) {
         if (stringField(root_json, "documentURL")) |u| tree.url = u;
     }
@@ -729,7 +729,8 @@ const non_rendered_tags = [_][]const u8{
     "head", "script", "style", "noscript", "template", "meta", "link", "title", "base",
 };
 
-fn finishDom(tree: *Tree) Allocator.Error!void {
+/// `gpa` holds scratch data that does not outlive the call.
+fn finishDom(gpa: Allocator, tree: *Tree) Allocator.Error!void {
     const a = tree.arena.allocator();
     const nodes = tree.nodes;
 
@@ -771,23 +772,17 @@ fn finishDom(tree: *Tree) Allocator.Error!void {
     }
 
     // Pass 2: <label for=…> and wrapping labels -> control label text.
-    const label_of = try a.alloc(?NodeIndex, nodes.len);
+    const label_of = try gpa.alloc(?NodeIndex, nodes.len);
+    defer gpa.free(label_of);
     @memset(label_of, null);
+    var scratch: std.ArrayList(NodeIndex) = .empty;
+    defer scratch.deinit(gpa);
     for (nodes, 0..) |*n, i| {
         if (n.kind != .element or !std.mem.eql(u8, n.tag, "label")) continue;
-        if (n.attr("for")) |f| {
-            if (ids.get(f)) |ci| {
-                if (label_of[ci] == null) label_of[ci] = @intCast(i);
-            }
-            continue;
-        }
-        // Wrapped control: the first labelable descendant.
-        const order = try tree.preorder(a, @intCast(i));
-        for (order[1..]) |d| {
-            if (isLabelableTag(&nodes[d])) {
-                if (label_of[d] == null) label_of[d] = @intCast(i);
-                break;
-            }
+        const li: NodeIndex = @intCast(i);
+        const control = if (n.attr("for")) |f| ids.get(f) else try firstLabelable(tree, gpa, &scratch, li);
+        if (control) |ci| {
+            if (label_of[ci] == null) label_of[ci] = li;
         }
     }
 
@@ -834,6 +829,31 @@ fn isLabelableTag(n: *const Node) bool {
     const tags = [_][]const u8{ "input", "textarea", "select", "button", "meter", "output", "progress" };
     for (tags) |t| if (std.mem.eql(u8, n.tag, t)) return true;
     return false;
+}
+
+/// The control of a `<label>` without `for`: its first labelable descendant
+/// in tree order, skipping hidden subtrees and nested documents. The label
+/// itself may be hidden (`<label hidden>`, a closed `<details>` body).
+/// `stack` is reusable scratch space; nothing is kept in the tree arena.
+fn firstLabelable(tree: *const Tree, gpa: Allocator, stack: *std.ArrayList(NodeIndex), label: NodeIndex) Allocator.Error!?NodeIndex {
+    stack.clearRetainingCapacity();
+    try pushChildren(gpa, stack, tree.nodes[label].children);
+    while (stack.pop()) |d| {
+        const n = &tree.nodes[d];
+        if (n.hidden or n.kind == .document) continue;
+        if (isLabelableTag(n)) return d;
+        try pushChildren(gpa, stack, n.children);
+    }
+    return null;
+}
+
+/// Push `kids` in reverse so they pop in document order.
+fn pushChildren(gpa: Allocator, stack: *std.ArrayList(NodeIndex), kids: []const NodeIndex) Allocator.Error!void {
+    var i = kids.len;
+    while (i > 0) {
+        i -= 1;
+        try stack.append(gpa, kids[i]);
+    }
 }
 
 const StyleFlags = struct { hidden: bool = false, pointer: bool = false };

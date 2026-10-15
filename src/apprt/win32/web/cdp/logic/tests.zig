@@ -268,6 +268,46 @@ test "unit: browser: dom heading level comes only from h1-h6 or aria-level" {
     }
 }
 
+test "unit: browser: hidden wrapping labels do not crash dom parsing" {
+    // A wrapping <label> that is itself hidden used to slice an empty
+    // preorder (`order[1..]`) and panic. The closed <details> case is
+    // ordinary settings-page markup.
+    const j =
+        \\{"root":{"nodeType":9,"children":[{"nodeType":1,"localName":"body","children":[
+        \\ {"nodeType":1,"localName":"details","children":[
+        \\  {"nodeType":1,"localName":"summary","children":[{"nodeType":3,"nodeValue":"Options"}]},
+        \\  {"nodeType":1,"localName":"label","children":[
+        \\   {"nodeType":1,"localName":"input","backendNodeId":2,"attributes":["type","checkbox"]},
+        \\   {"nodeType":3,"nodeValue":"Enable"}]}]},
+        \\ {"nodeType":1,"localName":"label","attributes":["hidden",""],"children":[
+        \\  {"nodeType":1,"localName":"input","backendNodeId":3}]},
+        \\ {"nodeType":1,"localName":"label","attributes":["style","display:none"],"children":[
+        \\  {"nodeType":1,"localName":"input","backendNodeId":4}]},
+        \\ {"nodeType":1,"localName":"label","attributes":["aria-hidden","true"]},
+        \\ {"nodeType":1,"localName":"details","attributes":["open",""],"children":[
+        \\  {"nodeType":1,"localName":"summary","children":[{"nodeType":3,"nodeValue":"More"}]},
+        \\  {"nodeType":1,"localName":"label","children":[
+        \\   {"nodeType":3,"nodeValue":"Notify me"},
+        \\   {"nodeType":1,"localName":"span","children":[{"nodeType":1,"localName":"input","backendNodeId":5,"attributes":["type","hidden"]}]},
+        \\   {"nodeType":1,"localName":"input","backendNodeId":6,"attributes":["type","checkbox"]}]}]}]}]}}
+    ;
+    var tree = try ax.parseDomDocument(gpa, j, .{});
+    defer tree.deinit();
+    for ([_]i64{ 2, 3, 4 }) |b| try testing.expect(tree.isHidden(tree.findByBackendId(b, null).?));
+    // The first labelable descendant skips hidden ones (input[type=hidden]).
+    try testing.expectEqualStrings("Notify me", tree.get(tree.findByBackendId(6, null).?).name);
+    var table = refs.RefTable.init(gpa);
+    defer table.deinit();
+    const text = try renderText(&tree, &table, .{ .interactive = true });
+    defer gpa.free(text);
+    try testing.expectEqualStrings(
+        \\- document ""
+        \\- button "Options" [ref=e1] [expanded=false]
+        \\- button "More" [ref=e2] [expanded]
+        \\- checkbox "Notify me" [ref=e3]
+    , text);
+}
+
 test "unit: browser: inline style visibility and cursor heuristics" {
     try testing.expect(ax.parseStyle("display:none").hidden);
     try testing.expect(ax.parseStyle("color: red; DISPLAY : None !important").hidden);
