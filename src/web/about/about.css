@@ -1,0 +1,138 @@
+/* About panel layout. Colors and type come from the tokens in ../_shared/. */
+
+.about {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: var(--wmux-space-6) var(--wmux-space-5);
+}
+
+.about-header {
+  display: flex;
+  align-items: center;
+  gap: var(--wmux-space-4);
+  margin-bottom: var(--wmux-space-5);
+}
+
+.about-mark {
+  flex: none;
+  width: 64px;
+  height: 64px;
+}
+
+.about-mark-frame {
+  fill: var(--wmux-accent);
+}
+
+.about-mark-line {
+  fill: none;
+  stroke: var(--wmux-accent-fg);
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.about-mark-dim {
+  opacity: 0.55;
+}
+
+.about-identity h1 {
+  margin-bottom: var(--wmux-space-1);
+}
+
+.about-tagline {
+  margin-bottom: var(--wmux-space-2);
+  color: var(--wmux-fg-muted);
+}
+
+.about-version {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wmux-space-2);
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.about-badge {
+  padding: 0 var(--wmux-space-2);
+  border: 1px solid var(--wmux-border-strong);
+  border-radius: 999px;
+  color: var(--wmux-fg-muted);
+  font-size: 0.85em;
+}
+
+.about-section {
+  padding: var(--wmux-space-4) 0;
+  border-top: 1px solid var(--wmux-border);
+}
+
+.about-build {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--wmux-space-1) var(--wmux-space-4);
+  margin: 0 0 var(--wmux-space-4);
+}
+
+.about-build dt {
+  color: var(--wmux-fg-muted);
+}
+
+.about-build dd {
+  margin: 0;
+  font-family: var(--wmux-font-mono);
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
+}
+
+.about-actions,
+.about-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wmux-space-2) var(--wmux-space-4);
+}
+
+.about-links {
+  margin-bottom: 0;
+}
+
+.about-text {
+  max-height: 320px;
+  margin-top: var(--wmux-space-3);
+  padding: var(--wmux-space-3);
+  overflow: auto;
+  border: 1px solid var(--wmux-border);
+  border-radius: var(--wmux-radius);
+  background-color: var(--wmux-surface);
+  font-size: 0.9em;
+  line-height: 1.5;
+}
+
+.about-status {
+  min-height: calc(1em * var(--wmux-line-height));
+  margin: var(--wmux-space-3) 0 0;
+  color: var(--wmux-fg-muted);
+}
+
+.about-status[data-kind="error"] {
+  color: var(--wmux-danger);
+}
+
+@media (max-width: 440px) {
+  .about {
+    padding: var(--wmux-space-4) var(--wmux-space-3);
+  }
+
+  .about-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .about-build {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .about-build dd {
+    margin-bottom: var(--wmux-space-2);
+  }
+}

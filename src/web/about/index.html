@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data: https://*.wmux.example; object-src 'none'; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types 'none'">
+    <meta name="referrer" content="no-referrer">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>About wmux</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="../_shared/base.css">
+    <link rel="stylesheet" href="about.css">
+    <script type="module" src="about.js"></script>
+  </head>
+  <body>
+    <main class="about" aria-labelledby="about-product">
+      <header class="about-header">
+        <svg class="about-mark" viewBox="0 0 64 64" width="64" height="64" aria-hidden="true">
+          <rect class="about-mark-frame" x="3" y="3" width="58" height="58" rx="12"></rect>
+          <path class="about-mark-line" d="M38 13v38"></path>
+          <path class="about-mark-line" d="M13 24l8 7-8 7M24 40h8"></path>
+          <path class="about-mark-line about-mark-dim" d="M44 24h8M44 32h5M44 40h8"></path>
+        </svg>
+        <div class="about-identity">
+          <h1 id="about-product" data-i18n="about.product">wmux</h1>
+          <p class="about-tagline" data-i18n="about.tagline">A terminal multiplexer for Windows, built on Ghostty.</p>
+          <p class="about-version">
+            <span id="about-version" data-i18n="about.loading">Loading build information…</span>
+            <span id="about-channel" class="about-badge" hidden></span>
+          </p>
+        </div>
+      </header>
+
+      <section class="about-section" aria-labelledby="about-build-heading">
+        <h2 id="about-build-heading" data-i18n="about.build.heading">Build information</h2>
+        <dl id="about-build" class="about-build"></dl>
+        <div class="about-actions">
+          <button type="button" id="about-copy" data-i18n="about.copy">Copy version info</button>
+        </div>
+      </section>
+
+      <section class="about-section" aria-labelledby="about-license-heading">
+        <h2 id="about-license-heading" data-i18n="about.license.heading">License</h2>
+        <p id="about-license-summary">wmux is free software, released under the MIT License.</p>
+        <p id="about-copyright" class="wmux-muted" hidden></p>
+        <p class="about-links">
+          <button type="button" id="about-license-toggle" class="wmux-link" aria-expanded="false" aria-controls="about-license-text" hidden>Show license</button>
+          <button type="button" id="about-notices-toggle" class="wmux-link" aria-expanded="false" aria-controls="about-notices-text" data-i18n="about.notices.show">Third-party notices</button>
+          <a id="about-homepage" href="#" rel="noreferrer" hidden data-i18n="about.homepage">Project website</a>
+        </p>
+        <pre id="about-license-text" class="about-text" role="region" tabindex="0" aria-label="License" data-i18n-attr="aria-label:about.license.heading" hidden></pre>
+        <pre id="about-notices-text" class="about-text" role="region" tabindex="0" aria-label="Third-party notices" data-i18n-attr="aria-label:about.notices.show" hidden></pre>
+      </section>
+
+      <p id="about-status" class="about-status" role="status" aria-live="polite"></p>
+    </main>
+  </body>
+</html>
