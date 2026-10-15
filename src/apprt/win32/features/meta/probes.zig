@@ -16,7 +16,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
-const Window = @import("Window.zig");
+const Window = @import("../../Window.zig");
 const PrState = Window.PrState;
 
 const log = std.log.scoped(.win32);
