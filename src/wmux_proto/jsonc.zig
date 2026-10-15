@@ -8,6 +8,9 @@ const std = @import("std");
 
 pub const default_max_depth: u32 = 128;
 
+/// UTF-8 byte order mark (Windows tools such as PowerShell 5.1 write one).
+const utf8_bom = "\xEF\xBB\xBF";
+
 /// 1-based line and column. Columns count Unicode code points, so a message
 /// points at the same character an editor shows.
 pub const Pos = struct {
@@ -19,12 +22,13 @@ pub const Pos = struct {
     }
 };
 
-/// Line and column of byte `offset` in `src` (clamped to `src.len`).
+/// Line and column of byte `offset` in `src` (clamped to `src.len`). A
+/// leading byte order mark takes no column, as editors do not show it.
 pub fn position(src: []const u8, offset: usize) Pos {
     const end = @min(offset, src.len);
     var line: u32 = 1;
     var col: u32 = 1;
-    var i: usize = 0;
+    var i: usize = if (std.mem.startsWith(u8, src, utf8_bom)) @min(utf8_bom.len, end) else 0;
     while (i < end) : (i += 1) {
         const c = src[i];
         if (c == '\n') {
@@ -91,8 +95,7 @@ pub const Tokenizer = struct {
     err: ?TokenError = null,
 
     pub fn init(src: []const u8, allow_comments: bool) Tokenizer {
-        const bom = "\xEF\xBB\xBF";
-        const start: usize = if (std.mem.startsWith(u8, src, bom)) bom.len else 0;
+        const start: usize = if (std.mem.startsWith(u8, src, utf8_bom)) utf8_bom.len else 0;
         return .{ .src = src, .i = start, .allow_comments = allow_comments };
     }
 
@@ -809,6 +812,12 @@ test "unit: proto: jsonc skips a byte order mark" {
     var doc = try parse(testing.allocator, "\xEF\xBB\xBF{\"a\": true}", .{}, null);
     defer doc.deinit();
     try testing.expectEqual(true, doc.root.get("a").?.asBool().?);
+    // The BOM is invisible in editors, so it takes no column.
+    try expectSyntaxError("\xEF\xBB\xBF{\"a\": tru}", .{}, 1, 7, "unexpected character");
+    try expectSyntaxError("\xEF\xBB\xBF", .{}, 1, 1, "unexpected end of input");
+    try testing.expectEqual(Pos{ .line = 1, .col = 1 }, position("\xEF\xBB\xBF{}", 1));
+    try testing.expectEqual(Pos{ .line = 1, .col = 2 }, position("\xEF\xBB\xBF{}", 4));
+    try testing.expectEqual(Pos{ .line = 2, .col = 1 }, position("\xEF\xBB\xBF{\n}", 5));
 }
 
 test "unit: proto: jsonc duplicate keys resolve to the last one" {
