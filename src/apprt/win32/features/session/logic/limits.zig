@@ -289,6 +289,44 @@ test "unit: session: scrollback tail honours the character cap" {
     try testing.expectEqual(max_scrollback_chars, std.unicode.utf8CountCodepoints(t) catch unreachable);
 }
 
+test "unit: session: scrollback and history caps are exact at the boundary" {
+    var aw: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer aw.deinit();
+    // Exactly max_scrollback_lines lines stay whole, with or without the
+    // trailing newline; one more line drops the oldest.
+    for (0..max_scrollback_lines) |i| try aw.writer.print("{d}\n", .{i});
+    const exact = aw.written();
+    try testing.expectEqual(exact.len, tailScrollback(exact).len);
+    try testing.expectEqual(exact.len - 1, tailScrollback(exact[0 .. exact.len - 1]).len);
+    try aw.writer.writeAll("last");
+    const one_more = aw.written();
+    const tail = tailScrollback(one_more);
+    try testing.expect(std.mem.startsWith(u8, tail, "1\n"));
+    try testing.expect(std.mem.endsWith(u8, tail, "\nlast"));
+
+    // Exactly max_scrollback_chars code points stay whole; one more drops
+    // one code point from a single line, or the whole oldest line.
+    const line = try testing.allocator.alloc(u8, max_scrollback_chars + 1);
+    defer testing.allocator.free(line);
+    @memset(line, 'a');
+    try testing.expectEqual(max_scrollback_chars, tailScrollback(line[1..]).len);
+    try testing.expectEqual(max_scrollback_chars, tailScrollback(line).len);
+    line[0] = 'b';
+    line[1] = '\n';
+    try testing.expectEqual(max_scrollback_chars + 1, tailScrollbackCaps(line, 10, max_scrollback_chars + 1).len);
+    try testing.expectEqual(max_scrollback_chars - 1, tailScrollback(line).len);
+
+    // Exactly max_browser_history entries per side are kept as they are.
+    var hist: [max_browser_history + 1][]const u8 = undefined;
+    for (&hist, 0..) |*h, i| h.* = if (i == 0) "oldest" else "x";
+    const kept = capHistory(hist[1..], hist[1..]);
+    try testing.expectEqual(max_browser_history, kept.back.len);
+    try testing.expectEqual(max_browser_history, kept.forward.len);
+    const capped = capHistory(&hist, &hist);
+    try testing.expectEqualStrings("x", capped.back[0]);
+    try testing.expectEqualStrings("oldest", capped.forward[0]);
+}
+
 test "unit: session: browser history keeps entries nearest the page" {
     var back: [150][]const u8 = undefined;
     var fwd: [150][]const u8 = undefined;
