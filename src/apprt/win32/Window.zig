@@ -22,6 +22,7 @@ const Surface = @import("Surface.zig");
 const SessionState = @import("SessionState.zig");
 const WindowState = @import("WindowState.zig");
 const SplitTree = @import("../../datastruct/split_tree.zig").SplitTree;
+const app_paths = @import("app/paths.zig");
 const w32 = @import("platform/win32.zig");
 
 /// Maximum bytes of a per-tab status string (set-status). Inline, like
@@ -737,16 +738,11 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
     // timing issues with ConPTY.
 }
 
-/// Name of the persisted window-state file, under %LOCALAPPDATA%\ghostty.
-const WINDOW_STATE_FILE = "window-state";
-
-/// Build the absolute path to the window-state file. Mirrors the
-/// `update_check_at` convention used elsewhere in this runtime
-/// (%LOCALAPPDATA%\ghostty\...). Caller owns the returned slice.
-fn windowStatePath(alloc: std.mem.Allocator) ![]u8 {
-    const dir = try std.process.getEnvVarOwned(alloc, "LOCALAPPDATA");
-    defer alloc.free(dir);
-    return std.fs.path.join(alloc, &.{ dir, "ghostty", WINDOW_STATE_FILE });
+/// Build the absolute path to the window-state file:
+/// %LOCALAPPDATA%\ghostty\window-state, or <WMUX_STATE_DIR>\window-state
+/// (app/paths.zig). Caller owns the returned slice.
+fn windowStatePath(app: *const App, alloc: std.mem.Allocator) ![]u8 {
+    return app_paths.windowStatePath(alloc, &app.runtime_env);
 }
 
 /// Capture the current window placement and persist it. Called on
@@ -798,7 +794,7 @@ pub fn savePlacement(self: *Window) void {
     const text = state.serialize(&serialize_buf) catch return;
 
     const alloc = self.app.core_app.alloc;
-    const path = windowStatePath(alloc) catch return;
+    const path = windowStatePath(self.app, alloc) catch return;
 
     const ctx = alloc.create(SavePlacementCtx) catch {
         alloc.free(path);
@@ -860,7 +856,7 @@ fn savePlacementWorker(ctx: *SavePlacementCtx) void {
 /// error path yields null.
 fn restorePlacement(self: *Window) ?WindowState.State {
     const alloc = self.app.core_app.alloc;
-    const path = windowStatePath(alloc) catch return null;
+    const path = windowStatePath(self.app, alloc) catch return null;
     defer alloc.free(path);
 
     const file = std.fs.cwd().openFile(path, .{}) catch return null;

@@ -26,19 +26,17 @@ const PaneContainer = @import("PaneContainer.zig");
 const Surface = @import("Surface.zig");
 const Window = @import("Window.zig");
 const SplitTree = @import("../../datastruct/split_tree.zig").SplitTree;
+const app_paths = @import("app/paths.zig");
+const RuntimeEnv = @import("app/runtime_env.zig").RuntimeEnv;
 const w32 = @import("platform/win32.zig");
 
 const log = std.log.scoped(.win32);
 
-/// Name of the persisted session-state file, under %LOCALAPPDATA%\ghostty.
-const SESSION_STATE_FILE = "session-state.json";
-
-/// Build the absolute path to the session-state file. Mirrors the
-/// `window-state` convention used elsewhere in this runtime.
-fn sessionStatePath(alloc: Allocator) ![]u8 {
-    const dir = try std.process.getEnvVarOwned(alloc, "LOCALAPPDATA");
-    defer alloc.free(dir);
-    return std.fs.path.join(alloc, &.{ dir, "ghostty", SESSION_STATE_FILE });
+/// Build the absolute path to the session-state file:
+/// %LOCALAPPDATA%\ghostty\session-state.json, or
+/// <WMUX_STATE_DIR>\session-state.json (app/paths.zig).
+fn sessionStatePath(alloc: Allocator, env: *const RuntimeEnv) ![]u8 {
+    return app_paths.sessionStatePath(alloc, env);
 }
 
 // ── JSON model types (v2) ──────────────────────────────────────────
@@ -211,7 +209,7 @@ pub fn save(alloc: Allocator, window: *Window) !void {
     try std.json.Stringify.value(session, .{}, &aw.writer);
     const json = aw.written();
 
-    const path = try sessionStatePath(a);
+    const path = try sessionStatePath(a, &window.app.runtime_env);
     if (std.fs.path.dirname(path)) |parent| {
         std.fs.cwd().makePath(parent) catch {};
     }
@@ -232,7 +230,7 @@ pub fn restore(alloc: Allocator, app: *App) !void {
     defer arena.deinit();
     const a = arena.allocator();
 
-    const path = sessionStatePath(a) catch return;
+    const path = sessionStatePath(a, &app.runtime_env) catch return;
     const file = std.fs.cwd().openFile(path, .{}) catch return;
     defer file.close();
 

@@ -34,6 +34,7 @@ const broadcast_window = @import("app/broadcast_window.zig");
 const hooks = @import("app/hooks.zig");
 const app_timers = @import("app/timers.zig");
 const message_loop = @import("app/message_loop.zig");
+const RuntimeEnv = @import("app/runtime_env.zig").RuntimeEnv;
 const perform_action = @import("app/perform_action.zig");
 const wv2 = @import("platform/webview2.zig");
 
@@ -70,6 +71,10 @@ core_app: *CoreApp,
 /// The configuration for the application. Loaded during init and
 /// updated in response to config_change actions.
 config: Config,
+
+/// Every WMUX_* app input (test mode, path overrides), parsed once in
+/// init (app/runtime_env.zig, ARCHITECTURE.md ADR-12.3 / Appendix G).
+runtime_env: RuntimeEnv = .{},
 
 /// A message-only window used to receive WM_APP_WAKEUP, app.tasks
 /// wakeups and app.timers ticks. This is not a visible window; it just
@@ -266,7 +271,9 @@ pub fn init(
         .bg_brush = bg_brush,
         .com_initialized = hr_coinit == 0 or hr_coinit == 1,
         .session_store = agent_session.Store.init(alloc),
+        .runtime_env = RuntimeEnv.load(alloc),
     };
+    errdefer self.runtime_env.deinit(alloc);
 
     // Register the window container class (GDI painting, no CS_OWNDC).
     // CS_DBLCLKS is required to receive WM_LBUTTONDBLCLK for divider equalize.
@@ -532,6 +539,7 @@ pub fn terminate(self: *App) void {
     }
 
     self.config.deinit();
+    self.runtime_env.deinit(alloc);
 
     // Release the taskbar overlay COM object before CoUninitialize tears
     // down the apartment it lives in.
@@ -1249,4 +1257,6 @@ test {
     _ = app_tasks;
     _ = app_timers;
     _ = hooks;
+    _ = @import("app/runtime_env.zig");
+    _ = @import("app/paths.zig");
 }

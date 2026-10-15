@@ -1,7 +1,8 @@
 //! Scrollback snapshot save/restore helpers (`%LOCALAPPDATA%\ghostty\
-//! scrollback\<surface_id>.txt`). Currently unreferenced (no caller saves
-//! or restores scrollback); kept compiling until W1-7 replaces them with
-//! terminal-side replay (ARCHITECTURE.md ADR-9.5).
+//! scrollback\<surface_id>.txt`, or `<WMUX_STATE_DIR>\scrollback\...`).
+//! Currently unreferenced (no caller saves or restores scrollback); kept
+//! until W1-7 replaces them with terminal-side replay (ARCHITECTURE.md
+//! ADR-9.5).
 //!
 //! Moved verbatim from App.zig in W0-A1 (ARCHITECTURE.md ADR-1.8).
 
@@ -10,16 +11,15 @@ const Allocator = std.mem.Allocator;
 
 const App = @import("../../App.zig");
 const Surface = @import("../../Surface.zig");
+const paths = @import("../../app/paths.zig");
 
 /// Capture the scrollback + visible screen of every terminal pane and save
-/// each to `%LOCALAPPDATA%\ghostty\scrollback\<surface_id>.txt`. Called
+/// each to `<scrollback dir>\<surface_id>.txt` (app/paths.zig). Called
 /// during session save so that session restore can repopulate the panes.
 /// Best-effort: errors on individual panes are swallowed.
 pub fn saveAllScrollback(self: *App) void {
     const alloc = self.core_app.alloc;
-    const dir = std.process.getEnvVarOwned(alloc, "LOCALAPPDATA") catch return;
-    defer alloc.free(dir);
-    const scrollback_dir = std.fs.path.join(alloc, &.{ dir, "ghostty", "scrollback" }) catch return;
+    const scrollback_dir = paths.scrollbackPath(alloc, &self.runtime_env) catch return;
     defer alloc.free(scrollback_dir);
 
     std.fs.cwd().makePath(scrollback_dir) catch return;
@@ -76,20 +76,20 @@ fn saveOnePaneScrollback(
 
 /// Restore saved scrollback into a pane by writing the text to the
 /// terminal's PTY as if it were program output, which naturally populates
-/// the scrollback buffer. The file is
-/// `%LOCALAPPDATA%\ghostty\scrollback\<surface_id>.txt`.
+/// the scrollback buffer. The file is `<scrollback dir>\<surface_id>.txt`
+/// (app/paths.zig).
 pub fn restoreScrollback(self: *App, surface: *Surface) void {
     const alloc = self.core_app.alloc;
     if (!surface.core_surface_ready) return;
 
     const sid = surface.core_surface.id;
 
-    const dir = std.process.getEnvVarOwned(alloc, "LOCALAPPDATA") catch return;
+    const dir = paths.scrollbackPath(alloc, &self.runtime_env) catch return;
     defer alloc.free(dir);
 
     var name_buf: [32]u8 = undefined;
     const name = std.fmt.bufPrint(&name_buf, "{d}.txt", .{sid}) catch return;
-    const path = std.fs.path.join(alloc, &.{ dir, "ghostty", "scrollback", name }) catch return;
+    const path = std.fs.path.join(alloc, &.{ dir, name }) catch return;
     defer alloc.free(path);
 
     const file = std.fs.cwd().openFile(path, .{}) catch return;

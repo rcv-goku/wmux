@@ -11,10 +11,12 @@ const std = @import("std");
 
 const App = @import("../App.zig");
 const BrowserPane = @import("../BrowserPane.zig");
+const paths = @import("../app/paths.zig");
 const wv2 = @import("../platform/webview2.zig");
 
 const log = std.log.scoped(.win32);
 
+/// Hand a browser pane the shared WebView2 environment, creating it on
 /// first use. The pane already holds its in-flight ref (startCreation);
 /// onEnvironment consumes it on failure or carries it into controller
 /// creation. Must be called on the UI thread.
@@ -48,14 +50,10 @@ fn createWebView2Env(self: *App) void {
         return;
     };
 
-    // User data folder: %LOCALAPPDATA%\ghostty\webview2. Must exist
-    // before environment creation.
-    const local = std.process.getEnvVarOwned(alloc, "LOCALAPPDATA") catch {
-        failWebView2Env(self);
-        return;
-    };
-    defer alloc.free(local);
-    const dir = std.fs.path.join(alloc, &.{ local, "ghostty", "webview2" }) catch {
+    // User data folder: %LOCALAPPDATA%\ghostty\webview2, or
+    // <WMUX_STATE_DIR>\webview2 (app/paths.zig). Must exist before
+    // environment creation.
+    const dir = paths.webview2UserDataPath(alloc, &self.runtime_env) catch {
         failWebView2Env(self);
         return;
     };
