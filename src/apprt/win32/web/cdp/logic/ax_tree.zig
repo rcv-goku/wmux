@@ -438,6 +438,27 @@ pub fn parseAxTree(gpa: Allocator, json: []const u8, opts: ParseOptions) ParseEr
         }
     }
     parent_of[root] = null;
+    // Break every other parent cycle as well (malformed input; Chrome sends
+    // a tree): follow each chain once and cut the link that closes a loop,
+    // so ancestor walks (isHidden, contains, CSS combinators) and subtree
+    // walks from any node terminate.
+    const walk_of = try gpa.alloc(u32, count);
+    defer gpa.free(walk_of);
+    @memset(walk_of, 0);
+    for (0..count) |start| {
+        if (walk_of[start] != 0) continue;
+        const walk: u32 = @intCast(start + 1);
+        var cur: NodeIndex = @intCast(start);
+        while (walk_of[cur] == 0) {
+            walk_of[cur] = walk;
+            const p = parent_of[cur] orelse break;
+            if (walk_of[p] == walk) {
+                parent_of[cur] = null;
+                break;
+            }
+            cur = p;
+        }
+    }
     // Children in childIds order, each at most once.
     const added = try a.alloc(bool, count);
     @memset(added, false);
@@ -495,12 +516,62 @@ pub fn parseAxTree(gpa: Allocator, json: []const u8, opts: ParseOptions) ParseEr
 /// Values live in the tree arena; the scanner's nesting stack uses `gpa`
 /// (an arena-backed scanner degrades badly on deeply nested input).
 fn parseJson(gpa: Allocator, a: Allocator, json: []const u8) ParseError!std.json.Value {
-    var scanner = std.json.Scanner.initCompleteInput(gpa, json);
+    // Chrome escapes every UTF-16 code unit, so page text holding a lone
+    // surrogate (a JS string cut inside an emoji) arrives as "\ud83d".
+    // std.json rejects unpaired surrogates, which would fail the whole
+    // snapshot; read them as U+FFFD instead.
+    const fixed = try replaceLoneSurrogates(gpa, json);
+    defer if (fixed) |f| gpa.free(f);
+    var scanner = std.json.Scanner.initCompleteInput(gpa, fixed orelse json);
     defer scanner.deinit();
     return std.json.parseFromTokenSourceLeaky(std.json.Value, a, &scanner, .{ .allocate = .alloc_always }) catch |err| switch (err) {
         error.OutOfMemory => error.OutOfMemory,
         else => error.InvalidCdpJson,
     };
+}
+
+/// A copy of `json` with every unpaired `\uD800`-`\uDFFF` escape rewritten
+/// as `\uFFFD` (same length), or null when there is none. Outside strings a
+/// backslash is a syntax error anyway, so no string tracking is needed.
+fn replaceLoneSurrogates(gpa: Allocator, json: []const u8) Allocator.Error!?[]u8 {
+    var out: ?[]u8 = null;
+    var i: usize = 0;
+    while (i + 1 < json.len) {
+        if (json[i] != '\\') {
+            i += 1;
+            continue;
+        }
+        if (json[i + 1] != 'u') {
+            i += 2; // `\\`, `\"`, `\n`, …
+            continue;
+        }
+        const cu = hex4(json, i + 2) orelse {
+            i += 2;
+            continue;
+        };
+        if (cu < 0xD800 or cu > 0xDFFF) {
+            i += 6;
+            continue;
+        }
+        if (cu <= 0xDBFF and i + 12 <= json.len and json[i + 6] == '\\' and json[i + 7] == 'u') {
+            if (hex4(json, i + 8)) |lo| if (lo >= 0xDC00 and lo <= 0xDFFF) {
+                i += 12; // a proper pair
+                continue;
+            };
+        }
+        const buf = out orelse try gpa.dupe(u8, json);
+        out = buf;
+        @memcpy(buf[i + 2 .. i + 6], "fffd");
+        i += 6;
+    }
+    return out;
+}
+
+fn hex4(s: []const u8, at: usize) ?u16 {
+    if (at + 4 > s.len) return null;
+    var v: u16 = 0;
+    for (s[at .. at + 4]) |c| v = v * 16 + (std.fmt.charToDigit(c, 16) catch return null);
+    return v;
 }
 
 fn axNodeList(doc: std.json.Value) ?[]const std.json.Value {

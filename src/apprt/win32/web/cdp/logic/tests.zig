@@ -152,6 +152,65 @@ test "unit: browser: ax tree survives cycles, duplicates and dangling child ids"
     try testing.expectEqual(@as(usize, 1), std.mem.count(u8, text, "\"B\""));
 }
 
+test "unit: browser: ax tree breaks parent cycles the root cannot reach" {
+    // 2 -> 3 -> 4 -> 2 and nobody else lists them. Only cycles through the
+    // root used to be cut, so isHidden/contains and a --selector walk
+    // starting inside the loop never ended.
+    const j =
+        \\{"nodes":[
+        \\ {"nodeId":"1","role":{"type":"internalRole","value":"RootWebArea"},"childIds":[]},
+        \\ {"nodeId":"2","role":{"type":"role","value":"button"},"name":{"type":"computedString","value":"A"},"childIds":["3"],"backendDOMNodeId":7},
+        \\ {"nodeId":"3","role":{"type":"role","value":"generic"},"childIds":["4"],"backendDOMNodeId":8},
+        \\ {"nodeId":"4","role":{"type":"role","value":"link"},"name":{"type":"computedString","value":"B"},"childIds":["2"],"backendDOMNodeId":9}
+        \\]}
+    ;
+    var tree = try ax.parseAxTree(gpa, j, .{});
+    defer tree.deinit();
+    for (0..tree.nodes.len) |i| {
+        var cur: ?ax.NodeIndex = @intCast(i);
+        var steps: usize = 0;
+        while (cur) |c| : (cur = tree.get(c).parent) {
+            steps += 1;
+            try testing.expect(steps <= tree.nodes.len);
+        }
+    }
+    var table = refs.RefTable.init(gpa);
+    defer table.deinit();
+    _ = try table.add(.{ .backend_node_id = 7 });
+    var snap = try snapshot.render(gpa, &tree, &table, .{ .selector = "@e1", .max_depth = 50 });
+    defer snap.deinit();
+    try testing.expectEqual(@as(usize, 1), std.mem.count(u8, snap.text, "\"A\""));
+}
+
+test "unit: browser: lone surrogate escapes read as U+FFFD instead of failing the parse" {
+    // Chrome writes each UTF-16 code unit as \uXXXX; text cut inside an
+    // emoji by page script leaves a lone surrogate, which std.json rejects,
+    // so one such string used to fail the whole snapshot.
+    const j =
+        \\{"root":{"nodeType":9,"children":[{"nodeType":1,"localName":"body","children":[
+        \\ {"nodeType":1,"localName":"button","attributes":["aria-label","Like \ud83d"]},
+        \\ {"nodeType":1,"localName":"button","attributes":["aria-label","\udc00x\ud800\ud800\udc00"]},
+        \\ {"nodeType":1,"localName":"button","children":[{"nodeType":3,"nodeValue":"ok \ud83d\ude00 \\ud800"}]}]}]}}
+    ;
+    var tree = try ax.parseDomDocument(gpa, j, .{});
+    defer tree.deinit();
+    var table = refs.RefTable.init(gpa);
+    defer table.deinit();
+    const text = try renderText(&tree, &table, .{});
+    defer gpa.free(text);
+    try testing.expectEqualStrings("- document \"\"\n" ++
+        "- button \"Like \u{FFFD}\" [ref=e1]\n" ++
+        "- button \"\u{FFFD}x\u{FFFD}\u{10000}\" [ref=e2]\n" ++
+        "- button \"ok \u{1F600} \\ud800\" [ref=e3]", text);
+    var a = try ax.parseAxTree(gpa, axDoc(
+        \\{"nodeId":"2","role":{"type":"role","value":"button"},"name":{"type":"computedString","value":"Go \udfff"},"parentId":"1"}
+    ), .{});
+    defer a.deinit();
+    try testing.expectEqualStrings("Go \u{FFFD}", a.get(1).name);
+    // A truncated escape is still malformed.
+    try testing.expectError(error.InvalidCdpJson, ax.parseDomDocument(gpa, "{\"root\":{\"nodeType\":9,\"nodeName\":\"\\ud83\"}}", .{}));
+}
+
 test "unit: browser: ax tree scalar values and tri-state properties" {
     const j =
         \\{"nodes":[
