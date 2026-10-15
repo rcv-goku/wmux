@@ -30,6 +30,7 @@ bundler. `zig build` installs `src/web/**` as-is to `SHARE\wmux\web\`; set
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data: https://*.wmux.example; object-src 'none'; base-uri 'none'; form-action 'none'">
     <meta name="referrer" content="no-referrer">
     <title>Example</title>
+    <link rel="icon" href="data:,">
     <link rel="stylesheet" href="../_shared/base.css">
     <link rel="stylesheet" href="example.css">
     <script type="module" src="example.js"></script>
@@ -65,6 +66,8 @@ Rules:
   `<meta charset>`. No inline `<script>`, no inline event handlers, no
   `style="…"` attributes and no `<style>` elements: the CSP blocks them. Setting
   styles from script through the CSSOM (`el.style.setProperty(…)`) is allowed.
+- Keep `<link rel="icon" href="data:,">`: without it the runtime requests
+  `/favicon.ico`, which the virtual host answers with a 404 console error.
 - Never assign untrusted text to `innerHTML`; use `textContent` and DOM APIs.
   Untrusted markup (markdown, previews) goes through the vendored DOMPurify.
   Pages without HTML sinks should also add
