@@ -80,13 +80,12 @@ jobs:
       # cli.ssh-cache.DiskCache on the gnu test binary, and some tests pull in
       # the GTK apprt at comptime. Run the win32-relevant filters instead.
       # (Known failures of the unfiltered suite: test/known-failures.txt.)
+      # Repeated -Dtest-filter flags are ORed into one test binary (one compile).
+      # Keep this a single command: the default pwsh step shell fails only on the
+      # exit code of the LAST native command, so a list of commands would hide
+      # the failures of every line but the last one.
       - name: Test (win32 feature suites)
-        run: |
-          zig build test -Dapp-runtime=win32 -Dtarget=x86_64-windows-gnu -Dtest-filter=sidebar
-          zig build test -Dapp-runtime=win32 -Dtarget=x86_64-windows-gnu -Dtest-filter=wsl
-          zig build test -Dapp-runtime=win32 -Dtarget=x86_64-windows-gnu -Dtest-filter=win-pwd
-          zig build test -Dapp-runtime=win32 -Dtarget=x86_64-windows-gnu "-Dtest-filter=unit: "
-          zig build test -Dapp-runtime=win32 -Dtarget=x86_64-windows-gnu "-Dtest-filter=ipc:"
+        run: zig build test -Dapp-runtime=win32 -Dtarget=x86_64-windows-gnu -Dtest-filter=sidebar -Dtest-filter=wsl -Dtest-filter=win-pwd "-Dtest-filter=unit: " "-Dtest-filter=ipc:"
 
   tooling:
     name: Tooling checks (scripts, registries)
