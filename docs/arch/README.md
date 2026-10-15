@@ -125,6 +125,9 @@ prints the plan.
 - Useful options: `-Only fmt,ownership`, `-Skip e2e`, `-FailFast`, `-DryRun` (plan only),
   `-Quiet` (log tails on failure only), `-UnitFilter 'unit: x'`, `-AllowMissingSpec`.
 - Logs and `summary.json` go to `.zig-cache\wmux-gate\<timestamp>-<mode>-<id>\`.
+- `e2e` tests the debug `zig-out\bin\wmux.exe` of the `build` step (`run.ps1 -Exe`), or lets
+  `run.ps1` build it (`-Build Debug`) when that step is skipped. Child scripts get `ZIG` set
+  to the gate's zig.
 - Contract scripts (`test/cli/probes.ps1`, `test/contract/*.ps1`) run with the repo root as
   working directory and no arguments, find binaries under `zig-out\bin` themselves and
   exit non-zero on failure.

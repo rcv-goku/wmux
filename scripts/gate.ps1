@@ -26,6 +26,8 @@
       e2e        test/e2e/run.ps1 (if present)                  x     x
                    -Wp:   suite "smoke" + the areas holding the WP's <id>*.e2e.ps1 suites
                    -Full: all suites
+                   (tests zig-out\bin\wmux.exe from the build step via -Exe; -Build Debug
+                    when the build step did not run)
       contract   settings-schema golden, test/cli/probes.ps1,         x
                  test/contract/*.ps1 (each when present)
       fulltest   zig build test, unfiltered, failures checked against test/known-failures.txt
@@ -158,6 +160,9 @@ try { $zigExe = Resolve-WmuxZig -Zig $Zig -Tag $tag } catch { $zigError = $_.Exc
 $cache = Get-WmuxZigCache -WorktreeRoot $repo -WorktreesRoot (Split-Path $repo -Parent)
 $childEnv = @{}
 if ($cache.Override) { $childEnv['ZIG_GLOBAL_CACHE_DIR'] = $cache.Dir }
+# Child scripts (test/e2e/run.ps1 -Build, contract scripts) find zig through $env:ZIG or
+# PATH only; hand them the zig this gate resolved (it may come from the ~\zig-... fallback).
+if ($zigExe) { $childEnv['ZIG'] = $zigExe }
 $T = Get-WmuxTargetArgs
 $pwshExe = Get-WmuxPwshExe
 
@@ -274,13 +279,23 @@ function Get-WpSuites {
     return , @($out)
 }
 
+function Get-E2EBinaryArgs($Params) {
+    # Test the wmux.exe this gate's build step produced (run.ps1 -Exe); let run.ps1 build it
+    # (-Build Debug) only when the build step does not run in this invocation.
+    $built = if ($DryRun) { -not (($Only -and $Only -notcontains 'build') -or ($Skip -contains 'build')) }
+    else { $script:results.Contains('build') -and $script:results['build'].Result -eq 'PASS' }
+    if ($built -and $Params.ContainsKey('exe')) { return @('-Exe', (Join-Path $repo 'zig-out\bin\wmux.exe')) }
+    if ($Params.ContainsKey('build')) { return @('-Build', 'Debug') }
+    return @()
+}
+
 function Get-E2ERuns {
     # Returns a list of argument arrays for test/e2e/run.ps1 plus a description.
     $run = Join-Path $repo 'test/e2e/run.ps1'
     $params = Get-WmuxScriptParameters -Path $run
     $common = @('-NoProfile', '-NonInteractive', '-File', $run)
     $runs = [System.Collections.Generic.List[object]]::new()
-    $buildArgs = if ($params.ContainsKey('build')) { @('-Build', 'Debug') } else { @() }
+    $buildArgs = Get-E2EBinaryArgs $params
     if ($mode -eq 'full') {
         $extra = $buildArgs
         if ($params.ContainsKey('parallel')) { $extra += @('-Parallel', '4') }
