@@ -1,0 +1,727 @@
+==== [A] shims first, npm (cmd+ps1+sh) later :: cmd /c
+S4IDENT exe=<R>\shims\agents\claude.exe
+S4IDENT cmdline=claude  --probe
+S4IDENT argv[0]=<claude>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>
+
+--- stderr ---
+
+--- exit 0
+==== [A] shims first, npm (cmd+ps1+sh) later :: pwsh 7
+S4IDENT exe=<R>\shims\agents\claude.exe
+S4IDENT cmdline="<R>\shims\agents\claude.exe" --probe
+S4IDENT argv[0]=<<R>\shims\agents\claude.exe>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>
+
+--- stderr ---
+
+--- exit 0
+==== [A] shims first, npm (cmd+ps1+sh) later :: powershell 5.1
+S4IDENT exe=<R>\shims\agents\claude.exe
+S4IDENT cmdline="<R>\shims\agents\claude.exe" --probe
+S4IDENT argv[0]=<<R>\shims\agents\claude.exe>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>
+
+--- stderr ---
+
+--- exit 0
+==== [A] shims first, npm (cmd+ps1+sh) later :: git bash -c
+S4IDENT exe=<R>\shims\agents\claude.exe
+S4IDENT cmdline=<R>\shims\agents\claude.exe --probe
+S4IDENT argv[0]=<<R>\shims\agents\claude.exe>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>
+
+--- stderr ---
+
+--- exit 0
+==== [A] shims first, npm (cmd+ps1+sh) later :: git bash -lc
+TIMEOUT
+--- stderr ---
+
+--- exit -1
+==== [A] shims first, npm (cmd+ps1+sh) later :: CreateProcess
+S4IDENT exe=<R>\shims\agents\claude.exe
+S4IDENT cmdline=claude --probe
+S4IDENT argv[0]=<claude>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>
+SPAWNER child exit=0
+
+--- stderr ---
+
+--- exit 0
+==== [A] shims first, npm (cmd+ps1+sh) later :: .NET Process
+S4IDENT exe=<R>\shims\agents\claude.exe
+S4IDENT cmdline="claude" --probe
+S4IDENT argv[0]=<claude>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>
+
+
+--- stderr ---
+
+--- exit 0
+==== [A] shims first, npm (cmd+ps1+sh) later :: where.exe
+<R>\shims\agents\claude.exe
+<R>\npm\claude
+<R>\npm\claude.cmd
+
+--- stderr ---
+
+--- exit 0
+==== [B] shims first, native claude.exe later :: cmd /c
+S4IDENT exe=<R>\shims\agents\claude.exe
+S4IDENT cmdline=claude  --probe
+S4IDENT argv[0]=<claude>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>
+
+--- stderr ---
+
+--- exit 0
+==== [B] shims first, native claude.exe later :: pwsh 7
+S4IDENT exe=<R>\shims\agents\claude.exe
+S4IDENT cmdline="<R>\shims\agents\claude.exe" --probe
+S4IDENT argv[0]=<<R>\shims\agents\claude.exe>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>
+
+--- stderr ---
+
+--- exit 0
+==== [B] shims first, native claude.exe later :: powershell 5.1
+S4IDENT exe=<R>\shims\agents\claude.exe
+S4IDENT cmdline="<R>\shims\agents\claude.exe" --probe
+S4IDENT argv[0]=<<R>\shims\agents\claude.exe>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>
+
+--- stderr ---
+
+--- exit 0
+==== [B] shims first, native claude.exe later :: git bash -c
+S4IDENT exe=<R>\shims\agents\claude.exe
+S4IDENT cmdline=<R>\shims\agents\claude.exe --probe
+S4IDENT argv[0]=<<R>\shims\agents\claude.exe>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>
+
+--- stderr ---
+
+--- exit 0
+==== [B] shims first, native claude.exe later :: git bash -lc
+S4IDENT exe=<R>\shims\agents\claude.exe
+S4IDENT cmdline=<R>\shims\agents\claude.exe --probe
+S4IDENT argv[0]=<<R>\shims\agents\claude.exe>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>
+
+--- stderr ---
+
+--- exit 0
+==== [B] shims first, native claude.exe later :: CreateProcess
+S4IDENT exe=<R>\shims\agents\claude.exe
+S4IDENT cmdline=claude --probe
+S4IDENT argv[0]=<claude>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>
+SPAWNER child exit=0
+
+--- stderr ---
+
+--- exit 0
+==== [B] shims first, native claude.exe later :: .NET Process
+S4IDENT exe=<R>\shims\agents\claude.exe
+S4IDENT cmdline="claude" --probe
+S4IDENT argv[0]=<claude>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>
+
+
+--- stderr ---
+
+--- exit 0
+==== [B] shims first, native claude.exe later :: where.exe
+<R>\shims\agents\claude.exe
+<R>\native\claude.exe
+
+--- stderr ---
+
+--- exit 0
+==== [C] CONTROL npm first, shims later :: cmd /c
+S4NPM via=claude.cmd
+S4IDENT exe=<R>\npm\node.exe
+S4IDENT cmdline="<R>\npm\\node.exe"   "<R>\npm\\node_modules\@anthropic-ai\claude-code\cli.js" --probe
+S4IDENT argv[0]=<<R>\npm\\node.exe>
+S4IDENT argv[1]=<<R>\npm\\node_modules\@anthropic-ai\claude-code\cli.js>
+S4IDENT argv[2]=<--probe>
+S4IDENT cwd=<R>
+
+--- stderr ---
+
+--- exit 0
+==== [C] CONTROL npm first, shims later :: pwsh 7
+S4NPM via=claude.ps1
+S4IDENT exe=<R>\npm\node.exe
+S4IDENT cmdline="<R>\npm\node.exe" <R>\npm/node_modules/@anthropic-ai/claude-code/cli.js --probe
+S4IDENT argv[0]=<<R>\npm\node.exe>
+S4IDENT argv[1]=<<R>\npm/node_modules/@anthropic-ai/claude-code/cli.js>
+S4IDENT argv[2]=<--probe>
+S4IDENT cwd=<R>
+
+--- stderr ---
+
+--- exit 0
+==== [C] CONTROL npm first, shims later :: powershell 5.1
+TIMEOUT
+--- stderr ---
+
+--- exit -1
+==== [C] CONTROL npm first, shims later :: git bash -c
+S4NPM via=claude(sh)
+S4IDENT exe=<R>\npm\node.exe
+S4IDENT cmdline=<R>\npm\node.exe <R>/npm/node_modules/@anthropic-ai/claude-code/cli.js --probe
+S4IDENT argv[0]=<<R>\npm\node.exe>
+S4IDENT argv[1]=<<R>/npm/node_modules/@anthropic-ai/claude-code/cli.js>
+S4IDENT argv[2]=<--probe>
+S4IDENT cwd=<R>
+
+--- stderr ---
+
+--- exit 0
+==== [C] CONTROL npm first, shims later :: git bash -lc
+S4NPM via=claude(sh)
+S4IDENT exe=<R>\npm\node.exe
+S4IDENT cmdline=<R>\npm\node.exe <R>/npm/node_modules/@anthropic-ai/claude-code/cli.js --probe
+S4IDENT argv[0]=<<R>\npm\node.exe>
+S4IDENT argv[1]=<<R>/npm/node_modules/@anthropic-ai/claude-code/cli.js>
+S4IDENT argv[2]=<--probe>
+S4IDENT cwd=<R>
+
+--- stderr ---
+
+--- exit 0
+==== [C] CONTROL npm first, shims later :: CreateProcess
+S4IDENT exe=<R>\shims\agents\claude.exe
+S4IDENT cmdline=claude --probe
+S4IDENT argv[0]=<claude>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>
+SPAWNER child exit=0
+
+--- stderr ---
+
+--- exit 0
+==== [C] CONTROL npm first, shims later :: .NET Process
+S4IDENT exe=<R>\shims\agents\claude.exe
+S4IDENT cmdline="claude" --probe
+S4IDENT argv[0]=<claude>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>
+
+
+--- stderr ---
+
+--- exit 0
+==== [C] CONTROL npm first, shims later :: where.exe
+<R>\npm\claude
+<R>\npm\claude.cmd
+<R>\shims\agents\claude.exe
+
+--- stderr ---
+
+--- exit 0
+==== [D] A with PATHEXT=.CMD;.BAT;.PS1;.EXE;.COM :: cmd /c
+S4IDENT exe=<R>\shims\agents\claude.exe
+S4IDENT cmdline=claude  --probe
+S4IDENT argv[0]=<claude>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>
+
+--- stderr ---
+
+--- exit 0
+==== [D] A with PATHEXT=.CMD;.BAT;.PS1;.EXE;.COM :: pwsh 7
+S4IDENT exe=<R>\shims\agents\claude.exe
+S4IDENT cmdline="<R>\shims\agents\claude.exe" --probe
+S4IDENT argv[0]=<<R>\shims\agents\claude.exe>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>
+
+--- stderr ---
+
+--- exit 0
+==== [D] A with PATHEXT=.CMD;.BAT;.PS1;.EXE;.COM :: powershell 5.1
+S4IDENT exe=<R>\shims\agents\claude.exe
+S4IDENT cmdline="<R>\shims\agents\claude.exe" --probe
+S4IDENT argv[0]=<<R>\shims\agents\claude.exe>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>
+
+--- stderr ---
+
+--- exit 0
+==== [D] A with PATHEXT=.CMD;.BAT;.PS1;.EXE;.COM :: git bash -c
+S4IDENT exe=<R>\shims\agents\claude.exe
+S4IDENT cmdline=<R>\shims\agents\claude.exe --probe
+S4IDENT argv[0]=<<R>\shims\agents\claude.exe>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>
+
+--- stderr ---
+
+--- exit 0
+==== [D] A with PATHEXT=.CMD;.BAT;.PS1;.EXE;.COM :: git bash -lc
+S4IDENT exe=<R>\shims\agents\claude.exe
+S4IDENT cmdline=<R>\shims\agents\claude.exe --probe
+S4IDENT argv[0]=<<R>\shims\agents\claude.exe>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>
+
+--- stderr ---
+
+--- exit 0
+==== [D] A with PATHEXT=.CMD;.BAT;.PS1;.EXE;.COM :: CreateProcess
+S4IDENT exe=<R>\shims\agents\claude.exe
+S4IDENT cmdline=claude --probe
+S4IDENT argv[0]=<claude>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>
+SPAWNER child exit=0
+
+--- stderr ---
+
+--- exit 0
+==== [D] A with PATHEXT=.CMD;.BAT;.PS1;.EXE;.COM :: .NET Process
+S4IDENT exe=<R>\shims\agents\claude.exe
+S4IDENT cmdline="claude" --probe
+S4IDENT argv[0]=<claude>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>
+
+
+--- stderr ---
+
+--- exit 0
+==== [D] A with PATHEXT=.CMD;.BAT;.PS1;.EXE;.COM :: where.exe
+<R>\shims\agents\claude.exe
+<R>\npm\claude
+<R>\npm\claude.cmd
+<R>\npm\claude.ps1
+
+--- stderr ---
+
+--- exit 0
+==== [E] one dir with claude.exe+.cmd+.ps1+sh :: cmd /c
+S4IDENT exe=<R>\samedir\claude.exe
+S4IDENT cmdline=claude  --probe
+S4IDENT argv[0]=<claude>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>
+
+--- stderr ---
+
+--- exit 0
+==== [E] one dir with claude.exe+.cmd+.ps1+sh :: pwsh 7
+S4SAMEDIR via=claude.ps1
+
+--- stderr ---
+
+--- exit 0
+==== [E] one dir with claude.exe+.cmd+.ps1+sh :: powershell 5.1
+S4SAMEDIR via=claude.ps1
+
+--- stderr ---
+
+--- exit 0
+==== [E] one dir with claude.exe+.cmd+.ps1+sh :: git bash -c
+S4SAMEDIR via=claude(sh)
+
+--- stderr ---
+
+--- exit 0
+==== [E] one dir with claude.exe+.cmd+.ps1+sh :: git bash -lc
+S4SAMEDIR via=claude(sh)
+
+--- stderr ---
+
+--- exit 0
+==== [E] one dir with claude.exe+.cmd+.ps1+sh :: CreateProcess
+S4IDENT exe=<R>\samedir\claude.exe
+S4IDENT cmdline=claude --probe
+S4IDENT argv[0]=<claude>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>
+SPAWNER child exit=0
+
+--- stderr ---
+
+--- exit 0
+==== [E] one dir with claude.exe+.cmd+.ps1+sh :: .NET Process
+S4IDENT exe=<R>\samedir\claude.exe
+S4IDENT cmdline="claude" --probe
+S4IDENT argv[0]=<claude>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>
+
+
+--- stderr ---
+
+--- exit 0
+==== [E] one dir with claude.exe+.cmd+.ps1+sh :: where.exe
+<R>\samedir\claude
+<R>\samedir\claude.cmd
+<R>\samedir\claude.exe
+
+--- stderr ---
+
+--- exit 0
+==== [F] A, cwd contains claude.cmd :: cmd /c
+S4CWD via=cwdtest\claude.cmd
+
+--- stderr ---
+
+--- exit 0
+==== [F] A, cwd contains claude.cmd :: pwsh 7
+S4IDENT exe=<R>\shims\agents\claude.exe
+S4IDENT cmdline="<R>\shims\agents\claude.exe" --probe
+S4IDENT argv[0]=<<R>\shims\agents\claude.exe>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>\cwdtest
+
+--- stderr ---
+
+--- exit 0
+==== [F] A, cwd contains claude.cmd :: powershell 5.1
+S4IDENT exe=<R>\shims\agents\claude.exe
+S4IDENT cmdline="<R>\shims\agents\claude.exe" --probe
+S4IDENT argv[0]=<<R>\shims\agents\claude.exe>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>\cwdtest
+
+--- stderr ---
+
+--- exit 0
+==== [F] A, cwd contains claude.cmd :: git bash -c
+S4IDENT exe=<R>\shims\agents\claude.exe
+S4IDENT cmdline=<R>\shims\agents\claude.exe --probe
+S4IDENT argv[0]=<<R>\shims\agents\claude.exe>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>\cwdtest
+
+--- stderr ---
+
+--- exit 0
+==== [F] A, cwd contains claude.cmd :: git bash -lc
+TIMEOUT
+--- stderr ---
+
+--- exit -1
+==== [F] A, cwd contains claude.cmd :: CreateProcess
+S4IDENT exe=<R>\shims\agents\claude.exe
+S4IDENT cmdline=claude --probe
+S4IDENT argv[0]=<claude>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>\cwdtest
+SPAWNER child exit=0
+
+--- stderr ---
+
+--- exit 0
+==== [F] A, cwd contains claude.cmd :: .NET Process
+S4IDENT exe=<R>\shims\agents\claude.exe
+S4IDENT cmdline="claude" --probe
+S4IDENT argv[0]=<claude>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>\cwdtest
+
+
+--- stderr ---
+
+--- exit 0
+==== [F] A, cwd contains claude.cmd :: where.exe
+<R>\cwdtest\claude.cmd
+<R>\shims\agents\claude.exe
+<R>\npm\claude
+<R>\npm\claude.cmd
+
+--- stderr ---
+
+--- exit 0
+==== [G] A, cwd contains claude.exe (native) :: cmd /c
+S4IDENT exe=<R>\native\claude.exe
+S4IDENT cmdline=claude  --probe
+S4IDENT argv[0]=<claude>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>\native
+
+--- stderr ---
+
+--- exit 0
+==== [G] A, cwd contains claude.exe (native) :: pwsh 7
+S4IDENT exe=<R>\shims\agents\claude.exe
+S4IDENT cmdline="<R>\shims\agents\claude.exe" --probe
+S4IDENT argv[0]=<<R>\shims\agents\claude.exe>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>\native
+
+--- stderr ---
+
+--- exit 0
+==== [G] A, cwd contains claude.exe (native) :: powershell 5.1
+S4IDENT exe=<R>\shims\agents\claude.exe
+S4IDENT cmdline="<R>\shims\agents\claude.exe" --probe
+S4IDENT argv[0]=<<R>\shims\agents\claude.exe>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>\native
+
+--- stderr ---
+
+--- exit 0
+==== [G] A, cwd contains claude.exe (native) :: git bash -c
+S4IDENT exe=<R>\shims\agents\claude.exe
+S4IDENT cmdline=<R>\shims\agents\claude.exe --probe
+S4IDENT argv[0]=<<R>\shims\agents\claude.exe>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>\native
+
+--- stderr ---
+
+--- exit 0
+==== [G] A, cwd contains claude.exe (native) :: git bash -lc
+S4IDENT exe=<R>\shims\agents\claude.exe
+S4IDENT cmdline=<R>\shims\agents\claude.exe --probe
+S4IDENT argv[0]=<<R>\shims\agents\claude.exe>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>\native
+
+--- stderr ---
+
+--- exit 0
+==== [G] A, cwd contains claude.exe (native) :: CreateProcess
+S4IDENT exe=<R>\native\claude.exe
+S4IDENT cmdline=claude --probe
+S4IDENT argv[0]=<claude>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>\native
+SPAWNER child exit=0
+
+--- stderr ---
+
+--- exit 0
+==== [G] A, cwd contains claude.exe (native) :: .NET Process
+S4IDENT exe=<R>\native\claude.exe
+S4IDENT cmdline="claude" --probe
+S4IDENT argv[0]=<claude>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>\native
+
+
+--- stderr ---
+
+--- exit 0
+==== [G] A, cwd contains claude.exe (native) :: where.exe
+<R>\native\claude.exe
+<R>\shims\agents\claude.exe
+<R>\npm\claude
+<R>\npm\claude.cmd
+
+--- stderr ---
+
+--- exit 0
+==== [H] G + NoDefaultCurrentDirectoryInExePath=1 :: cmd /c
+S4IDENT exe=<R>\shims\agents\claude.exe
+S4IDENT cmdline=claude  --probe
+S4IDENT argv[0]=<claude>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>\native
+
+--- stderr ---
+
+--- exit 0
+==== [H] G + NoDefaultCurrentDirectoryInExePath=1 :: pwsh 7
+S4IDENT exe=<R>\shims\agents\claude.exe
+S4IDENT cmdline="<R>\shims\agents\claude.exe" --probe
+S4IDENT argv[0]=<<R>\shims\agents\claude.exe>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>\native
+
+--- stderr ---
+
+--- exit 0
+==== [H] G + NoDefaultCurrentDirectoryInExePath=1 :: powershell 5.1
+S4IDENT exe=<R>\shims\agents\claude.exe
+S4IDENT cmdline="<R>\shims\agents\claude.exe" --probe
+S4IDENT argv[0]=<<R>\shims\agents\claude.exe>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>\native
+
+--- stderr ---
+
+--- exit 0
+==== [H] G + NoDefaultCurrentDirectoryInExePath=1 :: git bash -c
+S4IDENT exe=<R>\shims\agents\claude.exe
+S4IDENT cmdline=<R>\shims\agents\claude.exe --probe
+S4IDENT argv[0]=<<R>\shims\agents\claude.exe>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>\native
+
+--- stderr ---
+
+--- exit 0
+==== [H] G + NoDefaultCurrentDirectoryInExePath=1 :: git bash -lc
+S4IDENT exe=<R>\shims\agents\claude.exe
+S4IDENT cmdline=<R>\shims\agents\claude.exe --probe
+S4IDENT argv[0]=<<R>\shims\agents\claude.exe>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>\native
+
+--- stderr ---
+
+--- exit 0
+==== [H] G + NoDefaultCurrentDirectoryInExePath=1 :: CreateProcess
+S4IDENT exe=<R>\shims\agents\claude.exe
+S4IDENT cmdline=claude --probe
+S4IDENT argv[0]=<claude>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>\native
+SPAWNER child exit=0
+
+--- stderr ---
+
+--- exit 0
+==== [H] G + NoDefaultCurrentDirectoryInExePath=1 :: .NET Process
+S4IDENT exe=<R>\shims\agents\claude.exe
+S4IDENT cmdline="claude" --probe
+S4IDENT argv[0]=<claude>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>\native
+
+
+--- stderr ---
+
+--- exit 0
+==== [H] G + NoDefaultCurrentDirectoryInExePath=1 :: where.exe
+<R>\native\claude.exe
+<R>\shims\agents\claude.exe
+<R>\npm\claude
+<R>\npm\claude.cmd
+
+--- stderr ---
+
+--- exit 0
+==== [I] npm only (no exe anywhere) :: cmd /c
+S4NPM via=claude.cmd
+S4IDENT exe=<R>\npm\node.exe
+S4IDENT cmdline="<R>\npm\\node.exe"   "<R>\npm\\node_modules\@anthropic-ai\claude-code\cli.js" --probe
+S4IDENT argv[0]=<<R>\npm\\node.exe>
+S4IDENT argv[1]=<<R>\npm\\node_modules\@anthropic-ai\claude-code\cli.js>
+S4IDENT argv[2]=<--probe>
+S4IDENT cwd=<R>
+
+--- stderr ---
+
+--- exit 0
+==== [I] npm only (no exe anywhere) :: pwsh 7
+S4NPM via=claude.ps1
+S4IDENT exe=<R>\npm\node.exe
+S4IDENT cmdline="<R>\npm\node.exe" <R>\npm/node_modules/@anthropic-ai/claude-code/cli.js --probe
+S4IDENT argv[0]=<<R>\npm\node.exe>
+S4IDENT argv[1]=<<R>\npm/node_modules/@anthropic-ai/claude-code/cli.js>
+S4IDENT argv[2]=<--probe>
+S4IDENT cwd=<R>
+
+--- stderr ---
+
+--- exit 0
+==== [I] npm only (no exe anywhere) :: powershell 5.1
+S4NPM via=claude.ps1
+S4IDENT exe=<R>\npm\node.exe
+S4IDENT cmdline="<R>\npm\node.exe" <R>\npm/node_modules/@anthropic-ai/claude-code/cli.js --probe
+S4IDENT argv[0]=<<R>\npm\node.exe>
+S4IDENT argv[1]=<<R>\npm/node_modules/@anthropic-ai/claude-code/cli.js>
+S4IDENT argv[2]=<--probe>
+S4IDENT cwd=<R>
+
+--- stderr ---
+
+--- exit 0
+==== [I] npm only (no exe anywhere) :: git bash -c
+S4NPM via=claude(sh)
+S4IDENT exe=<R>\npm\node.exe
+S4IDENT cmdline=<R>\npm\node.exe <R>/npm/node_modules/@anthropic-ai/claude-code/cli.js --probe
+S4IDENT argv[0]=<<R>\npm\node.exe>
+S4IDENT argv[1]=<<R>/npm/node_modules/@anthropic-ai/claude-code/cli.js>
+S4IDENT argv[2]=<--probe>
+S4IDENT cwd=<R>
+
+--- stderr ---
+
+--- exit 0
+==== [I] npm only (no exe anywhere) :: git bash -lc
+S4NPM via=claude(sh)
+S4IDENT exe=<R>\npm\node.exe
+S4IDENT cmdline=<R>\npm\node.exe <R>/npm/node_modules/@anthropic-ai/claude-code/cli.js --probe
+S4IDENT argv[0]=<<R>\npm\node.exe>
+S4IDENT argv[1]=<<R>/npm/node_modules/@anthropic-ai/claude-code/cli.js>
+S4IDENT argv[2]=<--probe>
+S4IDENT cwd=<R>
+
+--- stderr ---
+
+--- exit 0
+==== [I] npm only (no exe anywhere) :: CreateProcess
+SPAWNER CreateProcessW(NULL, "claude --probe") failed err=2
+
+--- stderr ---
+
+--- exit 1
+==== [I] npm only (no exe anywhere) :: .NET Process
+
+--- stderr ---
+MethodInvocationException: Exception calling "Start" with "1" argument(s): "An error occurred trying to start process 'claude' with working directory '<R>'. The system cannot find the file specified."
+InvalidOperation: You cannot call a method on a null-valued expression.
+
+--- exit 1
+==== [I] npm only (no exe anywhere) :: where.exe
+<R>\npm\claude
+<R>\npm\claude.cmd
+
+--- stderr ---
+
+--- exit 0
+==== [J] spawner next to claude.exe :: CreateProcess
+S4IDENT exe=<R>\spawnerdir\claude.exe
+S4IDENT cmdline=claude --probe
+S4IDENT argv[0]=<claude>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>
+SPAWNER child exit=0
+
+
+==== bash -c PATH
+/mingw64/bin:/usr/bin:~/bin:<R>/shims/agents:<R>/npm:/c/Windows/system32:/c/Windows:/c/Windows/System32/Wbem:/c/Windows/System32/WindowsPowerShell/v1.0:/c/Program Files/PowerShell/7:/cmd
+claude is <R>/shims/agents/claude
+claude is <R>/npm/claude
+
+
+==== bash -l -c PATH
+~/bin:/mingw64/bin:/usr/local/bin:/usr/bin:/bin:/mingw64/bin:/usr/bin:~/bin:<R>/shims/agents:<R>/npm:/c/Windows/system32:/c/Windows:/c/Windows/System32/Wbem:/c/Windows/System32/WindowsPowerShell/v1.0:/c/Program Files/PowerShell/7:/cmd:/usr/bin/vendor_perl:/usr/bin/core_perl
+claude is <R>/shims/agents/claude
+claude is <R>/npm/claude
+
+
+==== bash --rcfile (prepends native)
+S4IDENT exe=<R>\native\claude.exe
+S4IDENT cmdline=<R>\native\claude.exe --probe
+S4IDENT argv[0]=<<R>\native\claude.exe>
+S4IDENT argv[1]=<--probe>
+S4IDENT cwd=<R>
+
+bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+

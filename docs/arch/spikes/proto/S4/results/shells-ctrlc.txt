@@ -1,0 +1,605 @@
+==== cmd :: wrapper :: handler 15000
+HARNESS cmd=C:\Windows\System32\cmd.exe /d /q /k prompt S4READY$G
+HARNESS root pid=18292
+HARNESS t=1672 saw "S4READY", typed 21 bytes
+HARNESS t=3344 armed (saw "CHILDPID=")
+HARNESS t=4844 wrote 0x03
+HARNESS t=8359 wrote 23 bytes
+HARNESS t=10344 wrote 5 bytes
+HARNESS t=11062 root exited code=42 (0x2A)
+HARNESS snapshot t=11594
+HARNESS   root alive=no
+HARNESS   child pid=40696 alive=no exitcode=42 (0x2A)
+--- pty output (VT stripped) ---
+  | S4READY>claude handler 15000
+  | CHILDPID=40696 mode=handler
+  | CHILD got ctrl event 0
+  | S4READY>echo EXIT=%ERRORLEVEL%
+  | EXIT=42
+  | S4READY>exit
+--- end ---
+
+
+==== cmd :: wrapper :: sleep 15000
+HARNESS cmd=C:\Windows\System32\cmd.exe /d /q /k prompt S4READY$G
+HARNESS root pid=32744
+HARNESS t=1188 saw "S4READY", typed 19 bytes
+HARNESS t=2797 armed (saw "CHILDPID=")
+HARNESS t=4297 wrote 0x03
+HARNESS t=7813 wrote 23 bytes
+HARNESS t=9797 wrote 5 bytes
+HARNESS t=10109 root exited code=3221225786 (0xC000013A)
+HARNESS snapshot t=10609
+HARNESS   root alive=no
+HARNESS   child pid=25020 alive=no exitcode=3221225786 (0xC000013A)
+--- pty output (VT stripped) ---
+  | S4READY>claude sleep 15000
+  | CHILDPID=25020 mode=sleep
+  | ^C
+  | S4READY>echo EXIT=%ERRORLEVEL%
+  | EXIT=-1073741510
+  | S4READY>exit
+--- end ---
+
+
+==== cmd :: wrapper :: raw 15000
+HARNESS cmd=C:\Windows\System32\cmd.exe /d /q /k prompt S4READY$G
+HARNESS root pid=38812
+HARNESS t=593 saw "S4READY", typed 17 bytes
+HARNESS t=4281 armed (saw "CHILDPID=")
+HARNESS t=5781 wrote 0x03
+HARNESS t=9281 wrote 23 bytes
+HARNESS t=11281 wrote 5 bytes
+HARNESS t=14015 root exited code=43 (0x2B)
+HARNESS snapshot t=14515
+HARNESS   root alive=no
+HARNESS   child pid=36240 alive=no exitcode=43 (0x2B)
+--- pty output (VT stripped) ---
+  | S4READY>claude raw 15000
+  | CHILDPID=36240 mode=raw
+  | CHILD raw mode set (old=0x1f7)
+  | CHILD raw got 0x03 key event (no CTRL_C_EVENT)
+  | S4READY>echo EXIT=%ERRORLEVEL%
+  | EXIT=43
+  | S4READY>exit
+--- end ---
+
+
+==== cmd :: direct :: handler 15000
+HARNESS cmd=C:\Windows\System32\cmd.exe /d /q /k prompt S4READY$G
+HARNESS root pid=36996
+HARNESS t=2063 saw "S4READY", typed 91 bytes
+HARNESS t=5000 armed (saw "CHILDPID=")
+HARNESS t=6500 wrote 0x03
+HARNESS t=10000 wrote 23 bytes
+HARNESS t=12016 wrote 5 bytes
+HARNESS t=12141 root exited code=42 (0x2A)
+HARNESS snapshot t=12672
+HARNESS   root alive=no
+HARNESS   child pid=42784 alive=no exitcode=42 (0x2A)
+--- pty output (VT stripped) ---
+  | S4READY>"<R>\bin\child.exe" handler 15000
+  | CHILDPID=42784 mode=handler
+  | CHILD got ctrl event 0
+  | S4READY>echo EXIT=%ERRORLEVEL%
+  | EXIT=42
+  | S4READY>exit
+--- end ---
+
+
+==== cmd :: direct :: sleep 15000
+HARNESS cmd=C:\Windows\System32\cmd.exe /d /q /k prompt S4READY$G
+HARNESS root pid=7108
+HARNESS t=2235 saw "S4READY", typed 89 bytes
+HARNESS t=4203 armed (saw "CHILDPID=")
+HARNESS t=5719 wrote 0x03
+HARNESS t=9203 wrote 23 bytes
+HARNESS t=11203 wrote 5 bytes
+HARNESS t=11828 root exited code=3221225786 (0xC000013A)
+HARNESS snapshot t=12328
+HARNESS   root alive=no
+HARNESS   child pid=41844 alive=no exitcode=3221225786 (0xC000013A)
+--- pty output (VT stripped) ---
+  | S4READY>"<R>\bin\child.exe" sleep 15000
+  | CHILDPID=41844 mode=sleep
+  | ^C
+  | S4READY>echo EXIT=%ERRORLEVEL%
+  | EXIT=-1073741510
+  | S4READY>exit
+--- end ---
+
+
+==== cmd :: direct :: raw 15000
+HARNESS cmd=C:\Windows\System32\cmd.exe /d /q /k prompt S4READY$G
+HARNESS root pid=41304
+HARNESS t=1187 saw "S4READY", typed 87 bytes
+HARNESS t=2484 armed (saw "CHILDPID=")
+HARNESS t=4047 wrote 0x03
+HARNESS t=7484 wrote 23 bytes
+HARNESS t=9484 wrote 5 bytes
+HARNESS t=9719 root exited code=43 (0x2B)
+HARNESS snapshot t=10234
+HARNESS   root alive=no
+HARNESS   child pid=38008 alive=no exitcode=43 (0x2B)
+--- pty output (VT stripped) ---
+  | S4READY>"<R>\bin\child.exe" raw 15000
+  | CHILDPID=38008 mode=raw
+  | CHILD raw mode set (old=0x1f7)
+  | CHILD raw got 0x03 key event (no CTRL_C_EVENT)
+  | S4READY>echo EXIT=%ERRORLEVEL%
+  | EXIT=43
+  | S4READY>exit
+--- end ---
+
+
+==== pwsh 7 :: wrapper :: handler 15000
+HARNESS cmd="C:\Program Files\PowerShell\7\pwsh.exe" -NoLogo -NoProfile -NoExit -Command "function prompt { 'S4READY> ' }"
+HARNESS root pid=36376
+HARNESS t=7188 saw "S4READY", typed 21 bytes
+HARNESS t=18484 armed (saw "CHILDPID=")
+HARNESS t=19984 wrote 0x03
+HARNESS t=23484 wrote 39 bytes
+HARNESS t=25484 wrote 5 bytes
+HARNESS t=44203 root exited code=0 (0x0)
+HARNESS snapshot t=44703
+HARNESS   root alive=no
+HARNESS   child pid=40732 alive=no exitcode=42 (0x2A)
+--- pty output (VT stripped) ---
+  | S4READY>claude raw 15000
+  | claude raw 15000
+  | claude raw 15000
+  | claude raw 15000
+  | claude raw 15000
+  | claude raw 15000
+  | claude raw 15000
+  | claude handler 15000
+  | claude handler 15000
+  | claude handler 15000
+  | claude handler 15000
+  | claude handler 15000
+  | claude handler 15000
+  | claude handler 15000
+  | claude handler 15000
+  | claude handler 15000
+  | claude handler 15000
+  | claude handler 15000
+  | claude handler 15000
+  | claude handler 15000
+  | CHILDPID=40732 mode=handler
+  | CHILD got ctrl event 0
+  | S4READY> Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | > Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | > Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | EXIT=42
+  | S4READY> exit
+  | exit
+  | exit
+  | exit=$LASTEXITCODE
+--- end ---
+
+
+==== pwsh 7 :: wrapper :: sleep 15000
+HARNESS cmd="C:\Program Files\PowerShell\7\pwsh.exe" -NoLogo -NoProfile -NoExit -Command "function prompt { 'S4READY> ' }"
+HARNESS root pid=39628
+HARNESS t=4984 saw "S4READY", typed 19 bytes
+HARNESS t=8766 armed (saw "CHILDPID=")
+HARNESS t=10266 wrote 0x03
+HARNESS t=13766 wrote 39 bytes
+HARNESS t=15766 wrote 5 bytes
+HARNESS t=15906 root exited code=0 (0x0)
+HARNESS snapshot t=16422
+HARNESS   root alive=no
+HARNESS   child pid=33880 alive=no exitcode=3221225786 (0xC000013A)
+--- pty output (VT stripped) ---
+  | S4READY>claude handler 15000
+  | claude handler 15000
+  | claude handler 15000
+  | claude handler 15000
+  | claude handler 15000
+  | claude handler 15000
+  | claude handler 15000
+  | claude sleep 15000
+  | claude sleep 15000
+  | CHILDPID=33880 mode=sleep
+  | S4READY> Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | > Write-Output ('EXIT=' + $LASTEXITCODE)
+  | > Write-Output ('EXIT=' + $LASTEXITCODE)
+  | EXIT=-1073741510
+  | S4READY> exit
+  | exit
+--- end ---
+
+
+==== pwsh 7 :: wrapper :: raw 15000
+HARNESS cmd="C:\Program Files\PowerShell\7\pwsh.exe" -NoLogo -NoProfile -NoExit -Command "function prompt { 'S4READY> ' }"
+HARNESS root pid=21064
+HARNESS t=6312 saw "S4READY", typed 17 bytes
+HARNESS t=8547 armed (saw "CHILDPID=")
+HARNESS t=10047 wrote 0x03
+HARNESS t=13547 wrote 39 bytes
+HARNESS t=15547 wrote 5 bytes
+HARNESS t=16484 root exited code=0 (0x0)
+HARNESS snapshot t=16984
+HARNESS   root alive=no
+HARNESS   child pid=29632 alive=no exitcode=43 (0x2B)
+--- pty output (VT stripped) ---
+  | S4READY>claude sleep 15000
+  | claude sleep 15000
+  | claude sleep 15000
+  | claude sleep 15000
+  | claude sleep 15000
+  | claude sleep 15000
+  | claude raw 15000
+  | claude raw 15000
+  | CHILDPID=29632 mode=raw
+  | CHILD raw mode set (old=0x1f7)
+  | CHILD raw got 0x03 key event (no CTRL_C_EVENT)
+  | S4READY> Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | > Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | > Write-Output ('EXIT=' + $LASTEXITCODE)
+  | EXIT=43
+  | S4READY> exit
+  | exit
+  | exit
+  | exit=$LASTEXITCODE
+--- end ---
+
+
+==== pwsh 7 :: direct :: handler 15000
+HARNESS cmd="C:\Program Files\PowerShell\7\pwsh.exe" -NoLogo -NoProfile -NoExit -Command "function prompt { 'S4READY> ' }"
+HARNESS root pid=41000
+HARNESS t=2282 saw "S4READY", typed 93 bytes
+HARNESS t=3594 armed (saw "CHILDPID=")
+HARNESS t=5094 wrote 0x03
+HARNESS t=8594 wrote 39 bytes
+HARNESS t=10594 wrote 5 bytes
+HARNESS t=11922 root exited code=0 (0x0)
+HARNESS snapshot t=12422
+HARNESS   root alive=no
+HARNESS   child pid=32932 alive=no exitcode=42 (0x2A)
+--- pty output (VT stripped) ---
+  | S4READY>
+  | > & '<R>\bin\child.exe' raw 15000
+  | & '<R>\bin\child.exe' raw 15000
+  | & '<R>\bin\child.exe' raw 15000
+  | & '<R>\bin\child.exe' raw 15000
+  | & '<R>\bin\child.exe' raw 15000
+  | & '<R>\bin\child.exe' raw 15000
+  | & '<R>\bin\child.exe' raw 15000
+  | & '<R>\bin\child.exe' raw 15000
+  | > & '<R>\bin\child.exe' handler 15000
+  | & '<R>\bin\child.exe' handler 15000
+  | & '<R>\bin\child.exe' handler 15000
+  | & '<R>\bin\child.exe' handler 15000
+  | & '<R>\bin\child.exe' handler 15000
+  | & '<R>\bin\child.exe' handler 15000
+  | CHILDPID=32932 mode=handler
+  | CHILD got ctrl event 0
+  | S4READY> Write-Output ('EXIT=' + $LASTEXITCODE)
+  | > Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | > Write-Output ('EXIT=' + $LASTEXITCODE)
+  | EXIT=42
+  | S4READY> exit
+  | exit
+  | exit=$LASTEXITCODE
+--- end ---
+
+
+==== pwsh 7 :: direct :: sleep 15000
+HARNESS cmd="C:\Program Files\PowerShell\7\pwsh.exe" -NoLogo -NoProfile -NoExit -Command "function prompt { 'S4READY> ' }"
+HARNESS root pid=40132
+HARNESS t=7563 saw "S4READY", typed 91 bytes
+HARNESS t=29047 armed (saw "CHILDPID=")
+HARNESS t=30563 wrote 0x03
+HARNESS t=34047 wrote 39 bytes
+HARNESS t=36047 wrote 5 bytes
+HARNESS t=36281 root exited code=0 (0x0)
+HARNESS snapshot t=36781
+HARNESS   root alive=no
+HARNESS   child pid=36172 alive=no exitcode=3221225786 (0xC000013A)
+--- pty output (VT stripped) ---
+  | S4READY>
+  | > & '<R>\bin\child.exe' handler 15000
+  | & '<R>\bin\child.exe' handler 15000
+  | & '<R>\bin\child.exe' handler 15000
+  | & '<R>\bin\child.exe' handler 15000
+  | & '<R>\bin\child.exe' handler 15000
+  | & '<R>\bin\child.exe' handler 15000
+  | & '<R>\bin\child.exe' handler 15000
+  | & '<R>\bin\child.exe' handler 15000
+  | & '<R>\bin\child.exe' handler 15000
+  | & '<R>\bin\child.exe' handler 15000
+  | & '<R>\bin\child.exe' handler 15000
+  | & '<R>\bin\child.exe' handler 15000
+  | & '<R>\bin\child.exe' handler 15000
+  | & '<R>\bin\child.exe' handler 15000
+  | & '<R>\bin\child.exe' handler 15000
+  | & '<R>\bin\child.exe' handler 15000
+  | & '<R>\bin\child.exe' handler 15000
+  | & '<R>\bin\child.exe' handler 15000
+  | & '<R>\bin\child.exe' handler 15000
+  | & '<R>\bin\child.exe' handler 15000
+  | & '<R>\bin\child.exe' handler 15000
+  | & '<R>\bin\child.exe' handler 15000
+  | & '<R>\bin\child.exe' handler 15000
+  | & '<R>\bin\child.exe' handler 15000
+  | & '<R>\bin\child.exe' handler 15000
+  | & '<R>\bin\child.exe' handler 15000
+  | & '<R>\bin\child.exe' handler 15000
+  | & '<R>\bin\child.exe' handler 15000
+  | & '<R>\bin\child.exe' handler 15000
+  | & '<R>\bin\child.exe' handler 15000
+  | & '<R>\bin\child.exe' handler 15000
+  | > & '<R>\bin\child.exe' sleep 15000
+  | & '<R>\bin\child.exe' sleep 15000
+  | & '<R>\bin\child.exe' sleep 15000
+  | CHILDPID=36172 mode=sleep
+  | S4READY> Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | > Write-Output ('EXIT=' + $LASTEXITCODE)
+  | > Write-Output ('EXIT=' + $LASTEXITCODE)
+  | EXIT=-1073741510
+  | S4READY> exit
+--- end ---
+
+
+==== pwsh 7 :: direct :: raw 15000
+HARNESS cmd="C:\Program Files\PowerShell\7\pwsh.exe" -NoLogo -NoProfile -NoExit -Command "function prompt { 'S4READY> ' }"
+HARNESS root pid=41016
+HARNESS t=8844 saw "S4READY", typed 89 bytes
+HARNESS t=19188 armed (saw "CHILDPID=")
+HARNESS t=20688 wrote 0x03
+HARNESS t=24203 wrote 39 bytes
+HARNESS t=26188 wrote 5 bytes
+HARNESS t=29969 root exited code=0 (0x0)
+HARNESS snapshot t=30469
+HARNESS   root alive=no
+HARNESS   child pid=20416 alive=no exitcode=43 (0x2B)
+--- pty output (VT stripped) ---
+  | S4READY>
+  | > & '<R>\bin\child.exe' sleep 15000
+  | & '<R>\bin\child.exe' sleep 15000
+  | & '<R>\bin\child.exe' sleep 15000
+  | & '<R>\bin\child.exe' sleep 15000
+  | & '<R>\bin\child.exe' sleep 15000
+  | > & '<R>\bin\child.exe' sleep 15000
+  | & '<R>\bin\child.exe' raw 15000
+  | & '<R>\bin\child.exe' raw 15000
+  | & '<R>\bin\child.exe' raw 15000
+  | & '<R>\bin\child.exe' raw 15000
+  | & '<R>\bin\child.exe' raw 15000
+  | & '<R>\bin\child.exe' raw 15000
+  | & '<R>\bin\child.exe' raw 15000
+  | & '<R>\bin\child.exe' raw 15000
+  | & '<R>\bin\child.exe' raw 15000
+  | CHILDPID=20416 mode=raw
+  | CHILD raw mode set (old=0x1f7)
+  | CHILD raw got 0x03 key event (no CTRL_C_EVENT)
+  | S4READY> Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | > Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | > Write-Output ('EXIT=' + $LASTEXITCODE)
+  | Write-Output ('EXIT=' + $LASTEXITCODE)
+  | EXIT=43
+  | S4READY> exit
+  | exit
+--- end ---
+
+
+==== git bash :: wrapper :: handler 15000
+HARNESS cmd="C:\Program Files\Git\bin\bash.exe" --norc --noprofile -i
+HARNESS root pid=43212
+HARNESS t=547 saw "S4READY", typed 21 bytes
+HARNESS t=1281 armed (saw "CHILDPID=")
+HARNESS t=2781 wrote 0x03
+HARNESS t=6281 wrote 13 bytes
+HARNESS t=8281 wrote 5 bytes
+HARNESS t=8391 root exited code=0 (0x0)
+HARNESS snapshot t=8891
+HARNESS   root alive=no
+HARNESS   child pid=43728 alive=no exitcode=42 (0x2A)
+--- pty output (VT stripped) ---
+  | S4READY> claude handler 15000
+  | CHILDPID=43728 mode=handler
+  | CHILD got ctrl event 0
+  | S4READY> echo EXIT=$?
+  | EXIT=130
+  | S4READY> exit
+  | exit
+--- end ---
+
+
+==== git bash :: wrapper :: sleep 15000
+HARNESS cmd="C:\Program Files\Git\bin\bash.exe" --norc --noprofile -i
+HARNESS root pid=26224
+HARNESS t=766 saw "S4READY", typed 19 bytes
+HARNESS t=1281 armed (saw "CHILDPID=")
+HARNESS t=2781 wrote 0x03
+HARNESS t=6297 wrote 13 bytes
+HARNESS t=8297 wrote 5 bytes
+HARNESS t=10469 root exited code=0 (0x0)
+HARNESS snapshot t=10969
+HARNESS   root alive=no
+HARNESS   child pid=11196 alive=no exitcode=3221225786 (0xC000013A)
+--- pty output (VT stripped) ---
+  | S4READY> claude sleep 15000
+  | CHILDPID=11196 mode=sleep
+  | S4READY> echo EXIT=$?
+  | EXIT=130
+  | S4READY> exit
+  | exit
+--- end ---
+
+
+==== git bash :: wrapper :: raw 15000
+HARNESS cmd="C:\Program Files\Git\bin\bash.exe" --norc --noprofile -i
+HARNESS root pid=3152
+HARNESS t=469 saw "S4READY", typed 17 bytes
+HARNESS t=734 armed (saw "CHILDPID=")
+HARNESS t=2234 wrote 0x03
+HARNESS t=5734 wrote 13 bytes
+HARNESS t=7750 wrote 5 bytes
+HARNESS t=7906 root exited code=0 (0x0)
+HARNESS snapshot t=8422
+HARNESS   root alive=no
+HARNESS   child pid=9036 alive=no exitcode=43 (0x2B)
+--- pty output (VT stripped) ---
+  | S4READY> claude raw 15000
+  | CHILDPID=9036 mode=raw
+  | CHILD raw mode set (old=0xe7)
+  | CHILD raw got 0x03 key event (no CTRL_C_EVENT)
+  | S4READY> echo EXIT=$?
+  | EXIT=43
+  | S4READY> exit
+  | exit
+--- end ---
+
+
+==== git bash :: direct :: handler 15000
+HARNESS cmd="C:\Program Files\Git\bin\bash.exe" --norc --noprofile -i
+HARNESS root pid=39104
+HARNESS t=922 saw "S4READY", typed 91 bytes
+HARNESS t=2578 armed (saw "CHILDPID=")
+HARNESS t=4078 wrote 0x03
+HARNESS t=7578 wrote 13 bytes
+HARNESS t=9578 wrote 5 bytes
+HARNESS t=9719 root exited code=0 (0x0)
+HARNESS snapshot t=10219
+HARNESS   root alive=no
+HARNESS   child pid=43280 alive=no exitcode=42 (0x2A)
+--- pty output (VT stripped) ---
+  | S4READY> '<R>\bin\child.exe' handler 15000
+  | CHILDPID=43280 mode=handler
+  | CHILD got ctrl event 0
+  | S4READY> echo EXIT=$?
+  | EXIT=130
+  | S4READY> exit
+  | exit
+--- end ---
+
+
+==== git bash :: direct :: sleep 15000
+HARNESS cmd="C:\Program Files\Git\bin\bash.exe" --norc --noprofile -i
+HARNESS root pid=42964
+HARNESS t=968 saw "S4READY", typed 89 bytes
+HARNESS t=2593 armed (saw "CHILDPID=")
+HARNESS t=4093 wrote 0x03
+HARNESS t=7593 wrote 13 bytes
+HARNESS t=9609 wrote 5 bytes
+HARNESS t=9968 root exited code=0 (0x0)
+HARNESS snapshot t=10484
+HARNESS   root alive=no
+HARNESS   child pid=26036 alive=no exitcode=3221225786 (0xC000013A)
+--- pty output (VT stripped) ---
+  | S4READY> '<R>\bin\child.exe' sleep 15000
+  | CHILDPID=26036 mode=sleep
+  | S4READY> echo EXIT=$?
+  | EXIT=130
+  | S4READY> exit
+  | exit
+--- end ---
+
+
+==== git bash :: direct :: raw 15000
+HARNESS cmd="C:\Program Files\Git\bin\bash.exe" --norc --noprofile -i
+HARNESS root pid=7092
+HARNESS t=6984 saw "S4READY", typed 87 bytes
+HARNESS t=17563 armed (saw "CHILDPID=")
+HARNESS t=19063 wrote 0x03
+HARNESS t=22563 wrote 13 bytes
+HARNESS t=24578 wrote 5 bytes
+HARNESS t=24719 root exited code=0 (0x0)
+HARNESS snapshot t=25219
+HARNESS   root alive=no
+HARNESS   child pid=42152 alive=no exitcode=43 (0x2B)
+--- pty output (VT stripped) ---
+  | S4READY> '<R>\bin\child.exe' raw 15000
+  | CHILDPID=42152 mode=raw
+  | CHILD raw mode set (old=0xe7)
+  | CHILD raw got 0x03 key event (no CTRL_C_EVENT)
+  | S4READY> echo EXIT=$?
+  | EXIT=43
+  | S4READY> exit
+  | exit
+--- end ---
+
+
