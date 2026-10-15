@@ -1,13 +1,15 @@
 name: Windows CI
 
+# master is the integration branch (origin/HEAD); the workflow used to target a
+# non-existent "main" branch and therefore never ran on push or pull request.
 on:
   push:
-    branches: [main]
+    branches: [master]
     paths-ignore:
       - '**.md'
       - 'docs/**'
   pull_request:
-    branches: [main]
+    branches: [master]
   workflow_dispatch:
 
 # Cancel superseded runs on the same ref.
@@ -52,12 +54,68 @@ jobs:
       - name: Build (win32 apprt)
         run: zig build -Dapp-runtime=win32 -Dtarget=x86_64-windows-gnu
 
+      # Wave 0 (W0-A3) adds the test-fast and test-cli build steps (ARCHITECTURE
+      # ADR-12.2/12.6). They run here as soon as build.zig defines them.
+      - name: Detect optional build steps
+        id: optional
+        shell: pwsh
+        run: |
+          $listing = zig build -l -Dapp-runtime=win32 -Dtarget=x86_64-windows-gnu 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 0) { Write-Host $listing; exit 1 }
+          foreach ($step in 'test-fast', 'test-cli') {
+            $present = $listing -match "(?m)^\s+$([regex]::Escape($step))\s"
+            Write-Host "$step defined: $present"
+            "$($step -replace '-', '_')=$($present.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          }
+
+      - name: Test (test-fast, pure logic)
+        if: steps.optional.outputs.test_fast == 'true'
+        run: zig build test-fast -Dapp-runtime=win32 -Dtarget=x86_64-windows-gnu
+
+      - name: Test (test-cli)
+        if: steps.optional.outputs.test_cli == 'true'
+        run: zig build test-cli -Dapp-runtime=win32 -Dtarget=x86_64-windows-gnu
+
       # The full test suite has known environment-specific failures in
       # cli.ssh-cache.DiskCache on the gnu test binary, and some tests pull in
       # the GTK apprt at comptime. Run the win32-relevant filters instead.
+      # (Known failures of the unfiltered suite: test/known-failures.txt.)
       - name: Test (win32 feature suites)
         run: |
           zig build test -Dapp-runtime=win32 -Dtarget=x86_64-windows-gnu -Dtest-filter=sidebar
           zig build test -Dapp-runtime=win32 -Dtarget=x86_64-windows-gnu -Dtest-filter=wsl
           zig build test -Dapp-runtime=win32 -Dtarget=x86_64-windows-gnu -Dtest-filter=win-pwd
           zig build test -Dapp-runtime=win32 -Dtarget=x86_64-windows-gnu "-Dtest-filter=unit: "
+          zig build test -Dapp-runtime=win32 -Dtarget=x86_64-windows-gnu "-Dtest-filter=ipc:"
+
+  tooling:
+    name: Tooling checks (scripts, registries)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Parse PowerShell scripts
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem -Path scripts, test, dist -Recurse -File -Include *.ps1, *.psm1, *.psd1 -ErrorAction SilentlyContinue)
+          $bad = 0
+          foreach ($f in $files) {
+            $tokens = $null; $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$tokens, [ref]$errors)
+            foreach ($e in $errors) {
+              $bad++
+              Write-Host "::error file=$($f.FullName),line=$($e.Extent.StartLineNumber)::$($e.Message)"
+            }
+          }
+          Write-Host "$($files.Count) PowerShell file(s) parsed, $bad error(s)"
+          if ($bad) { exit 1 }
+
+      - name: Registries and logic-test wiring (check-manifest)
+        shell: pwsh
+        run: ./scripts/check-manifest.ps1
+
+      - name: Tooling self-tests
+        shell: pwsh
+        run: ./scripts/test-tooling.ps1
