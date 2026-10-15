@@ -403,8 +403,18 @@ pub fn parse(gpa: Allocator, bytes: []const u8, opts: ParseOptions, diag: ?*Diag
     return .{ .arena = arena, .session = session };
 }
 
+/// `bytes` without a leading UTF-8 byte order mark. The writer never emits
+/// one, but Windows tools add it (Windows PowerShell's `Set-Content
+/// -Encoding UTF8`, .NET's `Encoding.UTF8`), and RFC 8259 lets a parser
+/// ignore it.
+pub fn withoutBom(bytes: []const u8) []const u8 {
+    const bom = "\xEF\xBB\xBF";
+    return if (std.mem.startsWith(u8, bytes, bom)) bytes[bom.len..] else bytes;
+}
+
 /// Parses into `arena`; every returned slice is owned by `arena`.
-pub fn parseLeaky(arena: Allocator, bytes: []const u8, opts: ParseOptions, diag: ?*Diagnostics) ParseError!Session {
+pub fn parseLeaky(arena: Allocator, file_bytes: []const u8, opts: ParseOptions, diag: ?*Diagnostics) ParseError!Session {
+    const bytes = withoutBom(file_bytes);
     if (bytes.len > limits.max_file_bytes) return error.Corrupt;
     if (limits.exceedsJsonDepth(bytes, limits.max_json_depth)) return error.Corrupt;
     const root = std.json.parseFromSliceLeaky(Value, arena, bytes, .{
@@ -1349,6 +1359,16 @@ test "unit: session: corrupt inputs are rejected without leaks" {
     for (0..doc.len) |n| try testing.expectError(error.Corrupt, parse(testing.allocator, doc[0..n], .{}, null));
     var p = try parse(testing.allocator, doc, .{}, null);
     p.deinit();
+}
+
+test "unit: session: a leading UTF-8 byte order mark is accepted" {
+    const doc = "{\"schema\":\"wmux-session\",\"version\":3,\"channel\":\"stable\"}";
+    var p = try parse(testing.allocator, "\xEF\xBB\xBF" ++ doc, .{}, null);
+    defer p.deinit();
+    try testing.expectEqualStrings("stable", p.session.channel);
+    // One mark, at the very start only.
+    const bad = [_][]const u8{ "\xEF\xBB\xBF", "\xEF\xBB\xBF\xEF\xBB\xBF" ++ doc, " \xEF\xBB\xBF" ++ doc, "\xEF\xBB" ++ doc };
+    for (bad) |b| try testing.expectError(error.Corrupt, parse(testing.allocator, b, .{}, null));
 }
 
 test "unit: session: wrongly typed fields fall back to defaults" {

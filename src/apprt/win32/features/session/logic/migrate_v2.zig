@@ -60,7 +60,8 @@ pub const Result = struct {
 };
 
 /// Converts a legacy file into a v3 session allocated in `arena`.
-pub fn migrate(arena: Allocator, bytes: []const u8, opts: Options) Error!Result {
+pub fn migrate(arena: Allocator, file_bytes: []const u8, opts: Options) Error!Result {
+    const bytes = schema.withoutBom(file_bytes);
     if (bytes.len > limits.max_file_bytes) return error.Corrupt;
     if (limits.exceedsJsonDepth(bytes, limits.max_json_depth)) return error.Corrupt;
     const root = std.json.parseFromSliceLeaky(Value, arena, bytes, .{
@@ -417,6 +418,14 @@ test "unit: session: v1 fixture migrates flat tabs into one pane" {
     try testing.expect(ws.panes[0].tabs[0].panel == .terminal);
     try testing.expectEqualStrings(ws.panes[0].id.?, ws.layout.?.pane);
     try testing.expectEqualStrings(ws.panes[0].id.?, ws.focused_pane.?);
+}
+
+test "unit: session: a legacy file with a UTF-8 byte order mark migrates" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    var prng: std.Random.DefaultPrng = undefined;
+    const r = try migrate(arena.allocator(), "\xEF\xBB\xBF" ++ @embedFile("testdata/v1_flat.json"), seeded(&prng));
+    try testing.expectEqualStrings("old", r.session.windows[0].workspaces[0].title.custom.?);
 }
 
 test "unit: session: v2 empty leaves collapse and empty workspaces survive" {
