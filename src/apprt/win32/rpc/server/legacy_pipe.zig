@@ -531,6 +531,100 @@ pub const Server = struct {
 };
 
 // ---------------------------------------------------------------------------
+// App glue: start the server, hand requests to the UI thread, dispatch
+// them through the legacy command table. (Moved from App.zig in W0-A1;
+// W1-1 replaces this with rpc/server/PipeServer.zig + rpc/dispatch.zig.)
+// ---------------------------------------------------------------------------
+
+const App = @import("../../App.zig");
+const legacy_table = @import("../compat/legacy_table.zig");
+const w32 = @import("../../platform/win32.zig");
+
+const app_log = std.log.scoped(.win32);
+
+/// Posted by the IPC server's pipe thread (onRequest) to hand a parsed
+/// *Request to the GUI thread, which owns all HWND/WebView2 access.
+/// lparam carries the request pointer.
+pub const WM_APP_IPC_REQUEST: u32 = w32.WM_APP + 4;
+
+/// Start the named-pipe IPC server on pipe wmux-ipc-<pid>. The pipe
+/// thread parses requests and posts each to msg_hwnd; the UI thread
+/// drives the browser/workspace/tab/send commands in handleRequest.
+/// Failure (e.g. a stale pipe) leaves ipc_server null — the CLI is then
+/// unavailable but the app runs.
+pub fn start(self: *App) void {
+    // `socket-control = off` disables the agent-control IPC entirely; the
+    // CLI verbs then report no running instance. `on`/`read-only` both
+    // start the server (read-only is enforced per-verb in
+    // handleRequest, not by withholding the pipe).
+    if (self.config.@"socket-control" == .off) {
+        app_log.info("socket-control=off: agent IPC server not started", .{});
+        return;
+    }
+    const alloc = self.core_app.alloc;
+    var name_buf: [64]u8 = undefined;
+    const name = defaultPipeName(&name_buf) catch return;
+    self.ipc_server = Server.start(alloc, name, onRequest, self) catch |err| {
+        app_log.warn("failed to start browser IPC server: {}", .{err});
+        return;
+    };
+}
+
+/// Pipe-thread callback: hand the parsed request to the UI thread. On a
+/// PostMessageW failure (msg_hwnd gone, queue full) the request would
+/// otherwise leak, so destroy it here. ctx is the *App.
+///
+/// A command's optional `prepare` stage runs HERE, on the pipe thread,
+/// before the UI ever sees the request (only `workspace-new --worktree`,
+/// which shells out to git; see features/workspaces/legacy.zig). When it
+/// fails it has already answered the client, and the request is dropped
+/// without reaching the UI.
+fn onRequest(ctx: ?*anyopaque, req: *Request) void {
+    const self: *App = @ptrCast(@alignCast(ctx.?));
+
+    if (legacy_table.lookup(req.cmd).prepare) |prepare| {
+        if (!prepare(self, req)) {
+            // prepare already answered the client with the error; drop
+            // the request.
+            req.destroy();
+            return;
+        }
+    }
+
+    const hwnd = self.msg_hwnd orelse {
+        req.destroy();
+        return;
+    };
+    if (w32.PostMessageW(hwnd, WM_APP_IPC_REQUEST, 0, @bitCast(@intFromPtr(req))) == 0) {
+        req.destroy();
+    }
+}
+
+/// Handle one IPC request on the UI thread (from WM_APP_IPC_REQUEST):
+/// look the command up in the legacy table, enforce read-only mode, run
+/// its handler (which answers via the server), name any returned error
+/// to the client, then destroy the request. Async handlers (eval,
+/// snapshot, click, fill) reply later from their WebView2/CDP completion,
+/// so they must NOT also answer here.
+pub fn handleRequest(self: *App, req: *Request) void {
+    defer req.destroy();
+    const server = self.ipc_server orelse return;
+    const command = legacy_table.lookup(req.cmd);
+
+    // read-only mode: refuse any verb that would change state, spawn a
+    // process, or inject input. The server still answers (with an error)
+    // so the client gets a clear signal rather than a hang.
+    if (self.config.@"socket-control" == .@"read-only" and !command.read_only) {
+        server.sendError(req.id, "socket-control=read-only: command refused") catch {};
+        return;
+    }
+
+    command.handler(self, req) catch |err| {
+        server.sendError(req.id, @errorName(err)) catch {};
+    };
+}
+
+// ---------------------------------------------------------------------------
 // Tests: end-to-end over a real named pipe (Windows only)
 // ---------------------------------------------------------------------------
 

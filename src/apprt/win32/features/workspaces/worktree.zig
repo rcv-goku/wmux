@@ -92,6 +92,68 @@ pub fn worktreePath(
     return std.fs.path.join(alloc, &.{ repo, ".worktrees", name });
 }
 
+// ---------------------------------------------------------------------------
+// git child runner (pipe thread; used by workspace-new --worktree)
+// ---------------------------------------------------------------------------
+
+/// One git child invocation. Captures stdout+stderr, returns whether it
+/// exited 0 along with the owned output buffers (caller frees both).
+pub const GitResult = struct {
+    ok: bool,
+    stdout: []u8,
+    stderr: []u8,
+};
+
+pub fn runGit(alloc: Allocator, argv: []const []const u8) !GitResult {
+    var child = std.process.Child.init(argv, alloc);
+    child.stdin_behavior = .Ignore;
+    child.stdout_behavior = .Pipe;
+    child.stderr_behavior = .Pipe;
+
+    var stdout: std.ArrayList(u8) = .empty;
+    errdefer stdout.deinit(alloc);
+    var stderr: std.ArrayList(u8) = .empty;
+    errdefer stderr.deinit(alloc);
+
+    try child.spawn();
+    // collectOutput reads both pipes to EOF (8 MiB cap is far beyond any
+    // git worktree message) before wait, so a chatty child can't deadlock.
+    try child.collectOutput(alloc, &stdout, &stderr, 8 * 1024 * 1024);
+    const term = try child.wait();
+
+    const ok = switch (term) {
+        .Exited => |code| code == 0,
+        else => false,
+    };
+    return .{
+        .ok = ok,
+        .stdout = try stdout.toOwnedSlice(alloc),
+        .stderr = try stderr.toOwnedSlice(alloc),
+    };
+}
+
+/// Distill git's stderr into a single-line client error message. git
+/// often prints a progress line ("Preparing worktree ...") before the
+/// actual failure, so prefer the first line tagged "fatal:" or "error:"
+/// (the useful reason); fall back to the first non-empty line, then a
+/// generic message when stderr is empty. Trimmed and capped.
+pub fn gitMessage(stderr: []const u8) []const u8 {
+    var first_nonempty: ?[]const u8 = null;
+    var it = std.mem.splitScalar(u8, stderr, '\n');
+    while (it.next()) |raw| {
+        const line = std.mem.trim(u8, raw, &std.ascii.whitespace);
+        if (line.len == 0) continue;
+        if (first_nonempty == null) first_nonempty = line;
+        if (std.mem.startsWith(u8, line, "fatal:") or
+            std.mem.startsWith(u8, line, "error:"))
+        {
+            return line[0..@min(line.len, 512)];
+        }
+    }
+    if (first_nonempty) |line| return line[0..@min(line.len, 512)];
+    return "git worktree add failed";
+}
+
 test "ipc: validateBranch accepts ordinary branch names" {
     try testing.expectEqualStrings("feature-x", try validateBranch("feature-x"));
     try testing.expectEqualStrings("v1.2.3", try validateBranch("v1.2.3"));
