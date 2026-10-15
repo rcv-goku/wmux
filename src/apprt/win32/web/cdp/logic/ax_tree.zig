@@ -949,7 +949,7 @@ fn domStates(n: *Node) void {
     if (std.mem.eql(u8, n.role, "heading")) {
         if (n.attr("aria-level")) |l| {
             s.level = std.fmt.parseInt(u8, std.mem.trim(u8, l, " "), 10) catch null;
-        } else if (n.tag.len == 2 and n.tag[0] == 'h') {
+        } else if (n.tag.len == 2 and n.tag[0] == 'h' and n.tag[1] >= '1' and n.tag[1] <= '6') {
             s.level = n.tag[1] - '0';
         }
     }

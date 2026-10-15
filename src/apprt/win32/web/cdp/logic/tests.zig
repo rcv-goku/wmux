@@ -234,6 +234,26 @@ test "unit: browser: dom implicit roles" {
     }
 }
 
+test "unit: browser: dom heading level comes only from h1-h6 or aria-level" {
+    // Page markup decides tag names: `<h- role=heading>` must not underflow
+    // and `<hr role=heading>` must not invent a level from its tag.
+    const j =
+        \\{"root":{"nodeType":9,"children":[{"nodeType":1,"localName":"body","children":[
+        \\ {"nodeType":1,"localName":"h-","backendNodeId":2,"attributes":["role","heading"],"children":[{"nodeType":3,"nodeValue":"dash"}]},
+        \\ {"nodeType":1,"localName":"hr","backendNodeId":3,"attributes":["role","heading"]},
+        \\ {"nodeType":1,"localName":"h4","backendNodeId":4,"children":[{"nodeType":3,"nodeValue":"four"}]},
+        \\ {"nodeType":1,"localName":"h-","backendNodeId":5,"attributes":["role","heading","aria-level","3"]}]}]}}
+    ;
+    var tree = try ax.parseDomDocument(gpa, j, .{});
+    defer tree.deinit();
+    const Case = struct { i64, ?u8 };
+    for ([_]Case{ .{ 2, null }, .{ 3, null }, .{ 4, 4 }, .{ 5, 3 } }) |c| {
+        const n = tree.get(tree.findByBackendId(c[0], null).?);
+        try testing.expectEqualStrings("heading", n.role);
+        try testing.expectEqual(c[1], n.states.level);
+    }
+}
+
 test "unit: browser: inline style visibility and cursor heuristics" {
     try testing.expect(ax.parseStyle("display:none").hidden);
     try testing.expect(ax.parseStyle("color: red; DISPLAY : None !important").hidden);
