@@ -877,9 +877,12 @@ pub const WireContext = struct {
     surface_id: ?[]const u8 = null,
     workspace_id: ?[]const u8 = null,
     pid: ?u32 = null,
-    /// Background work known to be pending at Stop (from the transcript),
-    /// OR-ed with the event's own `run_in_background`.
-    background_pending: bool = false,
+    /// Background work pending at Stop, as the CLI found it in the
+    /// transcript: true or false when known, null when unknown. A known
+    /// false is sent too, so the app clears the pending state it tracked
+    /// from earlier `run_in_background` tools. The event's own
+    /// `run_in_background` always sends true.
+    background_pending: ?bool = null,
 };
 
 /// Write the `wmux.agent.hook` params object. Null fields are omitted.
@@ -920,9 +923,10 @@ pub fn writeHookParams(n: Normalized, ctx: WireContext, w: *std.Io.Writer) std.I
         try jw.objectField("is_subagent");
         try jw.write(true);
     }
-    if (n.background_pending or ctx.background_pending) {
+    const background: ?bool = if (n.background_pending) true else ctx.background_pending;
+    if (background) |b| {
         try jw.objectField("background_pending");
-        try jw.write(true);
+        try jw.write(b);
     }
     if (n.input_kind) |k| {
         try jw.objectField("input_kind");

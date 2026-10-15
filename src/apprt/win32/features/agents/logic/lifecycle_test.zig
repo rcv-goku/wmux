@@ -120,6 +120,32 @@ test "unit: agents: lifecycle stop with background work pending" {
     try testing.expectEqual(State.idle, stateOf(&r));
 }
 
+fn applyWire(r: *Registry, json: []const u8, now: i64) !lifecycle.Outcome {
+    const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, json, .{});
+    defer parsed.deinit();
+    return r.apply(surface, lifecycle.Input.fromHookParams(parsed.value.object, now).?);
+}
+
+test "unit: agents: lifecycle a stop that reports no background work clears the tracked flag" {
+    var r = Registry.init(testing.allocator);
+    defer r.deinit();
+    _ = try applyWire(&r, "{\"agent\":\"claude\",\"event\":\"session-start\",\"seq\":1,\"session_id\":\"sess-1\"}", 1);
+    _ = try applyWire(&r, "{\"agent\":\"claude\",\"event\":\"pre-tool-use\",\"seq\":2,\"session_id\":\"sess-1\",\"background_pending\":true}", 2);
+    try testing.expect(r.get(surface).?.pending_background);
+    // Stop without a verdict keeps what was tracked.
+    _ = try applyWire(&r, "{\"agent\":\"claude\",\"event\":\"stop\",\"seq\":3,\"session_id\":\"sess-1\"}", 3);
+    try testing.expectEqual(State.backgroundWorkPending, stateOf(&r));
+    // The next turn's Stop finds the background work done.
+    _ = try applyWire(&r, "{\"agent\":\"claude\",\"event\":\"prompt-submit\",\"seq\":4,\"session_id\":\"sess-1\"}", 4);
+    _ = try applyWire(&r, "{\"agent\":\"claude\",\"event\":\"stop\",\"seq\":5,\"session_id\":\"sess-1\",\"background_pending\":false}", 5);
+    try testing.expectEqual(State.idle, stateOf(&r));
+    try testing.expect(!r.get(surface).?.pending_background);
+    // Later turns go idle without a verdict too.
+    _ = try applyWire(&r, "{\"agent\":\"claude\",\"event\":\"prompt-submit\",\"seq\":6,\"session_id\":\"sess-1\"}", 6);
+    _ = try applyWire(&r, "{\"agent\":\"claude\",\"event\":\"stop\",\"seq\":7,\"session_id\":\"sess-1\"}", 7);
+    try testing.expectEqual(State.idle, stateOf(&r));
+}
+
 test "unit: agents: lifecycle stop failure flag and recovery" {
     var r = Registry.init(testing.allocator);
     defer r.deinit();

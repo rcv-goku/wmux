@@ -712,6 +712,30 @@ test "unit: agents: wmux.agent.hook params encoding" {
     try testing.expectEqualStrings("C:\\w \"q\"", parsed.value.object.get("cwd").?.string);
 }
 
+test "unit: agents: wmux.agent.hook params send a known background state at stop" {
+    var stop = try normalizeFixture(.claude, "stop", "{\"session_id\":\"s\"}");
+    defer stop.p.deinit();
+    // The app needs an explicit false to clear the pending state it tracked
+    // from an earlier run_in_background tool; unknown stays omitted.
+    const cases = .{
+        .{ @as(?bool, false), "{\"agent\":\"claude\",\"event\":\"stop\",\"seq\":2,\"session_id\":\"s\",\"background_pending\":false}" },
+        .{ @as(?bool, true), "{\"agent\":\"claude\",\"event\":\"stop\",\"seq\":2,\"session_id\":\"s\",\"background_pending\":true}" },
+        .{ @as(?bool, null), "{\"agent\":\"claude\",\"event\":\"stop\",\"seq\":2,\"session_id\":\"s\"}" },
+    };
+    inline for (cases) |c| {
+        const json = try normalize.hookParamsAlloc(testing.allocator, stop.n.?, .{ .seq = 2, .background_pending = c[0] });
+        defer testing.allocator.free(json);
+        try testing.expectEqualStrings(c[1], json);
+    }
+
+    // A tool started in the background reports true whatever the context says.
+    var bg = try normalizeFixture(.claude, "pre-tool-use", "{\"tool_input\":{\"run_in_background\":true}}");
+    defer bg.p.deinit();
+    const json = try normalize.hookParamsAlloc(testing.allocator, bg.n.?, .{ .seq = 3, .background_pending = false });
+    defer testing.allocator.free(json);
+    try testing.expect(std.mem.indexOf(u8, json, "\"background_pending\":true") != null);
+}
+
 test "unit: agents: wmux.agent.hook params minimal and flagged forms" {
     var r = try normalizeFixture(.hermes_agent, "stop", "{\"hook_event_name\":\"on_error\",\"status\":\"failed\"}");
     defer r.p.deinit();
