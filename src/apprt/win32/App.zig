@@ -30,6 +30,8 @@ const meta = @import("features/meta/api.zig");
 const updater = @import("features/updater/legacy_check.zig");
 const config_files = @import("settings/legacy_config_files.zig");
 const app_tasks = @import("app/tasks.zig");
+const broadcast_window = @import("app/broadcast_window.zig");
+const hooks = @import("app/hooks.zig");
 const app_timers = @import("app/timers.zig");
 const message_loop = @import("app/message_loop.zig");
 const perform_action = @import("app/perform_action.zig");
@@ -79,6 +81,11 @@ tasks: app_tasks.Tasks = .{},
 
 /// UI-thread timers on msg_hwnd (ARCHITECTURE.md ADR-1.6).
 timers: app_timers.Timers = .{},
+
+/// Hidden top-level window that receives the broadcasts msg_hwnd cannot
+/// (logoff/shutdown, power, settings, display changes) and offers them to
+/// the app hooks (ARCHITECTURE.md ADR-1.6).
+broadcast: broadcast_window.BroadcastWindow = .{},
 
 /// The HINSTANCE for this module.
 hinstance: w32.HINSTANCE,
@@ -381,6 +388,10 @@ pub fn init(
     self.tasks.init(alloc, self.msg_hwnd);
     self.timers.init(alloc, self.msg_hwnd);
 
+    // The hidden broadcast window (never shown) for broadcast-only
+    // messages; failure only disables those hooks.
+    self.broadcast.create(self, hinstance);
+
     // Start the agent IPC server now that msg_hwnd exists (the pipe
     // thread posts requests to it). A failure here only disables the
     // `ghostty +browser` CLI, so log and continue.
@@ -474,6 +485,10 @@ pub fn terminate(self: *App) void {
         _ = w32.DestroyWindow(hwnd);
         self.msg_hwnd = null;
     }
+
+    // The broadcast window dispatches app hooks; tear it down with the
+    // other app-level windows, before any state they touch.
+    self.broadcast.destroy(self.hinstance);
 
     // Deinit and free all Window containers.
     const alloc = self.core_app.alloc;
@@ -651,14 +666,6 @@ fn keyToVk(key: @import("../../input/key.zig").Key) ?u32 {
         else => null,
     };
 }
-
-// -----------------------------------------------------------------------
-// Tray balloons (update + desktop notifications share the callback)
-// -----------------------------------------------------------------------
-
-/// Tray-icon notification callback (uCallbackMessage). The wparam is
-/// the tray icon's uID; lparam carries NIN_* events.
-pub const WM_APP_TRAY: u32 = w32.WM_APP + 3;
 
 /// Start the quit timer. Called when the last surface closes.
 pub fn startQuitTimer(self: *App) void {
@@ -1206,25 +1213,15 @@ fn msgWndProc(
         return 0;
     }
 
-    if (msg == WM_APP_TRAY) {
-        // wparam = uID, lparam = NIN_* event. A click on the update
-        // notification opens the GitHub releases page; a click on a
-        // desktop notification jumps to the surface that produced it.
-        const event: u32 = @intCast(lparam & 0xFFFF);
-        if (event != w32.NIN_BALLOONUSERCLICK) return 0;
-        if (wparam == updater.NOTIF_UPDATE_UID) {
-            updater.openReleasesPage();
-        } else if (wparam >= notifications.NOTIF_DESKTOP_UID_BASE and
-            wparam < notifications.NOTIF_DESKTOP_UID_BASE + notifications.NOTIF_DESKTOP_SLOTS)
-        {
-            notifications.onDesktopNotifClick(app, wparam - notifications.NOTIF_DESKTOP_UID_BASE);
-        }
-        return 0;
-    }
-
     // Every msg_hwnd timer is an app.timers timer (quit delay, quick
     // terminal animation, metadata refresh, balloon cleanups).
     if (msg == w32.WM_TIMER and app.timers.dispatch(app, wparam)) return 0;
+
+    // Everything else is offered to the app hooks (e.g. the tray-balloon
+    // callback hooks.WM_APP_TRAY: a click on the update notification
+    // opens the GitHub releases page, a click on a desktop notification
+    // jumps to the surface that produced it).
+    if (hooks.dispatchApp(&hooks.app_hooks, app, msg, wparam, lparam)) |result| return result;
 
     return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
 }
@@ -1251,4 +1248,5 @@ test {
     _ = config_files;
     _ = app_tasks;
     _ = app_timers;
+    _ = hooks;
 }

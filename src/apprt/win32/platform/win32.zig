@@ -1530,3 +1530,11 @@ pub extern "ole32" fn CoInitializeEx(
 ) callconv(.winapi) i32;
 
 pub extern "ole32" fn CoUninitialize() callconv(.winapi) void;
+
+// -----------------------------------------------------------------------
+// W0-A1: app plumbing (app/broadcast_window.zig)
+// -----------------------------------------------------------------------
+
+pub extern "user32" fn RegisterWindowMessageW(
+    lpString: [*:0]const u16,
+) callconv(.winapi) u32;

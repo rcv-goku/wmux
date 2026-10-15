@@ -15,6 +15,7 @@ const apprt = @import("../../../../apprt.zig");
 const App = @import("../../App.zig");
 const Surface = @import("../../Surface.zig");
 const Window = @import("../../Window.zig");
+const hooks = @import("../../app/hooks.zig");
 const taskbar = @import("../../platform/taskbar.zig");
 const w32 = @import("../../platform/win32.zig");
 
@@ -326,7 +327,7 @@ pub fn showDesktopNotification(
     // NIF_MESSAGE registers our callback so a click on the balloon is
     // delivered as WM_APP_TRAY → jump to the notifying surface.
     nid.uFlags = w32.NIF_INFO | w32.NIF_ICON | w32.NIF_TIP | w32.NIF_MESSAGE;
-    nid.uCallbackMessage = App.WM_APP_TRAY;
+    nid.uCallbackMessage = hooks.WM_APP_TRAY;
     nid.hIcon = w32.LoadIconW(self.hinstance, w32.IDI_GHOSTTY) orelse w32.LoadIconW(null, w32.IDI_APPLICATION);
     nid.dwInfoFlags = w32.NIIF_INFO;
     nid.uVersion_or_uTimeout = 5000; // 5 second timeout
@@ -363,9 +364,23 @@ fn onDesktopNotifTimer(self: *App, slot: usize) void {
     clearDesktopNotif(self, slot);
 }
 
+/// App hook for hooks.WM_APP_TRAY (wparam = icon uID, lparam = NIN_*
+/// event): claims the desktop-notification uIDs; a balloon click jumps to
+/// the surface that produced it. Other uIDs are left to their owners.
+/// (Moved from App.msgWndProc.)
+pub fn onTrayCallback(self: *App, wparam: usize, lparam: isize) ?isize {
+    if (wparam < NOTIF_DESKTOP_UID_BASE or
+        wparam >= NOTIF_DESKTOP_UID_BASE + NOTIF_DESKTOP_SLOTS) return null;
+    const event: u32 = @intCast(lparam & 0xFFFF);
+    if (event == w32.NIN_BALLOONUSERCLICK) {
+        onDesktopNotifClick(self, wparam - NOTIF_DESKTOP_UID_BASE);
+    }
+    return 0;
+}
+
 /// A desktop-notification balloon was clicked: jump to the surface that
 /// produced it, then tear down the balloon's icon, timer, and slot.
-pub fn onDesktopNotifClick(self: *App, slot: usize) void {
+fn onDesktopNotifClick(self: *App, slot: usize) void {
     const notif = self.desktop_notifs[slot];
     clearDesktopNotif(self, slot);
 

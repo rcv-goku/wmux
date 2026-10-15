@@ -22,9 +22,8 @@ pub const onChildExited = ring.onChildExited;
 pub const onCommandFinished = ring.onCommandFinished;
 pub const pushNotif = ring.pushNotif;
 
-// Desktop balloons.
-pub const onDesktopNotifClick = ring.onDesktopNotifClick;
-pub const clearDesktopNotif = ring.clearDesktopNotif;
+// Desktop balloons (onTrayCallback is the hooks.WM_APP_TRAY app hook).
+pub const onTrayCallback = ring.onTrayCallback;
 pub const dropDesktopNotifsForWindow = ring.dropDesktopNotifsForWindow;
 
 // Notification log (sidebar panel) and unread state.

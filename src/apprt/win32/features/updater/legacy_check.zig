@@ -10,6 +10,7 @@ const Allocator = std.mem.Allocator;
 
 const App = @import("../../App.zig");
 const build_config = @import("../../../../build_config.zig");
+const hooks = @import("../../app/hooks.zig");
 const tasks = @import("../../app/tasks.zig");
 const w32 = @import("../../platform/win32.zig");
 
@@ -166,7 +167,7 @@ pub fn showUpdateNotification(self: *App, ver: []const u8) void {
     // NIF_MESSAGE registers our callback so a click on the balloon
     // is delivered as WM_APP_TRAY → opens the GitHub releases page.
     nid.uFlags = w32.NIF_INFO | w32.NIF_ICON | w32.NIF_TIP | w32.NIF_MESSAGE;
-    nid.uCallbackMessage = App.WM_APP_TRAY;
+    nid.uCallbackMessage = hooks.WM_APP_TRAY;
     nid.hIcon = w32.LoadIconW(self.hinstance, w32.IDI_GHOSTTY) orelse w32.LoadIconW(null, w32.IDI_APPLICATION);
     nid.dwInfoFlags = w32.NIIF_INFO;
     nid.uVersion_or_uTimeout = 10000;
@@ -240,9 +241,19 @@ fn fetchLatestVersion() !VersionResult {
     return result;
 }
 
-/// A click on the update balloon (WM_APP_TRAY with NOTIF_UPDATE_UID)
-/// opens the GitHub releases page. (Moved from App.msgWndProc.)
-pub fn openReleasesPage() void {
+/// App hook for hooks.WM_APP_TRAY (wparam = icon uID, lparam = NIN_*
+/// event): claims the update balloon's uID; a click opens the GitHub
+/// releases page. (Moved from App.msgWndProc.)
+pub fn onTrayCallback(self: *App, wparam: usize, lparam: isize) ?isize {
+    _ = self;
+    if (wparam != NOTIF_UPDATE_UID) return null;
+    const event: u32 = @intCast(lparam & 0xFFFF);
+    if (event == w32.NIN_BALLOONUSERCLICK) openReleasesPage();
+    return 0;
+}
+
+/// A click on the update balloon opens the GitHub releases page.
+fn openReleasesPage() void {
     var url_buf: [256]u16 = undefined;
     const url_len = std.unicode.utf8ToUtf16Le(&url_buf, RELEASES_URL) catch return;
     url_buf[url_len] = 0;
