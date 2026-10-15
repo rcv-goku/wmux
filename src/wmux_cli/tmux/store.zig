@@ -60,13 +60,15 @@ pub const Store = struct {
 
     /// Decodes a store file. Empty or whitespace-only input is an empty
     /// store; malformed JSON or a non-object root is `error.InvalidStore`
-    /// (the caller may back the file up and start fresh).
+    /// (the caller may back the file up and start fresh). A key repeated in
+    /// one object keeps its last value (names that differ only in invalid
+    /// UTF-8 are written as the same key).
     pub fn parse(gpa: Allocator, bytes: []const u8) ParseError!Store {
         var self: Store = .{};
         errdefer self.deinit(gpa);
         if (std.mem.trim(u8, bytes, " \t\r\n").len == 0) return self;
 
-        var parsed = std.json.parseFromSlice(std.json.Value, gpa, bytes, .{}) catch |err| switch (err) {
+        var parsed = std.json.parseFromSlice(std.json.Value, gpa, bytes, .{ .duplicate_field_behavior = .use_last }) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => return error.InvalidStore,
         };
@@ -277,7 +279,9 @@ pub const Store = struct {
 
     /// Forgets every reference to a closed surface: its pane id, `lastSplit`
     /// entries naming it, agent columns ending at it and layouts whose main
-    /// surface it was. Returns true when anything changed.
+    /// surface it was. Returns true when anything changed. `surface` must
+    /// not point into the store (matching entries are freed while the scan
+    /// goes on).
     pub fn forgetSurface(self: *Store, gpa: Allocator, surface: []const u8) bool {
         var changed = false;
         var i: usize = 0;
@@ -390,50 +394,39 @@ fn writeStrMap(s: *std.json.Stringify, field: []const u8, m: *const StrMap) std.
 /// JSON must be valid UTF-8: invalid bytes are written as U+FFFD.
 fn writeStringSafe(s: *std.json.Stringify, v: []const u8) std.Io.Writer.Error!void {
     if (std.unicode.utf8ValidateSlice(v)) return s.write(v);
-    var buf: [4096]u8 = undefined;
-    var fba = std.heap.FixedBufferAllocator.init(&buf);
-    const fixed = sanitizeUtf8(fba.allocator(), v) catch {
-        // Very long invalid text: degrade to replacing every non-ASCII byte.
-        try s.beginWriteRaw();
-        try s.writer.writeByte('"');
-        for (v) |c| {
-            if (c < 0x80) {
-                try std.json.Stringify.encodeJsonStringChars(&.{c}, .{}, s.writer);
-            } else try s.writer.writeAll("\\ufffd");
-        }
-        try s.writer.writeByte('"');
-        s.endWriteRaw();
-        return;
-    };
-    try s.write(fixed);
+    try s.beginWriteRaw();
+    try writeLossyString(s.writer, v, s.options);
+    s.endWriteRaw();
 }
 
 fn objectFieldSafe(s: *std.json.Stringify, key: []const u8) std.Io.Writer.Error!void {
     if (std.unicode.utf8ValidateSlice(key)) return s.objectField(key);
-    var buf: [1024]u8 = undefined;
-    var fba = std.heap.FixedBufferAllocator.init(&buf);
-    const fixed = sanitizeUtf8(fba.allocator(), key) catch "\u{FFFD}";
-    try s.objectField(fixed);
+    try s.beginObjectFieldRaw();
+    try writeLossyString(s.writer, key, s.options);
+    s.endObjectFieldRaw();
 }
 
-fn sanitizeUtf8(a: Allocator, v: []const u8) Allocator.Error![]const u8 {
-    var out: std.ArrayList(u8) = .empty;
+/// Writes `v` as a quoted JSON string, streaming (no buffer, no size cap):
+/// valid UTF-8 runs are escaped as usual and every byte that does not
+/// start a valid sequence becomes U+FFFD.
+fn writeLossyString(w: *std.Io.Writer, v: []const u8, options: std.json.Stringify.Options) std.Io.Writer.Error!void {
+    const replacement = if (options.escape_unicode) "\\ufffd" else "\u{FFFD}";
+    try w.writeByte('"');
+    var start: usize = 0;
     var i: usize = 0;
     while (i < v.len) {
-        const n = std.unicode.utf8ByteSequenceLength(v[i]) catch {
-            try out.appendSlice(a, "\u{FFFD}");
-            i += 1;
-            continue;
-        };
-        if (i + n <= v.len and std.unicode.utf8ValidateSlice(v[i .. i + n])) {
-            try out.appendSlice(a, v[i .. i + n]);
+        const n = std.unicode.utf8ByteSequenceLength(v[i]) catch 0;
+        if (n != 0 and i + n <= v.len and std.unicode.utf8ValidateSlice(v[i..][0..n])) {
             i += n;
-        } else {
-            try out.appendSlice(a, "\u{FFFD}");
-            i += 1;
+            continue;
         }
+        try std.json.Stringify.encodeJsonStringChars(v[start..i], options, w);
+        try w.writeAll(replacement);
+        i += 1;
+        start = i;
     }
-    return out.items;
+    try std.json.Stringify.encodeJsonStringChars(v[start..], options, w);
+    try w.writeByte('"');
 }
 
 /// Longest prefix of `s` that is at most `cap` bytes and does not split a
@@ -553,6 +546,44 @@ test "unit: tmux: store: buffers append, rename, delete, cap and invalid UTF-8" 
     var back = try Store.parse(gpa, json);
     defer back.deinit(gpa);
     try testing.expectEqualStrings("x\u{FFFD}y", back.getBuffer("raw").?);
+}
+
+test "unit: tmux: store: duplicate keys keep the last value" {
+    const gpa = testing.allocator;
+    var st = try Store.parse(gpa,
+        \\{"buffers":{"a":"1","a":"2"},"lastSplitSurface":{"W":"S1","W":"S2"}}
+    );
+    defer st.deinit(gpa);
+    try testing.expectEqualStrings("2", st.getBuffer("a").?);
+    try testing.expectEqual(@as(usize, 1), st.buffers.count());
+    try testing.expectEqualStrings("S2", st.getLastSplit("W").?);
+}
+
+test "unit: tmux: store: invalid UTF-8 of any length round-trips and stays readable" {
+    const gpa = testing.allocator;
+    var st: Store = .{};
+    defer st.deinit(gpa);
+    // Names that differ only in invalid bytes encode to the same key.
+    try st.setBuffer(gpa, "k\xff", "one", false);
+    try st.setBuffer(gpa, "k\xfe", "two", false);
+    // A long name and text with one bad byte keep every valid character.
+    var long: std.ArrayList(u8) = .empty;
+    defer long.deinit(gpa);
+    for (0..3000) |_| try long.appendSlice(gpa, "é");
+    try long.append(gpa, 0xc3); // truncated sequence at the very end
+    try st.setBuffer(gpa, long.items, long.items, false);
+    try st.setHook(gpa, "after-x", "\x80\"quoted\" ✓\x01");
+    const json = try st.toJson(gpa);
+    defer gpa.free(json);
+    try testing.expect(std.unicode.utf8ValidateSlice(json));
+
+    var back = try Store.parse(gpa, json);
+    defer back.deinit(gpa);
+    try testing.expectEqualStrings("two", back.getBuffer("k\u{FFFD}").?);
+    const fixed = try std.mem.concat(gpa, u8, &.{ long.items[0 .. long.items.len - 1], "\u{FFFD}" });
+    defer gpa.free(fixed);
+    try testing.expectEqualStrings(fixed, back.getBuffer(fixed).?);
+    try testing.expectEqualStrings("\u{FFFD}\"quoted\" ✓\x01", back.getHook("after-x").?);
 }
 
 test "unit: tmux: store: path" {
