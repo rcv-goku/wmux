@@ -142,6 +142,10 @@ pub const Model = struct {
     gpa: std.mem.Allocator,
     store: Store,
     marks: Marks = .{},
+    /// Local agent records restored from the previous session that the
+    /// orphan sweep still watches (`persist.sweepOrphanedAgentRecords`).
+    /// Ids whose record is gone are dropped lazily by the sweep.
+    restored_agent_records: std.AutoArrayHashMapUnmanaged(Uuid, void) = .empty,
 
     pub fn init(gpa: std.mem.Allocator) Model {
         return .{ .gpa = gpa, .store = Store.init(gpa) };
@@ -150,6 +154,7 @@ pub const Model = struct {
     pub fn deinit(self: *Model) void {
         self.store.deinit();
         self.marks.deinit(self.gpa);
+        self.restored_agent_records.deinit(self.gpa);
         self.* = undefined;
     }
 
@@ -289,6 +294,7 @@ pub const Model = struct {
     pub fn clearAll(self: *Model, out: ?*IdList) !usize {
         const n = try self.store.removeScope(.all, .{}, out);
         self.marks.clearAll();
+        self.restored_agent_records.clearRetainingCapacity();
         return n;
     }
 
