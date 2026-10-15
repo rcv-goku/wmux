@@ -513,11 +513,12 @@ Add-Step 'contract' 'contract checks' @('full') {
 }
 
 Add-Step 'fulltest' 'zig build test (unfiltered) vs test/known-failures.txt' @('fulltest') {
-    return "zig build test $($T -join ' ')  (allowlist: test/known-failures.txt)"
+    return "zig build test $($T -join ' ') --summary all  (allowlist: test/known-failures.txt)"
 } {
     $kfPath = Join-Path $repo 'test/known-failures.txt'
     $known = Read-WmuxKnownFailures -Path $kfPath
-    $res = Invoke-Zig 'fulltest' (@('build', 'test') + $T)
+    # --summary all prints the "Build Summary: ... N/M tests passed" line on success too.
+    $res = Invoke-Zig 'fulltest' (@('build', 'test') + $T + @('--summary', 'all'))
     $parsed = ConvertFrom-WmuxZigTestLog -Lines ([System.IO.File]::ReadAllLines($res.LogFile))
     $summary = if ($parsed.Summary) { $parsed.Summary -replace '^Build Summary: ', '' } else { '' }
     # Compile errors leave no test results; error-looking lines printed by tests do not count.
