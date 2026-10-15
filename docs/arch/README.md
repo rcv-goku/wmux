@@ -39,8 +39,9 @@ Every implementation agent reads, in this order (§15.1):
 
 ## Work packages
 
-- **Ids**: `W<wave>-<n>` (`W2-5`), split packages get a letter (`W1-1a`, `W1-1b`), W0 lanes
-  have names (`W0-A1`, `W0-C`, `W0-D-S1`). Size S < 1 agent-day, M 1–2, L 2–4; XL is split.
+- **Ids**: `W<wave>-<n>` (`W2-5`; the split wave 5 gives `W5a-<n>`, `W5b-<n>`), split packages
+  get a letter (`W1-1a`, `W1-1b`), W0 lanes have names (`W0-A1`, `W0-C`, `W0-D-S1`). Size
+  S < 1 agent-day, M 1–2, L 2–4; XL is split.
 - **Spec** (`wp/<id>.md`, Appendix H): YAML front matter with `id`, `title`, `wave`, `size`,
   `depends`, `covers` (matrix.csv ids), `owns` (globs the WP may create/modify), `touches`
   (frozen/hot files, each with a `reason`, matching the wave's hot-file table), `appends`

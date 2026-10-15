@@ -90,8 +90,8 @@ New-Item -ItemType Directory -Force -Path $fixtureRoot | Out-Null
 try {
     # ------------------------------------------------------------ module
     Write-Host 'module: WP ids'
-    foreach ($id in 'W2-5', 'W1-1a', 'W0-D-S1', 'W0-C', 'W12-3') { Test-That "valid id $id" (Test-WmuxWpId $id) }
-    foreach ($id in 'w2-5', 'W2', 'W2-', 'X1-2', 'W2-5 ', 'W2_5') { Test-That "invalid id '$id'" (-not (Test-WmuxWpId $id)) }
+    foreach ($id in 'W2-5', 'W1-1a', 'W0-D-S1', 'W0-C', 'W12-3', 'W5a-3') { Test-That "valid id $id" (Test-WmuxWpId $id) }
+    foreach ($id in 'w2-5', 'W2', 'W2-', 'X1-2', 'W2-5 ', 'W2_5', 'W5ab-1', 'W5a') { Test-That "invalid id '$id'" (-not (Test-WmuxWpId $id)) }
 
     Write-Host 'module: YAML front matter'
     $template = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot '../docs/arch/wp/_template.md'))
@@ -246,6 +246,10 @@ try {
     Invoke-FixtureGit $repo @('commit', '-q', '-am', 'frozen')
     $r = Invoke-Script 'check-ownership.ps1' @('-Wp', 'W9-1', '-RepoRoot', $repo)
     Test-That 'ownership: frozen file needs touches' (($r.Code -eq 1) -and ($r.Output -match 'frozen file')) $r.Output
+    $lettered = Join-Path $fixtureRoot 'W9-1-wave5a.md'
+    [System.IO.File]::WriteAllText($lettered, [System.IO.File]::ReadAllText((Join-Path $repo 'docs/arch/wp/W9-1.md')).Replace('wave: 1', 'wave: 5a'), $utf8)
+    $r = Invoke-Script 'check-ownership.ps1' @('-Wp', 'W9-1', '-RepoRoot', $repo, '-SpecPath', $lettered)
+    Test-That 'ownership: wave 5a applies the frozen rules' (($r.Code -eq 1) -and ($r.Output -match 'frozen file')) $r.Output
 
     # d) shared-appendable file loses a line; uncommitted change counts
     Invoke-FixtureGit $repo @('checkout', '-q', 'master')

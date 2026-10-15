@@ -13,7 +13,8 @@
 
 Set-StrictMode -Version 3.0
 
-$script:WpIdPattern = '^W\d+(?:-[A-Za-z0-9]+)+$'
+# W<wave>-<n>[...]; waves may carry a letter (ADR-14.6 splits wave 5 into W5a and W5b).
+$script:WpIdPattern = '^W\d+[a-z]?(?:-[A-Za-z0-9]+)+$'
 $script:TargetArgs = @('-Dapp-runtime=win32', '-Dtarget=x86_64-windows-gnu')
 $script:ExpectedZigVersion = '0.15.2'
 $script:GitExe = $null
@@ -61,7 +62,7 @@ function Resolve-WmuxPath {
 }
 
 function Test-WmuxWpId {
-    <# True if $Wp looks like a work-package id: W2-5, W1-1a, W0-D-S1, W0-C. #>
+    <# True if $Wp looks like a work-package id: W2-5, W1-1a, W0-D-S1, W0-C, W5a-3. #>
     param([Parameter(Mandatory)][AllowEmptyString()][string]$Wp)
     return [bool]($Wp -cmatch $script:WpIdPattern)
 }

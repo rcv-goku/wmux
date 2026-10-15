@@ -109,7 +109,7 @@ switch ($spec.Source) {
 
 $wave = $null
 $waveRaw = [string]$spec.Data['wave']
-if ($waveRaw -match '^\d+$') { $wave = [int]$waveRaw }
+if ($waveRaw -match '^(\d+)[a-z]?$') { $wave = [int]$Matches[1] }   # 5a/5b count as wave 5
 
 # Rules in precedence order. Frozen files are special-cased below.
 $rules = [System.Collections.Generic.List[object]]::new()
