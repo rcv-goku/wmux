@@ -488,25 +488,39 @@ Add-Step 'e2e' 'test/e2e/run.ps1' @('local', 'full') {
     return (New-StepResult PASS (($runs | ForEach-Object Label) -join ', '))
 }
 
+# Settings schema golden (section 15.2); the check needs a committed golden to compare with.
+$SchemaGolden = 'docs/wmux/schema/wmux.schema.json'
+function Test-SchemaGoldenTracked {
+    return ((Invoke-WmuxGit -RepoRoot $repo -Arguments @('ls-files', '--error-unmatch', '--', $SchemaGolden) -AllowFailure).ExitCode -eq 0)
+}
+
 Add-Step 'contract' 'contract checks' @('full') {
     $parts = @()
-    if ((Get-BuildStepNames) -contains 'settings-schema') { $parts += 'settings-schema golden' }
+    if ((Get-BuildStepNames) -contains 'settings-schema') {
+        $parts += if (Test-SchemaGoldenTracked) { 'settings-schema golden' } else { "settings-schema golden skipped ($SchemaGolden not committed yet)" }
+    }
     if (Test-Path -LiteralPath (Join-Path $repo 'test/cli/probes.ps1')) { $parts += 'test/cli/probes.ps1' }
     $parts += @(Get-ChildItem -LiteralPath (Join-Path $repo 'test/contract') -Filter '*.ps1' -File -ErrorAction SilentlyContinue | ForEach-Object { "test/contract/$($_.Name)" })
     if ($parts.Count -eq 0) { return 'skip: no contract checks present yet' }
     return ($parts -join ', ')
 } {
-    $ran = @(); $failedChecks = @()
+    $ran = @(); $failedChecks = @(); $notes = @()
     $names = Get-BuildStepNames
     if ($names -contains 'settings-schema') {
-        $ran += 'settings-schema'
-        $res = Invoke-Zig 'contract' (@('build', 'settings-schema') + $T) -Suffix '-schema'
-        if ($res.ExitCode -ne 0) { $failedChecks += 'settings-schema (build step failed)' }
-        else {
-            $st = Invoke-WmuxGit -RepoRoot $repo -Arguments @('status', '--porcelain', '--', 'docs/wmux/schema')
-            if ($st.Output.Trim()) {
-                Write-Host $st.Output
-                $failedChecks += 'settings-schema (docs/wmux/schema differs from the committed golden; commit the regenerated file)'
+        if (-not (Test-SchemaGoldenTracked)) {
+            # Nothing to compare with yet (the first WP that adds a setting commits it); running
+            # the generator would only drop an untracked file into the tree.
+            $notes += "settings-schema golden skipped: $SchemaGolden is not committed yet"
+        } else {
+            $ran += 'settings-schema'
+            $res = Invoke-Zig 'contract' (@('build', 'settings-schema') + $T) -Suffix '-schema'
+            if ($res.ExitCode -ne 0) { $failedChecks += 'settings-schema (build step failed)' }
+            else {
+                $st = Invoke-WmuxGit -RepoRoot $repo -Arguments @('status', '--porcelain', '--', 'docs/wmux/schema')
+                if ($st.Output.Trim()) {
+                    Write-Host $st.Output
+                    $failedChecks += 'settings-schema (docs/wmux/schema differs from the committed golden; commit the regenerated file)'
+                }
             }
         }
     }
@@ -522,9 +536,12 @@ Add-Step 'contract' 'contract checks' @('full') {
         $k++
         if ($res.ExitCode -ne 0) { $failedChecks += $rel }
     }
-    if ($ran.Count -eq 0) { return (New-StepResult SKIP 'no contract checks present yet (settings-schema step, test/cli/probes.ps1, test/contract/*.ps1)') }
+    if ($ran.Count -eq 0) {
+        $why = if ($notes.Count) { $notes -join '; ' } else { 'no contract checks present yet (settings-schema step, test/cli/probes.ps1, test/contract/*.ps1)' }
+        return (New-StepResult SKIP $why)
+    }
     if ($failedChecks.Count) { return (New-StepResult FAIL ($failedChecks -join '; ')) }
-    return (New-StepResult PASS ($ran -join ', '))
+    return (New-StepResult PASS ((@($ran) + @($notes)) -join ', '))
 }
 
 Add-Step 'fulltest' 'zig build test (unfiltered) vs test/known-failures.txt' @('fulltest') {
