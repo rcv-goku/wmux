@@ -105,7 +105,7 @@ fn writeRootMeta(jw: *std.json.Stringify) Error!void {
     try jw.objectField("packs");
     try jw.beginObject();
     try jw.objectField("description");
-    try jw.write("Local pack files or directories loaded before this file, relative to it unless absolute. A directory resolves to wmux.pack.json, then cmux.pack.json.");
+    try jw.write("Pack files or directories applied beneath this file (values set here win). Relative entries start from this file's directory. A directory resolves to wmux.pack.json, then cmux.pack.json.");
     try jw.objectField("type");
     try jw.write("array");
     try jw.objectField("items");
