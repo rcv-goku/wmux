@@ -80,4 +80,5 @@ test {
     _ = agents;
     _ = commands;
     _ = @import("wmux_proto");
+    _ = @import("tmux/tests.zig");
 }
