@@ -5,6 +5,11 @@
 //!
 //! Eviction scans for the oldest entry: O(capacity) per insert into a full
 //! cache, fine for the few hundred entries a sidebar needs. std-only.
+//!
+//! Removals leave tombstones in the std hash index, and a cache that stays
+//! full never grows (which would clear them), so the index is rehashed in
+//! place after every `capacity` removals. Without that, steady churn turns
+//! every free slot into a tombstone and each miss probes the whole table.
 const std = @import("std");
 
 pub fn LruCache(comptime V: type) type {
@@ -32,6 +37,8 @@ pub fn LruCache(comptime V: type) type {
         evict_fn: ?EvictFn = null,
         hits: u64 = 0,
         misses: u64 = 0,
+        /// Index removals (tombstones) since the last rehash.
+        removals: usize = 0,
 
         pub fn init(gpa: std.mem.Allocator, capacity: usize, evict_ctx: ?*anyopaque, evict_fn: ?EvictFn) Self {
             return .{ .gpa = gpa, .capacity = @max(capacity, 1), .evict_ctx = evict_ctx, .evict_fn = evict_fn };
@@ -95,6 +102,7 @@ pub fn LruCache(comptime V: type) type {
             }
             self.entries.clearRetainingCapacity();
             self.index.clearRetainingCapacity();
+            self.removals = 0;
         }
 
         fn evict(self: *Self, value: V) void {
@@ -117,6 +125,14 @@ pub fn LruCache(comptime V: type) type {
             _ = self.entries.swapRemove(i);
             if (i < self.entries.items.len) {
                 self.index.getPtr(self.entries.items[i].key).?.* = i;
+            }
+            // Amortized O(1); keeps neither capacity nor `available` changed,
+            // so it is safe between ensureUnusedCapacity and the insert in
+            // `put`. The index holds no pointers anyone keeps.
+            self.removals += 1;
+            if (self.removals >= self.capacity) {
+                self.index.rehash(std.hash_map.StringContext{});
+                self.removals = 0;
             }
         }
     };
@@ -208,6 +224,32 @@ test "unit: gfx: lru churn keeps the index consistent" {
         }
         try testing.expect(cache.count() <= 16);
     }
+    for (cache.entries.items, 0..) |e, idx| {
+        try testing.expectEqual(idx, cache.index.get(e.key).?);
+    }
+}
+
+fn freeIndexSlots(cache: anytype) usize {
+    var free: usize = 0;
+    for (cache.index.metadata.?[0..cache.index.capacity()]) |m| {
+        if (m.isFree()) free += 1;
+    }
+    return free;
+}
+
+test "unit: gfx: lru churn does not fill the index with tombstones" {
+    var cache = LruCache(u32).init(testing.allocator, 64, null, null);
+    defer cache.deinit();
+    var key_buf: [16]u8 = undefined;
+    var i: u32 = 0;
+    while (i < 10_000) : (i += 1) {
+        const key = std.fmt.bufPrint(&key_buf, "k{d}", .{i}) catch unreachable;
+        try cache.put(key, i);
+        // A full table of tombstones (no free slot) makes every miss probe
+        // all of it.
+        try testing.expect(freeIndexSlots(&cache) > 0);
+    }
+    try testing.expectEqual(@as(usize, 64), cache.count());
     for (cache.entries.items, 0..) |e, idx| {
         try testing.expectEqual(idx, cache.index.get(e.key).?);
     }
