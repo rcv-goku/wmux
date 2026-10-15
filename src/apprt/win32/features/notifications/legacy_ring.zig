@@ -633,6 +633,147 @@ pub fn dropDesktopNotifsForWindow(self: *App, window: *Window) void {
 }
 
 // ---------------------------------------------------------------------------
+// apprt action reactions (moved from App.performAction in W0-A1; reached
+// through api.zig from app/perform_action.zig)
+// ---------------------------------------------------------------------------
+
+/// `.ring_bell`: audible + visual bell, sidebar bell mark and log entry.
+pub fn onBell(self: *App, target: apprt.Target) void {
+    // Audio bell.
+    _ = w32.MessageBeep(0xFFFFFFFF);
+    // Visual bell: flash the taskbar button if the window owning
+    // this surface isn't currently the foreground window. Without
+    // this, BEL on a backgrounded terminal is invisible.
+    switch (target) {
+        .app => {},
+        .surface => |core_surface| {
+            const rt_surface = core_surface.rt_surface;
+            const parent_window = rt_surface.parent_window;
+            var foreground = false;
+            if (parent_window.hwnd) |win_hwnd| {
+                foreground = w32.GetForegroundWindow() == win_hwnd;
+                if (!foreground) {
+                    var fwi: w32.FLASHWINFO = .{
+                        .cbSize = @sizeOf(w32.FLASHWINFO),
+                        .hwnd = win_hwnd,
+                        .dwFlags = w32.FLASHW_ALL | w32.FLASHW_TIMERNOFG,
+                        .uCount = 2,
+                        .dwTimeout = 0,
+                    };
+                    _ = w32.FlashWindowEx(&fwi);
+                }
+            }
+            // Mark the tab in the sidebar unless the bell rang
+            // in the active tab of the foreground window, where
+            // the user already sees it.
+            const loc = parent_window.findLocOfSurface(rt_surface);
+            const active = if (loc) |l|
+                l.ws == parent_window.activeWorkspace() and l.container == l.ws.focused_container and l.tab == l.container.active_tab
+            else
+                false;
+            if (!active or !foreground) {
+                parent_window.setTabStatusForSurface(rt_surface, .bell);
+                const title: []const u16 = if (loc) |l|
+                    l.container.tab_titles[l.tab][0..l.container.tab_title_lens[l.tab]]
+                else
+                    std.unicode.utf8ToUtf16LeStringLiteral("Ghostty");
+                pushNotif(
+                    self,
+                    .bell,
+                    parent_window,
+                    rt_surface,
+                    title,
+                    std.unicode.utf8ToUtf16LeStringLiteral("Bell"),
+                );
+            }
+        },
+    }
+}
+
+/// `.show_child_exited`: mark the tab exited, log it, and report a
+/// non-zero exit code in a message box.
+pub fn onChildExited(self: *App, target: apprt.Target, value: apprt.Action.Value(.show_child_exited)) void {
+    switch (target) {
+        .app => {},
+        .surface => |core_surface| {
+            const rt_surface = core_surface.rt_surface;
+            const parent_window = rt_surface.parent_window;
+            // Mark the tab in the sidebar even when it's the
+            // active tab; the user may be looking elsewhere
+            // when the shell exits.
+            parent_window.setTabStatusForSurface(rt_surface, .exited);
+            const title: []const u16 = if (parent_window.findLocOfSurface(rt_surface)) |l|
+                l.container.tab_titles[l.tab][0..l.container.tab_title_lens[l.tab]]
+            else
+                std.unicode.utf8ToUtf16LeStringLiteral("Ghostty");
+            pushNotif(
+                self,
+                .exited,
+                parent_window,
+                rt_surface,
+                title,
+                std.unicode.utf8ToUtf16LeStringLiteral("Process exited"),
+            );
+            const exit_code = value.exit_code;
+            if (exit_code != 0) {
+                // Show a message box including the actual exit code.
+                const hwnd_val = rt_surface.parent_window.hwnd;
+                var utf8_buf: [128]u8 = undefined;
+                const msg_utf8 = std.fmt.bufPrint(
+                    &utf8_buf,
+                    "The shell process exited with code {d}.",
+                    .{exit_code},
+                ) catch "The shell process exited unexpectedly.";
+
+                var utf16_buf: [256]u16 = undefined;
+                const utf16_len = std.unicode.utf8ToUtf16Le(&utf16_buf, msg_utf8) catch {
+                    _ = w32.MessageBoxW(
+                        hwnd_val,
+                        std.unicode.utf8ToUtf16LeStringLiteral("The shell process exited unexpectedly."),
+                        std.unicode.utf8ToUtf16LeStringLiteral("Ghostty"),
+                        w32.MB_ICONWARNING,
+                    );
+                    return;
+                };
+                utf16_buf[utf16_len] = 0;
+                _ = w32.MessageBoxW(
+                    hwnd_val,
+                    @ptrCast(&utf16_buf),
+                    std.unicode.utf8ToUtf16LeStringLiteral("Ghostty"),
+                    w32.MB_ICONWARNING,
+                );
+            }
+        },
+    }
+}
+
+/// `.command_finished`: flash the taskbar button on a failed command when
+/// the window is not foreground.
+pub fn onCommandFinished(target: apprt.Target, value: apprt.Action.Value(.command_finished)) void {
+    // Flash the taskbar button if the window isn't currently the
+    // foreground window. macOS bounces the dock icon for the
+    // same reason. We only flash on non-zero exit codes — a
+    // successful command shouldn't pull the user back.
+    switch (target) {
+        .app => {},
+        .surface => |core_surface| {
+            if (value.exit_code orelse 0 == 0) return;
+            const win_hwnd = core_surface.rt_surface.parent_window.hwnd orelse return;
+            const fg = w32.GetForegroundWindow();
+            if (fg == win_hwnd) return;
+            var fwi: w32.FLASHWINFO = .{
+                .cbSize = @sizeOf(w32.FLASHWINFO),
+                .hwnd = win_hwnd,
+                .dwFlags = w32.FLASHW_ALL | w32.FLASHW_TIMERNOFG,
+                .uCount = 3,
+                .dwTimeout = 0,
+            };
+            _ = w32.FlashWindowEx(&fwi);
+        },
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 

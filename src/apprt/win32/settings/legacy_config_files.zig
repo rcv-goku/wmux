@@ -16,7 +16,6 @@ const w32 = @import("../platform/win32.zig");
 
 const log = std.log.scoped(.win32);
 
-
 /// Posted by the setDefaultShell worker thread after the config file has
 /// been written successfully. Signals the UI thread to perform a
 /// reload_config so the new command takes effect. No payload.
@@ -328,6 +327,31 @@ pub fn openConfigFolder(self: *App) void {
         null,
         w32.SW_SHOW,
     );
+}
+
+/// `.reload_config`: reload the config and push it to the core, which
+/// triggers config_change actions on all surfaces. (Moved from
+/// App.performAction in W0-A1.)
+pub fn reloadConfig(self: *App, soft: bool) void {
+    // Reload config and push to the core, which triggers
+    // config_change actions on all surfaces.
+    const alloc = self.core_app.alloc;
+    if (soft) {
+        // Soft reload: re-apply existing config (for conditional state changes)
+        self.core_app.updateConfig(self, &self.config) catch |err| {
+            log.err("soft config reload error: {}", .{err});
+        };
+    } else {
+        // Hard reload: read config from disk
+        var new_config = configpkg.Config.load(alloc) catch |err| {
+            log.err("failed to reload config: {}", .{err});
+            return;
+        };
+        defer new_config.deinit();
+        self.core_app.updateConfig(self, &new_config) catch |err| {
+            log.err("config update error: {}", .{err});
+        };
+    }
 }
 
 // ---------------------------------------------------------------------------

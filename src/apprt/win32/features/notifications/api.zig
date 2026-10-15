@@ -16,8 +16,11 @@ pub const DesktopNotif = ring.DesktopNotif;
 pub const NotifEntry = ring.NotifEntry;
 pub const NotifRing = ring.NotifRing;
 
-// Ingestion.
+// Ingestion (apprt actions routed by app/perform_action.zig, and pushes).
 pub const showDesktopNotification = ring.showDesktopNotification;
+pub const onBell = ring.onBell;
+pub const onChildExited = ring.onChildExited;
+pub const onCommandFinished = ring.onCommandFinished;
 pub const pushNotif = ring.pushNotif;
 
 // Desktop balloons.
