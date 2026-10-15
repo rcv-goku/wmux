@@ -22,7 +22,9 @@ function Invoke-LegacyCommand {
     $reply = Invoke-WmuxRawLine $Instance $line | ConvertFrom-Json
     Assert-Equal $Id $reply.id "reply id for $Cmd"
     Assert-True $reply.ok "legacy '$Cmd' failed: $($reply.error)"
-    return , $reply.data
+    # No unary comma: callers wrap list replies in @(), which would otherwise nest the list
+    # one level deeper ([[...]]) and break Count, indexing and Assert-JsonShape.
+    return $reply.data
 }
 
 # Golden shape from test/e2e/fixtures (resolved by Assert-JsonShape).
