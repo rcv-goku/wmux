@@ -1160,6 +1160,52 @@ test "unit: browser: css subset matching" {
     }
 }
 
+test "unit: browser: css combinators match without backtracking" {
+    // body > section.a > div.b > div > div.b > span.c
+    const j =
+        \\{"root":{"nodeType":9,"children":[{"nodeType":1,"localName":"html","children":[{"nodeType":1,"localName":"body","children":[
+        \\ {"nodeType":1,"localName":"section","attributes":["class","a"],"children":[
+        \\  {"nodeType":1,"localName":"div","attributes":["class","b"],"children":[
+        \\   {"nodeType":1,"localName":"div","children":[
+        \\    {"nodeType":1,"localName":"div","attributes":["class","b"],"children":[
+        \\     {"nodeType":1,"localName":"span","attributes":["class","c"]}]}]}]}]}]}]}]}}
+    ;
+    var tree = try ax.parseDomDocument(gpa, j, .{});
+    defer tree.deinit();
+    const cases = [_]struct { []const u8, usize }{
+        .{ ".a > .b .c", 1 }, // the nearest .b has no .a parent; a farther one does
+        .{ ".a .b > .c", 1 },
+        .{ ".a > div > div > .b > .c", 1 },
+        .{ ".a > .b > .c", 0 },
+        .{ "section > div > div", 1 },
+        .{ ".b .b .c", 1 },
+        .{ ".b .b .b .c", 0 },
+        .{ "body .a > .b > div > .b > .c", 1 },
+        .{ "html > body > section div span", 1 },
+        .{ "div div", 2 },
+    };
+    for (cases) |c| {
+        const got = try queryCount(&tree, c[0]);
+        if (got != c[1]) {
+            std.log.err("selector {s}: expected {d}, got {d}", .{ c[0], c[1], got });
+            return error.TestExpectedEqual;
+        }
+    }
+
+    // A failing descendant chain over 40 nested divs: exponential before.
+    var json: std.ArrayList(u8) = .empty;
+    defer json.deinit(gpa);
+    try json.appendSlice(gpa, "{\"root\":{\"nodeType\":9,\"children\":[{\"nodeType\":1,\"localName\":\"body\",\"children\":[");
+    for (0..40) |_| try json.appendSlice(gpa, "{\"nodeType\":1,\"localName\":\"div\",\"children\":[");
+    try json.appendSlice(gpa, "{\"nodeType\":1,\"localName\":\"span\"}");
+    for (0..40) |_| try json.appendSlice(gpa, "]}");
+    try json.appendSlice(gpa, "]}]}}");
+    var deep = try ax.parseDomDocument(gpa, json.items, .{});
+    defer deep.deinit();
+    try testing.expectEqual(@as(usize, 0), try queryCount(&deep, "p div div div div div div span"));
+    try testing.expectEqual(@as(usize, 1), try queryCount(&deep, "body div div div div div div span"));
+}
+
 test "unit: browser: css parse errors" {
     const invalid = [_][]const u8{ "", "  ", "[", "[a", "[a=", "[a='x", "#", ".", "a,", ",a", "a >", "> a", "[a!=b]", "1abc", "a)", "[a=b c]" };
     for (invalid) |sel| {

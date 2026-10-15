@@ -56,7 +56,7 @@ pub const Selector = struct {
         const n = tree.get(idx);
         if (n.kind != .element or n.tag.len == 0) return false;
         for (self.alternatives) |alt| {
-            if (matchComplex(tree, idx, alt, alt.compounds.len - 1)) return true;
+            if (matchComplex(tree, idx, alt)) return true;
         }
         return false;
     }
@@ -281,21 +281,45 @@ fn isIdentChar(c: u8) bool {
     return std.ascii.isAlphanumeric(c) or c == '_' or c == '-' or c >= 0x80;
 }
 
-fn matchComplex(tree: *const Tree, idx: NodeIndex, cx: Complex, ci: usize) bool {
-    if (!matchCompound(tree.get(idx), cx.compounds[ci])) return false;
-    if (ci == 0) return true;
-    switch (cx.combinators[ci - 1]) {
-        .child => {
-            const p = parentElement(tree, idx) orelse return false;
-            return matchComplex(tree, p, cx, ci - 1);
-        },
-        .descendant => {
-            var cur = parentElement(tree, idx);
-            while (cur) |p| : (cur = parentElement(tree, p)) {
-                if (matchComplex(tree, p, cx, ci - 1)) return true;
-            }
-            return false;
-        },
+/// Right to left without backtracking. A run of compounds joined by `>`
+/// (a segment) must match on consecutive ancestors; across a descendant
+/// combinator the nearest ancestor where the next segment matches is taken.
+/// Nearest is always safe: a farther match ends higher up and leaves only a
+/// subset of the ancestors for the remaining segments. Cost is linear in
+/// depth x compounds; plain recursion was exponential (a failing
+/// "p div div div div div div div div span" on 40 nested divs took seconds).
+fn matchComplex(tree: *const Tree, idx: NodeIndex, cx: Complex) bool {
+    var hi = cx.compounds.len;
+    var lo = segmentStart(cx, hi);
+    var top = matchSegment(tree, idx, cx, lo, hi) orelse return false;
+    while (lo > 0) {
+        hi = lo;
+        lo = segmentStart(cx, hi);
+        var cur = parentElement(tree, top);
+        top = while (cur) |c| : (cur = parentElement(tree, c)) {
+            if (matchSegment(tree, c, cx, lo, hi)) |t| break t;
+        } else return false;
+    }
+    return true;
+}
+
+/// First compound of the `>` chain that ends at `compounds[hi - 1]`.
+fn segmentStart(cx: Complex, hi: usize) usize {
+    var lo = hi - 1;
+    while (lo > 0 and cx.combinators[lo - 1] == .child) lo -= 1;
+    return lo;
+}
+
+/// `compounds[hi - 1]` at `idx`, each earlier compound of the segment at the
+/// parent of the previous one; returns the node `compounds[lo]` matched.
+fn matchSegment(tree: *const Tree, idx: NodeIndex, cx: Complex, lo: usize, hi: usize) ?NodeIndex {
+    var cur = idx;
+    var ci = hi - 1;
+    while (true) {
+        if (!matchCompound(tree.get(cur), cx.compounds[ci])) return null;
+        if (ci == lo) return cur;
+        ci -= 1;
+        cur = parentElement(tree, cur) orelse return null;
     }
 }
 
