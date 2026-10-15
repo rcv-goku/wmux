@@ -61,6 +61,9 @@ pub const Node = struct {
     hidden: bool = false,
     /// onclick / cursor:pointer / tabindex hint (snapshot --cursor).
     clickable: bool = false,
+    /// DOM shadow root (a `.document` node from `shadowRoots`): selectors
+    /// and ids of the main document never reach inside it.
+    shadow_root: bool = false,
     states: States = .{},
 
     /// Attribute lookup, ASCII case-insensitive on the name.
@@ -665,7 +668,11 @@ pub fn parseDomDocument(gpa: Allocator, json: []const u8, opts: ParseOptions) Pa
                 n.kind = .text;
                 n.text = stringField(o, "nodeValue") orelse "";
             },
-            9, 11 => n.kind = .document,
+            9, 11 => {
+                n.kind = .document;
+                // pierce:true reports shadow roots as DocumentFragments.
+                n.shadow_root = node_type == 11;
+            },
             else => {
                 n.kind = .other;
                 n.hidden = true;

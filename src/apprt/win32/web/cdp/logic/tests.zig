@@ -1068,8 +1068,9 @@ test "unit: browser: iframes and shadow roots carry frame ids and css scope" {
     // #dup is unique within each document, so both paths use it.
     try testing.expectEqualStrings("#dup", pay.css_path.?);
     try testing.expectEqualStrings("#dup", (try table.lookup("e1")).css_path.?);
-    // Shadow content has no document-element ancestor chain: path starts at the shadow child.
-    try testing.expectEqualStrings("button", (try table.lookup("e3")).css_path.?);
+    // document.querySelector cannot reach shadow content: "button" would
+    // resolve to the "Top" button, so the ref keeps only its backend id.
+    try testing.expect((try table.lookup("e3")).css_path == null);
     // CSS combinators do not cross into the iframe document or shadow root.
     try testing.expectEqual(@as(usize, 0), try queryCount(&tree, "iframe button"));
     try testing.expectEqual(@as(usize, 0), try queryCount(&tree, "x-card button"));
@@ -1078,6 +1079,58 @@ test "unit: browser: iframes and shadow roots carry frame ids and css scope" {
     // Lookup by backend id honours the frame.
     try testing.expect(tree.findByBackendId(9, "CHILD") != null);
     try testing.expect(tree.findByBackendId(9, "OTHER") == null);
+}
+
+test "unit: browser: css paths only where querySelector finds the same element" {
+    // AX-sourced tree annotated with DOM tags: the AX tree has no node for
+    // the hidden first button, so an AX-derived "body > button" would make
+    // document.querySelector return that hidden button instead.
+    const axj =
+        \\{"nodes":[
+        \\ {"nodeId":"1","role":{"type":"internalRole","value":"RootWebArea"},"childIds":["2"],"backendDOMNodeId":1},
+        \\ {"nodeId":"2","ignored":true,"role":{"type":"role","value":"generic"},"childIds":["3"],"backendDOMNodeId":3},
+        \\ {"nodeId":"3","role":{"type":"role","value":"button"},"name":{"type":"computedString","value":"Go"},"backendDOMNodeId":6}
+        \\]}
+    ;
+    const domj =
+        \\{"root":{"nodeType":9,"backendNodeId":1,"children":[{"nodeType":1,"localName":"html","backendNodeId":2,"children":[{"nodeType":1,"localName":"body","backendNodeId":3,"children":[
+        \\ {"nodeType":1,"localName":"button","backendNodeId":5,"attributes":["hidden",""],"children":[{"nodeType":3,"nodeValue":"Old"}]},
+        \\ {"nodeType":1,"localName":"button","backendNodeId":6,"children":[{"nodeType":3,"nodeValue":"Go"}]},
+        \\ {"nodeType":1,"localName":"my.el-x","backendNodeId":7},
+        \\ {"nodeType":1,"localName":"my.el-x","backendNodeId":8,"attributes":["id","card"]},
+        \\ {"nodeType":1,"localName":"x-host","backendNodeId":9,"shadowRoots":[{"nodeType":11,"backendNodeId":10,"children":[
+        \\  {"nodeType":1,"localName":"input","backendNodeId":11,"attributes":["id","only"]}]}]}]}]}]}}
+    ;
+    var dom = try ax.parseDomDocument(gpa, domj, .{});
+    defer dom.deinit();
+    var a = try ax.parseAxTree(gpa, axj, .{});
+    defer a.deinit();
+    try a.annotateFromDom(&dom);
+    var table = refs.RefTable.init(gpa);
+    defer table.deinit();
+    var snap = try snapshot.render(gpa, &a, &table, .{});
+    defer snap.deinit();
+    try testing.expect((try table.lookup("e1")).css_path == null);
+    try testing.expectEqual(@as(?i64, 6), (try table.lookup("e1")).backend_node_id);
+    // The find result then names the ref instead of a CSS path.
+    var aw: std.Io.Writer.Allocating = .init(gpa);
+    defer aw.deinit();
+    var s: std.json.Stringify = .{ .writer = &aw.writer };
+    try locators.writeFindResult(gpa, &s, &a, &table, a.findByBackendId(6, null).?, 1, "find");
+    try testing.expect(std.mem.indexOf(u8, aw.written(), "\"selector\":\"@e1\"") != null);
+
+    const Case = struct { i64, ?[]const u8 };
+    for ([_]Case{
+        .{ 6, "html > body > button:nth-of-type(2)" },
+        .{ 7, null }, // tag needs escaping
+        .{ 8, "#card" }, // the id makes the tag irrelevant
+        .{ 9, "html > body > x-host" },
+        .{ 11, null }, // shadow content, even with a unique id
+    }) |c| {
+        const p = try css.cssPath(gpa, &dom, dom.findByBackendId(c[0], null).?);
+        defer if (p) |q| gpa.free(q);
+        if (c[1]) |want| try testing.expectEqualStrings(want, p.?) else try testing.expect(p == null);
+    }
 }
 
 test "unit: browser: css path falls back to nth-of-type for duplicate ids" {

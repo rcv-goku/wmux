@@ -343,12 +343,18 @@ pub const max_path_steps = 64;
 /// A CSS path that `document.querySelector` resolves to `idx` within its own
 /// document: `#id` when the id is a plain identifier and unique in that
 /// document, else `tag:nth-of-type(k)` steps from the document element.
-/// Returns null for non-element or AX-only nodes and for elements nested
-/// deeper than `max_path_steps` (resolve those by backendNodeId instead).
-/// Caller frees.
+/// Returns null (resolve by backendNodeId instead) when no such path can be
+/// trusted: non-element nodes; trees not parsed from `DOM.getDocument`
+/// (AX parents and siblings, even with DOM tags annotated, differ from the
+/// DOM, so nth-of-type would count the wrong siblings); elements inside a
+/// shadow tree, which `document.querySelector` cannot reach; tag names
+/// that are not plain identifiers; elements nested deeper than
+/// `max_path_steps`. Caller frees.
 pub fn cssPath(gpa: Allocator, tree: *const Tree, idx: NodeIndex) Allocator.Error!?[]u8 {
+    if (tree.source != .dom) return null;
     const n = tree.get(idx);
     if (n.kind != .element or n.tag.len == 0) return null;
+    if (tree.get(documentOf(tree, idx)).shadow_root) return null;
     const Step = struct { node: NodeIndex, kind: enum { id, tag, nth }, nth: usize = 0 };
     var steps: [max_path_steps]Step = undefined;
     var count: usize = 0;
@@ -363,6 +369,9 @@ pub fn cssPath(gpa: Allocator, tree: *const Tree, idx: NodeIndex) Allocator.Erro
                 break;
             }
         }
+        // A tag step: `my.el-x` or `a:b` would parse as a class or a
+        // pseudo-class.
+        if (!isPlainIdent(cn.tag)) return null;
         const parent = parentElement(tree, c) orelse {
             steps[count] = .{ .node = c, .kind = .tag };
             count += 1;
