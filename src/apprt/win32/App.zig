@@ -8,42 +8,40 @@ const apprt = @import("../../apprt.zig");
 const configpkg = @import("../../config.zig");
 const Config = configpkg.Config;
 const CoreApp = @import("../../App.zig");
-const CoreSurface = @import("../../Surface.zig");
-const internal_os = @import("../../os/main.zig");
+const input = @import("../../input.zig");
 
 const agent_session = @import("agent_session.zig");
 const BrowserPane = @import("BrowserPane.zig");
-const ipc = @import("rpc/compat/legacy_json.zig");
-const legacy_pipe = @import("rpc/server/legacy_pipe.zig");
-const notifications = @import("features/notifications/api.zig");
-const Pane = @import("Pane.zig");
-const PaneContainer = @import("PaneContainer.zig");
-const QuickTerminal = @import("features/quick_terminal/QuickTerminal.zig");
-const global_hotkey = @import("features/quick_terminal/global_hotkey.zig");
-const sync_input = @import("features/sync_input/broadcast.zig");
-const SessionState = @import("SessionState.zig");
 const Surface = @import("Surface.zig");
 const Window = @import("Window.zig");
-const SplitTree = @import("../../datastruct/split_tree.zig").SplitTree;
+
+// app/ plumbing (ARCHITECTURE.md ADR-1.6).
+const app_clipboard = @import("app/clipboard.zig");
+const app_modal = @import("app/modal.zig");
+const app_tasks = @import("app/tasks.zig");
+const app_timers = @import("app/timers.zig");
+const broadcast_window = @import("app/broadcast_window.zig");
+const hooks = @import("app/hooks.zig");
+const message_loop = @import("app/message_loop.zig");
+const perform_action = @import("app/perform_action.zig");
+const RuntimeEnv = @import("app/runtime_env.zig").RuntimeEnv;
+
+// Layers.
+const config_files = @import("settings/legacy_config_files.zig");
+const ipc = @import("rpc/compat/legacy_json.zig");
+const legacy_pipe = @import("rpc/server/legacy_pipe.zig");
 const taskbar = @import("platform/taskbar.zig");
 const w32 = @import("platform/win32.zig");
 const web_env = @import("web/env.zig");
-const meta = @import("features/meta/api.zig");
-const updater = @import("features/updater/legacy_check.zig");
-const config_files = @import("settings/legacy_config_files.zig");
-const app_tasks = @import("app/tasks.zig");
-const app_clipboard = @import("app/clipboard.zig");
-const app_modal = @import("app/modal.zig");
-const broadcast_window = @import("app/broadcast_window.zig");
-const hooks = @import("app/hooks.zig");
-const app_timers = @import("app/timers.zig");
-const message_loop = @import("app/message_loop.zig");
-const RuntimeEnv = @import("app/runtime_env.zig").RuntimeEnv;
-const perform_action = @import("app/perform_action.zig");
 const wv2 = @import("platform/webview2.zig");
 
-const build_config = @import("../../build_config.zig");
-const input = @import("../../input.zig");
+// Features (through their api.zig where they have one).
+const global_hotkey = @import("features/quick_terminal/global_hotkey.zig");
+const meta = @import("features/meta/api.zig");
+const notifications = @import("features/notifications/api.zig");
+const QuickTerminal = @import("features/quick_terminal/QuickTerminal.zig");
+const sync_input = @import("features/sync_input/broadcast.zig");
+const updater = @import("features/updater/legacy_check.zig");
 
 const log = std.log.scoped(.win32);
 
@@ -849,7 +847,6 @@ fn surfaceWndProc(
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
         },
 
-
         w32.WM_IME_STARTCOMPOSITION => {
             surface.handleImeStartComposition();
             // Let DefWindowProc show the default composition window.
@@ -1068,8 +1065,6 @@ fn msgWndProc(
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
-
-const testing = std.testing;
 
 test {
     // Pull in the tests of modules App owns but only references by
