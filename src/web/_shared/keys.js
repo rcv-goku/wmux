@@ -32,8 +32,9 @@
  *     KeyRouter skips this panel (shortcut recorders); the returned release
  *     function turns it off again (also on pagehide).
  *
- * Text always wins: printable keys typed into text fields are never taken, and
- * Ctrl+Alt (AltGr) combinations that produce a character are text.
+ * Text always wins: in text fields only Ctrl/Alt/Win combinations, Escape and
+ * F-keys can match (typing and caret keys stay with the field), and AltGr or
+ * Ctrl+Alt combinations that produce a character are text.
  * Strokes use the ADR-8.3 grammar: modifiers ctrl/shift/alt/win joined with
  * "+", letters by virtual key, digits and punctuation by US key position.
  */
@@ -390,12 +391,15 @@ export function strokeFromKeyboardEvent(e) {
   if (!e || e.isComposing || e.keyCode === 229) return null;
   const key = keyFromEvent(e);
   if (!key) return null;
-  if (e.ctrlKey && e.altKey && typeof e.key === "string" && e.key.length === 1) {
-    // Ctrl+Alt that produced text is AltGr typing: text always wins (ADR-8.2).
+  if (typeof e.key === "string" && e.key.length === 1) {
+    // AltGr (or Ctrl+Alt) that produced text is typing: text always wins (ADR-8.2).
     const altGraph = typeof e.getModifierState === "function" && e.getModifierState("AltGraph");
-    const nonAscii = e.key.charCodeAt(0) > 0x7e;
-    const changed = !e.shiftKey && e.key.toLowerCase() !== key;
-    if (altGraph || nonAscii || changed) return null;
+    if (altGraph) return null;
+    if (e.ctrlKey && e.altKey) {
+      const nonAscii = e.key.charCodeAt(0) > 0x7e;
+      const changed = !e.shiftKey && e.key.toLowerCase() !== key;
+      if (nonAscii || changed) return null;
+    }
   }
   return formatStroke({
     ctrl: Boolean(e.ctrlKey),
@@ -426,6 +430,21 @@ function eventTarget(e) {
   const path = typeof e.composedPath === "function" ? e.composedPath() : null;
   const target = path && path.length > 0 ? path[0] : e.target;
   return target && target.nodeType === 1 ? target : null;
+}
+
+/**
+ * Whether a stroke may match while a text field has focus. Fields own typing
+ * and caret keys (letters, digits, Enter, Tab, Space, Backspace, Delete,
+ * arrows, Home/End, PgUp/PgDn, with or without Shift); only Ctrl, Alt or Win
+ * combinations, Escape and F-keys can be shortcuts there.
+ *
+ * @param {string} stroke canonical stroke
+ */
+export function isTextFieldShortcut(stroke) {
+  const parts = String(stroke).split("+");
+  const key = parts[parts.length - 1];
+  if (key === "escape" || /^f([1-9]|1[0-9]|2[0-4])$/.test(key)) return true;
+  return parts.slice(0, -1).some((m) => m === "ctrl" || m === "alt" || m === "win");
 }
 
 /** Whether the event targets a text-entry control (inputs, textareas, contenteditable). */
@@ -462,7 +481,7 @@ let controller = null;
  *
  * @param {{handlers?: Record<string, Function>, keymap?: unknown}} [options]
  *   handlers: action id -> handler({action, strokes, event})
- *   keymap: explicit keymap (otherwise taken from panel.init and "keymap" events)
+ *   keymap: initial keymap; panel.init.keymap and "keymap" events replace it
  */
 export function installKeys(options) {
   if (!controller) controller = createController();
@@ -481,6 +500,7 @@ function createController() {
   let localPending = null;
   let hostPending = null;
   let captureDepth = 0;
+  let captureEpoch = 0; // bumped when pagehide drops every capture
   let forwarding = true;
 
   function setKeymap(raw) {
@@ -596,8 +616,9 @@ function createController() {
       return;
     }
 
-    // Text always wins in text fields; Enter and Space keep activating controls.
-    if (!accel && isTextEntryTarget(e)) return;
+    // Text always wins in text fields (typing and caret keys stay with the
+    // field); Enter and Space keep activating controls.
+    if (isTextEntryTarget(e) && !isTextFieldShortcut(stroke)) return;
     const key = stroke.slice(stroke.lastIndexOf("+") + 1);
     if (!accel && (key === "enter" || key === "space") && isActivationTarget(e)) return;
 
@@ -648,10 +669,13 @@ function createController() {
     clearLocalPending();
     clearHostPending();
     if (captureDepth === 1) setHostCapture(true);
+    const epoch = captureEpoch;
     let released = false;
     return () => {
       if (released) return;
       released = true;
+      // A capture dropped by pagehide is already released.
+      if (epoch !== captureEpoch) return;
       captureDepth -= 1;
       if (captureDepth === 0) setHostCapture(false);
     };
@@ -662,6 +686,7 @@ function createController() {
     clearHostPending();
     if (captureDepth > 0) {
       captureDepth = 0;
+      captureEpoch += 1;
       wmux.send("panel.key_capture", { on: false });
     }
   }

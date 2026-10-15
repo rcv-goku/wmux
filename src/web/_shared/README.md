@@ -294,9 +294,11 @@ matched by virtual key, digits and punctuation by US key position. An object
 
 Behavior for a keydown, mouse X1 (`mouse4`) or X2 (`mouse5`):
 
-1. Printable keys in text fields are never taken; Enter and Space on buttons
-   and links keep activating them; IME composition, dead keys and AltGr text
-   are ignored.
+1. Text fields keep typing and caret keys: while one has focus, only Ctrl, Alt
+   or Win combinations, Escape and F-keys can match (letters, digits, Enter,
+   Tab, Space, Backspace, Delete, arrows, Home/End and PgUp/PgDn, with or
+   without Shift, stay with the field). Enter and Space on buttons and links
+   keep activating them; IME composition, dead keys and AltGr text are ignored.
 2. A binding whose action has a page handler runs the handler and consumes the
    event.
 3. A binding without a page handler, made only of strokes native could not
