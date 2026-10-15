@@ -142,19 +142,19 @@ while ($true) {
                     'events.stream' {
                         $names = if ($req.params.names) { @($req.params.names) } else { @() }
                         $cats = if ($req.params.categories) { @($req.params.categories) } else { @() }
-                        $boot = '0F221057-0320-41B7-8CB3-083C8D927D95'
+                        $boot = 'EED6A3D5-CDF0-4823-A383-CE4C9EC42335'
                         Send-Json $writer ([ordered]@{
                                 type = 'ack'; protocol = 'cmux-events'; version = 1; boot_id = $boot
-                                subscription_id = '8F6F1E66-0D6E-4B4D-A0F8-0F7B0B7B92CA'; heartbeat_interval_seconds = 15; replay_count = 2
+                                subscription_id = '460F280C-12C7-428C-A982-EA9D8AA60F45'; heartbeat_interval_seconds = 15; replay_count = 2
                                 resume = [ordered]@{ after_seq = $req.params.after_seq; requested_after_seq = $req.params.after_seq; oldest_seq = 1; latest_seq = 2; next_seq = 3; gap = $false }
                                 filters = [ordered]@{ names = $names; categories = $cats }
                             })
                         foreach ($n in 1, 2) {
-                            $ws = if ($n -eq 1) { '9B6920C1-6C29-4C27-A069-78CF285F932A' } else { '83F4E6A4-5246-4DB8-A412-9CE7B059FA6C' }
+                            $ws = if ($n -eq 1) { '384E46CB-5986-49BE-9696-4BC07AF97C4D' } else { 'C0CD13DB-0141-4529-B8E8-D5DF0A696C28' }
                             Send-Json $writer ([ordered]@{
                                     type = 'event'; protocol = 'cmux-events'; version = 1; boot_id = $boot; seq = $n; id = "$boot-$n"
                                     name = 'workspace.created'; category = 'workspace'; source = 'workspace.lifecycle'
-                                    occurred_at = '2026-05-06T19:18:03.421Z'; workspace_id = $ws; surface_id = $null; pane_id = $null; window_id = $null
+                                    occurred_at = '2026-10-15T09:41:27.250Z'; workspace_id = $ws; surface_id = $null; pane_id = $null; window_id = $null
                                     payload = [ordered]@{ index = $n }
                                 })
                             if ($n -eq 1) { Send-Json $writer ([ordered]@{ type = 'heartbeat'; protocol = 'cmux-events'; version = 1; boot_id = $boot; latest_seq = 1 }) }
@@ -271,8 +271,8 @@ Test-Case 'module exports exactly the Appendix D.3 functions and parameters' {
 }
 
 Test-Case 'Assert-JsonShape wildcards UUIDs, refs and timestamps and reports paths' {
-    $golden = '{"workspace_id":"9B6920C1-6C29-4C27-A069-78CF285F932A","workspace_ref":"workspace:4","index":3,' +
-    '"created_at":"2026-05-06T19:18:03.421Z","event_id":"0F221057-0320-41B7-8CB3-083C8D927D95-126","title":"api","tags":["a","b"]}'
+    $golden = '{"workspace_id":"384E46CB-5986-49BE-9696-4BC07AF97C4D","workspace_ref":"workspace:4","index":3,' +
+    '"created_at":"2026-10-15T09:41:27.250Z","event_id":"EED6A3D5-CDF0-4823-A383-CE4C9EC42335-57","title":"api","tags":["a","b"]}'
     $good = [ordered]@{
         workspace_id = [guid]::NewGuid().ToString().ToUpperInvariant(); workspace_ref = 'workspace:17'; index = 3
         created_at = '2026-10-15T08:00:00Z'; event_id = ([guid]::NewGuid().ToString() + '-9'); title = 'api'; tags = @('a', 'b'); extra = 1
@@ -409,7 +409,7 @@ Test-Case 'v2 envelope encoding and decoding' {
     Assert-Equal '{"id":7,"method":"system.ping","params":{}}' (InModule { New-WmuxRpcRequestLine -Method 'system.ping' -Params $null -Id 7 })
     $null = Assert-Throws { InModule { New-WmuxRpcRequestLine -Method 'x' -Params 'nope' -Id 1 } }
 
-    $ok = '{"id":"abc","ok":true,"result":{"workspace_id":"9B6920C1-6C29-4C27-A069-78CF285F932A","index":3}}'
+    $ok = '{"id":"abc","ok":true,"result":{"workspace_id":"384E46CB-5986-49BE-9696-4BC07AF97C4D","index":3}}'
     $r = InModule { param($l) ConvertFrom-WmuxRpcReply -Line $l -RequestId 'abc' -Method 'workspace.create' } $ok
     Assert-Equal 3 $r.index
     $arr = InModule { ConvertFrom-WmuxRpcReply -Line '{"id":1,"ok":true,"result":[{"a":1}]}' -RequestId 1 -Method 'm' }
@@ -436,9 +436,9 @@ Test-Case 'v2 envelope encoding and decoding' {
 }
 
 Test-Case 'JSON conversion keeps strings, u64 ids and single-element arrays' {
-    $v = [WmuxTestHarness.Json]::Parse('{"t":"2026-05-06T19:18:03.421Z","big":17293822569102704640,"one":[1],"n":null,"f":1.5,"nested":{"k":"v"},"neg":-3}')
+    $v = [WmuxTestHarness.Json]::Parse('{"t":"2026-10-15T09:41:27.250Z","big":17293822569102704640,"one":[1],"n":null,"f":1.5,"nested":{"k":"v"},"neg":-3}')
     Assert-True ($v.t -is [string]) 'ISO dates stay strings'
-    Assert-Equal '2026-05-06T19:18:03.421Z' $v.t
+    Assert-Equal '2026-10-15T09:41:27.250Z' $v.t
     Assert-True ($v.big -is [uint64]) 'ids beyond Int64 become UInt64'
     Assert-Equal ([uint64]'17293822569102704640') $v.big
     Assert-True ($v.one -is [array]) 'single-element arrays survive'
@@ -447,7 +447,7 @@ Test-Case 'JSON conversion keeps strings, u64 ids and single-element arrays' {
     Assert-Equal 1.5 $v.f
     Assert-Equal 'v' $v.nested.k
     Assert-True ($v.neg -is [long])
-    Assert-Equal '{"t":"2026-05-06T19:18:03.421Z","big":17293822569102704640,"one":[1],"n":null,"f":1.5,"nested":{"k":"v"},"neg":-3}' (ConvertTo-Json -InputObject $v -Compress -Depth 10)
+    Assert-Equal '{"t":"2026-10-15T09:41:27.250Z","big":17293822569102704640,"one":[1],"n":null,"f":1.5,"nested":{"k":"v"},"neg":-3}' (ConvertTo-Json -InputObject $v -Compress -Depth 10)
 }
 
 Test-Case 'settings document, ghostty.conf and child environment follow D.2 (no launch)' {
@@ -600,14 +600,14 @@ Test-Case 'event helpers against a fake v2 server: stream, read, wait' {
         $null = Wait-WmuxCondition -TimeoutSec 10 -IntervalMs 20 { $s.EndOfStream }
         $events = @(Read-WmuxEvents $s -TimeoutSec 5)
         Assert-Equal 2 $events.Count 'heartbeats are not returned as events'
-        Assert-Equal '83F4E6A4-5246-4DB8-A412-9CE7B059FA6C' $events[1].workspace_id
-        Assert-JsonShape $events[0] '{"type":"event","seq":"<int>","id":"0F221057-0320-41B7-8CB3-083C8D927D95-1","name":"workspace.created","workspace_id":"<uuid>","occurred_at":"<timestamp>"}'
+        Assert-Equal 'C0CD13DB-0141-4529-B8E8-D5DF0A696C28' $events[1].workspace_id
+        Assert-JsonShape $events[0] '{"type":"event","seq":"<int>","id":"EED6A3D5-CDF0-4823-A383-CE4C9EC42335-1","name":"workspace.created","workspace_id":"<uuid>","occurred_at":"<timestamp>"}'
         $null = Assert-Throws -Code 'harness_stream_closed' { Read-WmuxEvents $s -TimeoutSec 1 }
         Close-WmuxEventStream $s
         $logLines = @(Get-Content -LiteralPath $s.LogPath)
         Assert-Equal 4 $logLines.Count 'the stream log keeps every frame (ack, events, heartbeat)'
 
-        $wanted = '83F4E6A4-5246-4DB8-A412-9CE7B059FA6C'
+        $wanted = 'C0CD13DB-0141-4529-B8E8-D5DF0A696C28'
         $frame = Wait-WmuxEvent $w -Name 'workspace.created' -Where { $_.workspace_id -eq $wanted } -TimeoutSec 10
         Assert-Equal 2 $frame.seq
         $frame = Wait-WmuxEvent $w -Category 'workspace' -TimeoutSec 10
