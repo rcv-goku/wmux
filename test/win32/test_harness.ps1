@@ -122,6 +122,17 @@ try {
     Write-Warning "SetThreadDpiAwarenessContext unavailable; continuing DPI-unaware ($($_.Exception.Message))"
 }
 
+# Processes the harness may target without -ProcessId: wmux builds of this checkout's zig-out
+# and the ghostty-test.exe copy that ghostty_test.sh runs from %TEMP%, never the installed
+# wmux the developer is working in.
+function Test-DevWmuxProcess {
+    param($Process)
+    if ($Process.ProcessName -eq "ghostty-test") { return $true }
+    $zigOut = (Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) "zig-out") + "\"
+    return ($Process.Name -like "*wmux*") -and $Process.Path -and
+        $Process.Path.StartsWith($zigOut, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
 function Find-WmuxWindow {
     param([int]$ProcessId = 0, [long]$DirectHwnd = 0)
 
@@ -142,13 +153,7 @@ function Find-WmuxWindow {
         $p = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
         if ($p) { $procs = @($p) }
     } else {
-        # Without -ProcessId only consider dev builds of this checkout, never the
-        # installed wmux the developer is working in.
-        $zigOut = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) "zig-out"
-        $procs = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
-            $_.Name -like "*wmux*" -and $_.Path -and
-                $_.Path.StartsWith($zigOut, [System.StringComparison]::OrdinalIgnoreCase)
-        })
+        $procs = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { Test-DevWmuxProcess $_ })
     }
 
     foreach ($p in $procs) {
@@ -348,12 +353,9 @@ function Invoke-Kill {
         & taskkill /PID $ProcessId /T /F 2>$null | Out-Null
         Write-Output "KILLED=$ProcessId"
     } else {
-        # Only dev builds of this checkout: a bare "wmux*" match would also kill the
+        # Only dev builds (Test-DevWmuxProcess): a bare "wmux*" match would also kill the
         # installed wmux the developer is working in.
-        $zigOut = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) "zig-out"
-        Get-Process wmux -ErrorAction SilentlyContinue | Where-Object {
-            $_.Path -and $_.Path.StartsWith($zigOut, [System.StringComparison]::OrdinalIgnoreCase)
-        } | ForEach-Object {
+        Get-Process -ErrorAction SilentlyContinue | Where-Object { Test-DevWmuxProcess $_ } | ForEach-Object {
             & taskkill /PID $_.Id /T /F 2>$null | Out-Null
         }
         Write-Output "KILLED=all"

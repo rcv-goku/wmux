@@ -1,6 +1,6 @@
 #!/bin/bash
 # Ghostty Win32 Test Runner
-# Runs from WSL2, launches ghostty.exe on Windows side, validates behavior
+# Runs from WSL2, launches wmux.exe (as a ghostty-test.exe copy) on Windows side, validates behavior
 #
 # Usage:
 #   ./ghostty_test.sh [test_name]    Run a specific test
@@ -30,9 +30,9 @@ echo "Copying exe to local path to avoid security prompts..."
 powershell.exe -ExecutionPolicy Bypass -Command "Get-Process ghostty-test -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue" 2>/dev/null || true
 sleep 0.3
 # Retry the copy once if it fails (Windows file locking can be transient).
-cp "$REPO_DIR/zig-out/bin/ghostty.exe" "$(wslpath "$WIN_TEMP")/ghostty-test.exe" 2>/dev/null || {
+cp "$REPO_DIR/zig-out/bin/wmux.exe" "$(wslpath "$WIN_TEMP")/ghostty-test.exe" 2>/dev/null || {
     sleep 0.5
-    cp "$REPO_DIR/zig-out/bin/ghostty.exe" "$(wslpath "$WIN_TEMP")/ghostty-test.exe"
+    cp "$REPO_DIR/zig-out/bin/wmux.exe" "$(wslpath "$WIN_TEMP")/ghostty-test.exe"
 }
 GHOSTTY_EXE="$LOCAL_EXE"
 
@@ -900,7 +900,7 @@ test_new_tab() {
     ps -Action sendkeys -ProcessId "$pid" -Keys "^+t"
     sleep 3
 
-    # Count top-level Ghostty windows — should still be 1 (tab is inside the window)
+    # Count top-level WmuxWindow windows — should still be 1 (tab is inside the window)
     local count
     count="$(powershell.exe -ExecutionPolicy Bypass -Command '
 Add-Type @"
@@ -920,7 +920,7 @@ $count=0
 $cb=[WC+EP]{param($h,$l); $p=[uint32]0; [WC]::GetWindowThreadProcessId($h,[ref]$p)|Out-Null
   if($p -eq '"$pid"' -and [WC]::IsWindowVisible($h)){
     $cls=New-Object System.Text.StringBuilder 64; [WC]::GetClassName($h,$cls,64)|Out-Null
-    if($cls.ToString() -eq "GhosttyWindow"){
+    if($cls.ToString() -eq "WmuxWindow"){
       $cr=New-Object WC+RECT; [WC]::GetClientRect($h,[ref]$cr)|Out-Null
       if($cr.R -gt 0){$script:count++}}}; $true}
 [WC]::EnumWindows($cb,[IntPtr]::Zero)|Out-Null
