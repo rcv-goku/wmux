@@ -79,5 +79,6 @@ test "unit: cli: the version line names cmux" {
 test {
     _ = agents;
     _ = commands;
+    _ = @import("hooks/tests.zig");
     _ = @import("wmux_proto");
 }
