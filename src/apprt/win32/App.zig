@@ -13,7 +13,8 @@ const internal_os = @import("../../os/main.zig");
 
 const agent_session = @import("agent_session.zig");
 const BrowserPane = @import("BrowserPane.zig");
-const ipc = @import("ipc.zig");
+const ipc = @import("rpc/compat/legacy_json.zig");
+const legacy_pipe = @import("rpc/server/legacy_pipe.zig");
 const Pane = @import("Pane.zig");
 const PaneContainer = @import("PaneContainer.zig");
 const QuickTerminal = @import("features/quick_terminal/QuickTerminal.zig");
@@ -23,6 +24,7 @@ const Window = @import("Window.zig");
 const SplitTree = @import("../../datastruct/split_tree.zig").SplitTree;
 const taskbar = @import("platform/taskbar.zig");
 const w32 = @import("platform/win32.zig");
+const worktree = @import("features/workspaces/worktree.zig");
 const ws_meta = @import("ws_meta.zig");
 const wv2 = @import("platform/webview2.zig");
 
@@ -173,7 +175,7 @@ com_initialized: bool = false,
 /// so all browser driving happens on this UI thread. Stopped before
 /// msg_hwnd is destroyed in terminate(). Null if startup failed (e.g.
 /// a stale pipe of the same name): IPC is then simply unavailable.
-ipc_server: ?*ipc.Server = null,
+ipc_server: ?*legacy_pipe.Server = null,
 
 /// Monotonic source of stable browser-pane ids handed back over IPC so
 /// later navigate/eval commands can target a specific pane. Assigned in
@@ -2754,8 +2756,8 @@ fn startIpcServer(self: *App) void {
     }
     const alloc = self.core_app.alloc;
     var name_buf: [64]u8 = undefined;
-    const name = ipc.defaultPipeName(&name_buf) catch return;
-    self.ipc_server = ipc.Server.start(alloc, name, ipcCallback, self) catch |err| {
+    const name = legacy_pipe.defaultPipeName(&name_buf) catch return;
+    self.ipc_server = legacy_pipe.Server.start(alloc, name, ipcCallback, self) catch |err| {
         log.warn("failed to start browser IPC server: {}", .{err});
         return;
     };
@@ -2808,7 +2810,7 @@ fn ipcPrepareWorktree(self: *App, req: *ipc.Request, branch: []const u8) bool {
     const server = self.ipc_server orelse return false;
     const alloc = self.core_app.alloc;
 
-    const validated = ipc.validateBranch(branch) catch |err| {
+    const validated = worktree.validateBranch(branch) catch |err| {
         server.sendError(req.id, @errorName(err)) catch {};
         return false;
     };
@@ -2822,7 +2824,7 @@ fn ipcPrepareWorktree(self: *App, req: *ipc.Request, branch: []const u8) bool {
         return false;
     };
 
-    const path = ipc.worktreePath(alloc, repo, validated) catch {
+    const path = worktree.worktreePath(alloc, repo, validated) catch {
         server.sendError(req.id, "out of memory") catch {};
         return false;
     };
@@ -3404,7 +3406,7 @@ fn ipcFindBrowser(self: *App, id: ?u32) ?*BrowserPane {
 }
 
 /// Read an optional u32 "id" field from the request args.
-/// (Pure logic lives in ipc.zig so the protocol tests cover it.)
+/// (Pure logic lives in legacy_json.zig so the protocol tests cover it.)
 const ipcArgId = ipc.argId;
 
 /// Read a required string field from the request args.
@@ -4062,7 +4064,7 @@ fn ipcNotifyMarkOldestNext(self: *App, req: *ipc.Request) anyerror!void {
 // ---------------------------------------------------------------------------
 
 /// Read the optional u64 "surface" arg: a stable surface id
-/// (GHOSTTY_SURFACE_ID). Pure logic in ipc.zig so the protocol tests cover it.
+/// (GHOSTTY_SURFACE_ID). Pure logic in legacy_json.zig so the protocol tests cover it.
 const ipcArgU64 = ipc.argU64;
 
 /// A resolved (workspace, tab) target within the IPC target window. tab
@@ -5670,6 +5672,11 @@ test {
     // `_ = WindowState`.
     _ = ws_meta;
     _ = agent_session;
+    // The ipc.zig split (W0-A1): keep every moved test collected.
+    _ = ipc;
+    _ = legacy_pipe;
+    _ = worktree;
+    _ = @import("features/status/log_ring.zig");
 }
 
 test "unit: parseAttentionOsc recognizes the ring/clear sentinel" {

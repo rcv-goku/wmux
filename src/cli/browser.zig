@@ -4,10 +4,9 @@ const Allocator = std.mem.Allocator;
 const Action = @import("../cli.zig").ghostty.Action;
 const args = @import("args.zig");
 
-// The wire protocol and line framing are shared with the server so the
-// request/response shape can never drift. ipc.zig only compiles on
-// Windows (it pulls in named-pipe externs), so it's imported lazily
-// inside the Windows-only code path below.
+// The wire protocol and line framing (rpc/compat/legacy_json.zig) are
+// shared with the server so the request/response shape can never drift.
+// They are imported lazily inside the Windows-only code path below.
 
 /// Options exists so the shared CLI machinery (completions, docs,
 /// `Action.options()`) has a type to reflect over. `+browser` parses its
@@ -83,7 +82,7 @@ pub fn run(alloc: Allocator) !u8 {
 const windows_impl = if (builtin.os.tag == .windows) struct {
     const windows = std.os.windows;
     const kernel32 = windows.kernel32;
-    const ipc = @import("../apprt/win32/ipc.zig");
+    const ipc = @import("../apprt/win32/rpc/compat/legacy_json.zig");
 
     // FindFirstFileW / FindNextFileW for enumerating named pipes. std
     // doesn't surface these, so declare the minimum we need.

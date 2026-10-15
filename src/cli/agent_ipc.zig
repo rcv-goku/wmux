@@ -18,7 +18,7 @@ const Allocator = std.mem.Allocator;
 pub const impl = if (builtin.os.tag == .windows) struct {
     const windows = std.os.windows;
     const kernel32 = windows.kernel32;
-    const ipc = @import("../apprt/win32/ipc.zig");
+    const ipc = @import("../apprt/win32/rpc/compat/legacy_json.zig");
 
     // FindFirstFileW / FindNextFileW for enumerating named pipes. std
     // doesn't surface these, so declare the minimum we need.

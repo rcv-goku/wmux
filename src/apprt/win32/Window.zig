@@ -22,7 +22,6 @@ const Surface = @import("Surface.zig");
 const SessionState = @import("SessionState.zig");
 const WindowState = @import("WindowState.zig");
 const SplitTree = @import("../../datastruct/split_tree.zig").SplitTree;
-const ipc = @import("ipc.zig");
 const w32 = @import("platform/win32.zig");
 
 /// Maximum bytes of a per-tab status string (set-status). Inline, like
