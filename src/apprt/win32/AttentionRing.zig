@@ -19,7 +19,7 @@
 //! pane be ringed" decision lives in Window.updateAttentionRings.
 
 const std = @import("std");
-const w32 = @import("win32.zig");
+const w32 = @import("platform/win32.zig");
 const Surface = @import("Surface.zig");
 const testing = std.testing;
 

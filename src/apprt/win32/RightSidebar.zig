@@ -9,7 +9,7 @@
 //! sidebar coexists with the left sidebar and tab bar.
 
 const std = @import("std");
-const w32 = @import("win32.zig");
+const w32 = @import("platform/win32.zig");
 const Window = @import("Window.zig");
 const ipc = @import("ipc.zig");
 

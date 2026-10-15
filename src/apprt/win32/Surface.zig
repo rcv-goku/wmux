@@ -15,7 +15,7 @@ const internal_os = @import("../../os/main.zig");
 const App = @import("App.zig");
 const Pane = @import("Pane.zig");
 const Window = @import("Window.zig");
-const w32 = @import("win32.zig");
+const w32 = @import("platform/win32.zig");
 const Scrollbar = @import("Scrollbar.zig").Scrollbar;
 
 const log = std.log.scoped(.win32);

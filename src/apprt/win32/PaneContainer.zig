@@ -11,7 +11,7 @@ const Allocator = std.mem.Allocator;
 const Pane = @import("Pane.zig");
 const Window = @import("Window.zig");
 const ipc = @import("ipc.zig");
-const w32 = @import("win32.zig");
+const w32 = @import("platform/win32.zig");
 
 const MAX_TABS = Window.MAX_TABS;
 const MAX_STATUS_BYTES = Window.MAX_STATUS_BYTES;

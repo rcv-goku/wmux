@@ -26,7 +26,7 @@ const PaneContainer = @import("PaneContainer.zig");
 const Surface = @import("Surface.zig");
 const Window = @import("Window.zig");
 const SplitTree = @import("../../datastruct/split_tree.zig").SplitTree;
-const w32 = @import("win32.zig");
+const w32 = @import("platform/win32.zig");
 
 const log = std.log.scoped(.win32);
 

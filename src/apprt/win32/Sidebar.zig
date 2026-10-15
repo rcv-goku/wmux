@@ -5,7 +5,7 @@
 //! coexists with the sidebar, offset to its right.
 
 const std = @import("std");
-const w32 = @import("win32.zig");
+const w32 = @import("platform/win32.zig");
 const PaneContainer = @import("PaneContainer.zig");
 const Window = @import("Window.zig");
 const testing = std.testing;

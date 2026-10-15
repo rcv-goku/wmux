@@ -26,7 +26,7 @@
 //! independent of GDI.
 
 const std = @import("std");
-const w32 = @import("win32.zig");
+const w32 = @import("platform/win32.zig");
 const Pane = @import("Pane.zig");
 const testing = std.testing;
 

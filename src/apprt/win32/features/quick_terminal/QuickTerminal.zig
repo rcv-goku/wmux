@@ -4,12 +4,12 @@ const QuickTerminal = @This();
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const configpkg = @import("../../config.zig");
+const configpkg = @import("../../../../config.zig");
 
-const App = @import("App.zig");
-const Window = @import("Window.zig");
-const Surface = @import("Surface.zig");
-const w32 = @import("win32.zig");
+const App = @import("../../App.zig");
+const Window = @import("../../Window.zig");
+const Surface = @import("../../Surface.zig");
+const w32 = @import("../../platform/win32.zig");
 
 const log = std.log.scoped(.win32_quick_terminal);
 
