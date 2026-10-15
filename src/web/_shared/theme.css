@@ -1,0 +1,194 @@
+/*
+ * wmux web panels: design tokens (ARCHITECTURE ADR-6.6).
+ *
+ * theme.js writes the host-fed and derived tokens inline on <html> from the
+ * "theme" bridge message. The values below are the defaults used before the
+ * first theme message and outside wmux (data-wmux-theme="default"); they equal
+ * what theme.js derives for its default dark and light colors.
+ *
+ * Panels use the tokens, never raw colors. base.css imports this file.
+ */
+
+:root {
+  /* Host-fed: terminal colors (Ghostty background/foreground/palette/...). */
+  --wmux-bg: #1e1e1e;
+  --wmux-fg: #d4d4d4;
+  --wmux-bg-rgb: 30 30 30;
+  --wmux-fg-rgb: 212 212 212;
+  --wmux-bg-opacity: 1;
+  --wmux-palette-0: #2e3436;
+  --wmux-palette-1: #cc0000;
+  --wmux-palette-2: #4e9a06;
+  --wmux-palette-3: #c4a000;
+  --wmux-palette-4: #3465a4;
+  --wmux-palette-5: #75507b;
+  --wmux-palette-6: #06989a;
+  --wmux-palette-7: #d3d7cf;
+  --wmux-palette-8: #555753;
+  --wmux-palette-9: #ef2929;
+  --wmux-palette-10: #8ae234;
+  --wmux-palette-11: #fce94f;
+  --wmux-palette-12: #729fcf;
+  --wmux-palette-13: #ad7fa8;
+  --wmux-palette-14: #34e2e2;
+  --wmux-palette-15: #eeeeec;
+  --wmux-cursor: #d4d4d4;
+  --wmux-cursor-text: #1e1e1e;
+  --wmux-selection-bg: #2e496d;
+  --wmux-selection-fg: #d4d4d4;
+  --wmux-accent: #4c9aff;
+  --wmux-accent-fg: #000000;
+  --wmux-accent-rgb: 76 154 255;
+  --wmux-sidebar-bg: #252525;
+  --wmux-sidebar-fg: #d4d4d4;
+  --wmux-sidebar-active-bg: #2f425c;
+  --wmux-sidebar-active-fg: #d4d4d4;
+  --wmux-sidebar-border: #3f3f3f;
+  --wmux-font-mono: "Cascadia Mono", "Consolas", "Courier New", monospace;
+  --wmux-font-size: 14px;
+
+  /* Derived from background/foreground/accent (recomputed by theme.js). */
+  --wmux-surface: #252525;
+  --wmux-surface-raised: #2d2d2d;
+  --wmux-hover: #303030;
+  --wmux-pressed: #3b3b3b;
+  --wmux-border: #3f3f3f;
+  --wmux-border-strong: #585858;
+  --wmux-fg-muted: #8b8b8b;
+  --wmux-focus-ring: #4c9aff;
+  --wmux-link: #4c9aff;
+  --wmux-scrollbar-thumb: #515151;
+  --wmux-scrollbar-thumb-hover: #6a6a6a;
+  --wmux-scrollbar-track: transparent;
+
+  /* Palette aliases. */
+  --wmux-black: var(--wmux-palette-0);
+  --wmux-red: var(--wmux-palette-1);
+  --wmux-green: var(--wmux-palette-2);
+  --wmux-yellow: var(--wmux-palette-3);
+  --wmux-blue: var(--wmux-palette-4);
+  --wmux-magenta: var(--wmux-palette-5);
+  --wmux-cyan: var(--wmux-palette-6);
+  --wmux-white: var(--wmux-palette-7);
+  --wmux-bright-black: var(--wmux-palette-8);
+  --wmux-bright-red: var(--wmux-palette-9);
+  --wmux-bright-green: var(--wmux-palette-10);
+  --wmux-bright-yellow: var(--wmux-palette-11);
+  --wmux-bright-blue: var(--wmux-palette-12);
+  --wmux-bright-magenta: var(--wmux-palette-13);
+  --wmux-bright-cyan: var(--wmux-palette-14);
+  --wmux-bright-white: var(--wmux-palette-15);
+
+  /* Status colors: bright palette entries on dark backgrounds. */
+  --wmux-danger: var(--wmux-palette-9);
+  --wmux-success: var(--wmux-palette-10);
+  --wmux-warning: var(--wmux-palette-11);
+  --wmux-info: var(--wmux-palette-12);
+
+  /* Static tokens. */
+  --wmux-font-ui: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --wmux-font-size-ui: 14px;
+  --wmux-line-height: 1.45;
+  --wmux-space-1: 4px;
+  --wmux-space-2: 8px;
+  --wmux-space-3: 12px;
+  --wmux-space-4: 16px;
+  --wmux-space-5: 24px;
+  --wmux-space-6: 32px;
+  --wmux-radius-sm: 4px;
+  --wmux-radius: 6px;
+  --wmux-radius-lg: 10px;
+  --wmux-focus-ring-width: 2px;
+  --wmux-focus-ring-offset: 2px;
+  --wmux-shadow: 0 4px 16px rgb(0 0 0 / 0.35);
+  --wmux-motion-duration: 120ms;
+  --wmux-motion-easing: cubic-bezier(0.2, 0, 0, 1);
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --wmux-bg: #ffffff;
+    --wmux-fg: #1f1f1f;
+    --wmux-bg-rgb: 255 255 255;
+    --wmux-fg-rgb: 31 31 31;
+    --wmux-cursor: #1f1f1f;
+    --wmux-cursor-text: #ffffff;
+    --wmux-selection-bg: #aac8f1;
+    --wmux-selection-fg: #1f1f1f;
+    --wmux-accent: #0b62d6;
+    --wmux-accent-fg: #ffffff;
+    --wmux-accent-rgb: 11 98 214;
+    --wmux-sidebar-bg: #f6f6f6;
+    --wmux-sidebar-fg: #1f1f1f;
+    --wmux-sidebar-active-bg: #bbd1ee;
+    --wmux-sidebar-active-fg: #1f1f1f;
+    --wmux-sidebar-border: #d6d6d6;
+    --wmux-surface: #f6f6f6;
+    --wmux-surface-raised: #ededed;
+    --wmux-hover: #e9e9e9;
+    --wmux-pressed: #dbdbdb;
+    --wmux-border: #d7d7d7;
+    --wmux-border-strong: #b7b7b7;
+    --wmux-fg-muted: #676767;
+    --wmux-focus-ring: #0b62d6;
+    --wmux-link: #0b62d6;
+    --wmux-scrollbar-thumb: #c0c0c0;
+    --wmux-scrollbar-thumb-hover: #a1a1a1;
+    --wmux-shadow: 0 4px 16px rgb(0 0 0 / 0.18);
+  }
+}
+
+/* Status colors: normal palette entries on light backgrounds. */
+:root[data-wmux-scheme="light"] {
+  --wmux-danger: var(--wmux-palette-1);
+  --wmux-success: var(--wmux-palette-2);
+  --wmux-warning: var(--wmux-palette-3);
+  --wmux-info: var(--wmux-palette-4);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-wmux-scheme]) {
+    --wmux-danger: var(--wmux-palette-1);
+    --wmux-success: var(--wmux-palette-2);
+    --wmux-warning: var(--wmux-palette-3);
+    --wmux-info: var(--wmux-palette-4);
+  }
+}
+
+:root[data-wmux-high-contrast="true"] {
+  --wmux-focus-ring-width: 3px;
+}
+
+:root[data-wmux-reduced-motion="true"] {
+  --wmux-motion-duration: 0ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --wmux-motion-duration: 0ms;
+  }
+}
+
+/* Windows contrast themes: system colors win over the terminal theme. */
+@media (forced-colors: active) {
+  :root {
+    --wmux-bg: Canvas !important;
+    --wmux-fg: CanvasText !important;
+    --wmux-surface: Canvas !important;
+    --wmux-surface-raised: Canvas !important;
+    --wmux-hover: Canvas !important;
+    --wmux-pressed: Canvas !important;
+    --wmux-border: CanvasText !important;
+    --wmux-border-strong: CanvasText !important;
+    --wmux-fg-muted: GrayText !important;
+    --wmux-accent: Highlight !important;
+    --wmux-accent-fg: HighlightText !important;
+    --wmux-focus-ring: Highlight !important;
+    --wmux-link: LinkText !important;
+    --wmux-selection-bg: Highlight !important;
+    --wmux-selection-fg: HighlightText !important;
+    --wmux-scrollbar-thumb: CanvasText !important;
+    --wmux-scrollbar-thumb-hover: Highlight !important;
+    --wmux-focus-ring-width: 3px;
+  }
+}
