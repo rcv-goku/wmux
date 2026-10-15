@@ -728,6 +728,19 @@ test "unit: meta: git resolve returns null outside a repo or on a bad .git file"
     try testing.expect((try resolve(gpa, "/r/sub/x", bad.fs())) == null);
 }
 
+fn resolveAllocations(gpa: Allocator) !void {
+    var linked = try resolveFromDotGit(gpa, "C:\\src\\feat", "gitdir: C:/src/proj/.git/worktrees/feat\n", "../..\n");
+    linked.deinit(gpa);
+    // A `.git` directory: `FakeFs.read` (which reports OOM as null) never runs.
+    var fake: FakeFs = .{ .dirs = &.{"C:\\src\\proj\\.git"}, .files = &.{} };
+    var walked = (try resolve(gpa, "C:\\src\\proj\\a\\b", fake.fs())).?;
+    walked.deinit(gpa);
+}
+
+test "unit: meta: git resolution frees everything when allocation fails" {
+    try testing.checkAllAllocationFailures(testing.allocator, resolveAllocations, .{});
+}
+
 test "unit: meta: git isRelevantChange filters watcher noise" {
     try testing.expect(isRelevantChange("HEAD"));
     try testing.expect(isRelevantChange("index"));

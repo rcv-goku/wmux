@@ -385,6 +385,26 @@ test "unit: meta: ports writeList formats the ports= value" {
     try testing.expectEqualStrings("3000,8080,65535", aw.written());
 }
 
+fn allocatingPaths(gpa: Allocator) !void {
+    const rows = [_]ListenerRow{
+        .{ .addr = .{ .v4 = .{ 0, 0, 0, 0 } }, .port = 8000, .pid = 10 },
+        .{ .addr = .{ .v6 = v6_any }, .port = 8000, .pid = 10 },
+        .{ .addr = .{ .v4 = .{ 127, 0, 0, 1 } }, .port = 5173, .pid = 11 },
+    };
+    const scan = try collect(gpa, &rows, &.{ 10, 11 });
+    defer gpa.free(scan);
+    var t: Tracker = .{};
+    defer t.deinit(gpa);
+    _ = try t.update(gpa, scan);
+    _ = try t.update(gpa, scan[1..]);
+    const visible = try t.ports(gpa);
+    gpa.free(visible);
+}
+
+test "unit: meta: ports collect and Tracker free everything when allocation fails" {
+    try testing.checkAllAllocationFailures(testing.allocator, allocatingPaths, .{});
+}
+
 test "unit: meta: ports workspaceRange computes CMUX_PORT ranges" {
     const first = try workspaceRange(default_port_base, default_port_range, 0);
     try testing.expectEqual(PortRange{ .start = 9100, .end = 9109, .size = 10 }, first);

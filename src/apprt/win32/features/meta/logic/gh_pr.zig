@@ -624,12 +624,18 @@ const fixture_open =
 ;
 
 fn testRow(gpa: Allocator, url: []const u8, status: Status, source: Source, observed_ms: i64) !Row {
+    const label = try gpa.dupe(u8, default_label);
+    errdefer gpa.free(label);
+    const url_owned = try gpa.dupe(u8, url);
+    errdefer gpa.free(url_owned);
+    const title = try gpa.dupe(u8, "");
+    errdefer gpa.free(title);
     return .{
         .number = 1,
         .status = status,
-        .label = try gpa.dupe(u8, default_label),
-        .url = try gpa.dupe(u8, url),
-        .title = try gpa.dupe(u8, ""),
+        .label = label,
+        .url = url_owned,
+        .title = title,
         .branch = try gpa.dupe(u8, ""),
         .source = source,
         .observed_ms = observed_ms,
@@ -834,6 +840,48 @@ test "unit: meta: gh_pr mergeRows orders explicit links after pane-derived" {
     try testing.expectEqual(Status.closed, rows.items[1].status);
     try testing.expectEqualStrings("https://github.com/a/b/pull/9", rows.items[2].url);
     try testing.expectEqualStrings("https://github.com/a/b/pull/7", rows.items[3].url);
+}
+
+test "unit: meta: gh_pr mergeRows lifts a manual-first group joined by a pane row" {
+    const gpa = testing.allocator;
+    var rows: std.ArrayList(Row) = .empty;
+    defer freeRows(gpa, &rows);
+    try rows.append(gpa, try testRow(gpa, "https://github.com/a/b/pull/9", .open, .manual, 0));
+    try rows.append(gpa, try testRow(gpa, "https://github.com/a/b/pull/7", .open, .manual, 0));
+    try rows.append(gpa, try testRow(gpa, "https://github.com/a/b/pull/5", .open, .pane, 0));
+    // A later pane observation of #9 makes its group pane-derived, so it
+    // keeps the first position, ahead of the manual-only #7.
+    try rows.append(gpa, try testRow(gpa, "https://github.com/a/b/pull/9/", .merged, .pane, 0));
+    try mergeRows(gpa, &rows);
+    try testing.expectEqual(@as(usize, 3), rows.items.len);
+    try testing.expectEqualStrings("https://github.com/a/b/pull/9/", rows.items[0].url);
+    try testing.expectEqual(Status.merged, rows.items[0].status);
+    try testing.expectEqualStrings("https://github.com/a/b/pull/5", rows.items[1].url);
+    try testing.expectEqualStrings("https://github.com/a/b/pull/7", rows.items[2].url);
+}
+
+fn allocatingPaths(gpa: Allocator) !void {
+    var row = try parseView(gpa, fixture_open);
+    row.deinit(gpa);
+    var repo = try parseRepoView(gpa,
+        \\{"nameWithOwner":"me/wmux","url":"https://github.com/me/wmux",
+        \\ "parent":{"name":"wmux","owner":{"login":"acme"}}}
+    );
+    repo.deinit(gpa);
+
+    var rows: std.ArrayList(Row) = .empty;
+    defer freeRows(gpa, &rows);
+    try rows.ensureTotalCapacity(gpa, 3);
+    rows.appendAssumeCapacity(try testRow(gpa, "https://github.com/a/b/pull/9", .open, .manual, 0));
+    rows.appendAssumeCapacity(try testRow(gpa, "https://github.com/a/b/pull/5", .open, .pane, 0));
+    rows.appendAssumeCapacity(try testRow(gpa, "http://github.com/a/b/pull/9/", .merged, .pane, 1));
+    try mergeRows(gpa, &rows);
+    var copy = try rows.items[0].clone(gpa);
+    copy.deinit(gpa);
+}
+
+test "unit: meta: gh_pr parsers, mergeRows and clone free everything when allocation fails" {
+    try testing.checkAllAllocationFailures(testing.allocator, allocatingPaths, .{});
 }
 
 test "unit: meta: gh_pr mergeRows on empty and single lists" {
