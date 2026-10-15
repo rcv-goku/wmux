@@ -1532,9 +1532,68 @@ pub extern "ole32" fn CoInitializeEx(
 pub extern "ole32" fn CoUninitialize() callconv(.winapi) void;
 
 // -----------------------------------------------------------------------
-// W0-A1: app plumbing (app/broadcast_window.zig)
+// W0-A1: app plumbing (app/broadcast_window.zig, app/foreground.zig)
 // -----------------------------------------------------------------------
 
 pub extern "user32" fn RegisterWindowMessageW(
     lpString: [*:0]const u16,
 ) callconv(.winapi) u32;
+
+// DWM cloaking (WMUX_TEST_HIDDEN, ARCHITECTURE.md ADR-12.3).
+pub const DWMWA_CLOAK: u32 = 13;
+pub const DWMWA_CLOAKED: u32 = 14;
+
+pub extern "dwmapi" fn DwmGetWindowAttribute(
+    hwnd: HWND,
+    dwAttribute: u32,
+    pvAttribute: *anyopaque,
+    cbAttribute: u32,
+) callconv(.winapi) i32;
+
+// Thread-local WH_CBT hook (WMUX_TEST_HIDDEN, ARCHITECTURE.md ADR-12.3).
+pub const HHOOK = *opaque {};
+pub const HOOKPROC = *const fn (code: i32, wparam: usize, lparam: isize) callconv(.winapi) isize;
+pub const WH_CBT: i32 = 5;
+pub const HCBT_CREATEWND: i32 = 3;
+pub const HCBT_ACTIVATE: i32 = 5;
+
+/// CREATESTRUCTW. `lpszName`/`lpszClass` may hold atoms, so they are
+/// opaque here; note the cy, cx, y, x field order.
+pub const CREATESTRUCTW = extern struct {
+    lpCreateParams: ?*anyopaque,
+    hInstance: ?HINSTANCE,
+    hMenu: ?HMENU,
+    hwndParent: ?HWND,
+    cy: i32,
+    cx: i32,
+    y: i32,
+    x: i32,
+    style: i32,
+    lpszName: ?*const anyopaque,
+    lpszClass: ?*const anyopaque,
+    dwExStyle: u32,
+};
+
+/// The HCBT_CREATEWND lParam.
+pub const CBT_CREATEWNDW = extern struct {
+    lpcs: *CREATESTRUCTW,
+    hwndInsertAfter: ?HWND,
+};
+
+pub extern "user32" fn SetWindowsHookExW(
+    idHook: i32,
+    lpfn: HOOKPROC,
+    hmod: ?HINSTANCE,
+    dwThreadId: u32,
+) callconv(.winapi) ?HHOOK;
+
+pub extern "user32" fn UnhookWindowsHookEx(
+    hhk: HHOOK,
+) callconv(.winapi) i32;
+
+pub extern "user32" fn CallNextHookEx(
+    hhk: ?HHOOK,
+    nCode: i32,
+    wParam: usize,
+    lParam: isize,
+) callconv(.winapi) isize;

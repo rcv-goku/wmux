@@ -17,6 +17,7 @@ const Window = @import("Window.zig");
 
 // app/ plumbing (ARCHITECTURE.md ADR-1.6).
 const app_clipboard = @import("app/clipboard.zig");
+const app_foreground = @import("app/foreground.zig");
 const app_modal = @import("app/modal.zig");
 const app_tasks = @import("app/tasks.zig");
 const app_timers = @import("app/timers.zig");
@@ -286,6 +287,12 @@ pub fn init(
     self.clipboard.init(alloc, self.runtime_env.test_mode);
     errdefer self.clipboard.deinit();
 
+    // WMUX_TEST_HIDDEN: refuse every activation on this (UI) thread and
+    // keep user32's own top-level windows off-screen, before any window
+    // exists (app/foreground.zig, ARCHITECTURE.md ADR-12.3).
+    app_foreground.installHiddenHooks(self);
+    errdefer app_foreground.uninstallHiddenHooks();
+
     // Register the window container class (GDI painting, no CS_OWNDC).
     // CS_DBLCLKS is required to receive WM_LBUTTONDBLCLK for divider equalize.
     // Application icon, loaded from the embedded resource. Falls back
@@ -545,6 +552,9 @@ pub fn terminate(self: *App) void {
         _ = w32.UnregisterClassW(WINDOW_CLASS_NAME, self.hinstance);
         self.class_atom = 0;
     }
+
+    // Every window is gone: drop the WMUX_TEST_HIDDEN hook (if any).
+    app_foreground.uninstallHiddenHooks();
 
     self.config.deinit();
     self.runtime_env.deinit(alloc);
@@ -1095,5 +1105,6 @@ test {
     _ = @import("app/runtime_env.zig");
     _ = @import("app/paths.zig");
     _ = app_clipboard;
+    _ = app_foreground;
     _ = app_modal;
 }

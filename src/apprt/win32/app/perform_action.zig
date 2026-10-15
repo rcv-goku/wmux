@@ -299,7 +299,7 @@ fn restoreSession(self: *App) void {
 }
 
 fn initialSize(self: *App, target: apprt.Target, value: apprt.Action.Value(.initial_size)) void {
-    // WMUX_TEST_HIDDEN windows keep their fixed 1600x1000 client area.
+    // WMUX_TEST_HIDDEN windows keep their fixed hidden geometry.
     if (self.runtime_env.test_hidden) return;
     switch (target) {
         .app => {},
@@ -349,7 +349,7 @@ fn toggleBackgroundOpacity(self: *App, target: apprt.Target) void {
 }
 
 fn resetWindowSize(self: *App, target: apprt.Target) void {
-    // WMUX_TEST_HIDDEN windows keep their fixed 1600x1000 client area.
+    // WMUX_TEST_HIDDEN windows keep their fixed hidden geometry.
     if (self.runtime_env.test_hidden) return;
     switch (target) {
         .app => {},

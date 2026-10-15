@@ -753,8 +753,11 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
 
 /// Build the absolute path to the window-state file:
 /// %LOCALAPPDATA%\ghostty\window-state, or <WMUX_STATE_DIR>\window-state
-/// (app/paths.zig). Caller owns the returned slice.
+/// (app/paths.zig). Caller owns the returned slice. A WMUX_TEST_HIDDEN
+/// instance has no window-state file (ADR-12.3: placement save and
+/// restore are skipped), so savePlacement/restorePlacement are no-ops.
 fn windowStatePath(app: *const App, alloc: std.mem.Allocator) ![]u8 {
+    if (app.runtime_env.test_hidden) return error.HiddenTestInstance;
     return app_paths.windowStatePath(alloc, &app.runtime_env);
 }
 

@@ -318,11 +318,13 @@ fn calculateRects(self: *QuickTerminal) void {
         },
     }
 
-    // WMUX_TEST_HIDDEN: keep the quick terminal off-screen like every other
-    // top-level window (same geometry, anchored at the hidden origin).
-    if (self.app.runtime_env.test_hidden) {
-        const dx = foreground.hidden_origin - self.target_rect.left;
-        const dy = foreground.hidden_origin - self.target_rect.top;
+    // WMUX_TEST_HIDDEN: the window is cloaked (app/foreground.zig), so its
+    // rects may stay on the monitor; only an uncloaked one is moved
+    // off-screen like every other hidden top-level window (same geometry,
+    // anchored at the off-screen position).
+    if (foreground.keepOffscreen(self.app, self.window.hwnd)) {
+        const dx = foreground.hidden_offscreen - self.target_rect.left;
+        const dy = foreground.hidden_offscreen - self.target_rect.top;
         inline for (.{ &self.target_rect, &self.hidden_rect }) |r| {
             r.left += dx;
             r.right += dx;

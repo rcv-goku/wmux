@@ -17,9 +17,11 @@ pub const RuntimeEnv = struct {
     test_mode: bool = false,
 
     /// WMUX_TEST_HIDDEN: every top-level window is WS_EX_TOOLWINDOW |
-    /// WS_EX_NOACTIVATE at (-32000, -32000) with a 1600x1000 client area,
-    /// shown only with SW_SHOWNOACTIVATE; app/foreground.zig never
-    /// activates anything.
+    /// WS_EX_NOACTIVATE with a 1600x1000 client area (clamped to the
+    /// primary work area) at the work-area origin, DWM-cloaked (off-screen
+    /// at (-32000, -32000) only if cloaking fails), shown only with
+    /// SW_SHOWNOACTIVATE; nothing activates (app/foreground.zig, including
+    /// its WH_CBT hook) and window placement is neither saved nor restored.
     test_hidden: bool = false,
 
     /// WMUX_TEST_SESSION_RESTORE: allow session restore in test mode.
