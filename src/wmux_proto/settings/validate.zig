@@ -336,7 +336,13 @@ pub fn checkValue(arena: Allocator, ty: Type, node: *const Node) Allocator.Error
         .boolean => if (node.data != .boolean) return try mismatch(arena, "a boolean", node),
         .integer => |r| {
             if (node.data != .number) return try mismatch(arena, "an integer", node);
-            const v = node.asInt() orelse return .{ .code = .type_mismatch, .message = try std.fmt.allocPrint(arena, "expected an integer, got {s}", .{node.data.number}) };
+            const raw = node.data.number;
+            const v = node.asInt() orelse {
+                // Integer syntax that does not fit an i64 is a range problem.
+                if (std.mem.indexOfAny(u8, raw, ".eE") == null)
+                    return .{ .code = .out_of_range, .message = try std.fmt.allocPrint(arena, "{s} is outside the range {d}..{d}", .{ raw, r.min, r.max }) };
+                return .{ .code = .type_mismatch, .message = try std.fmt.allocPrint(arena, "expected an integer, got {s}", .{raw}) };
+            };
             if (v < r.min or v > r.max) return .{ .code = .out_of_range, .message = try std.fmt.allocPrint(arena, "{d} is outside the range {d}..{d}", .{ v, r.min, r.max }) };
         },
         .number => |r| {
@@ -827,6 +833,31 @@ test "unit: settings: type errors report positions" {
     try expectIssue(&r, .err, .type_mismatch, "$.sidebar", 12, 14);
     try testing.expectEqual(@as(usize, 10), r.errorCount());
     for (r.issues) |i| if (i.code == .not_in_enum) try testing.expectEqualStrings("\"blue\" is not one of: system, light, dark", i.message);
+}
+
+test "unit: settings: numeric boundaries" {
+    const cases = [_]struct { []const u8, ?Code, []const u8 }{
+        .{ "{\"app\": {\"paneResizeStepPixels\": 99999999999999999999}}", .out_of_range, "99999999999999999999 is outside the range 1..200" },
+        .{ "{\"app\": {\"paneResizeStepPixels\": -9223372036854775809}}", .out_of_range, "-9223372036854775809 is outside the range 1..200" },
+        .{ "{\"app\": {\"paneResizeStepPixels\": 1.0}}", .type_mismatch, "expected an integer, got 1.0" },
+        .{ "{\"app\": {\"paneResizeStepPixels\": 2e1}}", .type_mismatch, "expected an integer, got 2e1" },
+        .{ "{\"app\": {\"paneResizeStepPixels\": 1}}", null, "" },
+        .{ "{\"app\": {\"paneResizeStepPixels\": 200}}", null, "" },
+        .{ "{\"app\": {\"paneResizeStepPixels\": 201}}", .out_of_range, "201 is outside the range 1..200" },
+        .{ "{\"terminal\": {\"scrollSpeed\": 0.1}}", null, "" },
+        .{ "{\"terminal\": {\"scrollSpeed\": 3e0}}", null, "" },
+        .{ "{\"terminal\": {\"scrollSpeed\": 1e400}}", .out_of_range, "1e400 is outside the range 0.1..3" },
+        .{ "{\"terminal\": {\"scrollSpeed\": 0.09999}}", .out_of_range, "0.09999 is outside the range 0.1..3" },
+    };
+    for (cases) |c| {
+        var r = try validateText(testing.allocator, c[0], fixtureOpts(.global));
+        defer r.deinit();
+        if (c[1]) |code| {
+            try testing.expectEqual(@as(usize, 1), r.issues.len);
+            try testing.expectEqual(code, r.issues[0].code);
+            try testing.expectEqualStrings(c[2], r.issues[0].message);
+        } else try testing.expectEqual(@as(usize, 0), r.issues.len);
+    }
 }
 
 test "unit: settings: unknown keys warn and known cmux keys inform" {
