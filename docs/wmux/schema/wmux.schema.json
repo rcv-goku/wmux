@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schema.wmux.example/wmux.schema.json",
+  "title": "wmux settings",
+  "description": "Settings for wmux.json and the shared cmux.json. Keys use cmux names; wmux-only keys live under \"wmux\".",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "description": "Schema URL for editor completion (the wmux or the cmux schema).",
+      "type": "string"
+    },
+    "schemaVersion": {
+      "description": "Config format version; newer versions are read best effort.",
+      "type": "integer",
+      "minimum": 1,
+      "default": 1
+    },
+    "packs": {
+      "description": "Local pack files or directories loaded before this file, relative to it unless absolute. A directory resolves to wmux.pack.json, then cmux.pack.json.",
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "string",
+            "minLength": 1
+          },
+          {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "path"
+            ]
+          }
+        ]
+      },
+      "default": []
+    }
+  }
+}
