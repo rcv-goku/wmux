@@ -632,7 +632,8 @@ pub const Engine = struct {
     fn current(self: *Engine) Error!?Found {
         const snap = try self.getSnap();
         if (snap.caller_pane) |id| {
-            if (findPane(snap, paneIdIs, id)) |f| return f;
+            // Same lookup as `-t %N`, including the store's pane map.
+            if (try self.findPaneId(id)) |f| return f;
         }
         for (snap.sessions) |*s| {
             if (s.attached) return completeSession(s);
@@ -726,8 +727,9 @@ pub const Engine = struct {
             const fwd = raw[0] == '+' or std.mem.eql(u8, raw, "{next}");
             return neighbor(w, act, fwd);
         }
-        if (std.mem.eql(u8, raw, "{top}") or std.mem.eql(u8, raw, "{start}")) return &w.panes[0];
-        if (std.mem.eql(u8, raw, "{bottom}") or std.mem.eql(u8, raw, "{end}")) return &w.panes[w.panes.len - 1];
+        // `{start}`/`{end}` are window tokens in tmux, not pane tokens.
+        if (std.mem.eql(u8, raw, "{top}")) return &w.panes[0];
+        if (std.mem.eql(u8, raw, "{bottom}")) return &w.panes[w.panes.len - 1];
         const idx = std.fmt.parseInt(u32, raw, 10) catch return null;
         for (w.panes) |*p| {
             if (p.index == idx) return p;
@@ -783,13 +785,21 @@ pub const Engine = struct {
                 return self.notFound(want, raw);
             },
             .bare => |name| blk: {
-                const cur = try self.current();
-                if (want == .session) {
-                    if (findSessionByName(snap, name)) |s| break :blk completeSession(s);
-                }
-                if (cur) |c| {
-                    if (c.session) |s| {
-                        if (findWindowIn(s, name)) |w| break :blk completeWindow(s, w);
+                // tmux's order per target type: a session target names a
+                // session only (so kill-session never widens to the
+                // session of a same-named window); a window target is a
+                // window of the current session, then a session; a pane
+                // target is a pane of the current window first.
+                if (want != .session) {
+                    if (try self.current()) |c| {
+                        if (want == .pane) {
+                            if (c.window) |w| {
+                                if (findPaneIn(w, name)) |p| break :blk .{ .session = c.session, .window = w, .pane = p };
+                            }
+                        }
+                        if (c.session) |s| {
+                            if (findWindowIn(s, name)) |w| break :blk completeWindow(s, w);
+                        }
                     }
                 }
                 if (findSessionByName(snap, name)) |s| break :blk completeSession(s);
@@ -1017,7 +1027,8 @@ pub const Engine = struct {
 
     fn cmdNewWindow(self: *Engine, cmd: parse.Command) Error!void {
         const a = cmd.args;
-        const f = try self.resolve(a.get('t'), .session);
+        // tmux: -t is a target window; the new window joins its session.
+        const f = try self.resolve(a.get('t'), .window);
         const spawn = try self.spawnFrom(a);
         const id = try self.call("newWindow", cmd.word, NewWindowReq{ .session = f.session.?.id, .name = a.get('n'), .detached = a.has('d'), .spawn = spawn });
         _ = try self.recordPane(id);
@@ -1142,7 +1153,8 @@ pub const Engine = struct {
     fn cmdSelectWindow(self: *Engine, cmd: parse.Command) Error!void {
         const a = cmd.args;
         if (a.has('l') or a.has('n') or a.has('p')) {
-            const f = try self.resolve(a.get('t'), .session);
+            // -t stays a target window; these act on its session.
+            const f = try self.resolve(a.get('t'), .window);
             const req: SessionReq = .{ .session = f.session.?.id };
             if (a.has('l')) return self.call("lastWindow", cmd.word, req);
             if (a.has('n')) return self.call("nextWindow", cmd.word, req);
@@ -1488,7 +1500,8 @@ pub const Engine = struct {
         const by_title = !any_field or a.has('T');
         const by_content = (!any_field or a.has('C')) and self.exec.vtable.capturePane != null;
         const ic = a.has('i');
-        const start = try self.resolve(a.get('t'), .session);
+        // tmux: -t is a target pane; the search starts in its session.
+        const start = try self.resolve(a.get('t'), .pane);
         const snap = try self.getSnap();
         // The target's session first, then the others in order.
         var order: std.ArrayList(*const Session) = .empty;

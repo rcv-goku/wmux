@@ -733,6 +733,67 @@ test "unit: tmux: %N falls back to the store's pane-surface map" {
     try h.expect(&.{ "display", "-p", "-t", "%42", "#{pane_id}" }, 0, "%1\n", "");
 }
 
+test "unit: tmux: the caller pane honours the store's pane-surface map" {
+    const h = try Harness.create();
+    defer h.destroy();
+    h.eng.options.main_vertical_placement = false;
+    try h.expect(&.{ "split-window", "-d" }, 0, "", "");
+    h.fake.log.clearRetainingCapacity();
+    // TMUX_PANE=%42 was recorded for surface UUID2 (a renumbered host).
+    try h.store.setPaneSurface(testing.allocator, 42, UUID2);
+    h.fake.caller = 42;
+    try h.expect(&.{ "display", "-p", "#{pane_id}" }, 0, "%2\n", "");
+    try h.expect(&.{ "split-window", "-d", "-P", "-F", "#{pane_id}" }, 0, "%3\n", "");
+    try h.expectLog("split window=@1 target=%2 dir=down size=- detached=true cwd=- env= cmd=none\n");
+}
+
+test "unit: tmux: bare targets follow tmux's lookup order for each target type" {
+    const h = try Harness.create();
+    defer h.destroy();
+    h.eng.options.main_vertical_placement = false;
+    try h.expect(&.{ "split-window", "-d" }, 0, "", ""); // %2: pane 1 of window 0
+    try h.expect(&.{ "new-window", "-d", "-n", "logs" }, 0, "", ""); // window 1 (@2) with %3
+    h.fake.log.clearRetainingCapacity();
+    // Pane targets: a pane of the current window first, then a window of
+    // the current session, then a session.
+    const fmt = "#{window_index}.#{pane_index} #{pane_id}";
+    const cases = [_][2][]const u8{
+        .{ "1", "0.1 %2" },
+        .{ "+", "0.1 %2" },
+        .{ "{bottom}", "0.1 %2" },
+        .{ "{end}", "1.0 %3" },
+        .{ "logs", "1.0 %3" },
+        .{ "main", "0.0 %1" },
+    };
+    for (cases) |c| {
+        var buf: [64]u8 = undefined;
+        const want = try std.fmt.bufPrint(&buf, "{s}\n", .{c[1]});
+        h.expect(&.{ "display-message", "-p", "-t", c[0], fmt }, 0, want, "") catch |e| {
+            std.log.err("target {s}", .{c[0]});
+            return e;
+        };
+    }
+    try h.expect(&.{ "display", "-p", "-t", "5", "x" }, 1, "", "can't find pane: 5\n");
+    try h.expect(&.{ "kill-pane", "-t", "1" }, 0, "", "");
+    try h.expectLog("killPane %2\n");
+    // Session targets name sessions only: a window name never widens to
+    // the session that holds it.
+    try h.expect(&.{ "kill-session", "-t", "logs" }, 1, "", "can't find session: logs\n");
+    try h.expect(&.{ "has-session", "-t", "logs" }, 1, "", "can't find session: logs\n");
+    try h.expect(&.{ "rename-session", "-t", "logs", "x" }, 1, "", "can't find session: logs\n");
+    try h.expectLog("");
+    // new-window and select-window take window targets, find-window a pane.
+    try h.expect(&.{ "new-window", "-d", "-t", "logs", "-P", "-F", "#{session_name}:#{window_index}" }, 0, "main:2\n", "");
+    try h.expect(&.{ "select-window", "-n", "-t", "logs" }, 0, "", "");
+    try h.expect(&.{ "find-window", "-t", "logs", "-N", "logs" }, 0, "", "");
+    try h.expectLog(
+        \\newWindow session=$0 name=- detached=true cwd=- env= cmd=none
+        \\nextWindow $0
+        \\selectWindow @2
+        \\
+    );
+}
+
 test "unit: tmux: list commands with default and custom formats" {
     const h = try Harness.create();
     defer h.destroy();
