@@ -292,7 +292,8 @@ pub fn summarizeRollup(v: std.json.Value) Checks {
 
 /// Why a `gh pr view` probe produced no row, from its stderr.
 pub const ProbeFailure = enum {
-    /// The branch has no PR: clear pane-derived rows, not a refresh failure.
+    /// The branch has no PR, or HEAD is detached (no branch at all): clear
+    /// pane-derived rows, not a refresh failure.
     no_pull_request,
     /// gh is not logged in: stop probing until settings/auth change.
     not_authenticated,
@@ -304,13 +305,16 @@ pub const ProbeFailure = enum {
 
 pub fn classifyFailure(stderr: []const u8) ProbeFailure {
     if (containsIgnoreCase(stderr, "no pull requests found") or
-        containsIgnoreCase(stderr, "no open pull requests")) return .no_pull_request;
-    if (containsIgnoreCase(stderr, "gh auth login") or
-        containsIgnoreCase(stderr, "not logged in") or
-        containsIgnoreCase(stderr, "authentication")) return .not_authenticated;
+        containsIgnoreCase(stderr, "no open pull requests") or
+        containsIgnoreCase(stderr, "not on any branch")) return .no_pull_request;
+    // Repository checks come before the auth checks: gh's message for
+    // remotes on hosts it does not know also suggests `gh auth login`.
     if (containsIgnoreCase(stderr, "not a git repository") or
         containsIgnoreCase(stderr, "no git remotes found") or
         containsIgnoreCase(stderr, "none of the git remotes")) return .not_a_repository;
+    if (containsIgnoreCase(stderr, "gh auth login") or
+        containsIgnoreCase(stderr, "not logged in") or
+        containsIgnoreCase(stderr, "authentication")) return .not_authenticated;
     return .other;
 }
 
@@ -755,6 +759,10 @@ test "unit: meta: gh_pr classifyFailure maps gh stderr" {
     try testing.expectEqual(ProbeFailure.no_pull_request, classifyFailure("no pull requests found for branch \"main\"\n"));
     try testing.expectEqual(ProbeFailure.not_authenticated, classifyFailure("To get started with GitHub CLI, please run:  gh auth login"));
     try testing.expectEqual(ProbeFailure.not_a_repository, classifyFailure("failed to run git: fatal: not a git repository (or any of the parent directories): .git"));
+    // A non-GitHub remote is not an auth failure even though gh's hint
+    // mentions `gh auth login`.
+    try testing.expectEqual(ProbeFailure.not_a_repository, classifyFailure("none of the git remotes configured for this repository point to a known GitHub host. To tell gh about a new GitHub host, please use `gh auth login`\n"));
+    try testing.expectEqual(ProbeFailure.no_pull_request, classifyFailure("could not determine current branch: git: not on any branch\n"));
     try testing.expectEqual(ProbeFailure.other, classifyFailure("HTTP 502: Bad Gateway"));
     try testing.expectEqual(ProbeFailure.other, classifyFailure(""));
 }
