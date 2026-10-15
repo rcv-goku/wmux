@@ -1177,16 +1177,45 @@ test "unit: tmux: if-shell with formats and shell exit codes" {
     try h.expectLog("shell [true] cwd=/home/me/proj\nshell [false] cwd=/home/me/proj\n");
 }
 
-test "unit: tmux: if-shell recursion is bounded" {
+test "unit: tmux: hooks never fire for commands run by a hook" {
     const h = try Harness.create();
     defer h.destroy();
+    // This hook would re-trigger itself; tmux runs hook commands with hooks
+    // disabled, so it runs once per hooked command.
     try h.store.setHook(testing.allocator, "after-display-message", "display -p again");
-    // The hook re-triggers itself; nesting stops at the bound and the
-    // outer command still succeeds.
-    const code = h.eng.run(&.{ "display", "-p", "first" });
-    try testing.expectEqual(@as(u8, 0), code);
-    try testing.expect(std.mem.startsWith(u8, h.out.written(), "first\nagain\n"));
-    try testing.expect(std.mem.count(u8, h.out.written(), "again") <= 8);
+    try h.expect(&.{ "display", "-p", "first" }, 0, "first\nagain\n", "");
+    try h.expect(&.{ "set-hook", "-R", "after-display-message" }, 0, "again\n", "");
+    // An if-shell branch is not a hook: its commands fire hooks as usual.
+    try h.expect(&.{ "if-shell", "-F", "1", "display -p branch" }, 0, "branch\nagain\n", "");
+}
+
+/// `levels` if-shell commands nested in each other's branch strings,
+/// innermost `display -p deep`; returns the outermost branch argument.
+fn nestedIfShell(a: Allocator, levels: usize) ![]const u8 {
+    var cur: []const u8 = "display -p deep";
+    for (0..levels) |_| {
+        var next: std.ArrayList(u8) = .empty;
+        try next.appendSlice(a, "if-shell -F 1 \"");
+        for (cur) |c| {
+            if (c == '\\' or c == '"') try next.append(a, '\\');
+            try next.append(a, c);
+        }
+        try next.append(a, '"');
+        cur = next.items;
+    }
+    return cur;
+}
+
+test "unit: tmux: if-shell nesting is bounded" {
+    const h = try Harness.create();
+    defer h.destroy();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    try h.expect(&.{ "if-shell", "-F", "1", try nestedIfShell(a, 2) }, 0, "deep\n", "");
+    try h.expect(&.{ "if-shell", "-F", "1", try nestedIfShell(a, 6) }, 0, "deep\n", "");
+    try h.expect(&.{ "if-shell", "-F", "1", try nestedIfShell(a, 7) }, 1, "", "command nesting too deep\n");
+    try h.expect(&.{ "if-shell", "-F", "1", try nestedIfShell(a, 20) }, 1, "", "command nesting too deep\n");
 }
 
 test "unit: tmux: set-hook stores, runs after commands and unsets" {

@@ -358,6 +358,8 @@ pub const Engine = struct {
     arena: Allocator = undefined,
     globals: parse.Globals = .{},
     snap: ?Snapshot = null,
+    /// Set while hook commands run: like tmux, they never fire hooks.
+    in_hook: bool = false,
 
     /// Runs one shim invocation (argv without argv[0]) and returns the exit
     /// code. Output is flushed before returning.
@@ -367,6 +369,7 @@ pub const Engine = struct {
         self.arena = arena_state.allocator();
         self.snap = null;
         self.globals = .{};
+        self.in_hook = false;
         defer self.snap = null;
         const code: u8 = self.runInner(argv) catch |e| switch (e) {
             error.OutOfMemory => blk: {
@@ -531,16 +534,25 @@ pub const Engine = struct {
             .attach_session, .detach_client, .source_file, .refresh_client, .start_server, .bind_key, .unbind_key, .copy_mode => {},
             .display_popup => return self.fail(placeholder_message, .{}),
         }
-        if (cmd.id() != .set_hook and depth < max_depth) {
+        if (cmd.id() != .set_hook and !self.in_hook and depth < max_depth) {
             const hook_name = try std.fmt.allocPrint(self.arena, "after-{s}", .{cmd.spec.name});
             if (self.store.getHook(hook_name)) |hook| {
                 const owned = try self.arena.dupe(u8, hook);
-                self.runString(owned, depth + 1) catch |e| switch (e) {
+                self.runHook(owned, depth + 1) catch |e| switch (e) {
                     error.CommandFailed => {}, // hook failures never fail the command
                     else => return e,
                 };
             }
         }
+    }
+
+    /// Runs hook commands with hooks disabled, as tmux does, so a hook can
+    /// never re-trigger itself or another hook.
+    fn runHook(self: *Engine, s: []const u8, depth: usize) Error!void {
+        const was = self.in_hook;
+        self.in_hook = true;
+        defer self.in_hook = was;
+        return self.runString(s, depth);
     }
 
     // -- plumbing ------------------------------------------------------------
@@ -1604,7 +1616,7 @@ pub const Engine = struct {
         }
         if (a.has('R')) {
             const hook = self.store.getHook(name) orelse return;
-            return self.runString(try self.arena.dupe(u8, hook), depth + 1);
+            return self.runHook(try self.arena.dupe(u8, hook), depth + 1);
         }
         if (a.positionals.len < 2) return self.fail("usage: {s} {s}", .{ cmd.spec.name, cmd.spec.usage });
         try self.store.setHook(self.gpa, name, a.positionals[1]);
