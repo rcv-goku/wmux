@@ -702,6 +702,39 @@ test "unit: tmux: parse: getopt clusters and attached values" {
     try testing.expectEqualStrings("cat", cmd.args.positionals[0]);
 }
 
+test "unit: tmux: parse: shell-style splitting and global flag edge cases" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var diag: Diag = .{};
+    // Empty input and bare separators produce no commands.
+    try testing.expectEqual(@as(usize, 0), (try splitCommandString(arena, "", &diag)).len);
+    try testing.expectEqual(@as(usize, 0), (try splitCommandString(arena, " \t;\n; ", &diag)).len);
+    // Double-quote escapes, literal single quotes, escaped blanks, adjacent
+    // quoting, UTF-8 and a trailing backslash.
+    const g = try splitCommandString(arena, "send-keys -t %1 \"a \\\"b\\\" \\$c\" 'd \\e' f\\ g h''i 'ünï ✓' x\\", &diag);
+    const want = [_][]const u8{ "send-keys", "-t", "%1", "a \"b\" $c", "d \\e", "f g", "hi", "ünï ✓", "x\\" };
+    try testing.expectEqual(@as(usize, 1), g.len);
+    try testing.expectEqual(want.len, g[0].len);
+    for (want, g[0]) |w, got| try testing.expectEqualStrings(w, got);
+    // `#` is never a comment and a quoted `;` is text.
+    const two = try splitCommandString(arena, "display -p '#{pane_id};x' ; kill-pane", &diag);
+    try testing.expectEqual(@as(usize, 2), two.len);
+    try testing.expectEqualStrings("#{pane_id};x", two[0][2]);
+    try testing.expectEqualStrings("kill-pane", two[1][0]);
+    try testing.expectError(error.Syntax, splitCommandString(arena, "a \"b", &diag));
+    try testing.expectError(error.Syntax, splitCommandString(arena, "a 'b", &diag));
+
+    // Global flags: attached and detached values, `--` before the verb.
+    const inv = try parseInvocation(arena, &.{ "-Lswarm", "-S", "C:\\tmp\\s", "-f/dev/null", "--", "has", "-t", "x" }, &diag);
+    try testing.expectEqualStrings("swarm", inv.globals.socket_name.?);
+    try testing.expectEqualStrings("C:\\tmp\\s", inv.globals.socket_path.?);
+    try testing.expectEqualStrings("/dev/null", inv.globals.config_file.?);
+    try testing.expectEqual(@as(usize, 1), inv.commands.len);
+    try testing.expectEqual(CommandId.has_session, inv.commands[0].id());
+    try testing.expectEqualStrings("x", inv.commands[0].args.get('t').?);
+}
+
 test "unit: tmux: parse: targets" {
     try testing.expectEqual(@as(u32, 7), parseTarget("%7").pane_id);
     try testing.expectEqual(@as(u32, 2), parseTarget("@2").window_id);
