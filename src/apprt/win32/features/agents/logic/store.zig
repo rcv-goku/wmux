@@ -448,10 +448,14 @@ pub const Store = struct {
     /// 5. with `activate`, the record becomes the active session of its
     ///    surface and workspace, and other sessions on the same surface are
     ///    superseded (removed).
+    /// Strings that are not valid UTF-8 (Windows env vars and argv arrive as
+    /// WTF-8) are ignored like nulls, and such a session id counts as
+    /// missing: ids are written as object keys, verbatim, and one invalid
+    /// key would make the whole file unreadable.
     pub fn applyHook(self: *Store, u: Update) (Allocator.Error || error{MissingSessionId})!void {
         const a = self.alloc();
         const sid_in = std.mem.trim(u8, u.session_id, " \t\r\n");
-        if (sid_in.len == 0) return error.MissingSessionId;
+        if (sid_in.len == 0 or !std.unicode.utf8ValidateSlice(sid_in)) return error.MissingSessionId;
         const sid = truncateUtf8(sid_in, max_id_bytes);
 
         if (!self.sessions.contains(sid)) {
@@ -489,11 +493,11 @@ pub const Store = struct {
         switch (u.turn) {
             .none => {},
             .begin => {
-                if (u.turn_id) |t| r.active_prompt_turn_id = try a.dupe(u8, truncateUtf8(t, max_id_bytes));
+                if (validUtf8(u.turn_id)) |t| r.active_prompt_turn_id = try a.dupe(u8, truncateUtf8(t, max_id_bytes));
                 r.turn_settled = false;
             },
             .settle => {
-                const last = if (u.turn_id) |t| try a.dupe(u8, truncateUtf8(t, max_id_bytes)) else r.active_prompt_turn_id;
+                const last = if (validUtf8(u.turn_id)) |t| try a.dupe(u8, truncateUtf8(t, max_id_bytes)) else r.active_prompt_turn_id;
                 if (last) |l| r.last_prompt_turn_id = l;
                 r.active_prompt_turn_id = null;
                 r.turn_settled = true;
@@ -761,8 +765,16 @@ fn optStr(o: std.json.ObjectMap, key: []const u8, cap: usize) ?[]const u8 {
     return if (v == .string) truncateUtf8(v.string, cap) else null;
 }
 
+/// `v` when it is valid UTF-8, else null.
+fn validUtf8(v: ?[]const u8) ?[]const u8 {
+    const s = v orelse return null;
+    return if (std.unicode.utf8ValidateSlice(s)) s else null;
+}
+
+/// Overwrite `slot` with a capped copy of `v`; null or invalid UTF-8 keeps
+/// the stored value (see `Store.applyHook`).
 fn setStr(a: Allocator, slot: *?[]const u8, v: ?[]const u8, cap: usize) Allocator.Error!void {
-    const s = v orelse return;
+    const s = validUtf8(v) orelse return;
     slot.* = try a.dupe(u8, truncateUtf8(s, cap));
 }
 

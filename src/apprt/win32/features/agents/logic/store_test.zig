@@ -145,6 +145,26 @@ test "unit: agents: store merge keeps fields that an update leaves null" {
     try testing.expectError(error.MissingSessionId, s.applyHook(.{ .session_id = "  ", .now_ms = 1 }));
 }
 
+test "unit: agents: store ignores ids and text that are not valid UTF-8" {
+    // A lone surrogate from a WTF-16 environment variable arrives as WTF-8.
+    const wtf8 = "S-\xed\xa0\x80-1";
+    var s = Store.init(testing.allocator);
+    defer s.deinit();
+    try s.applyHook(.{ .session_id = "a", .now_ms = 1_000, .surface_id = surf_a, .cwd = "/ok" });
+    try s.applyHook(.{ .session_id = "b", .now_ms = 2_000, .surface_id = wtf8, .workspace_id = "W-\xff", .cwd = "/bad\xff", .title = "fine", .turn = .begin, .turn_id = "t\xc3" });
+    try testing.expectError(error.MissingSessionId, s.applyHook(.{ .session_id = "id-\xff", .now_ms = 3_000 }));
+    const b = s.get("b").?;
+    try testing.expect(b.surface_id == null and b.workspace_id == null and b.cwd == null and b.active_prompt_turn_id == null);
+    try testing.expectEqualStrings("fine", b.title.?);
+
+    // The file stays readable: both records survive a round trip.
+    var t = try roundTrip(&s);
+    defer t.deinit();
+    try testing.expectEqual(@as(usize, 0), t.diagnostics.items.len);
+    try testing.expectEqual(@as(usize, 2), t.count());
+    try testing.expectEqualStrings("/ok", t.activeForSurface(surf_a).?.cwd.?);
+}
+
 test "unit: agents: store superseded sessions on the same surface are cleaned up" {
     var s = Store.init(testing.allocator);
     defer s.deinit();
