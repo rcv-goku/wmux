@@ -892,7 +892,10 @@ fn surfaceWndProc(
             surface.handleMouseButton(.left, .press, lparam);
             return 0;
         },
-        w32.WM_LBUTTONUP => { surface.handleMouseButton(.left, .release, lparam); return 0; },
+        w32.WM_LBUTTONUP => {
+            surface.handleMouseButton(.left, .release, lparam);
+            return 0;
+        },
         w32.WM_RBUTTONDOWN => {
             _ = w32.SetFocus(hwnd);
             // Only the terminal surface forwards right-clicks to the
@@ -911,7 +914,10 @@ fn surfaceWndProc(
             surface.handleMouseButton(.middle, .press, lparam);
             return 0;
         },
-        w32.WM_MBUTTONUP => { surface.handleMouseButton(.middle, .release, lparam); return 0; },
+        w32.WM_MBUTTONUP => {
+            surface.handleMouseButton(.middle, .release, lparam);
+            return 0;
+        },
 
         w32.WM_MOUSEMOVE => {
             surface.handleMouseMove(lparam);
@@ -1019,7 +1025,10 @@ fn surfaceWndProc(
             surface.handleFocus(true);
             return 0;
         },
-        w32.WM_KILLFOCUS => { surface.handleFocus(false); return 0; },
+        w32.WM_KILLFOCUS => {
+            surface.handleFocus(false);
+            return 0;
+        },
 
         else => return w32.DefWindowProcW(hwnd, msg, wparam, lparam),
     }

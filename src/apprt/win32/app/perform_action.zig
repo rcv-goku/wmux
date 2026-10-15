@@ -357,12 +357,17 @@ fn resetWindowSize(self: *App, target: apprt.Target) void {
             if (core_surface.rt_surface.parent_window.hwnd) |h| {
                 // Reset to default 800x600
                 var rect = w32.RECT{
-                    .left = 0, .top = 0,
-                    .right = 800, .bottom = 600,
+                    .left = 0,
+                    .top = 0,
+                    .right = 800,
+                    .bottom = 600,
                 };
                 _ = w32.AdjustWindowRectEx(&rect, w32.WS_OVERLAPPEDWINDOW, 0, 0);
                 _ = w32.SetWindowPos(
-                    h, null, 0, 0,
+                    h,
+                    null,
+                    0,
+                    0,
                     rect.right - rect.left,
                     rect.bottom - rect.top,
                     w32.SWP_NOZORDER | w32.SWP_NOMOVE,
@@ -493,7 +498,10 @@ fn floatWindow(target: apprt.Target, value: apprt.Action.Value(.float_window)) v
             _ = w32.SetWindowPos(
                 win_hwnd,
                 insert_after,
-                0, 0, 0, 0,
+                0,
+                0,
+                0,
+                0,
                 w32.SWP_NOMOVE | w32.SWP_NOSIZE | w32.SWP_NOACTIVATE,
             );
         },

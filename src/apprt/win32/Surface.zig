@@ -424,15 +424,27 @@ pub fn deinit(self: *Surface) void {
         self.search_hwnd = null;
         self.search_edit = null;
     }
-    if (self.search_font) |f| { _ = w32.DeleteObject(f); self.search_font = null; }
+    if (self.search_font) |f| {
+        _ = w32.DeleteObject(f);
+        self.search_font = null;
+    }
     if (self.palette_hwnd) |popup| {
         _ = w32.DestroyWindow(popup);
         self.palette_hwnd = null;
         self.palette_edit = null;
     }
-    if (self.palette_font) |f| { _ = w32.DeleteObject(f); self.palette_font = null; }
-    if (self.palette_brush) |b| { _ = w32.DeleteObject(b); self.palette_brush = null; }
-    if (self.palette_paint_font) |f| { _ = w32.DeleteObject(f); self.palette_paint_font = null; }
+    if (self.palette_font) |f| {
+        _ = w32.DeleteObject(f);
+        self.palette_font = null;
+    }
+    if (self.palette_brush) |b| {
+        _ = w32.DeleteObject(b);
+        self.palette_brush = null;
+    }
+    if (self.palette_paint_font) |f| {
+        _ = w32.DeleteObject(f);
+        self.palette_paint_font = null;
+    }
 
     // Don't call DestroyWindow on the child HWND here. The OPENGL32.dll
     // driver hooks into window destruction and segfaults after we've already
@@ -766,7 +778,10 @@ fn ensureSearchBar(self: *Surface) void {
         App.TERMINAL_CLASS_NAME,
         std.unicode.utf8ToUtf16LeStringLiteral(""),
         w32.WS_POPUP | w32.WS_BORDER,
-        0, 0, bar_w, bar_h,
+        0,
+        0,
+        bar_w,
+        bar_h,
         self.parent_window.hwnd.?,
         null,
         self.app.hinstance,
@@ -793,7 +808,10 @@ fn ensureSearchBar(self: *Surface) void {
         std.unicode.utf8ToUtf16LeStringLiteral("EDIT"),
         std.unicode.utf8ToUtf16LeStringLiteral(""),
         w32.WS_CHILD | w32.WS_VISIBLE_STYLE | w32.ES_AUTOHSCROLL,
-        pad, pad, bar_w - pad * 2 - 2, bar_h - pad * 2 - 2,
+        pad,
+        pad,
+        bar_w - pad * 2 - 2,
+        bar_h - pad * 2 - 2,
         popup,
         @ptrFromInt(@as(usize, SEARCH_EDIT_ID)),
         self.app.hinstance,
@@ -805,9 +823,19 @@ fn ensureSearchBar(self: *Surface) void {
 
     // Set a readable font (DPI-scaled)
     self.search_font = w32.CreateFontW(
-        -@as(i32, @intFromFloat(@round(16.0 * s))), 0, 0, 0, 400,
-        0, 0, 0,
-        0, 0, 0, 0, 0,
+        -@as(i32, @intFromFloat(@round(16.0 * s))),
+        0,
+        0,
+        0,
+        400,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
         std.unicode.utf8ToUtf16LeStringLiteral("Segoe UI"),
     );
     if (self.search_font) |f| {
@@ -1007,7 +1035,10 @@ fn ensureCommandPalette(self: *Surface) void {
         App.TERMINAL_CLASS_NAME,
         std.unicode.utf8ToUtf16LeStringLiteral(""),
         w32.WS_POPUP | w32.WS_BORDER,
-        0, 0, pal_w, pal_h,
+        0,
+        0,
+        pal_w,
+        pal_h,
         self.parent_window.hwnd.?,
         null,
         self.app.hinstance,
@@ -1034,7 +1065,10 @@ fn ensureCommandPalette(self: *Surface) void {
         std.unicode.utf8ToUtf16LeStringLiteral("EDIT"),
         std.unicode.utf8ToUtf16LeStringLiteral(""),
         w32.WS_CHILD | w32.WS_VISIBLE_STYLE | w32.ES_AUTOHSCROLL,
-        pad, pad, pal_w - pad * 2 - 2, edit_h,
+        pad,
+        pad,
+        pal_w - pad * 2 - 2,
+        edit_h,
         popup,
         @ptrFromInt(@as(usize, PALETTE_EDIT_ID)),
         self.app.hinstance,
@@ -1046,8 +1080,19 @@ fn ensureCommandPalette(self: *Surface) void {
 
     // Set font (DPI-scaled) — stored for cleanup in deinit
     self.palette_font = w32.CreateFontW(
-        -@as(i32, @intFromFloat(@round(16.0 * s))), 0, 0, 0, 400,
-        0, 0, 0, 0, 0, 0, 0, 0,
+        -@as(i32, @intFromFloat(@round(16.0 * s))),
+        0,
+        0,
+        0,
+        400,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
         std.unicode.utf8ToUtf16LeStringLiteral("Segoe UI"),
     );
     if (self.palette_font) |f| {
@@ -1101,8 +1146,6 @@ fn filterPaletteEntries(self: *Surface, filter: []const u8) void {
         _ = w32.InvalidateRect(popup, null, 1);
     }
 }
-
-
 
 /// Handle text changes in the palette search edit (EN_CHANGE).
 pub fn handlePaletteChange(self: *Surface) void {
@@ -1190,8 +1233,19 @@ pub fn paintPalette(self: *Surface, hwnd: w32.HWND) void {
     const s = self.scale;
     if (self.palette_paint_font == null) {
         self.palette_paint_font = w32.CreateFontW(
-            -@as(i32, @intFromFloat(@round(14.0 * s))), 0, 0, 0, 400,
-            0, 0, 0, 0, 0, 0, 0, 0,
+            -@as(i32, @intFromFloat(@round(14.0 * s))),
+            0,
+            0,
+            0,
+            400,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
             std.unicode.utf8ToUtf16LeStringLiteral("Segoe UI"),
         );
     }
@@ -1526,8 +1580,19 @@ pub fn handleDpiChange(self: *Surface) void {
     }
     if (self.search_edit) |edit| {
         self.search_font = w32.CreateFontW(
-            -@as(i32, @intFromFloat(@round(16.0 * s))), 0, 0, 0, 400,
-            0, 0, 0, 0, 0, 0, 0, 0,
+            -@as(i32, @intFromFloat(@round(16.0 * s))),
+            0,
+            0,
+            0,
+            400,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
             std.unicode.utf8ToUtf16LeStringLiteral("Segoe UI"),
         );
         if (self.search_font) |f| {
@@ -1536,8 +1601,19 @@ pub fn handleDpiChange(self: *Surface) void {
     }
     if (self.palette_edit) |edit| {
         self.palette_font = w32.CreateFontW(
-            -@as(i32, @intFromFloat(@round(16.0 * s))), 0, 0, 0, 400,
-            0, 0, 0, 0, 0, 0, 0, 0,
+            -@as(i32, @intFromFloat(@round(16.0 * s))),
+            0,
+            0,
+            0,
+            400,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
             std.unicode.utf8ToUtf16LeStringLiteral("Segoe UI"),
         );
         if (self.palette_font) |f| {
