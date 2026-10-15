@@ -1677,3 +1677,52 @@ test "unit: browser: locators over an ax-only tree use names" {
     try testing.expectEqual(@as(?i64, null), try findBackend(&tree, .{ .kind = .testid, .value = "x" }));
     try testing.expectEqual(@as(?i64, null), try findBackend(&tree, .{ .kind = .first, .value = "button" }));
 }
+
+// ---------------------------------------------------------------------------
+// allocation failures
+
+/// Every allocating entry point once, all on `a`: parse (both sources, with
+/// a url, frames, shadow roots, labels and a lone surrogate), annotate,
+/// render with refs and css paths, JSON, find/register, resolve, count.
+fn pipeline(a: std.mem.Allocator) !void {
+    var dom = try ax.parseDomDocument(a, dom_frames, .{ .url = "https://top.test/" });
+    defer dom.deinit();
+    var login = try ax.parseDomDocument(a, dom_login, .{});
+    defer login.deinit();
+    var tree = try ax.parseAxTree(a, ax_login, .{ .url = "https://example.test/login" });
+    defer tree.deinit();
+    try tree.annotateFromDom(&login);
+    var odd = try ax.parseDomDocument(a, "{\"root\":{\"nodeType\":9,\"children\":[{\"nodeType\":1,\"localName\":\"button\",\"attributes\":[\"aria-label\",\"\\ud83d\"]}]}}", .{});
+    defer odd.deinit();
+
+    var table = refs.RefTable.init(a);
+    defer table.deinit();
+    try table.setSelectedFrame("CHILD");
+    var snap = try snapshot.render(a, &dom, &table, .{ .cursor = true });
+    defer snap.deinit();
+    var aw: std.Io.Writer.Allocating = .init(a);
+    defer aw.deinit();
+    var s: std.json.Stringify = .{ .writer = &aw.writer };
+    snapshot.writeJson(a, &s, &snap, &dom, &table, .{}) catch return error.OutOfMemory;
+    var ax_snap = try snapshot.render(a, &tree, &table, .{ .compact = true });
+    defer ax_snap.deinit();
+    const idx = (try locators.findOne(a, &login, .{ .kind = .text, .value = "sign" }, null)).?;
+    const id = try locators.register(a, &login, &table, idx);
+    aw.clearRetainingCapacity();
+    s = .{ .writer = &aw.writer };
+    locators.writeFindResult(a, &s, &login, &table, idx, id, "find") catch return error.OutOfMemory;
+    _ = try locators.resolveSelector(a, &login, &table, "form > button.btn");
+    _ = try locators.countMatches(a, &dom, "button");
+}
+
+test "unit: browser: allocation failures anywhere in the pipeline leak nothing" {
+    var fail_index: usize = 0;
+    while (true) : (fail_index += 1) {
+        var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = fail_index });
+        if (pipeline(failing.allocator())) |_| {
+            try testing.expect(fail_index > 0);
+            break;
+        } else |err| try testing.expectEqual(error.OutOfMemory, err);
+        try testing.expect(fail_index < 100_000);
+    }
+}
