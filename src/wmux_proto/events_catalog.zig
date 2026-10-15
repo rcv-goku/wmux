@@ -15,7 +15,7 @@
 
 const std = @import("std");
 
-/// Coarse subscription group (`events.stream {categories}`, `cmux events --category`).
+/// Category of an event, the unit of `events.stream {categories}` and `cmux events --category` filters.
 pub const Category = enum {
     agent,
     app,
@@ -46,8 +46,8 @@ pub const Origin = enum {
     /// Emitted only by `model/ops/*` mutators, so UI, shortcut, CLI, startup and
     /// restore paths each emit exactly once (source `window.lifecycle` / `workspace.lifecycle`).
     lifecycle,
-    /// Emitted by `rpc/dispatch.zig` after a successful reply, for command effects
-    /// with no authoritative model event (source `socket.v2` / `socket.v1`).
+    /// Emitted by `rpc/dispatch.zig` after a successful reply, for commands whose
+    /// result no `model/ops` event reports (source `socket.v2` / `socket.v1`).
     socket,
     /// Emitted by a feature store for its own domain (notifications, sidebar, feed, agents).
     store,
@@ -163,7 +163,7 @@ fn omitted(n: []const u8) Key {
     return .{ .name = n, .value_type = .any, .required = false, .privacy = .omitted };
 }
 
-/// Largest accepted `prompt_length` (the hook CLI's 1 MiB input ceiling).
+/// Upper bound of `prompt_length`: 1 MiB, the most input a hook accepts.
 pub const max_prompt_length: i64 = 1_048_576;
 
 // Shared payload key sets.
@@ -888,22 +888,22 @@ fn expectViolation(name: []const u8, json: []const u8, reason: Reason, key: []co
 test "unit: events: payload validation accepts documented payloads" {
     const gpa = testing.allocator;
     try validatePayloadJson(gpa, "notification.created",
-        \\{"notification_id":"7ED5F805-CC6F-4B06-9701-AC798F63E209","title":null,"subtitle":null,"body":null,
-        \\ "title_length":14,"subtitle_length":0,"body_length":13,"redacted_fields":["title","subtitle","body"],"delivery":"store"}
+        \\{"notification_id":"9242A50F-0CDF-4E93-85DE-B165A44EE023","title":null,"subtitle":null,"body":null,
+        \\ "title_length":5,"subtitle_length":0,"body_length":21,"redacted_fields":["title","subtitle","body"],"delivery":"store"}
     );
     try validatePayloadJson(gpa, "agent.hook.Stop",
-        \\{"session_id":"session-123","hook_event_name":"Stop","_source":"codex",
-        \\ "surface_id":"83F4E6A4-5246-4DB8-A412-9CE7B059FA6C","tool_name":null,"_opencode_request_id":"request-456","phase":"received"}
+        \\{"session_id":"s-4f1c","hook_event_name":"Stop","_source":"codex",
+        \\ "surface_id":"A5D08B97-22F6-418C-AFD0-64C842FC6E07","tool_name":null,"_opencode_request_id":"req-88","phase":"received"}
     );
     try validatePayloadJson(gpa, "window.created",
-        \\{"window_id":"2fb4e6a4-5246-4db8-a412-9ce7b059fa6c","workspace_id":null,"workspace_count":1,
+        \\{"window_id":"799cef90-c91f-441c-83fb-54ec70da635a","workspace_id":null,"workspace_count":1,
         \\ "selected_workspace_index":0,"is_key_window":true,"is_main_window":true,"origin":"startup","extra":"ok"}
     );
     try validatePayloadJson(gpa, "program_status.changed",
         \\{"event":"removed","id":null,"record":null,"records":[],"records_total":0,"snapshot_id":"s1","snapshot_index":0,"snapshot_count":1}
     );
     try validatePayloadJson(gpa, "workspace.prompt.submitted",
-        \\{"workspace_id":"9B6920C1-6C29-4C27-A069-78CF285F932A","message":null,"message_preview":"héllo 中 👩‍💻",
+        \\{"workspace_id":"C7E2CD6C-4E2C-47C5-8D30-DE9F1B3F9EAD","message":null,"message_preview":"héllo 中 👩‍💻",
         \\ "message_length":9,"redacted_fields":["message"]}
     );
     try validatePayloadJson(gpa, "feed.item.completed",
@@ -936,12 +936,41 @@ test "unit: events: payload validation rejects malformed payloads" {
     try expectViolation("program_status.changed", "{\"event\":\"clear\",\"id\":null,\"record\":null,\"records\":[],\"records_total\":0,\"snapshot_id\":\"s\",\"snapshot_index\":0,\"snapshot_count\":0}", .out_of_range, "snapshot_count");
 }
 
+test "unit: events: uuid keys accept only 8-4-4-4-12 hex" {
+    const ok = [_][]const u8{
+        "4335148D-7678-4F16-B3F9-B59D6C9E1E74",
+        "4335148d-7678-4f16-b3f9-b59d6c9e1e74",
+    };
+    const bad = [_][]const u8{
+        "",
+        "4335148D-7678-4F16-B3F9-B59D6C9E1E7", // 35 bytes
+        "4335148D-7678-4F16-B3F9-B59D6C9E1E740", // 37 bytes
+        "{4335148D-7678-4F16-B3F9-B59D6C9E1E74}",
+        "4335148D7-678-4F16-B3F9-B59D6C9E1E74", // dash out of place
+        "4335148D-7678-4F16-B3F9_B59D6C9E1E74",
+        "4335148G-7678-4F16-B3F9-B59D6C9E1E74", // not hex
+        "4335148D-7678-4F16-B3F9-B59D6C9E1EÉ", // 36 bytes, not ASCII
+        "4335148D76784F16B3F9B59D6C9E1E74",
+        "surface:7",
+    };
+    var buf: [128]u8 = undefined;
+    for (ok) |u| {
+        const json = try std.fmt.bufPrint(&buf, "{{\"selected_surface_id\":\"{s}\"}}", .{u});
+        try validatePayloadJson(testing.allocator, "pane.focused", json);
+    }
+    for (bad) |u| {
+        const json = try std.fmt.bufPrint(&buf, "{{\"selected_surface_id\":\"{s}\"}}", .{u});
+        try expectViolation("pane.focused", json, .value_not_allowed, "selected_surface_id");
+    }
+    try expectViolation("pane.focused", "{\"selected_surface_id\":7}", .wrong_type, "selected_surface_id");
+}
+
 test "unit: events: privacy violations are detected" {
     // The acceptance line: typed text must never appear in surface.input_sent.
     try expectViolation("surface.input_sent", "{\"text\":\"secret123\",\"text_length\":9,\"redacted_fields\":[\"text\"]}", .redacted_value_present, "text");
     try expectViolation("browser.input", "{\"value\":\"hunter2\",\"value_length\":7,\"redacted_fields\":[\"value\"]}", .redacted_value_present, "value");
     try expectViolation("notification.created",
-        \\{"notification_id":"7ED5F805-CC6F-4B06-9701-AC798F63E209","title":"T","subtitle":null,"body":null,
+        \\{"notification_id":"9242A50F-0CDF-4E93-85DE-B165A44EE023","title":"T","subtitle":null,"body":null,
         \\ "title_length":1,"subtitle_length":0,"body_length":0,"redacted_fields":["title","subtitle","body"],"delivery":"store"}
     , .redacted_value_present, "title");
     try expectViolation("agent.hook.PreToolUse", "{\"hook_event_name\":\"PreToolUse\",\"_source\":\"claude\",\"phase\":\"received\",\"tool_input\":{\"cmd\":\"ls\"}}", .omitted_key_present, "tool_input");
@@ -952,11 +981,11 @@ test "unit: events: privacy violations are detected" {
 }
 
 test "unit: events: prompt_length accepts only integral 0..1048576" {
-    const ok = [_][]const u8{ "0", "85", "18635", "1048576", "85.0" };
+    const ok = [_][]const u8{ "0", "1", "4096", "1048576", "512.0" };
     const bad = [_]struct { []const u8, Reason }{
         .{ "-1", .out_of_range },    .{ "1048577", .out_of_range },
         .{ "1.5", .wrong_type },     .{ "true", .wrong_type },
-        .{ "\"85\"", .wrong_type },  .{ "99999999999999999999999", .out_of_range },
+        .{ "\"12\"", .wrong_type },  .{ "99999999999999999999999", .out_of_range },
         .{ "1e300", .out_of_range }, .{ "null", .null_not_allowed },
     };
     var buf: [256]u8 = undefined;
@@ -968,7 +997,7 @@ test "unit: events: prompt_length accepts only integral 0..1048576" {
         const json = try std.fmt.bufPrint(&buf, "{{\"hook_event_name\":\"UserPromptSubmit\",\"_source\":\"claude\",\"phase\":\"received\",\"prompt_length\":{s}}}", .{b[0]});
         try expectViolation("agent.hook.UserPromptSubmit", json, b[1], "prompt_length");
     }
-    // Absent means unknown, not zero: still valid.
+    // prompt_length is optional: a payload without it is valid.
     try validatePayloadJson(testing.allocator, "agent.hook.UserPromptSubmit", "{\"hook_event_name\":\"UserPromptSubmit\",\"_source\":\"claude\",\"phase\":\"received\"}");
 }
 
