@@ -312,6 +312,7 @@ pub fn build(b: *std.Build) !void {
                 &deps,
             );
         };
+        wmux.addImports(valgrind_exe.exe.root_module);
 
         const run_cmd = b.addSystemCommand(&.{
             "valgrind",

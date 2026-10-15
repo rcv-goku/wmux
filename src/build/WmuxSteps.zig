@@ -240,7 +240,10 @@ pub fn init(b: *std.Build, cfg: *const Config, opts: Options) !WmuxSteps {
 }
 
 /// Makes `@import("wmux_proto")` and `@import("wmux_build_options")`
-/// available to an app module (wmux.exe and its unit tests).
+/// available to an app root module. build.zig calls it for every compile of
+/// the app (wmux.exe, its valgrind build and the unit tests). Reuse these
+/// module objects: two modules with the same root file in one compilation
+/// fail the build.
 pub fn addImports(self: *const WmuxSteps, module: *std.Build.Module) void {
     module.addImport("wmux_proto", self.proto);
     module.addImport("wmux_build_options", self.build_options);
