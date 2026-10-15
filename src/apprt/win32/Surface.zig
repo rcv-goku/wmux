@@ -15,6 +15,7 @@ const internal_os = @import("../../os/main.zig");
 const App = @import("App.zig");
 const Pane = @import("Pane.zig");
 const Window = @import("Window.zig");
+const app_modal = @import("app/modal.zig");
 const w32 = @import("platform/win32.zig");
 const Scrollbar = @import("Scrollbar.zig").Scrollbar;
 
@@ -544,7 +545,8 @@ pub fn close(self: *Surface, process_active: bool) void {
     // the core would return process_active=true unconditionally).
     if (process_active) {
         const parent_hwnd = self.parent_window.hwnd;
-        const result = w32.MessageBoxW(
+        const result = app_modal.messageBox(
+            self.app,
             parent_hwnd,
             std.unicode.utf8ToUtf16LeStringLiteral(
                 "A process is still running in this terminal.\nClose anyway?",
@@ -584,36 +586,9 @@ pub fn clipboardRequest(
 
     const alloc = self.app.core_app.alloc;
 
-    if (w32.OpenClipboard(self.hwnd) == 0) {
-        log.warn("OpenClipboard failed", .{});
-        return false;
-    }
-    defer _ = w32.CloseClipboard();
-
-    // Retrieve CF_UNICODETEXT (UTF-16LE, null-terminated).
-    const hglobal = w32.GetClipboardData(w32.CF_UNICODETEXT) orelse {
-        // No text on the clipboard.
-        return false;
-    };
-
-    const ptr16 = w32.GlobalLock(hglobal) orelse {
-        log.warn("GlobalLock failed", .{});
-        return false;
-    };
-    defer _ = w32.GlobalUnlock(hglobal);
-
-    // Reinterpret the byte pointer as a u16 pointer for UTF-16LE data.
-    const wptr: [*]const u16 = @ptrCast(@alignCast(ptr16));
-
-    // Find the null terminator to get the length in u16 code units.
-    var wlen: usize = 0;
-    while (wptr[wlen] != 0) wlen += 1;
-
-    // Convert UTF-16LE to a UTF-8 slice owned by the allocator.
-    const utf8 = std.unicode.utf16LeToUtf8Alloc(alloc, wptr[0..wlen]) catch |err| {
-        log.warn("utf16LeToUtf8Alloc failed: {}", .{err});
-        return false;
-    };
+    // The clipboard text as UTF-8 (app/clipboard.zig: the system
+    // clipboard, or the in-process fake in WMUX_TEST_MODE).
+    const utf8 = self.app.clipboard.readText(alloc, self.hwnd) orelse return false;
     defer alloc.free(utf8);
 
     // Null-terminate for completeClipboardRequest.
@@ -660,46 +635,9 @@ pub fn setClipboard(
 
     const alloc = self.app.core_app.alloc;
 
-    // Convert UTF-8 to UTF-16LE.  Add 1 for the null terminator.
-    const utf16 = try std.unicode.utf8ToUtf16LeAlloc(alloc, text);
-    defer alloc.free(utf16);
-
-    // Size in bytes including the null terminator (u16 → 2 bytes each).
-    const byte_size = (utf16.len + 1) * @sizeOf(u16);
-
-    // Allocate a moveable global memory block.
-    const hglobal = w32.GlobalAlloc(w32.GMEM_MOVEABLE, byte_size) orelse {
-        log.warn("GlobalAlloc failed for clipboard write", .{});
-        return;
-    };
-
-    const dst_bytes = w32.GlobalLock(hglobal) orelse {
-        log.warn("GlobalLock failed for clipboard write", .{});
-        _ = w32.GlobalFree(hglobal);
-        return;
-    };
-
-    // Copy the UTF-16LE data (including null terminator) into the block.
-    const dst16: [*]u16 = @ptrCast(@alignCast(dst_bytes));
-    @memcpy(dst16[0..utf16.len], utf16);
-    dst16[utf16.len] = 0; // null terminator
-
-    _ = w32.GlobalUnlock(hglobal);
-
-    if (w32.OpenClipboard(self.hwnd) == 0) {
-        log.warn("OpenClipboard failed for clipboard write", .{});
-        _ = w32.GlobalFree(hglobal);
-        return;
-    }
-    defer _ = w32.CloseClipboard();
-
-    _ = w32.EmptyClipboard();
-
-    // SetClipboardData takes ownership of hglobal on success.
-    if (w32.SetClipboardData(w32.CF_UNICODETEXT, hglobal) == null) {
-        log.warn("SetClipboardData failed", .{});
-        _ = w32.GlobalFree(hglobal);
-    }
+    // app/clipboard.zig: the system clipboard, or the in-process fake in
+    // WMUX_TEST_MODE.
+    try self.app.clipboard.writeText(alloc, self.hwnd, text);
 }
 
 pub fn defaultTermioEnv(self: *const Surface) !std.process.EnvMap {

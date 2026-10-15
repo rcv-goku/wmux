@@ -9,6 +9,7 @@ const configpkg = @import("../../../../config.zig");
 const App = @import("../../App.zig");
 const Window = @import("../../Window.zig");
 const Surface = @import("../../Surface.zig");
+const foreground = @import("../../app/foreground.zig");
 const timers = @import("../../app/timers.zig");
 const w32 = @import("../../platform/win32.zig");
 
@@ -346,7 +347,7 @@ fn forceForeground(self: *QuickTerminal) void {
     // hotkey, so it intentionally comes forward over whatever app is
     // foreground (unlike the programmatic raises that go through the
     // foregroundIsOurs gate in forceForegroundWindow).
-    App.raiseForegroundWindow(hwnd);
+    foreground.raiseForegroundWindow(self.app, hwnd);
     // Focus the terminal surface inside the window.
     if (self.window.getActiveSurface()) |s| {
         if (s.hwnd) |sh| _ = w32.SetFocus(sh);

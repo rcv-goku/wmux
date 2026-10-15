@@ -30,6 +30,8 @@ const meta = @import("features/meta/api.zig");
 const updater = @import("features/updater/legacy_check.zig");
 const config_files = @import("settings/legacy_config_files.zig");
 const app_tasks = @import("app/tasks.zig");
+const app_clipboard = @import("app/clipboard.zig");
+const app_modal = @import("app/modal.zig");
 const broadcast_window = @import("app/broadcast_window.zig");
 const hooks = @import("app/hooks.zig");
 const app_timers = @import("app/timers.zig");
@@ -91,6 +93,13 @@ timers: app_timers.Timers = .{},
 /// (logoff/shutdown, power, settings, display changes) and offers them to
 /// the app hooks (ARCHITECTURE.md ADR-1.6).
 broadcast: broadcast_window.BroadcastWindow = .{},
+
+/// The only clipboard access point (system clipboard, or an in-process
+/// fake in WMUX_TEST_MODE).
+clipboard: app_clipboard.Clipboard = .{},
+
+/// Modal-loop depth (app/modal.zig).
+modal: app_modal.Modal = .{},
 
 /// The HINSTANCE for this module.
 hinstance: w32.HINSTANCE,
@@ -274,6 +283,8 @@ pub fn init(
         .runtime_env = RuntimeEnv.load(alloc),
     };
     errdefer self.runtime_env.deinit(alloc);
+    self.clipboard.init(alloc, self.runtime_env.test_mode);
+    errdefer self.clipboard.deinit();
 
     // Register the window container class (GDI painting, no CS_OWNDC).
     // CS_DBLCLKS is required to receive WM_LBUTTONDBLCLK for divider equalize.
@@ -540,6 +551,7 @@ pub fn terminate(self: *App) void {
 
     self.config.deinit();
     self.runtime_env.deinit(alloc);
+    self.clipboard.deinit();
 
     // Release the taskbar overlay COM object before CoUninitialize tears
     // down the apartment it lives in.
@@ -727,58 +739,6 @@ fn onQuitTimer(self: *App, ctx: usize) void {
     self.quit_timer_state = .expired;
     self.quit_requested = true;
     w32.PostQuitMessage(0);
-}
-
-/// Whether the current foreground window belongs to THIS process. The
-/// guard for every OS-foreground raise (forceForegroundWindow and the
-/// present_terminal raise): we only ever steal/move OS foreground when we
-/// already own it — switching between our own windows is fine, but we
-/// must NEVER yank the user out of another app (VS Code, Slack, the app
-/// an agent orchestrator is driving). Returns false when there is no
-/// foreground window (treat as "not ours" — don't grab it).
-pub fn foregroundIsOurs() bool {
-    const fg = w32.GetForegroundWindow() orelse return false;
-    var fg_pid: u32 = 0;
-    _ = w32.GetWindowThreadProcessId(fg, &fg_pid);
-    return fg_pid == w32.GetCurrentProcessId();
-}
-
-/// Raise a window of THIS process to the foreground, but ONLY when the
-/// current foreground window already belongs to us. When another
-/// application is foreground this is a no-op: the caller may still have
-/// restored/shown the window (it will flash its taskbar button) but we
-/// never steal OS foreground from another app. See foregroundIsOurs.
-/// This is the gate for every PROGRAMMATIC/notification raise
-/// (present_terminal, jumpToSurface, +notify next, --focus). The
-/// interactive QuickTerminal summon uses the ungated raiseForegroundWindow
-/// (user-pressed hotkey == explicit intent to come forward over any app).
-pub fn forceForegroundWindow(hwnd: w32.HWND) void {
-    if (!foregroundIsOurs()) return;
-    raiseForegroundWindow(hwnd);
-}
-
-/// Unconditionally raise `hwnd` to the OS foreground. Uses
-/// AttachThreadInput to work around the Win32 SetForegroundWindow
-/// restriction when the current foreground window belongs to another
-/// thread/process. The UNGATED primitive: only the interactive
-/// QuickTerminal summon (an explicit user hotkey) calls this directly;
-/// every programmatic/notification path goes through forceForegroundWindow
-/// so it can never yank the user out of another app.
-pub fn raiseForegroundWindow(hwnd: w32.HWND) void {
-    const fg = w32.GetForegroundWindow();
-    if (fg) |fg_hwnd| {
-        const fg_tid = w32.GetWindowThreadProcessId(fg_hwnd, null);
-        const our_tid = w32.GetCurrentThreadId();
-        if (fg_tid != our_tid) {
-            _ = w32.AttachThreadInput(our_tid, fg_tid, 1);
-            _ = w32.SetForegroundWindow(hwnd);
-            _ = w32.AttachThreadInput(our_tid, fg_tid, 0);
-        } else {
-            _ = w32.SetForegroundWindow(hwnd);
-        }
-    } else {
-        _ = w32.SetForegroundWindow(hwnd);
-    }
 }
 
 /// Notify the core app of a tick.
@@ -1259,4 +1219,6 @@ test {
     _ = hooks;
     _ = @import("app/runtime_env.zig");
     _ = @import("app/paths.zig");
+    _ = app_clipboard;
+    _ = app_modal;
 }

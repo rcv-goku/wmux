@@ -20,6 +20,7 @@ const SplitTree = @import("../../../datastruct/split_tree.zig").SplitTree;
 const Surface = @import("../Surface.zig");
 const Window = @import("../Window.zig");
 const config_files = @import("../settings/legacy_config_files.zig");
+const foreground = @import("foreground.zig");
 const notifications = @import("../features/notifications/api.zig");
 const updater = @import("../features/updater/legacy_check.zig");
 const w32 = @import("../platform/win32.zig");
@@ -113,9 +114,9 @@ pub fn perform(
         .size_limit => sizeLimit(target, value),
         .toggle_visibility => toggleVisibility(app),
         .float_window => floatWindow(target, value),
-        .command_finished => notifications.onCommandFinished(target, value),
+        .command_finished => notifications.onCommandFinished(app, target, value),
         .mouse_visibility => mouseVisibility(target, value),
-        .present_terminal => presentTerminal(target),
+        .present_terminal => presentTerminal(app, target),
         .new_split => newSplit(target, value),
         .goto_split => if (parentWindow(target)) |w| w.gotoSplit(value),
         .swap_split => if (parentWindow(target)) |w| w.swapSplit(value),
@@ -513,7 +514,7 @@ fn mouseVisibility(target: apprt.Target, value: apprt.Action.Value(.mouse_visibi
     }
 }
 
-fn presentTerminal(target: apprt.Target) void {
+fn presentTerminal(self: *App, target: apprt.Target) void {
     // Raise the window containing the target surface and select
     // its tab. Restores from minimized/iconic state if necessary.
     switch (target) {
@@ -531,7 +532,7 @@ fn presentTerminal(target: apprt.Target) void {
                 // never yank the user out of another app (the
                 // critical OS-foreground gate, applied to every
                 // raise path).
-                App.forceForegroundWindow(hwnd);
+                foreground.forceForegroundWindow(self, hwnd);
                 // Make sure the workspace AND tab containing this
                 // surface are active: select the workspace first
                 // (it re-lays out for the new tab count), then the

@@ -15,7 +15,9 @@ const apprt = @import("../../../../apprt.zig");
 const App = @import("../../App.zig");
 const Surface = @import("../../Surface.zig");
 const Window = @import("../../Window.zig");
+const foreground_mod = @import("../../app/foreground.zig");
 const hooks = @import("../../app/hooks.zig");
+const modal = @import("../../app/modal.zig");
 const taskbar = @import("../../platform/taskbar.zig");
 const w32 = @import("../../platform/win32.zig");
 
@@ -412,7 +414,7 @@ pub fn jumpToSurface(self: *App, window: *Window, surface: *Surface) bool {
     // window's sidebar), where Windows treats us as a background
     // process; a plain SetForegroundWindow would only flash the
     // taskbar button.
-    App.forceForegroundWindow(win_hwnd);
+    foreground_mod.forceForegroundWindow(self, win_hwnd);
     // Select the workspace containing the surface first (re-lays out for
     // its tab count), then the container and tab within it.
     win.selectWorkspace(win.workspaceIndex(loc.ws));
@@ -676,16 +678,7 @@ pub fn onBell(self: *App, target: apprt.Target) void {
             var foreground = false;
             if (parent_window.hwnd) |win_hwnd| {
                 foreground = w32.GetForegroundWindow() == win_hwnd;
-                if (!foreground) {
-                    var fwi: w32.FLASHWINFO = .{
-                        .cbSize = @sizeOf(w32.FLASHWINFO),
-                        .hwnd = win_hwnd,
-                        .dwFlags = w32.FLASHW_ALL | w32.FLASHW_TIMERNOFG,
-                        .uCount = 2,
-                        .dwTimeout = 0,
-                    };
-                    _ = w32.FlashWindowEx(&fwi);
-                }
+                if (!foreground) foreground_mod.flashWindow(self, win_hwnd, 2);
             }
             // Mark the tab in the sidebar unless the bell rang
             // in the active tab of the foreground window, where
@@ -751,7 +744,8 @@ pub fn onChildExited(self: *App, target: apprt.Target, value: apprt.Action.Value
 
                 var utf16_buf: [256]u16 = undefined;
                 const utf16_len = std.unicode.utf8ToUtf16Le(&utf16_buf, msg_utf8) catch {
-                    _ = w32.MessageBoxW(
+                    _ = modal.messageBox(
+                        self,
                         hwnd_val,
                         std.unicode.utf8ToUtf16LeStringLiteral("The shell process exited unexpectedly."),
                         std.unicode.utf8ToUtf16LeStringLiteral("Ghostty"),
@@ -760,7 +754,8 @@ pub fn onChildExited(self: *App, target: apprt.Target, value: apprt.Action.Value
                     return;
                 };
                 utf16_buf[utf16_len] = 0;
-                _ = w32.MessageBoxW(
+                _ = modal.messageBox(
+                    self,
                     hwnd_val,
                     @ptrCast(&utf16_buf),
                     std.unicode.utf8ToUtf16LeStringLiteral("Ghostty"),
@@ -773,7 +768,7 @@ pub fn onChildExited(self: *App, target: apprt.Target, value: apprt.Action.Value
 
 /// `.command_finished`: flash the taskbar button on a failed command when
 /// the window is not foreground.
-pub fn onCommandFinished(target: apprt.Target, value: apprt.Action.Value(.command_finished)) void {
+pub fn onCommandFinished(self: *App, target: apprt.Target, value: apprt.Action.Value(.command_finished)) void {
     // Flash the taskbar button if the window isn't currently the
     // foreground window. macOS bounces the dock icon for the
     // same reason. We only flash on non-zero exit codes — a
@@ -785,14 +780,7 @@ pub fn onCommandFinished(target: apprt.Target, value: apprt.Action.Value(.comman
             const win_hwnd = core_surface.rt_surface.parent_window.hwnd orelse return;
             const fg = w32.GetForegroundWindow();
             if (fg == win_hwnd) return;
-            var fwi: w32.FLASHWINFO = .{
-                .cbSize = @sizeOf(w32.FLASHWINFO),
-                .hwnd = win_hwnd,
-                .dwFlags = w32.FLASHW_ALL | w32.FLASHW_TIMERNOFG,
-                .uCount = 3,
-                .dwTimeout = 0,
-            };
-            _ = w32.FlashWindowEx(&fwi);
+            foreground_mod.flashWindow(self, win_hwnd, 3);
         },
     }
 }
