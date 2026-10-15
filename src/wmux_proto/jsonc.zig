@@ -25,22 +25,38 @@ pub const Pos = struct {
 /// Line and column of byte `offset` in `src` (clamped to `src.len`). A
 /// leading byte order mark takes no column, as editors do not show it.
 pub fn position(src: []const u8, offset: usize) Pos {
-    const end = @min(offset, src.len);
-    var line: u32 = 1;
-    var col: u32 = 1;
-    var i: usize = if (std.mem.startsWith(u8, src, utf8_bom)) @min(utf8_bom.len, end) else 0;
-    while (i < end) : (i += 1) {
-        const c = src[i];
-        if (c == '\n') {
-            line += 1;
-            col = 1;
-        } else if (c & 0xC0 != 0x80) {
-            // Count lead bytes only: one column per code point.
-            col += 1;
-        }
-    }
-    return .{ .line = line, .col = col };
+    var cursor: PosCursor = .{};
+    return cursor.advance(src, offset);
 }
+
+/// Computes positions for a series of offsets in one source by scanning on
+/// from the previous offset, so offsets in document order cost O(n) in
+/// total instead of O(n) each. An earlier offset restarts from the top.
+pub const PosCursor = struct {
+    offset: usize = 0,
+    pos: Pos = .{ .line = 1, .col = 1 },
+
+    pub fn advance(self: *PosCursor, src: []const u8, offset: usize) Pos {
+        const end = @min(offset, src.len);
+        if (end < self.offset) self.* = .{};
+        var line = self.pos.line;
+        var col = self.pos.col;
+        var i = self.offset;
+        if (i == 0 and std.mem.startsWith(u8, src, utf8_bom)) i = @min(utf8_bom.len, end);
+        while (i < end) : (i += 1) {
+            const c = src[i];
+            if (c == '\n') {
+                line += 1;
+                col = 1;
+            } else if (c & 0xC0 != 0x80) {
+                // Count lead bytes only: one column per code point.
+                col += 1;
+            }
+        }
+        self.* = .{ .offset = end, .pos = .{ .line = line, .col = col } };
+        return self.pos;
+    }
+};
 
 /// The first syntax error of a parse. `message` is a static string.
 pub const Diagnostic = struct {
@@ -825,6 +841,24 @@ test "unit: proto: jsonc columns count code points" {
     // "é" and "日" are multi-byte; the error column counts characters.
     try expectSyntaxError("{\"é日\": x}", .{}, 1, 8, "unexpected character");
     try testing.expectEqual(Pos{ .line = 2, .col = 3 }, position("a\r\nbc", 5));
+}
+
+test "unit: proto: jsonc position cursor agrees with position" {
+    const srcs = [_][]const u8{
+        "{\n  \"é日\": [1,\r\n 2],\n\t\"x\": \"😀\"\n}\n",
+        "\xEF\xBB\xBF{\"a\":\n1}",
+        "",
+    };
+    for (srcs) |src| {
+        // Forward, backward (restart) and past-the-end offsets.
+        var cursor: PosCursor = .{};
+        var offsets: std.ArrayList(usize) = .empty;
+        defer offsets.deinit(testing.allocator);
+        for (0..src.len + 2) |o| try offsets.append(testing.allocator, o);
+        for (0..src.len + 2) |o| try offsets.append(testing.allocator, src.len + 1 - o);
+        try offsets.appendSlice(testing.allocator, &.{ 1, 2, 0, 3, 2 });
+        for (offsets.items) |o| try testing.expectEqual(position(src, o), cursor.advance(src, o));
+    }
 }
 
 test "unit: proto: jsonc decodes escapes and unicode" {

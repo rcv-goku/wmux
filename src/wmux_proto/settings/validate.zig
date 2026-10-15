@@ -186,6 +186,8 @@ const Walker = struct {
     src: []const u8,
     opts: Options,
     issues: std.ArrayList(Issue) = .empty,
+    /// Issues arrive in document order, so positions scan the text once.
+    cursor: jsonc.PosCursor = .{},
 
     fn add(self: *Walker, severity: Severity, code: Code, path: []const u8, offset: usize, message: []const u8) Allocator.Error!void {
         try self.issues.append(self.arena, .{
@@ -194,7 +196,7 @@ const Walker = struct {
             .path = path,
             .message = message,
             .offset = offset,
-            .pos = jsonc.position(self.src, offset),
+            .pos = self.cursor.advance(self.src, offset),
         });
     }
 
@@ -833,6 +835,20 @@ test "unit: settings: type errors report positions" {
     try expectIssue(&r, .err, .type_mismatch, "$.sidebar", 12, 14);
     try testing.expectEqual(@as(usize, 10), r.errorCount());
     for (r.issues) |i| if (i.code == .not_in_enum) try testing.expectEqualStrings("\"blue\" is not one of: system, light, dark", i.message);
+}
+
+test "unit: settings: positions stay right across a large file" {
+    var aw: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer aw.deinit();
+    try aw.writer.writeAll("\xEF\xBB\xBF{\n");
+    for (0..5000) |i| try aw.writer.print("  \"unknown{d}\": {{\"x\": [1, \"é\"]}}, // c\n", .{i});
+    try aw.writer.writeAll("  \"app\": {\"appearance\": \"blue\"}\n}\n");
+    var r = try validateText(testing.allocator, aw.written(), fixtureOpts(.global));
+    defer r.deinit();
+    try testing.expectEqual(@as(usize, 5001), r.issues.len);
+    try expectIssue(&r, .warning, .unknown_key, "$.unknown0", 2, 3);
+    try expectIssue(&r, .warning, .unknown_key, "$.unknown4999", 5001, 3);
+    try expectIssue(&r, .err, .not_in_enum, "$.app.appearance", 5002, 25);
 }
 
 test "unit: settings: numeric boundaries" {
