@@ -119,6 +119,60 @@ test "unit: notifications: sanitizeAlloc rejects surrogates and overlongs" {
     try std.testing.expect(std.mem.endsWith(u8, out, "\u{FFFD}"));
 }
 
+/// Random valid UTF-8 of every encoded length (no surrogates), filling `buf`.
+fn randomUtf8(r: std.Random, buf: []u8) []u8 {
+    var n: usize = 0;
+    while (true) {
+        const cp: u21 = switch (r.uintLessThan(u8, 4)) {
+            0 => r.intRangeAtMost(u21, 0x00, 0x7F),
+            1 => r.intRangeAtMost(u21, 0x80, 0x7FF),
+            2 => if (r.boolean()) r.intRangeAtMost(u21, 0x800, 0xD7FF) else r.intRangeAtMost(u21, 0xE000, 0xFFFF),
+            else => r.intRangeAtMost(u21, 0x10000, 0x10FFFF),
+        };
+        var tmp: [4]u8 = undefined;
+        const len = std.unicode.utf8Encode(cp, &tmp) catch unreachable;
+        if (n + len > buf.len) return buf[0..n];
+        @memcpy(buf[n..][0..len], tmp[0..len]);
+        n += len;
+    }
+}
+
+test "unit: notifications: truncateUtf8 keeps the longest whole-code-point prefix" {
+    var prng = std.Random.DefaultPrng.init(0xC0FFEE);
+    const r = prng.random();
+    var buf: [48]u8 = undefined;
+    for (0..2000) |_| {
+        const s = randomUtf8(r, buf[0..r.uintAtMost(usize, buf.len)]);
+        for (0..s.len + 2) |max| {
+            var want: usize = 0;
+            var it = std.unicode.Utf8View.initUnchecked(s).iterator();
+            while (it.nextCodepointSlice()) |cp| {
+                if (want + cp.len > max) break;
+                want += cp.len;
+            }
+            try std.testing.expectEqual(want, truncateUtf8(s, max).len);
+        }
+    }
+}
+
+test "unit: notifications: sanitizeAlloc output is valid, capped and control free for any bytes" {
+    const gpa = std.testing.allocator;
+    var prng = std.Random.DefaultPrng.init(7);
+    const r = prng.random();
+    var buf: [48]u8 = undefined;
+    for (0..3000) |_| {
+        const s = buf[0..r.uintAtMost(usize, buf.len)];
+        r.bytes(s);
+        const max = r.uintAtMost(usize, 64);
+        const out = try sanitizeAlloc(gpa, s, max);
+        defer gpa.free(out);
+        try std.testing.expect(out.len <= max);
+        try std.testing.expect(std.unicode.utf8ValidateSlice(out));
+        var it = std.unicode.Utf8View.initUnchecked(out).iterator();
+        while (it.nextCodepoint()) |cp| try std.testing.expect(!isDroppedControl(cp));
+    }
+}
+
 test "unit: notifications: sanitizeAlloc caps on code-point boundaries" {
     const gpa = std.testing.allocator;
     const big = "\u{1F600}" ** 1000;
