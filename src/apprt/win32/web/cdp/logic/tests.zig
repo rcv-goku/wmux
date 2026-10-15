@@ -1133,6 +1133,61 @@ test "unit: browser: css paths only where querySelector finds the same element" 
     }
 }
 
+test "unit: browser: label for and aria-labelledby resolve ids in their own document" {
+    // A payment iframe reusing the page's "email" id: its <label for> must
+    // name its own input, not the page's.
+    const j =
+        \\{"root":{"nodeType":9,"backendNodeId":1,"children":[{"nodeType":1,"localName":"html","backendNodeId":2,"children":[{"nodeType":1,"localName":"body","backendNodeId":3,"children":[
+        \\ {"nodeType":1,"localName":"input","backendNodeId":4,"attributes":["id","email","placeholder","Your email"]},
+        \\ {"nodeType":1,"localName":"span","backendNodeId":12,"attributes":["id","tip"],"children":[{"nodeType":3,"nodeValue":"Page tip"}]},
+        \\ {"nodeType":1,"localName":"iframe","backendNodeId":5,"frameId":"F","contentDocument":{"nodeType":9,"backendNodeId":6,"children":[
+        \\  {"nodeType":1,"localName":"html","backendNodeId":7,"children":[{"nodeType":1,"localName":"body","backendNodeId":8,"children":[
+        \\   {"nodeType":1,"localName":"label","backendNodeId":9,"attributes":["for","email"],"children":[{"nodeType":3,"nodeValue":"Billing email"}]},
+        \\   {"nodeType":1,"localName":"input","backendNodeId":10,"attributes":["id","email"]}]}]}]}},
+        \\ {"nodeType":1,"localName":"x-host","backendNodeId":13,"shadowRoots":[{"nodeType":11,"backendNodeId":14,"children":[
+        \\  {"nodeType":1,"localName":"button","backendNodeId":15,"attributes":["aria-labelledby","tip"],"children":[{"nodeType":3,"nodeValue":"Own text"}]}]}]}]}]}]}}
+    ;
+    var tree = try ax.parseDomDocument(gpa, j, .{});
+    defer tree.deinit();
+    var table = refs.RefTable.init(gpa);
+    defer table.deinit();
+    const text = try renderText(&tree, &table, .{});
+    defer gpa.free(text);
+    try testing.expectEqualStrings(
+        \\- document ""
+        \\- textbox "Your email" [ref=e1]
+        \\- textbox "Billing email" [ref=e2]
+        \\- button "Own text" [ref=e3]
+    , text);
+    try testing.expectEqualStrings("F", (try table.lookup("e2")).frame_id.?);
+}
+
+test "unit: browser: css path id uniqueness is per document and precomputed" {
+    // 5000 buttons with ids: uniqueness used to be rescanned over the whole
+    // tree for every path (7 s in Debug, quadratic).
+    var json: std.ArrayList(u8) = .empty;
+    defer json.deinit(gpa);
+    try json.appendSlice(gpa, "{\"root\":{\"nodeType\":9,\"children\":[{\"nodeType\":1,\"localName\":\"html\",\"children\":[{\"nodeType\":1,\"localName\":\"body\",\"children\":[");
+    try json.appendSlice(gpa, "{\"nodeType\":1,\"localName\":\"x-host\",\"backendNodeId\":1,\"shadowRoots\":[{\"nodeType\":11,\"children\":[{\"nodeType\":1,\"localName\":\"i\",\"attributes\":[\"id\",\"b7\"]}]}]}");
+    const count = 5000;
+    for (0..count) |i| {
+        try json.print(gpa, ",{{\"nodeType\":1,\"localName\":\"button\",\"backendNodeId\":{d},\"attributes\":[\"id\",\"b{d}\"],\"children\":[{{\"nodeType\":3,\"nodeValue\":\"b{d}\"}}]}}", .{ i + 100, i, i });
+    }
+    try json.appendSlice(gpa, ",{\"nodeType\":1,\"localName\":\"p\",\"attributes\":[\"id\",\"b9\"]}]}]}]}}");
+    var tree = try ax.parseDomDocument(gpa, json.items, .{});
+    defer tree.deinit();
+    var table = refs.RefTable.init(gpa);
+    defer table.deinit();
+    var snap = try snapshot.render(gpa, &tree, &table, .{});
+    defer snap.deinit();
+    try testing.expectEqual(@as(usize, count), snap.element_count);
+    try testing.expectEqualStrings("#b4999", (try table.lookup("e5000")).css_path.?);
+    // A shadow tree's "b7" does not clash with the page's.
+    try testing.expectEqualStrings("#b7", (try table.lookup("e8")).css_path.?);
+    // "b9" appears twice in the page: positional path instead.
+    try testing.expectEqualStrings("html > body > button:nth-of-type(10)", (try table.lookup("e10")).css_path.?);
+}
+
 test "unit: browser: css path falls back to nth-of-type for duplicate ids" {
     const j =
         \\{"root":{"nodeType":9,"children":[{"nodeType":1,"localName":"html","children":[{"nodeType":1,"localName":"body","children":[

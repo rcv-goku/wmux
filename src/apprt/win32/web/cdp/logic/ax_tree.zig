@@ -64,6 +64,9 @@ pub const Node = struct {
     /// DOM shadow root (a `.document` node from `shadowRoots`): selectors
     /// and ids of the main document never reach inside it.
     shadow_root: bool = false,
+    /// DOM element whose non-empty `id` occurs once in its document or
+    /// shadow root, so `#id` selects exactly this element there.
+    id_unique: bool = false,
     states: States = .{},
 
     /// Attribute lookup, ASCII case-insensitive on the name.
@@ -736,14 +739,69 @@ const non_rendered_tags = [_][]const u8{
     "head", "script", "style", "noscript", "template", "meta", "link", "title", "base",
 };
 
+/// Element ids per document or shadow root: `getElementById`, `<label for>`
+/// and `aria-labelledby` never resolve across an iframe or shadow boundary.
+const IdIndex = struct {
+    /// The document or shadow root each node belongs to.
+    scope_of: []NodeIndex,
+    map: std.HashMapUnmanaged(Key, Slot, KeyContext, std.hash_map.default_max_load_percentage) = .empty,
+
+    const Key = struct { scope: NodeIndex, id: []const u8 };
+    const Slot = struct { first: NodeIndex, count: u32 };
+    const KeyContext = struct {
+        pub fn hash(_: KeyContext, k: Key) u64 {
+            return std.hash.Wyhash.hash(k.scope, k.id);
+        }
+        pub fn eql(_: KeyContext, x: Key, y: Key) bool {
+            return x.scope == y.scope and std.mem.eql(u8, x.id, y.id);
+        }
+    };
+
+    /// `nodes` must be breadth-first (every parent before its children),
+    /// as parseDomDocument builds them.
+    fn init(gpa: Allocator, nodes: []const Node) Allocator.Error!IdIndex {
+        const scope_of = try gpa.alloc(NodeIndex, nodes.len);
+        for (nodes, 0..) |n, i| {
+            const idx: NodeIndex = @intCast(i);
+            scope_of[i] = if (n.kind == .document) idx else if (n.parent) |p| scope_of[p] else idx;
+        }
+        return .{ .scope_of = scope_of };
+    }
+
+    fn deinit(self: *IdIndex, gpa: Allocator) void {
+        self.map.deinit(gpa);
+        gpa.free(self.scope_of);
+    }
+
+    fn add(self: *IdIndex, gpa: Allocator, idx: NodeIndex, id: []const u8) Allocator.Error!void {
+        const gop = try self.map.getOrPut(gpa, .{ .scope = self.scope_of[idx], .id = id });
+        if (gop.found_existing) {
+            gop.value_ptr.count +|= 1;
+        } else {
+            gop.value_ptr.* = .{ .first = idx, .count = 1 };
+        }
+    }
+
+    /// First element (document order) with `id` in the scope of `from`.
+    fn get(self: *const IdIndex, from: NodeIndex, id: []const u8) ?NodeIndex {
+        const slot = self.map.get(.{ .scope = self.scope_of[from], .id = id }) orelse return null;
+        return slot.first;
+    }
+
+    fn count(self: *const IdIndex, from: NodeIndex, id: []const u8) u32 {
+        const slot = self.map.get(.{ .scope = self.scope_of[from], .id = id }) orelse return 0;
+        return slot.count;
+    }
+};
+
 /// `gpa` holds scratch data that does not outlive the call.
 fn finishDom(gpa: Allocator, tree: *Tree) Allocator.Error!void {
     const a = tree.arena.allocator();
     const nodes = tree.nodes;
 
     // Pass 1: visibility, clickability, title, id index.
-    var ids: std.StringHashMapUnmanaged(NodeIndex) = .empty;
-    defer ids.deinit(a);
+    var ids: IdIndex = try .init(gpa, nodes);
+    defer ids.deinit(gpa);
     for (nodes, 0..) |*n, i| {
         if (n.kind != .element) continue;
         for (non_rendered_tags) |t| {
@@ -772,24 +830,24 @@ fn finishDom(gpa: Allocator, tree: *Tree) Allocator.Error!void {
                 cn.hidden = true;
             }
         }
-        if (n.attr("id")) |id| if (id.len > 0) {
-            const gop = try ids.getOrPut(a, id);
-            if (!gop.found_existing) gop.value_ptr.* = @intCast(i);
-        };
+        if (n.attr("id")) |id| if (id.len > 0) try ids.add(gpa, @intCast(i), id);
     }
 
-    // Pass 2: <label for=…> and wrapping labels -> control label text.
+    // Pass 2: id uniqueness (CSS paths); <label for=…> and wrapping labels
+    // -> control label text.
     const label_of = try gpa.alloc(?NodeIndex, nodes.len);
     defer gpa.free(label_of);
     @memset(label_of, null);
     var scratch: std.ArrayList(NodeIndex) = .empty;
     defer scratch.deinit(gpa);
     for (nodes, 0..) |*n, i| {
-        if (n.kind != .element or !std.mem.eql(u8, n.tag, "label")) continue;
-        const li: NodeIndex = @intCast(i);
-        const control = if (n.attr("for")) |f| ids.get(f) else try firstLabelable(tree, gpa, &scratch, li);
+        if (n.kind != .element) continue;
+        const ni: NodeIndex = @intCast(i);
+        if (n.attr("id")) |id| n.id_unique = id.len > 0 and ids.count(ni, id) == 1;
+        if (!std.mem.eql(u8, n.tag, "label")) continue;
+        const control = if (n.attr("for")) |f| ids.get(ni, f) else try firstLabelable(tree, gpa, &scratch, ni);
         if (control) |ci| {
-            if (label_of[ci] == null) label_of[ci] = li;
+            if (label_of[ci] == null) label_of[ci] = ni;
         }
     }
 
@@ -809,7 +867,7 @@ fn finishDom(gpa: Allocator, tree: *Tree) Allocator.Error!void {
         const label_text: []const u8 = if (label_of[i]) |li| try labelText(tree, li, idx) else "";
         n.name = try domName(tree, idx, &ids, label_text);
         if (isLabelableRole(n.role)) {
-            n.label = if (n.attr("aria-label")) |al| al else if (label_text.len > 0) label_text else try labelledBy(tree, n, &ids);
+            n.label = if (n.attr("aria-label")) |al| al else if (label_text.len > 0) label_text else try labelledBy(tree, idx, &ids);
         }
     }
 }
@@ -1005,13 +1063,13 @@ fn domValue(tree: *Tree, idx: NodeIndex) Allocator.Error![]const u8 {
     return "";
 }
 
-fn labelledBy(tree: *Tree, n: *const Node, ids: *const std.StringHashMapUnmanaged(NodeIndex)) Allocator.Error![]const u8 {
+fn labelledBy(tree: *Tree, idx: NodeIndex, ids: *const IdIndex) Allocator.Error![]const u8 {
     const a = tree.arena.allocator();
-    const refs = n.attr("aria-labelledby") orelse return "";
+    const refs = tree.nodes[idx].attr("aria-labelledby") orelse return "";
     var out: std.ArrayList(u8) = .empty;
     var it = std.mem.tokenizeAny(u8, refs, " \t\r\n");
     while (it.next()) |id| {
-        const target = ids.get(id) orelse continue;
+        const target = ids.get(idx, id) orelse continue;
         // Referenced labels count even when hidden (ARIA), so read raw text.
         const t = try tree.innerTextIgnoringHidden(a, target);
         if (t.len == 0) continue;
@@ -1023,11 +1081,11 @@ fn labelledBy(tree: *Tree, n: *const Node, ids: *const std.StringHashMapUnmanage
 
 /// Name order: aria-label, aria-labelledby, associated <label>, placeholder
 /// (button-type inputs: value), alt (images), title, inner text (120 chars).
-fn domName(tree: *Tree, idx: NodeIndex, ids: *const std.StringHashMapUnmanaged(NodeIndex), label_text: []const u8) Allocator.Error![]const u8 {
+fn domName(tree: *Tree, idx: NodeIndex, ids: *const IdIndex, label_text: []const u8) Allocator.Error![]const u8 {
     const a = tree.arena.allocator();
     const n = &tree.nodes[idx];
     if (nonEmpty(n.attr("aria-label"))) |v| return v;
-    const lb = try labelledBy(tree, n, ids);
+    const lb = try labelledBy(tree, idx, ids);
     if (lb.len > 0) return lb;
     if (label_text.len > 0) return label_text;
     const is_input = std.mem.eql(u8, n.tag, "input");

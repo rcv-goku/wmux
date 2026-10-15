@@ -363,7 +363,7 @@ pub fn cssPath(gpa: Allocator, tree: *const Tree, idx: NodeIndex) Allocator.Erro
         if (count >= max_path_steps) return null;
         const cn = tree.get(c);
         if (cn.attr("id")) |id| {
-            if (isPlainIdent(id) and idUniqueInDocument(tree, c, id)) {
+            if (cn.id_unique and isPlainIdent(id)) {
                 steps[count] = .{ .node = c, .kind = .id };
                 count += 1;
                 break;
@@ -420,18 +420,4 @@ fn documentOf(tree: *const Tree, idx: NodeIndex) NodeIndex {
         cur = p;
     }
     return cur;
-}
-
-fn idUniqueInDocument(tree: *const Tree, idx: NodeIndex, id: []const u8) bool {
-    const doc = documentOf(tree, idx);
-    var found: usize = 0;
-    for (tree.nodes, 0..) |n, i| {
-        if (n.kind != .element) continue;
-        const v = n.attr("id") orelse continue;
-        if (!std.mem.eql(u8, v, id)) continue;
-        if (documentOf(tree, @intCast(i)) != doc) continue;
-        found += 1;
-        if (found > 1) return false;
-    }
-    return found == 1;
 }
