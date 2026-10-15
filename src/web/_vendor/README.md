@@ -56,8 +56,10 @@ _vendor/
   license banners.
 - Never edit vendored code. If a patch is unavoidable, add `PATCHES.md` with
   the diff and the reason, and say so in the inventory.
-- `SHA256SUMS` uses the `sha256sum` format: `<64 lowercase hex>  <file>`, one
-  line per file, sorted by path, paths relative to the library directory.
+- `SHA256SUMS` uses the `sha256sum --text` format: `<64 lowercase hex>  <file>`
+  (two spaces), one line per file, sorted by path, paths relative to the
+  library directory. Pass `--text`: Git Bash's `sha256sum` otherwise writes
+  binary-mode lines (`<hex> *<file>`).
 
 `SOURCE.md` records: upstream project URL; package name and exact version;
 upstream tag or commit; where the files came from (the npm tarball URL plus its
@@ -69,10 +71,11 @@ that added it.
 
 - Works under the panel CSP: no `eval`, `new Function` or string timers
   (`unsafe-eval` is not allowed), no inline `<script>`. Libraries that inject
-  `<style>` elements or `style="…"` attributes are blocked by `style-src 'self'`;
-  prefer builds that use constructable stylesheets or a CSP nonce option, or
-  document the CSP change in the owning panel. For vega, use the CSP-safe
-  expression interpreter (`vega-interpreter`).
+  `<style>` elements or `style="…"` attributes are blocked (styles fall under
+  `default-src 'self'`, without `'unsafe-inline'`); prefer builds that use
+  constructable stylesheets or a CSP nonce option, or document the CSP change
+  in the owning panel. For vega, use the CSP-safe expression interpreter
+  (`vega-interpreter`).
 - Pages that enable Trusted Types need libraries that accept a policy
   (DOMPurify `RETURN_TRUSTED_TYPE`) or that avoid HTML sinks.
 - No network access, telemetry, service workers or remote fonts.
@@ -96,17 +99,18 @@ that added it.
 
    ```sh
    cd src/web/_vendor/<lib>@<version>
-   find . -type f ! -name SHA256SUMS | sed 's|^\./||' | LC_ALL=C sort | xargs sha256sum > SHA256SUMS
+   find . -type f ! -name SHA256SUMS | sed 's|^\./||' | LC_ALL=C sort | xargs sha256sum --text > SHA256SUMS
    ```
 
 4. Point the panels at the new path and delete the old version directory in the
    same change once nothing imports it.
 5. Update the inventory below.
-6. Verify: `sha256sum -c SHA256SUMS` (Git Bash or WSL) or, in PowerShell,
+6. Verify inside the library directory: `sha256sum -c SHA256SUMS` (Git Bash or
+   WSL) or, in PowerShell,
 
    ```powershell
    Get-Content SHA256SUMS | ForEach-Object {
-     $hash, $file = $_ -split '\s+', 2
+     $hash, $file = $_ -split '\s+\*?', 2
      if ((Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash.ToLower() -ne $hash) { "MISMATCH $file" }
    }
    ```
