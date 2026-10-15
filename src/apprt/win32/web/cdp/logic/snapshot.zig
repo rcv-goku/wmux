@@ -3,7 +3,7 @@
 //!
 //! ```
 //! - document "Sign in"
-//! - main [ref=e1]
+//! - main "" [ref=e1]
 //!   - textbox "Email" [ref=e2]: me@example.com
 //!   - checkbox "Remember me" [ref=e3] [checked]
 //!   - button "Sign in" [ref=e4]
@@ -189,17 +189,20 @@ pub fn render(gpa: Allocator, tree: *const Tree, table: *refs.RefTable, opts: Op
         // The default scope (document/body) is a container, never a line.
         const skip_self = scope_is_page and item.idx == scope;
         var role: []const u8 = "";
+        var cursor_generic = false;
         if (!skip_self and !n.ignored and n.kind == .element) {
             if (includeRole(n, opts)) {
                 role = n.role;
             } else if (opts.cursor and n.clickable and cursor_emitted < cursor_limit and !ax.isInteractiveRole(n.role)) {
                 role = "generic";
-                cursor_emitted += 1;
+                cursor_generic = true;
             }
         }
         var child_depth = item.depth;
         if (role.len > 0) {
             if (item.depth >= opts.max_depth) continue; // nothing deeper fits either
+            // Only printed generics count toward the cap.
+            if (cursor_generic) cursor_emitted += 1;
             const name = try displayName(gpa, tree, item.idx, role);
             defer gpa.free(name);
             // `add` copies every string into the table's own allocator,
@@ -428,6 +431,7 @@ pub fn writeEmptyHints(w: *std.Io.Writer, surface: []const u8, url: []const u8, 
 
 /// First `max_lines` lines of a snapshot (diagnostics `snapshot_excerpt`).
 pub fn excerpt(text: []const u8, max_lines: usize) []const u8 {
+    if (max_lines == 0) return text[0..0];
     var lines: usize = 0;
     for (text, 0..) |c, i| {
         if (c != '\n') continue;

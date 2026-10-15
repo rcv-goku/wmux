@@ -315,12 +315,17 @@ test "unit: browser: dom heading level comes only from h1-h6 or aria-level" {
         \\ {"nodeType":1,"localName":"h-","backendNodeId":2,"attributes":["role","heading"],"children":[{"nodeType":3,"nodeValue":"dash"}]},
         \\ {"nodeType":1,"localName":"hr","backendNodeId":3,"attributes":["role","heading"]},
         \\ {"nodeType":1,"localName":"h4","backendNodeId":4,"children":[{"nodeType":3,"nodeValue":"four"}]},
-        \\ {"nodeType":1,"localName":"h-","backendNodeId":5,"attributes":["role","heading","aria-level","3"]}]}]}}
+        \\ {"nodeType":1,"localName":"h-","backendNodeId":5,"attributes":["role","heading","aria-level","3"]},
+        \\ {"nodeType":1,"localName":"h2","backendNodeId":6,"attributes":["aria-level","0"]},
+        \\ {"nodeType":1,"localName":"h3","backendNodeId":7,"attributes":["aria-level"," x "]},
+        \\ {"nodeType":1,"localName":"div","backendNodeId":8,"attributes":["role","heading","aria-level","0"]},
+        \\ {"nodeType":1,"localName":"h1","backendNodeId":9,"attributes":["aria-level","\t5\n"]}]}]}}
     ;
     var tree = try ax.parseDomDocument(gpa, j, .{});
     defer tree.deinit();
     const Case = struct { i64, ?u8 };
-    for ([_]Case{ .{ 2, null }, .{ 3, null }, .{ 4, 4 }, .{ 5, 3 } }) |c| {
+    // Invalid aria-level values (not a positive integer) fall back to h1-h6.
+    for ([_]Case{ .{ 2, null }, .{ 3, null }, .{ 4, 4 }, .{ 5, 3 }, .{ 6, 2 }, .{ 7, 3 }, .{ 8, null }, .{ 9, 5 } }) |c| {
         const n = tree.get(tree.findByBackendId(c[0], null).?);
         try testing.expectEqualStrings("heading", n.role);
         try testing.expectEqual(c[1], n.states.level);
@@ -586,6 +591,40 @@ test "unit: browser: snapshot cursor generics are capped at 256" {
     defer snap.deinit();
     try testing.expectEqual(snapshot.cursor_limit, snap.element_count);
     try testing.expectEqual(snapshot.cursor_limit, table.count());
+}
+
+test "unit: browser: snapshot cursor cap counts only printed generics" {
+    // 300 clickable divs sit below max_depth (not printed); they used to use
+    // up the 256 cap so the top-level clickable "Last" was dropped.
+    var json: std.ArrayList(u8) = .empty;
+    defer json.deinit(gpa);
+    try json.appendSlice(gpa, "{\"root\":{\"nodeType\":9,\"children\":[{\"nodeType\":1,\"localName\":\"body\",\"children\":[");
+    for (0..300) |i| {
+        try json.print(gpa, "{{\"nodeType\":1,\"localName\":\"nav\",\"backendNodeId\":{d},\"children\":[{{\"nodeType\":1,\"localName\":\"div\",\"attributes\":[\"tabindex\",\"0\"]}}]}},", .{i + 10});
+    }
+    try json.appendSlice(gpa, "{\"nodeType\":1,\"localName\":\"div\",\"backendNodeId\":5,\"attributes\":[\"onclick\",\"f()\"],\"children\":[{\"nodeType\":3,\"nodeValue\":\"Last\"}]}]}]}}");
+    var tree = try ax.parseDomDocument(gpa, json.items, .{});
+    defer tree.deinit();
+    var table = refs.RefTable.init(gpa);
+    defer table.deinit();
+    var snap = try snapshot.render(gpa, &tree, &table, .{ .cursor = true, .max_depth = 1 });
+    defer snap.deinit();
+    try testing.expectEqual(@as(usize, 301), snap.element_count);
+    try testing.expect(std.mem.endsWith(u8, snap.text, "\n- generic \"Last\" [ref=e301]"));
+}
+
+test "unit: browser: blank aria-label does not hide the label element" {
+    const j =
+        \\{"root":{"nodeType":9,"children":[{"nodeType":1,"localName":"body","children":[
+        \\ {"nodeType":1,"localName":"label","attributes":["for","e"],"children":[{"nodeType":3,"nodeValue":"Email"}]},
+        \\ {"nodeType":1,"localName":"input","backendNodeId":3,"attributes":["id","e","aria-label"," "]}]}]}}
+    ;
+    var tree = try ax.parseDomDocument(gpa, j, .{});
+    defer tree.deinit();
+    const n = tree.get(tree.findByBackendId(3, null).?);
+    try testing.expectEqualStrings("Email", n.name);
+    try testing.expectEqualStrings("Email", n.label);
+    try testing.expectEqual(@as(?i64, 3), try findBackend(&tree, .{ .kind = .label, .value = "email" }));
 }
 
 test "unit: browser: snapshot selector scoping by css and by ref" {
@@ -909,6 +948,9 @@ test "unit: browser: snapshot excerpt keeps the first lines" {
     try testing.expectEqualStrings("a\nb", snapshot.excerpt("a\nb\nc", 2));
     try testing.expectEqualStrings("a\nb\nc", snapshot.excerpt("a\nb\nc", 9));
     try testing.expectEqualStrings("", snapshot.excerpt("", 3));
+    try testing.expectEqualStrings("a", snapshot.excerpt("a\nb", 1));
+    try testing.expectEqualStrings("", snapshot.excerpt("a\nb", 0));
+    try testing.expectEqualStrings("", snapshot.excerpt("abc", 0));
 }
 
 // ---------------------------------------------------------------------------
@@ -977,8 +1019,14 @@ test "unit: browser: ref table node removal and document updates" {
     try testing.expectEqualStrings("b", (try t.lookup("e2")).role);
     // Refs are never renumbered by removals.
     try testing.expectEqual(@as(u32, 4), try t.add(.{ .backend_node_id = 7 }));
+    // A replaced document drops the refs and the selected frame.
+    try t.setSelectedFrame("F1");
+    const g = t.generation;
     t.onDocumentUpdated();
     try testing.expectEqual(@as(usize, 0), t.count());
+    try testing.expect(t.selected_frame == null);
+    try testing.expect(t.generation != g);
+    try testing.expectError(error.RefNotFound, t.lookup("e4"));
 }
 
 test "unit: browser: ref table json and unicode names" {

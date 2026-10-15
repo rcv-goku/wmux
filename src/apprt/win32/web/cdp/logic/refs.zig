@@ -177,9 +177,11 @@ pub const RefTable = struct {
         }
     }
 
-    /// `DOM.documentUpdated`: the whole document was replaced.
+    /// `DOM.documentUpdated`: the whole document was replaced, so every ref
+    /// and the selected frame are dropped (see the module comment).
     pub fn onDocumentUpdated(self: *RefTable) void {
         self.clearEntries();
+        self.setSelectedFrame(null) catch unreachable; // null never allocates
         self.generation +%= 1;
     }
 

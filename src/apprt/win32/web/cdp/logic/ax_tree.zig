@@ -940,7 +940,9 @@ fn finishDom(gpa: Allocator, tree: *Tree) Allocator.Error!void {
         const label_text: []const u8 = if (label_of[i]) |li| try labelText(tree, li, idx) else "";
         n.name = try domName(tree, idx, &ids, label_text);
         if (isLabelableRole(n.role)) {
-            n.label = if (n.attr("aria-label")) |al| al else if (label_text.len > 0) label_text else try labelledBy(tree, idx, &ids);
+            // Same precedence as the name: a blank aria-label does not hide
+            // the <label> text.
+            n.label = if (nonEmpty(n.attr("aria-label"))) |al| al else if (label_text.len > 0) label_text else try labelledBy(tree, idx, &ids);
         }
     }
 }
@@ -1055,7 +1057,7 @@ pub fn domRole(n: *const Node) []const u8 {
     if (std.mem.eql(u8, t, "textarea")) return "textbox";
     if (std.mem.eql(u8, t, "select")) return "combobox";
     if (std.mem.eql(u8, t, "summary")) return "button";
-    if (t.len == 2 and t[0] == 'h' and t[1] >= '1' and t[1] <= '6') return "heading";
+    if (isHeadingTag(t)) return "heading";
     if (std.mem.eql(u8, t, "li")) return "listitem";
     if (std.mem.eql(u8, t, "option")) return "option";
     if (std.mem.eql(u8, t, "main")) return "main";
@@ -1101,12 +1103,20 @@ fn domStates(n: *Node) void {
     if (ariaTri(n, "aria-expanded")) |e| s.expanded = e == .on;
     s.focusable = n.hasAttr("tabindex") or isInteractiveRole(n.role);
     if (std.mem.eql(u8, n.role, "heading")) {
-        if (n.attr("aria-level")) |l| {
-            s.level = std.fmt.parseInt(u8, std.mem.trim(u8, l, " "), 10) catch null;
-        } else if (n.tag.len == 2 and n.tag[0] == 'h' and n.tag[1] >= '1' and n.tag[1] <= '6') {
-            s.level = n.tag[1] - '0';
-        }
+        // A valid aria-level (a positive integer) wins; otherwise h1-h6
+        // imply theirs, as browsers do for `<h2 aria-level="0">`.
+        s.level = ariaLevel(n) orelse if (isHeadingTag(n.tag)) n.tag[1] - '0' else null;
     }
+}
+
+fn ariaLevel(n: *const Node) ?u8 {
+    const v = n.attr("aria-level") orelse return null;
+    const level = std.fmt.parseInt(u8, std.mem.trim(u8, v, " \t\r\n"), 10) catch return null;
+    return if (level >= 1) level else null;
+}
+
+fn isHeadingTag(t: []const u8) bool {
+    return t.len == 2 and t[0] == 'h' and t[1] >= '1' and t[1] <= '6';
 }
 
 fn domValue(tree: *Tree, idx: NodeIndex) Allocator.Error![]const u8 {
