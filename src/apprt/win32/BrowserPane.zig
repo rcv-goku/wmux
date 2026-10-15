@@ -18,8 +18,8 @@ const Allocator = std.mem.Allocator;
 const App = @import("App.zig");
 const Pane = @import("Pane.zig");
 const Window = @import("Window.zig");
-const w32 = @import("win32.zig");
-const wv2 = @import("webview2.zig");
+const w32 = @import("platform/win32.zig");
+const wv2 = @import("platform/webview2.zig");
 
 const log = std.log.scoped(.win32);
 

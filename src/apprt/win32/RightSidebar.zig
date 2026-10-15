@@ -9,9 +9,9 @@
 //! sidebar coexists with the left sidebar and tab bar.
 
 const std = @import("std");
-const w32 = @import("win32.zig");
+const w32 = @import("platform/win32.zig");
 const Window = @import("Window.zig");
-const ipc = @import("ipc.zig");
+const log_ring = @import("features/status/log_ring.zig");
 
 /// Unscaled layout constants.
 const HEADER_H_BASE: i32 = 32;
@@ -331,7 +331,7 @@ pub fn paint(win: *Window, hdc_screen: w32.HDC) void {
             var i: usize = 0;
             while (i < ring.len and y + entry_h <= client_h) : (i += 1) {
                 const line = ring.at(i) orelse break;
-                var line_buf: [ipc.max_log_line_bytes]u16 = undefined;
+                var line_buf: [log_ring.max_log_line_bytes]u16 = undefined;
                 const line_w = std.unicode.utf8ToUtf16Le(&line_buf, line) catch 0;
                 if (line_w > 0) {
                     _ = w32.SetTextColor(mem_dc, log_text_color);

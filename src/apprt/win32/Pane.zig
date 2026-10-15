@@ -10,7 +10,7 @@ const Allocator = std.mem.Allocator;
 
 const BrowserPane = @import("BrowserPane.zig");
 const Surface = @import("Surface.zig");
-const w32 = @import("win32.zig");
+const w32 = @import("platform/win32.zig");
 
 /// Reference count for SplitTree ownership. Starts at 0 because
 /// SplitTree.init() calls ref() to take initial ownership.

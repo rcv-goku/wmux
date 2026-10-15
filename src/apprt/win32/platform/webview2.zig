@@ -13,7 +13,7 @@
 ///
 /// This file is self-contained: it only depends on `std.os.windows` types
 /// plus kernel32/ole32 imports declared locally, so it can be compiled
-/// standalone (see webview2_scratch.zig) without the repo build graph.
+/// standalone without the repo build graph.
 ///
 /// WebView2 is loaded dynamically through WebView2Loader.dll which must be
 /// shipped next to the executable; the WebView2 *runtime* (Evergreen) is

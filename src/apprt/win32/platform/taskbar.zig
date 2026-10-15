@@ -168,13 +168,15 @@ fn buildCountIcon(count: usize) ?w32.HICON {
     defer _ = w32.DeleteDC(mem_dc);
 
     // Top-down 32-bit DIB so we can build the color bitmap for the icon.
-    var bmi: w32.BITMAPINFO = .{ .bmiHeader = .{
-        .biWidth = size,
-        .biHeight = -size, // top-down
-        .biPlanes = 1,
-        .biBitCount = 32,
-        .biCompression = w32.BI_RGB,
-    } };
+    var bmi: w32.BITMAPINFO = .{
+        .bmiHeader = .{
+            .biWidth = size,
+            .biHeight = -size, // top-down
+            .biPlanes = 1,
+            .biBitCount = 32,
+            .biCompression = w32.BI_RGB,
+        },
+    };
     var bits: ?*anyopaque = null;
     const dib = w32.CreateDIBSection(mem_dc, &bmi, 0, &bits, null, 0) orelse return null;
     defer _ = w32.DeleteObject(dib);

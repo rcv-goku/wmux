@@ -10,8 +10,8 @@ const Allocator = std.mem.Allocator;
 
 const Pane = @import("Pane.zig");
 const Window = @import("Window.zig");
-const ipc = @import("ipc.zig");
-const w32 = @import("win32.zig");
+const log_ring = @import("features/status/log_ring.zig");
+const w32 = @import("platform/win32.zig");
 
 const MAX_TABS = Window.MAX_TABS;
 const MAX_STATUS_BYTES = Window.MAX_STATUS_BYTES;
@@ -51,7 +51,7 @@ tab_status_text_len: [MAX_TABS]u16 = @splat(0),
 tab_progress: [MAX_TABS]?u8 = @splat(null),
 
 /// Per-tab ring log buffer (log).
-tab_log: [MAX_TABS]ipc.LogRing = @splat(.{}),
+tab_log: [MAX_TABS]log_ring.LogRing = @splat(.{}),
 
 /// Per-tab synchronized input flag.
 tab_synchronized: [MAX_TABS]bool = @splat(false),
@@ -161,7 +161,7 @@ pub fn tabArrays(self: *PaneContainer) struct {
     *[MAX_TABS][MAX_STATUS_BYTES]u8,
     *[MAX_TABS]u16,
     *[MAX_TABS]?u8,
-    *[MAX_TABS]ipc.LogRing,
+    *[MAX_TABS]log_ring.LogRing,
     *[MAX_TABS]bool,
 } {
     return .{

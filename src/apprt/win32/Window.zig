@@ -22,8 +22,9 @@ const Surface = @import("Surface.zig");
 const SessionState = @import("SessionState.zig");
 const WindowState = @import("WindowState.zig");
 const SplitTree = @import("../../datastruct/split_tree.zig").SplitTree;
-const ipc = @import("ipc.zig");
-const w32 = @import("win32.zig");
+const app_foreground = @import("app/foreground.zig");
+const app_paths = @import("app/paths.zig");
+const w32 = @import("platform/win32.zig");
 
 /// Maximum bytes of a per-tab status string (set-status). Inline, like
 /// tab titles, so set-status never allocates; over-long text is byte
@@ -663,16 +664,27 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
         }
     }
 
+    // WMUX_TEST_HIDDEN replaces the geometry and adds
+    // WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE (app/foreground.zig).
+    const create = app_foreground.topLevelCreateParams(app, .{
+        .ex_style = ex_style,
+        .style = style,
+        .x = cx,
+        .y = cy,
+        .width = cw,
+        .height = ch,
+    });
+
     // Create the top-level container window using the GhosttyWindow class.
     const hwnd = w32.CreateWindowExW(
-        ex_style,
+        create.ex_style,
         App.WINDOW_CLASS_NAME,
         std.unicode.utf8ToUtf16LeStringLiteral("Ghostty"),
-        style,
-        cx,
-        cy,
-        cw,
-        ch,
+        create.style,
+        create.x,
+        create.y,
+        create.width,
+        create.height,
         null,
         null,
         app.hinstance,
@@ -687,6 +699,7 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
 
     // Store the Window pointer in GWLP_USERDATA for the WndProc.
     _ = w32.SetWindowLongPtrW(hwnd, w32.GWLP_USERDATA, @bitCast(@intFromPtr(self)));
+    app_foreground.finishTopLevelCreate(app, hwnd, create, &self.max_track_w, &self.max_track_h);
 
     applyChromeTheme(hwnd, app.config.background);
 
@@ -738,16 +751,14 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
     // timing issues with ConPTY.
 }
 
-/// Name of the persisted window-state file, under %LOCALAPPDATA%\ghostty.
-const WINDOW_STATE_FILE = "window-state";
-
-/// Build the absolute path to the window-state file. Mirrors the
-/// `update_check_at` convention used elsewhere in this runtime
-/// (%LOCALAPPDATA%\ghostty\...). Caller owns the returned slice.
-fn windowStatePath(alloc: std.mem.Allocator) ![]u8 {
-    const dir = try std.process.getEnvVarOwned(alloc, "LOCALAPPDATA");
-    defer alloc.free(dir);
-    return std.fs.path.join(alloc, &.{ dir, "ghostty", WINDOW_STATE_FILE });
+/// Build the absolute path to the window-state file:
+/// %LOCALAPPDATA%\ghostty\window-state, or <WMUX_STATE_DIR>\window-state
+/// (app/paths.zig). Caller owns the returned slice. A WMUX_TEST_HIDDEN
+/// instance has no window-state file (ADR-12.3: placement save and
+/// restore are skipped), so savePlacement/restorePlacement are no-ops.
+fn windowStatePath(app: *const App, alloc: std.mem.Allocator) ![]u8 {
+    if (app.runtime_env.test_hidden) return error.HiddenTestInstance;
+    return app_paths.windowStatePath(alloc, &app.runtime_env);
 }
 
 /// Capture the current window placement and persist it. Called on
@@ -799,7 +810,7 @@ pub fn savePlacement(self: *Window) void {
     const text = state.serialize(&serialize_buf) catch return;
 
     const alloc = self.app.core_app.alloc;
-    const path = windowStatePath(alloc) catch return;
+    const path = windowStatePath(self.app, alloc) catch return;
 
     const ctx = alloc.create(SavePlacementCtx) catch {
         alloc.free(path);
@@ -861,7 +872,7 @@ fn savePlacementWorker(ctx: *SavePlacementCtx) void {
 /// error path yields null.
 fn restorePlacement(self: *Window) ?WindowState.State {
     const alloc = self.app.core_app.alloc;
-    const path = windowStatePath(alloc) catch return null;
+    const path = windowStatePath(self.app, alloc) catch return null;
     defer alloc.free(path);
 
     const file = std.fs.cwd().openFile(path, .{}) catch return null;
@@ -1323,7 +1334,7 @@ pub fn addTabWithCommand(
             if (self.hwnd) |h| {
                 const cmd: i32 = if (self.restore_maximized) w32.SW_SHOWMAXIMIZED else w32.SW_SHOW;
                 self.restore_maximized = false;
-                _ = w32.ShowWindow(h, cmd);
+                app_foreground.showTopLevel(self.app, h, cmd);
                 _ = w32.UpdateWindow(h);
             }
         }
@@ -1488,7 +1499,7 @@ pub fn addBrowserTab(self: *Window) !void {
 
     if (container.tab_count == 1) {
         if (self.hwnd) |h| {
-            _ = w32.ShowWindow(h, w32.SW_SHOW);
+            app_foreground.showTopLevel(self.app, h, w32.SW_SHOW);
             _ = w32.UpdateWindow(h);
         }
         container.active_tab = pos;
