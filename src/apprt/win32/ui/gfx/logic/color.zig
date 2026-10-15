@@ -63,10 +63,14 @@ pub const Color = extern struct {
                 return rgba(ch[0], ch[1], ch[2], ch[3]);
             },
             6, 8 => {
+                // Digit by digit: std.fmt.parseInt would also accept a sign
+                // ("+f") or underscores in a pair.
                 var ch: [4]u8 = .{ 0, 0, 0, 255 };
                 var i: usize = 0;
                 while (i < s.len) : (i += 2) {
-                    ch[i / 2] = std.fmt.parseInt(u8, s[i .. i + 2], 16) catch return error.InvalidColor;
+                    const hi = std.fmt.charToDigit(s[i], 16) catch return error.InvalidColor;
+                    const lo = std.fmt.charToDigit(s[i + 1], 16) catch return error.InvalidColor;
+                    ch[i / 2] = hi * 16 + lo;
                 }
                 return rgba(ch[0], ch[1], ch[2], ch[3]);
             },
@@ -218,6 +222,10 @@ test "unit: gfx: color parsing" {
     try testing.expectError(error.InvalidColor, Color.parse("#ggg"));
     try testing.expectError(error.InvalidColor, Color.parse("#1234567"));
     try testing.expectError(error.InvalidColor, Color.parse(""));
+    // Only hex digits: no signs or separators inside a channel.
+    try testing.expectError(error.InvalidColor, Color.parse("#+f+f+f"));
+    try testing.expectError(error.InvalidColor, Color.parse("#-0-0-0"));
+    try testing.expectError(error.InvalidColor, Color.parse("#12_456"));
 }
 
 test "unit: gfx: color mixing, offsets and compositing" {
