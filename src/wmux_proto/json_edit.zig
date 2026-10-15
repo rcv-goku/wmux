@@ -229,7 +229,11 @@ pub fn setPath(gpa: Allocator, src: []const u8, segments: []const []const u8, va
         const style = inferStyle(src, null);
         var out: std.ArrayList(u8) = .empty;
         errdefer out.deinit(gpa);
-        if (!isBlank(src)) {
+        const bom_len: usize = if (std.mem.startsWith(u8, src, jsonc.utf8_bom)) jsonc.utf8_bom.len else 0;
+        if (isBlank(src[bom_len..])) {
+            // Keep a byte order mark, directly followed by the new root.
+            try out.appendSlice(gpa, src[0..bom_len]);
+        } else {
             try out.appendSlice(gpa, src);
             if (!std.mem.endsWith(u8, src, "\n")) try out.appendSlice(gpa, style.nl);
         }
@@ -610,6 +614,11 @@ test "unit: proto: json_edit fills empty and comment-only files" {
     try expectSet("{}", "a", "1", "{\n  \"a\": 1\n}");
     try expectSet("{\n}\n", "a", "1", "{\n  \"a\": 1\n}\n");
     try expectSet("{\n  // nothing yet\n}\n", "a", "1", "{\n  // nothing yet\n  \"a\": 1\n}\n");
+    // A byte order mark survives, with no blank line after it.
+    try expectSet("\xEF\xBB\xBF", "a", "1", "\xEF\xBB\xBF{\n  \"a\": 1\n}\n");
+    try expectSet("\xEF\xBB\xBF\r\n", "a", "1", "\xEF\xBB\xBF{\r\n  \"a\": 1\r\n}\r\n");
+    try expectSet("\xEF\xBB\xBF// c\n", "a", "1", "\xEF\xBB\xBF// c\n{\n  \"a\": 1\n}\n");
+    try expectSet("\xEF\xBB\xBF{\"a\": 1}", "b", "2", "\xEF\xBB\xBF{\"a\": 1, \"b\": 2}");
 }
 
 test "unit: proto: json_edit nested empty object in a multi-line file" {

@@ -9,7 +9,7 @@ const std = @import("std");
 pub const default_max_depth: u32 = 128;
 
 /// UTF-8 byte order mark (Windows tools such as PowerShell 5.1 write one).
-const utf8_bom = "\xEF\xBB\xBF";
+pub const utf8_bom = "\xEF\xBB\xBF";
 
 /// 1-based line and column. Columns count Unicode code points, so a message
 /// points at the same character an editor shows.
