@@ -862,11 +862,12 @@ namespace WmuxTestHarness
     }
 
     /// Per-Test-Case watchdog: when it fires it kills the process trees of the instances
-    /// registered for the running test so blocked pipe calls fail fast.
+    /// registered for the running test so blocked pipe calls fail fast. Targets are Process
+    /// objects (handle-based), and stopped instances are removed, so a recycled PID is never hit.
     public static class Watchdog
     {
         private static readonly object Gate = new object();
-        private static readonly HashSet<int> Targets = new HashSet<int>();
+        private static readonly Dictionary<int, Process> Targets = new Dictionary<int, Process>();
         private static Timer _timer;
         private static long _generation;
         private static volatile bool _fired;
@@ -883,9 +884,15 @@ namespace WmuxTestHarness
             }
         }
 
-        public static void AddPid(int pid)
+        public static void Add(Process process)
         {
-            lock (Gate) { Targets.Add(pid); }
+            if (process == null) return;
+            lock (Gate) { Targets[process.Id] = process; }
+        }
+
+        public static void Remove(int pid)
+        {
+            lock (Gate) { Targets.Remove(pid); }
         }
 
         public static bool Disarm()
@@ -902,17 +909,17 @@ namespace WmuxTestHarness
 
         private static void Fire(long gen)
         {
-            int[] pids;
+            Process[] targets;
             lock (Gate)
             {
                 if (gen != _generation || _timer == null) return;
                 _fired = true;
-                pids = new int[Targets.Count];
-                Targets.CopyTo(pids);
+                targets = new Process[Targets.Count];
+                Targets.Values.CopyTo(targets, 0);
             }
-            foreach (int pid in pids)
+            foreach (Process p in targets)
             {
-                try { Process.GetProcessById(pid).Kill(true); } catch { }
+                try { if (!p.HasExited) p.Kill(true); } catch { }
             }
         }
     }
@@ -1914,7 +1921,8 @@ function Stop-WmuxProcessTree {
         try {
             if (-not $p.HasExited) { $p.Kill($true) }
         } catch {
-            try { & "$env:SystemRoot\System32\taskkill.exe" /PID $Instance.Pid /T /F *> $null } catch { }
+            # By PID only while our handle says the process is still alive (no recycled PID).
+            try { if (-not $p.HasExited) { & "$env:SystemRoot\System32\taskkill.exe" /PID $Instance.Pid /T /F *> $null } } catch { }
         }
     }
     if ($Instance.JobHandle -ne [IntPtr]::Zero) {
@@ -2261,7 +2269,7 @@ function Start-WmuxInstance {
     $script:State.Instances.Add($inst)
     if ($script:State.CurrentTest) {
         $script:State.CurrentTest.Instances.Add($inst)
-        [WmuxTestHarness.Watchdog]::AddPid($inst.Pid)
+        [WmuxTestHarness.Watchdog]::Add($proc)
     }
     [WmuxTestHarness.FocusSampler]::Watch($inst.Pid)
 
@@ -2310,6 +2318,7 @@ function Stop-WmuxInstance {
     # its session file, which must never happen from a test.
     Stop-WmuxProcessTree -Instance $Instance
     try { if ($p.HasExited) { $Instance.ExitCode = $p.ExitCode } } catch { }
+    [WmuxTestHarness.Watchdog]::Remove($Instance.Pid)
 
     if ([WmuxTestHarness.FocusSampler]::ForPid($Instance.Pid).Count -gt 0) { $Instance.Failed = $true }
     [WmuxTestHarness.FocusSampler]::Unwatch($Instance.Pid)

@@ -939,12 +939,32 @@ Test-Case 'simulated focus theft' {
     [WmuxTestHarness.FocusSampler]::Watch($fg)
     try { $null = [WmuxTestHarness.FocusSampler]::SampleOnce() } finally { [WmuxTestHarness.FocusSampler]::Unwatch($fg) }
 }
+Test-Case 'watchdog spares removed processes' {
+    $psi = [System.Diagnostics.ProcessStartInfo]::new((Join-Path $env:SystemRoot 'System32\PING.EXE'))
+    foreach ($a in '-n', '30', '127.0.0.1') { $psi.ArgumentList.Add($a) }
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardOutput = $true
+    $spared = [System.Diagnostics.Process]::Start($psi)
+    $killed = [System.Diagnostics.Process]::Start($psi)
+    try {
+        [WmuxTestHarness.Watchdog]::Add($spared)
+        [WmuxTestHarness.Watchdog]::Add($killed)
+        [WmuxTestHarness.Watchdog]::Remove($spared.Id)
+        Start-Sleep -Milliseconds 2500
+        Write-Host "WATCHDOG spared=$(-not $spared.HasExited) killed=$($killed.HasExited)"
+    } finally {
+        foreach ($x in $spared, $killed) { try { if (-not $x.HasExited) { $x.Kill() } } catch { } }
+    }
+}
 '@
     $r = Invoke-ChildTestFile -Name 'testcase-semantics' -Content $content -Env @{ WMUX_E2E_TEST_TIMEOUT_SEC = '1'; WMUX_E2E_ATTEMPT = '2' }
     Assert-Equal 0 $r.ExitCode "child stderr: $($r.Stderr)"
     $byName = @{}
     foreach ($rec in $r.Results) { $byName[$rec.name] = $rec }
-    Assert-Equal 6 $r.Results.Count "six results recorded; stdout: $($r.Stdout)"
+    Assert-Equal 7 $r.Results.Count "seven results recorded; stdout: $($r.Stdout)"
+    Assert-Equal 'timeout' $byName['watchdog spares removed processes'].kind
+    Assert-Match 'WATCHDOG spared=True killed=True' $r.Stdout 'the watchdog kills registered processes and spares removed ones'
     Assert-Equal 'failed' $byName['fails first'].status
     Assert-Equal 'assertion' $byName['fails first'].kind
     Assert-Match 'deliberate -- Assert-Equal: expected 1, got 2' $byName['fails first'].message
