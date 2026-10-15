@@ -394,6 +394,29 @@ test "unit: browser: snapshot of dom login form skips hidden and script content"
     try testing.expectEqualStrings("html > body > main", (try table.lookup("e1")).css_path.?);
 }
 
+test "unit: browser: snapshot with a request arena keeps refs in the table allocator" {
+    // W2-8 renders with a per-request arena into a long-lived per-surface
+    // table. css paths used to be stored straight from the arena: they
+    // dangled after the request and table.deinit freed them with the wrong
+    // allocator ("Invalid free").
+    var tree = try ax.parseDomDocument(gpa, dom_login, .{});
+    defer tree.deinit();
+    var table = refs.RefTable.init(gpa);
+    defer table.deinit();
+    {
+        var arena = std.heap.ArenaAllocator.init(gpa);
+        defer arena.deinit();
+        const snap = try snapshot.render(arena.allocator(), &tree, &table, .{});
+        try testing.expectEqual(@as(usize, 4), snap.element_count);
+        // find + register through the same arena (the form is not in the snapshot).
+        const form = (try locators.findOne(arena.allocator(), &tree, .{ .kind = .first, .value = "form" }, null)).?;
+        try testing.expectEqual(@as(u32, 5), try locators.register(arena.allocator(), &tree, &table, form));
+    }
+    try testing.expectEqualStrings("#email", (try table.lookup("e2")).css_path.?);
+    try testing.expectEqualStrings("#login > button", (try table.lookup("e4")).css_path.?);
+    try testing.expectEqualStrings("#login", (try table.lookup("e5")).css_path.?);
+}
+
 test "unit: browser: snapshot compact drops unnamed structural roles" {
     var tree = try ax.parseDomDocument(gpa, dom_login, .{});
     defer tree.deinit();

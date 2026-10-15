@@ -161,6 +161,8 @@ pub const Snapshot = struct {
 pub const RenderError = error{ ElementNotFound, RefNotFound, InvalidRef, InvalidSelector, UnsupportedSelector } || Allocator.Error;
 
 /// Render the snapshot and replace `table`'s ref set with the emitted refs.
+/// `gpa` owns the returned text and scratch memory only; the table copies
+/// what it keeps into its own allocator, so `gpa` may be a request arena.
 pub fn render(gpa: Allocator, tree: *const Tree, table: *refs.RefTable, opts: Options) RenderError!Snapshot {
     const scope = try resolveScope(gpa, tree, table, opts.selector);
     table.beginSnapshot();
@@ -168,8 +170,6 @@ pub fn render(gpa: Allocator, tree: *const Tree, table: *refs.RefTable, opts: Op
     var aw: std.Io.Writer.Allocating = .init(gpa);
     defer aw.deinit();
     const w = &aw.writer;
-    var line: std.ArrayList(u8) = .empty;
-    defer line.deinit(gpa);
 
     w.writeAll("- document \"") catch return error.OutOfMemory;
     try writeSanitized(gpa, w, tree.title, name_max_chars);
@@ -202,15 +202,18 @@ pub fn render(gpa: Allocator, tree: *const Tree, table: *refs.RefTable, opts: Op
             if (item.depth >= opts.max_depth) continue; // nothing deeper fits either
             const name = try displayName(gpa, tree, item.idx, role);
             defer gpa.free(name);
+            // `add` copies every string into the table's own allocator,
+            // which may outlive `gpa` (a per-request arena).
+            const path = try css.cssPath(gpa, tree, item.idx);
+            defer if (path) |p| gpa.free(p);
             const id = try table.add(.{
                 .backend_node_id = n.backend_id,
                 .frame_id = n.frame_id,
                 .role = role,
                 .name = name,
-                .css_path = null,
+                .css_path = path,
             });
             try writeLine(gpa, w, tree, item.idx, role, name, id, item.depth, opts);
-            if (tree.source == .dom or n.tag.len > 0) try attachCssPath(gpa, tree, table, id, item.idx);
             emitted += 1;
             child_depth = item.depth + 1;
         }
@@ -253,13 +256,6 @@ fn displayName(gpa: Allocator, tree: *const Tree, idx: NodeIndex, role: []const 
     const t = try tree.innerText(gpa, idx, name_max_chars, true);
     defer gpa.free(t);
     return sanitize(gpa, t, name_max_chars);
-}
-
-fn attachCssPath(gpa: Allocator, tree: *const Tree, table: *refs.RefTable, id: u32, idx: NodeIndex) Allocator.Error!void {
-    const path = try css.cssPath(gpa, tree, idx) orelse return;
-    const e = table.entryMut(id) orelse return gpa.free(path);
-    if (e.css_path != null) return gpa.free(path);
-    e.css_path = path;
 }
 
 fn writeLine(gpa: Allocator, w: *std.Io.Writer, tree: *const Tree, idx: NodeIndex, role: []const u8, name: []const u8, id: u32, depth: u32, opts: Options) Allocator.Error!void {
