@@ -11,11 +11,16 @@
 //!
 //! For Windows app builds `install()` adds, relative to the install prefix:
 //!
-//!   cli/cmux.exe              the console CLI (src/wmux_cli/main.zig)
-//!   cli/wmux.com              byte copy of cmux.exe
-//!   cli/cmux, cli/wmux        LF sh launchers (src/wmux_cli/scripts/)
-//!   share/wmux/web/           src/web/** (once src/web exists)
-//!   share/wmux/schema/        wmux.schema.json (once docs/wmux/schema has it)
+//!   bin/cli/cmux.exe            the console CLI (src/wmux_cli/main.zig)
+//!   bin/cli/wmux.com            byte copy of cmux.exe
+//!   bin/cli/cmux, bin/cli/wmux  LF sh launchers (src/wmux_cli/scripts/)
+//!   share/wmux/web/             src/web/** (once src/web exists)
+//!   share/wmux/schema/          wmux.schema.json (once docs/wmux/schema has it)
+//!
+//! The CLI goes next to wmux.exe (bin/), as ADR-4.1 lays out dev builds
+//! (`zig-out\bin\cli\cmux.exe`) and Appendix G.1 defines `CLI` = `INSTALL\cli`
+//! with INSTALL = the directory of wmux.exe. share/ stays at the prefix, where
+//! the existing Ghostty resources live.
 //!
 //! `addImports` gives app modules `@import("wmux_proto")` and
 //! `@import("wmux_build_options")` (`version`, `channel`). `-Dwmux-channel`
@@ -25,8 +30,11 @@ const WmuxSteps = @This();
 const std = @import("std");
 const Config = @import("Config.zig");
 
-/// Directory of the CLI files, relative to the install prefix.
-pub const cli_install_dir = "cli";
+/// Directory of the CLI files, relative to the install directory of wmux.exe
+/// (`.bin`, which follows --prefix-exe-dir like wmux.exe does). The relays
+/// depend on this sibling layout: cmux.exe finds `..\wmux.exe` (ADR-4.3) and
+/// wmux.exe runs `<exe dir>\cli\cmux.exe` (ADR-4.10).
+pub const cli_subdir = "cli";
 
 /// The committed settings schema, relative to the build root.
 const schema_source_path = "docs/wmux/schema/wmux.schema.json";
@@ -171,7 +179,7 @@ pub fn init(b: *std.Build, cfg: *const Config, opts: Options) !WmuxSteps {
     {
         const step = b.step(
             "cli",
-            "Build and install only the cmux CLI (cli/cmux.exe, cli/wmux.com, cli/cmux, cli/wmux)",
+            "Build and install only the cmux CLI (bin/cli/cmux.exe, wmux.com, cmux, wmux)",
         );
         if (windows) {
             const exe = b.addExecutable(.{
@@ -186,13 +194,19 @@ pub fn init(b: *std.Build, cfg: *const Config, opts: Options) !WmuxSteps {
             });
             exe.subsystem = .Console;
 
-            const dir: std.Build.InstallDir = .{ .custom = cli_install_dir };
+            // Paths relative to `.bin`; the PDB is installed by hand so it
+            // lands next to cmux.exe instead of in bin/.
             step.dependOn(&b.addInstallArtifact(exe, .{
-                .dest_dir = .{ .override = dir },
+                .dest_dir = .{ .override = .bin },
+                .dest_sub_path = cli_subdir ++ "/cmux.exe",
+                .pdb_dir = .disabled,
             }).step);
-            step.dependOn(&b.addInstallFileWithDir(exe.getEmittedBin(), dir, "wmux.com").step);
-            step.dependOn(&b.addInstallFileWithDir(b.path("src/wmux_cli/scripts/cmux"), dir, "cmux").step);
-            step.dependOn(&b.addInstallFileWithDir(b.path("src/wmux_cli/scripts/wmux"), dir, "wmux").step);
+            if (exe.producesPdbFile()) {
+                step.dependOn(&b.addInstallBinFile(exe.getEmittedPdb(), cli_subdir ++ "/cmux.pdb").step);
+            }
+            step.dependOn(&b.addInstallBinFile(exe.getEmittedBin(), cli_subdir ++ "/wmux.com").step);
+            step.dependOn(&b.addInstallBinFile(b.path("src/wmux_cli/scripts/cmux"), cli_subdir ++ "/cmux").step);
+            step.dependOn(&b.addInstallBinFile(b.path("src/wmux_cli/scripts/wmux"), cli_subdir ++ "/wmux").step);
             install_step.dependOn(step);
 
             if (pathExists(b, "src/web")) {
