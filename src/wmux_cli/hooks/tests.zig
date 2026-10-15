@@ -620,6 +620,26 @@ test "unit: agents: stop notifications for other agents, grok and failures" {
     const e = (try normalize.format(a, fail.n.?, .{ .payload = &fail.p })).?;
     try testing.expectEqualStrings("Error", e.subtitle);
     try testing.expectEqualStrings("rate limit reached", e.body);
+
+    // Failure text with permission, approval or completion words is still
+    // an error, never a needs-permission prompt or a turn-complete.
+    const texts = [_][]const u8{ "API Error: permission denied for this model", "Request was not approved", "Completed with errors", "" };
+    for (texts) |t| {
+        const doc = try std.fmt.allocPrint(a, "{{\"hook_event_name\":\"StopFailure\",\"error\":\"{s}\"}}", .{t});
+        var r = try normalizeFixture(.claude, "stop", doc);
+        defer r.p.deinit();
+        const f2 = (try normalize.format(a, r.n.?, .{ .payload = &r.p })).?;
+        try testing.expectEqualStrings("Error", f2.subtitle);
+        try testing.expectEqual(normalize.Category.other, f2.category);
+        try testing.expectEqualStrings(if (t.len > 0) t else "Claude Code reported an error", f2.body);
+    }
+    // Same for a failure flagged only by `status`, even on Grok, whose
+    // plain Stop is silent.
+    var status = try normalizeFixture(.grok, "stop", "{\"status\":\"failed\",\"message\":\"Approval required to continue\"}");
+    defer status.p.deinit();
+    const g = (try normalize.format(a, status.n.?, .{ .payload = &status.p })).?;
+    try testing.expectEqualStrings("Error", g.subtitle);
+    try testing.expectEqualStrings("Approval required to continue", g.body);
 }
 
 test "unit: agents: permission, push and pi title formatting" {

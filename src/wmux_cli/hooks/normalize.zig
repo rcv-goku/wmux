@@ -621,9 +621,11 @@ pub fn format(a: Allocator, n: Normalized, opts: FormatOptions) Allocator.Error!
 fn formatStop(a: Allocator, n: Normalized, opts: FormatOptions) Allocator.Error!?Formatted {
     const title = n.agent.displayName();
     if (n.failure) {
-        const signal = try signalOf(a, n, opts.payload);
-        const joined = try std.mem.concat(a, u8, &.{ "error ", signal });
-        return classify(a, n.agent, joined, n.message);
+        // A failed turn is an error whatever its text says: running it
+        // through the classifier would turn "permission denied" into a
+        // pending permission prompt on an agent that has stopped.
+        const fallback = try std.fmt.allocPrint(a, "{s} reported an error", .{title});
+        return .{ .title = title, .subtitle = "Error", .body = try bodyOr(a, n.message orelse "", fallback, max_body_chars), .category = .other };
     }
     if (n.agent == .grok) return null; // Grok's Notification payload carries the text
     const last: ?[]const u8 = if (opts.payload) |p| p.last_assistant_message orelse opts.transcript_last_message else opts.transcript_last_message;
