@@ -134,16 +134,20 @@
     --wmux-link: #0b62d6;
     --wmux-scrollbar-thumb: #c0c0c0;
     --wmux-scrollbar-thumb-hover: #a1a1a1;
-    --wmux-shadow: 0 4px 16px rgb(0 0 0 / 0.18);
   }
 }
 
-/* Status colors: normal palette entries on light backgrounds. */
+/*
+ * Tokens theme.js does not write follow the applied scheme (data-wmux-scheme,
+ * which the host theme sets), not the OS preference: status colors use the
+ * normal palette entries and shadows are lighter on light backgrounds.
+ */
 :root[data-wmux-scheme="light"] {
   --wmux-danger: var(--wmux-palette-1);
   --wmux-success: var(--wmux-palette-2);
   --wmux-warning: var(--wmux-palette-3);
   --wmux-info: var(--wmux-palette-4);
+  --wmux-shadow: 0 4px 16px rgb(0 0 0 / 0.18);
 }
 
 @media (prefers-color-scheme: light) {
@@ -152,6 +156,7 @@
     --wmux-success: var(--wmux-palette-2);
     --wmux-warning: var(--wmux-palette-3);
     --wmux-info: var(--wmux-palette-4);
+    --wmux-shadow: 0 4px 16px rgb(0 0 0 / 0.18);
   }
 }
 
