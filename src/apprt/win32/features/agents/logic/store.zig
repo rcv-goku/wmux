@@ -38,6 +38,12 @@ pub const max_path_bytes: usize = 4096;
 pub const max_text_bytes: usize = 4096;
 pub const max_arguments: usize = 256;
 
+/// Unknown values nested deeper than this are dropped (with a diagnostic)
+/// instead of preserved. std.json parses any depth, but writing a value
+/// back recurses once per level and the safe-mode writer stops at 256
+/// levels, so a deep value would crash every later rewrite.
+pub const max_extra_depth: usize = 64;
+
 /// Store-name suffixes (cmux's agent list). File: `<suffix>-hook-sessions.json`.
 pub const known_suffixes = [_][]const u8{
     "claude",    "codex",       "grok",    "opencode",     "pi",
@@ -246,7 +252,7 @@ pub const Store = struct {
             } else if (std.mem.eql(u8, key, "activeSessionsByWorkspace") or std.mem.eql(u8, key, "activeSessionsBySurface")) {
                 // Decoded after sessions so dangling references can be dropped.
             } else {
-                try self.extra.put(a, key, v);
+                try self.keepExtra(&self.extra, "", key, v);
             }
         }
         inline for (.{ .{ "activeSessionsByWorkspace", &self.active_by_workspace }, .{ "activeSessionsBySurface", &self.active_by_surface } }) |m| {
@@ -255,8 +261,14 @@ pub const Store = struct {
         return self;
     }
 
+    /// Preserve an unknown key's value unless it nests too deeply to write
+    /// back (`max_extra_depth`). `diag_key` is the session key, or "".
+    fn keepExtra(self: *Store, map: *ExtraMap, diag_key: []const u8, k: []const u8, v: std.json.Value) Allocator.Error!void {
+        if (nestsDeeperThan(v, max_extra_depth)) return self.diag(diag_key, "unknown value nested too deeply; dropped");
+        try map.put(self.alloc(), k, v);
+    }
+
     fn decodeEntry(self: *Store, key: []const u8, v: std.json.Value) Allocator.Error!void {
-        const a = self.alloc();
         if (key.len == 0 or key.len > max_id_bytes) return self.diag(key, "invalid session key");
         if (v != .object) return self.diag(key, "entry is not an object");
         const o = v.object;
@@ -272,9 +284,9 @@ pub const Store = struct {
             const val = e.value_ptr.*;
             if (std.mem.eql(u8, k, "sessionId")) continue;
             const known = try self.decodeField(&r, key, k, val);
-            if (!known) try r.extra.put(a, k, val);
+            if (!known) try self.keepExtra(&r.extra, key, k, val);
         }
-        try self.sessions.put(a, key, r);
+        try self.sessions.put(self.alloc(), key, r);
     }
 
     /// Decode one known field; returns false for unknown keys. A known key
@@ -721,6 +733,26 @@ fn floatToInt(x: f64) i64 {
     if (x >= max) return std.math.maxInt(i64);
     if (x <= min) return std.math.minInt(i64);
     return @intFromFloat(x);
+}
+
+/// Whether `v` nests arrays/objects more than `limit` levels deep (a scalar
+/// is 0 levels, `[]` is 1). Recursion stops at `limit`, so the check itself
+/// is safe on any input.
+fn nestsDeeperThan(v: std.json.Value, limit: usize) bool {
+    switch (v) {
+        .array => |arr| {
+            if (limit == 0) return true;
+            for (arr.items) |item| if (nestsDeeperThan(item, limit - 1)) return true;
+            return false;
+        },
+        .object => |o| {
+            if (limit == 0) return true;
+            var it = o.iterator();
+            while (it.next()) |e| if (nestsDeeperThan(e.value_ptr.*, limit - 1)) return true;
+            return false;
+        },
+        else => return false,
+    }
 }
 
 fn optStr(o: std.json.ObjectMap, key: []const u8, cap: usize) ?[]const u8 {

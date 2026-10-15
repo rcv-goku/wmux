@@ -232,6 +232,51 @@ test "unit: agents: store preserves unknown keys and newer versions" {
     try testing.expectEqual(@as(f64, 1.5), r.extra.get("nested").?.object.get("x").?.float);
 }
 
+/// Appends `depth` nested arrays (`[[...]]`) or objects (`{"a":{"a":...0}}`).
+fn appendNested(doc: *std.ArrayList(u8), depth: usize, objects: bool) !void {
+    const gpa = testing.allocator;
+    if (objects) {
+        for (0..depth) |_| try doc.appendSlice(gpa, "{\"a\":");
+        try doc.append(gpa, '0');
+        try doc.appendNTimes(gpa, '}', depth);
+    } else {
+        try doc.appendNTimes(gpa, '[', depth);
+        try doc.appendNTimes(gpa, ']', depth);
+    }
+}
+
+test "unit: agents: store drops unknown values nested too deeply to rewrite" {
+    const gpa = testing.allocator;
+    var doc: std.ArrayList(u8) = .empty;
+    defer doc.deinit(gpa);
+    try doc.appendSlice(gpa, "{\"sessions\":{\"k\":{\"sessionId\":\"k\",\"cwd\":\"/w\",\"keep\":");
+    try appendNested(&doc, store.max_extra_depth, false);
+    try doc.appendSlice(gpa, ",\"deep\":");
+    try appendNested(&doc, 300, false);
+    try doc.appendSlice(gpa, "}},\"topKeep\":");
+    try appendNested(&doc, store.max_extra_depth, true);
+    try doc.appendSlice(gpa, ",\"topDeep\":");
+    try appendNested(&doc, store.max_extra_depth + 1, true);
+    try doc.append(gpa, '}');
+
+    var s = try Store.parse(gpa, doc.items);
+    defer s.deinit();
+    const r = s.get("k").?;
+    try testing.expectEqualStrings("/w", r.cwd.?);
+    try testing.expect(r.extra.get("keep") != null and r.extra.get("deep") == null);
+    try testing.expect(s.extra.get("topKeep") != null and s.extra.get("topDeep") == null);
+    try testing.expectEqual(@as(usize, 2), s.diagnostics.items.len);
+    try testing.expectEqualStrings("k", s.diagnostics.items[0].key);
+    try testing.expectEqualStrings("", s.diagnostics.items[1].key);
+
+    // Writing back must not trip the writer's nesting limit.
+    var t = try roundTrip(&s);
+    defer t.deinit();
+    try testing.expectEqual(@as(usize, 0), t.diagnostics.items.len);
+    try testing.expect(t.get("k").?.extra.get("keep") != null);
+    try testing.expect(t.extra.get("topKeep") != null);
+}
+
 test "unit: agents: store prune by age and entry cap" {
     var s = Store.init(testing.allocator);
     defer s.deinit();
