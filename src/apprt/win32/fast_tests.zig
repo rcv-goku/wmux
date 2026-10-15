@@ -1,0 +1,77 @@
+//! Root of `zig build test-fast` [frozen] (ADR-12.1, ADR-12.2): every pure
+//! logic/ test index, built with only std and the `wmux_proto` module. Never
+//! import anything here that needs Ghostty, Win32 or App code. The tests of
+//! wmux_proto itself run in a sibling artifact rooted at src/wmux_proto/proto.zig.
+
+test {
+    _ = @import("features/a11y/logic/tests.zig");
+    _ = @import("features/about/logic/tests.zig");
+    _ = @import("features/agent_chat/logic/tests.zig");
+    _ = @import("features/agent_messages/logic/tests.zig");
+    _ = @import("features/agent_status/logic/tests.zig");
+    _ = @import("features/agents/logic/tests.zig");
+    _ = @import("features/auto_naming/logic/tests.zig");
+    _ = @import("features/automation/logic/tests.zig");
+    _ = @import("features/browser/logic/tests.zig");
+    _ = @import("features/browser_profiles/logic/tests.zig");
+    _ = @import("features/canvas/logic/tests.zig");
+    _ = @import("features/chrome/logic/tests.zig");
+    _ = @import("features/comments/logic/tests.zig");
+    _ = @import("features/context_menus/logic/tests.zig");
+    _ = @import("features/copy_mode/logic/tests.zig");
+    _ = @import("features/custom_actions/logic/tests.zig");
+    _ = @import("features/custom_sidebars/logic/tests.zig");
+    _ = @import("features/debug/logic/tests.zig");
+    _ = @import("features/deeplinks/logic/tests.zig");
+    _ = @import("features/diff/logic/tests.zig");
+    _ = @import("features/dnd/logic/tests.zig");
+    _ = @import("features/dock/logic/tests.zig");
+    _ = @import("features/env_identity/logic/tests.zig");
+    _ = @import("features/events/logic/tests.zig");
+    _ = @import("features/feed/logic/tests.zig");
+    _ = @import("features/file_preview/logic/tests.zig");
+    _ = @import("features/files_explorer/logic/tests.zig");
+    _ = @import("features/find/logic/tests.zig");
+    _ = @import("features/find_in_dir/logic/tests.zig");
+    _ = @import("features/focus_history/logic/tests.zig");
+    _ = @import("features/global_search/logic/tests.zig");
+    _ = @import("features/groups/logic/tests.zig");
+    _ = @import("features/hibernation/logic/tests.zig");
+    _ = @import("features/hints/logic/tests.zig");
+    _ = @import("features/history/logic/tests.zig");
+    _ = @import("features/i18n/logic/tests.zig");
+    _ = @import("features/image_paste/logic/tests.zig");
+    _ = @import("features/install_cli/logic/tests.zig");
+    _ = @import("features/keep_awake/logic/tests.zig");
+    _ = @import("features/layouts/logic/tests.zig");
+    _ = @import("features/markdown/logic/tests.zig");
+    _ = @import("features/meta/logic/tests.zig");
+    _ = @import("features/notifications/logic/tests.zig");
+    _ = @import("features/palette/logic/tests.zig");
+    _ = @import("features/panes_surfaces/logic/tests.zig");
+    _ = @import("features/policy/logic/tests.zig");
+    _ = @import("features/quick_terminal/logic/tests.zig");
+    _ = @import("features/remote/logic/tests.zig");
+    _ = @import("features/remote_tmux/logic/tests.zig");
+    _ = @import("features/resume/logic/tests.zig");
+    _ = @import("features/session/logic/tests.zig");
+    _ = @import("features/settings_ui/logic/tests.zig");
+    _ = @import("features/shortcuts/logic/tests.zig");
+    _ = @import("features/sleepy_mode/logic/tests.zig");
+    _ = @import("features/status/logic/tests.zig");
+    _ = @import("features/sync_input/logic/tests.zig");
+    _ = @import("features/system/logic/tests.zig");
+    _ = @import("features/task_manager/logic/tests.zig");
+    _ = @import("features/terminal_io/logic/tests.zig");
+    _ = @import("features/textbox/logic/tests.zig");
+    _ = @import("features/tmux_compat/logic/tests.zig");
+    _ = @import("features/toasts/logic/tests.zig");
+    _ = @import("features/todo/logic/tests.zig");
+    _ = @import("features/tray/logic/tests.zig");
+    _ = @import("features/updater/logic/tests.zig");
+    _ = @import("features/vault/logic/tests.zig");
+    _ = @import("features/windows/logic/tests.zig");
+    _ = @import("features/workspace_status/logic/tests.zig");
+    _ = @import("features/workspace_style/logic/tests.zig");
+    _ = @import("features/workspaces/logic/tests.zig");
+}
