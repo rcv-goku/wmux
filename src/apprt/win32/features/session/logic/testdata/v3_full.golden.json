@@ -1,0 +1,236 @@
+{
+  "schema": "wmux-session",
+  "version": 3,
+  "app_version": "1.2.0",
+  "channel": "stable",
+  "created_at": "2026-10-15T10:00:00.000Z",
+  "clean_exit": true,
+  "scrollback_captured_at": null,
+  "handles": {
+    "next": {
+      "window": 3,
+      "workspace": 18,
+      "workspace_group": 2,
+      "pane": 41,
+      "surface": 77
+    }
+  },
+  "windows": [
+    {
+      "id": "11111111-1111-4111-8111-111111111111",
+      "ref": 1,
+      "placement": {
+        "x": -8,
+        "y": 0,
+        "w": 1600,
+        "h": 1000,
+        "maximized": false,
+        "fullscreen": false,
+        "monitor": "\\\\.\\DISPLAY1",
+        "dpi": 144
+      },
+      "sidebar": {
+        "visible": true,
+        "width": 240,
+        "scroll": 12
+      },
+      "right_sidebar": {
+        "visible": false,
+        "width": 300,
+        "mode": "files"
+      },
+      "selected_workspace": "22222222-2222-4222-8222-222222222222",
+      "groups": [
+        {
+          "id": "33333333-3333-4333-8333-333333333333",
+          "ref": 1,
+          "name": "api",
+          "collapsed": false,
+          "pinned": false,
+          "anchor": "22222222-2222-4222-8222-222222222222"
+        }
+      ],
+      "workspaces": [
+        {
+          "id": "22222222-2222-4222-8222-222222222222",
+          "ref": 7,
+          "title": {
+            "custom": "api ✓",
+            "auto": "pwsh",
+            "source": "user"
+          },
+          "description": "日本語 description",
+          "cwd": "C:\\src\\api",
+          "env": {
+            "AWS_PROFILE": "dev"
+          },
+          "group": "33333333-3333-4333-8333-333333333333",
+          "pinned": false,
+          "focused_pane": "44444444-4444-4444-8444-444444444441",
+          "zoomed_pane": null,
+          "layout": {
+            "split": {
+              "dir": "horizontal",
+              "ratio": 0.6,
+              "a": {
+                "pane": "44444444-4444-4444-8444-444444444441"
+              },
+              "b": {
+                "pane": "44444444-4444-4444-8444-444444444442"
+              }
+            }
+          },
+          "panes": [
+            {
+              "id": "44444444-4444-4444-8444-444444444441",
+              "ref": 12,
+              "selected_tab": "55555555-5555-4555-8555-555555555551",
+              "tabs": [
+                {
+                  "id": "55555555-5555-4555-8555-555555555551",
+                  "ref": 30,
+                  "title": {
+                    "custom": null,
+                    "auto": "pwsh",
+                    "source": "process"
+                  },
+                  "pinned": false,
+                  "panel": {
+                    "kind": "terminal",
+                    "cwd": "C:\\src\\api",
+                    "remote_cwd": null,
+                    "wsl_distro": null,
+                    "spawn": {
+                      "argv": [
+                        "pwsh.exe",
+                        "-NoLogo"
+                      ],
+                      "shell_kind": "pwsh"
+                    },
+                    "font_size": 13,
+                    "scrollback": "scrollback/55555555-5555-4555-8555-555555555551.vt"
+                  },
+                  "ext": {
+                    "agents": {
+                      "kind": "claude",
+                      "session_id": "abc",
+                      "launch": {}
+                    }
+                  }
+                },
+                {
+                  "id": "55555555-5555-4555-8555-555555555552",
+                  "ref": 31,
+                  "title": {
+                    "custom": "docs",
+                    "auto": null,
+                    "source": "user"
+                  },
+                  "pinned": true,
+                  "panel": {
+                    "kind": "browser",
+                    "url": "https://example.com/b",
+                    "back": [
+                      "https://example.com/a"
+                    ],
+                    "forward": [
+                      "https://example.com/c"
+                    ],
+                    "zoom": 1.25,
+                    "profile": "default",
+                    "devtools": true,
+                    "muted": false
+                  },
+                  "ext": {}
+                }
+              ],
+              "ext": {}
+            },
+            {
+              "id": "44444444-4444-4444-8444-444444444442",
+              "ref": 13,
+              "selected_tab": "55555555-5555-4555-8555-555555555553",
+              "tabs": [
+                {
+                  "id": "55555555-5555-4555-8555-555555555553",
+                  "ref": 32,
+                  "title": {
+                    "custom": null,
+                    "auto": "Notes",
+                    "source": "auto"
+                  },
+                  "pinned": false,
+                  "panel": {
+                    "kind": "web",
+                    "app": "markdown",
+                    "params": {
+                      "path": "C:\\notes.md"
+                    },
+                    "state": {
+                      "scroll": 3
+                    }
+                  },
+                  "ext": {}
+                },
+                {
+                  "id": "55555555-5555-4555-8555-555555555554",
+                  "ref": 33,
+                  "title": {
+                    "custom": null,
+                    "auto": "zz",
+                    "source": "agent"
+                  },
+                  "pinned": false,
+                  "panel": {
+                    "kind": "placeholder",
+                    "reason": "hibernated"
+                  },
+                  "ext": {}
+                },
+                {
+                  "id": "55555555-5555-4555-8555-555555555555",
+                  "ref": 34,
+                  "title": {
+                    "custom": null,
+                    "auto": null,
+                    "source": "auto"
+                  },
+                  "pinned": false,
+                  "panel": {
+                    "kind": "hologram",
+                    "beam": [
+                      1,
+                      2
+                    ]
+                  },
+                  "ext": {
+                    "newer_feature": {
+                      "x": [
+                        true,
+                        null,
+                        "s"
+                      ]
+                    }
+                  }
+                }
+              ],
+              "ext": {}
+            }
+          ],
+          "ext": {
+            "status": {},
+            "workspace_style": {
+              "color": "#3B82F6"
+            },
+            "notifications": {
+              "unread": []
+            }
+          }
+        }
+      ],
+      "ext": {
+        "future_window_feature": 1
+      }
+    }
+  ]
+}

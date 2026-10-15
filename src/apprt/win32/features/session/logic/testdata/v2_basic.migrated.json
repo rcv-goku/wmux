@@ -1,0 +1,207 @@
+{
+  "schema": "wmux-session",
+  "version": 3,
+  "app_version": "1.2.0",
+  "channel": "stable",
+  "created_at": "2026-10-15T10:00:00.000Z",
+  "clean_exit": true,
+  "scrollback_captured_at": null,
+  "handles": {
+    "next": {
+      "window": 2,
+      "workspace": 3,
+      "workspace_group": 1,
+      "pane": 4,
+      "surface": 5
+    }
+  },
+  "windows": [
+    {
+      "id": "A4046922-0259-4577-9948-06632723529E",
+      "ref": 1,
+      "placement": {
+        "x": 10,
+        "y": 20,
+        "w": 1280,
+        "h": 800,
+        "maximized": true,
+        "fullscreen": false,
+        "monitor": null,
+        "dpi": 96
+      },
+      "sidebar": {
+        "visible": true,
+        "width": 240,
+        "scroll": 0
+      },
+      "right_sidebar": {
+        "visible": false,
+        "width": 300,
+        "mode": null
+      },
+      "selected_workspace": "C3D861A5-CEDB-4BD3-AAE7-B363DAF8C16F",
+      "groups": [],
+      "workspaces": [
+        {
+          "id": "9744A5EE-68C8-4C96-ABFF-EA4374423C21",
+          "ref": 1,
+          "title": {
+            "custom": "api ✓",
+            "auto": null,
+            "source": "user"
+          },
+          "description": null,
+          "cwd": "C:\\src\\api",
+          "env": {},
+          "group": null,
+          "pinned": false,
+          "focused_pane": "24101ABB-87B0-4710-AFD7-7ACE2557CB80",
+          "zoomed_pane": null,
+          "layout": {
+            "split": {
+              "dir": "vertical",
+              "ratio": 0.3,
+              "a": {
+                "pane": "6E17D186-9AD5-440D-847E-E06C95CACF26"
+              },
+              "b": {
+                "pane": "24101ABB-87B0-4710-AFD7-7ACE2557CB80"
+              }
+            }
+          },
+          "panes": [
+            {
+              "id": "6E17D186-9AD5-440D-847E-E06C95CACF26",
+              "ref": 1,
+              "selected_tab": "57C89277-8450-45E7-AC45-4A0B33CC378C",
+              "tabs": [
+                {
+                  "id": "7EEAB206-EFFB-49E4-869E-2A96ECF20DA4",
+                  "ref": 1,
+                  "title": {
+                    "custom": null,
+                    "auto": "pwsh",
+                    "source": "auto"
+                  },
+                  "pinned": false,
+                  "panel": {
+                    "kind": "terminal",
+                    "cwd": "C:\\src\\api",
+                    "remote_cwd": null,
+                    "wsl_distro": null,
+                    "spawn": null,
+                    "font_size": null,
+                    "scrollback": null
+                  },
+                  "ext": {}
+                },
+                {
+                  "id": "57C89277-8450-45E7-AC45-4A0B33CC378C",
+                  "ref": 2,
+                  "title": {
+                    "custom": null,
+                    "auto": "Docs",
+                    "source": "auto"
+                  },
+                  "pinned": false,
+                  "panel": {
+                    "kind": "browser",
+                    "url": "about:blank",
+                    "back": [],
+                    "forward": [],
+                    "zoom": 1,
+                    "profile": null,
+                    "devtools": false,
+                    "muted": false
+                  },
+                  "ext": {}
+                }
+              ],
+              "ext": {}
+            },
+            {
+              "id": "24101ABB-87B0-4710-AFD7-7ACE2557CB80",
+              "ref": 2,
+              "selected_tab": "75333B4B-FF1F-40A3-AAE9-AE82489F2F35",
+              "tabs": [
+                {
+                  "id": "75333B4B-FF1F-40A3-AAE9-AE82489F2F35",
+                  "ref": 3,
+                  "title": {
+                    "custom": null,
+                    "auto": null,
+                    "source": "auto"
+                  },
+                  "pinned": false,
+                  "panel": {
+                    "kind": "terminal",
+                    "cwd": "D:\\logs",
+                    "remote_cwd": null,
+                    "wsl_distro": null,
+                    "spawn": null,
+                    "font_size": null,
+                    "scrollback": null
+                  },
+                  "ext": {}
+                }
+              ],
+              "ext": {}
+            }
+          ],
+          "ext": {}
+        },
+        {
+          "id": "C3D861A5-CEDB-4BD3-AAE7-B363DAF8C16F",
+          "ref": 2,
+          "title": {
+            "custom": "Workspace 2",
+            "auto": null,
+            "source": "user"
+          },
+          "description": null,
+          "cwd": null,
+          "env": {},
+          "group": null,
+          "pinned": false,
+          "focused_pane": "FF3D18A3-FC6B-4691-98F7-31412785357E",
+          "zoomed_pane": null,
+          "layout": {
+            "pane": "FF3D18A3-FC6B-4691-98F7-31412785357E"
+          },
+          "panes": [
+            {
+              "id": "FF3D18A3-FC6B-4691-98F7-31412785357E",
+              "ref": 3,
+              "selected_tab": "D64B340B-1D34-4108-905B-6F1B21F874D2",
+              "tabs": [
+                {
+                  "id": "D64B340B-1D34-4108-905B-6F1B21F874D2",
+                  "ref": 4,
+                  "title": {
+                    "custom": null,
+                    "auto": "cmd",
+                    "source": "auto"
+                  },
+                  "pinned": false,
+                  "panel": {
+                    "kind": "terminal",
+                    "cwd": null,
+                    "remote_cwd": null,
+                    "wsl_distro": null,
+                    "spawn": null,
+                    "font_size": null,
+                    "scrollback": null
+                  },
+                  "ext": {}
+                }
+              ],
+              "ext": {}
+            }
+          ],
+          "ext": {}
+        }
+      ],
+      "ext": {}
+    }
+  ]
+}
