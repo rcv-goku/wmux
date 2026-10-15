@@ -15,6 +15,7 @@ const internal_os = @import("../../os/main.zig");
 const App = @import("App.zig");
 const Pane = @import("Pane.zig");
 const Window = @import("Window.zig");
+const app_foreground = @import("app/foreground.zig");
 const app_modal = @import("app/modal.zig");
 const w32 = @import("platform/win32.zig");
 const Scrollbar = @import("Scrollbar.zig").Scrollbar;
@@ -726,7 +727,7 @@ pub fn setSearchActive(self: *Surface, active: bool, needle: [:0]const u8) void 
         self.ensureSearchBar();
         if (self.search_hwnd) |popup| {
             self.positionSearchBar();
-            _ = w32.ShowWindow(popup, w32.SW_SHOW);
+            app_foreground.showTopLevel(self.app, popup, w32.SW_SHOW);
 
             // Set the search text if provided
             if (needle.len > 0) {
@@ -774,7 +775,7 @@ fn ensureSearchBar(self: *Surface) void {
     // doesn't appear in the taskbar). Parent is the top-level Window
     // HWND so it floats above the terminal surface.
     const popup = w32.CreateWindowExW(
-        w32.WS_EX_TOOLWINDOW,
+        app_foreground.popupExStyle(self.app, w32.WS_EX_TOOLWINDOW),
         App.TERMINAL_CLASS_NAME,
         std.unicode.utf8ToUtf16LeStringLiteral(""),
         w32.WS_POPUP | w32.WS_BORDER,
@@ -1003,7 +1004,7 @@ pub fn setCommandPaletteActive(self: *Surface, active: bool) void {
         if (self.palette_hwnd) |popup| {
             self.positionCommandPalette();
             self.filterPaletteEntries("");
-            _ = w32.ShowWindow(popup, w32.SW_SHOW);
+            app_foreground.showTopLevel(self.app, popup, w32.SW_SHOW);
             if (self.palette_edit) |edit| {
                 _ = w32.SetWindowTextW(edit, std.unicode.utf8ToUtf16LeStringLiteral(""));
                 _ = w32.SetFocus(edit);
@@ -1031,7 +1032,7 @@ fn ensureCommandPalette(self: *Surface) void {
     const edit_h: i32 = @intFromFloat(@round(24.0 * s));
 
     const popup = w32.CreateWindowExW(
-        w32.WS_EX_TOOLWINDOW,
+        app_foreground.popupExStyle(self.app, w32.WS_EX_TOOLWINDOW),
         App.TERMINAL_CLASS_NAME,
         std.unicode.utf8ToUtf16LeStringLiteral(""),
         w32.WS_POPUP | w32.WS_BORDER,

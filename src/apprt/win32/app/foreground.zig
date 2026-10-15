@@ -158,6 +158,14 @@ pub fn finishTopLevelCreate(
     );
 }
 
+/// Extended style of an owned top-level popup (the terminal search and
+/// command palette bars): WS_EX_NOACTIVATE is added under
+/// WMUX_TEST_HIDDEN. (Such popups follow their owner window, which is
+/// already off-screen.)
+pub fn popupExStyle(app: *const App, ex_style: u32) u32 {
+    return if (app.runtime_env.test_hidden) ex_style | w32.WS_EX_NOACTIVATE else ex_style;
+}
+
 /// ShowWindow for top-level windows: under WMUX_TEST_HIDDEN every show
 /// command except SW_HIDE becomes SW_SHOWNOACTIVATE.
 pub fn showTopLevel(app: *const App, hwnd: w32.HWND, cmd: i32) void {
