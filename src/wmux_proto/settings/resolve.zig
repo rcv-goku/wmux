@@ -38,7 +38,8 @@ pub const Source = enum {
 };
 
 /// One parsed input. Packs listed by a file are passed as extra layers with
-/// the listing file's source, placed before it (ADR-5.1 row 5).
+/// the listing file's source, placed before it (ADR-5.1 row 5). Layers are
+/// only read during `resolve`; the result keeps no reference to them.
 pub const Layer = struct {
     source: Source,
     root: *const Node,
@@ -72,7 +73,9 @@ pub const Rejected = struct {
 };
 
 pub const Entry = struct {
+    /// Points into the `specs` passed to `resolve` (the static registry).
     spec: *const Spec,
+    /// Effective value, deep-copied into the `Resolved` arena.
     value: Node,
     /// Minified JSON of `value`.
     json: []const u8,
@@ -129,7 +132,9 @@ fn rank(s: Source) u8 {
 /// Resolves every spec in `specs`. `layers` may come in any order; equal
 /// sources keep their relative order (later wins). Per ADR-5.3 a value with
 /// a type/range error falls back to the next lower layer and is listed in
-/// `rejected`; so are project values for global-only keys.
+/// `rejected`; so are project values for global-only keys. The result owns
+/// its values: callers may free the layers (and the policy strings) as soon
+/// as this returns, which a reload snapshot needs. `specs` must outlive it.
 pub fn resolve(
     gpa: Allocator,
     specs: []const Spec,
@@ -227,6 +232,8 @@ fn resolveOne(
     }
 
     if (s.ty == .object) winner = .{ .start = 0, .end = 0, .data = .{ .object = try merged.toOwnedSlice(arena) } };
+    // Layer and policy nodes borrow their source text and parse arenas.
+    winner = try winner.clone(arena);
     return .{
         .spec = s,
         .value = winner,
@@ -715,6 +722,30 @@ test "unit: settings: policy values lock and enforce" {
     try testing.expect(!r.isLocked("automation.claudeBinaryPath"));
     try testing.expectEqualStrings("", r.getString("automation.claudeBinaryPath").?);
     try testing.expectEqual(@as(usize, 3), r.rejected.len);
+}
+
+test "unit: settings: resolved values outlive the layers and policy strings" {
+    const gpa = testing.allocator;
+    const src = try gpa.dupe(u8, "{\"app\": {\"appearance\": \"dark\"}, \"terminal\": {\"scrollSpeed\": 1.25}, \"notifications\": {\"hooks\": {\"k\": [\"v\"]}}}");
+    var layer_arena: std.heap.ArenaAllocator = .init(gpa);
+    const root = try jsonc.parseInto(layer_arena.allocator(), src, .{}, null);
+    const forced = try gpa.dupe(u8, "\"cmuxOnly\"");
+    var r = try resolve(gpa, fixtures, &.{.{ .source = .wmux_json, .root = &root, .src = src }}, &.{
+        .{ .path = "automation.socketControlMode", .hive = .hklm, .data = .{ .json = forced } },
+    });
+    defer r.deinit();
+    // A reload frees the parsed files right after resolving.
+    @memset(src, 'X');
+    @memset(forced, 'X');
+    layer_arena.deinit();
+    gpa.free(src);
+    gpa.free(forced);
+    try testing.expectEqualStrings("dark", r.getString("app.appearance").?);
+    try testing.expectEqual(@as(f64, 1.25), r.getFloat("terminal.scrollSpeed").?);
+    try testing.expectEqualStrings("cmuxOnly", r.getString("automation.socketControlMode").?);
+    const hooks = r.get("notifications.hooks").?;
+    try testing.expectEqualStrings("v", hooks.value.getPath(&.{"k"}).?.data.array[0].asString().?);
+    try testing.expectEqualStrings("{\"k\":[\"v\"]}", hooks.json);
 }
 
 test "unit: settings: legacy ghostty keys convert by spec type" {

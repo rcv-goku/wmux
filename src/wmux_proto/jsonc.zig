@@ -500,6 +500,33 @@ pub const Node = struct {
         }
     }
 
+    /// Deep copy whose strings, numbers, keys and children all live in
+    /// `arena`, so it outlives the source text and the parse arena. Spans
+    /// are kept as they were (offsets into the original source).
+    pub fn clone(self: *const Node, arena: std.mem.Allocator) error{OutOfMemory}!Node {
+        return .{ .start = self.start, .end = self.end, .data = switch (self.data) {
+            .null => .null,
+            .boolean => |b| .{ .boolean = b },
+            .number => |raw| .{ .number = try arena.dupe(u8, raw) },
+            .string => |s| .{ .string = try arena.dupe(u8, s) },
+            .array => |items| blk: {
+                const out = try arena.alloc(Node, items.len);
+                for (items, out) |*item, *o| o.* = try item.clone(arena);
+                break :blk .{ .array = out };
+            },
+            .object => |members| blk: {
+                const out = try arena.alloc(Member, members.len);
+                for (members, out) |*m, *o| o.* = .{
+                    .key = try arena.dupe(u8, m.key),
+                    .key_start = m.key_start,
+                    .key_end = m.key_end,
+                    .value = try m.value.clone(arena),
+                };
+                break :blk .{ .object = out };
+            },
+        } };
+    }
+
     /// Minified canonical JSON text of the value (comments dropped).
     pub fn toJsonAlloc(self: *const Node, gpa: std.mem.Allocator) error{OutOfMemory}![]u8 {
         var aw: std.Io.Writer.Allocating = .init(gpa);
@@ -862,6 +889,22 @@ test "unit: proto: jsonc node equality" {
     defer c.deinit();
     try testing.expect(a.root.eql(&b.root));
     try testing.expect(!a.root.eql(&c.root));
+}
+
+test "unit: proto: jsonc clone outlives the source and the parse" {
+    const gpa = testing.allocator;
+    const src = try gpa.dupe(u8, "{\"s\": \"plain\", \"e\": \"\\u00e9\", \"n\": 1.50, \"a\": [true, null, {\"k\": \"v\"}]}");
+    var doc = try parse(gpa, src, .{}, null);
+    var arena: std.heap.ArenaAllocator = .init(gpa);
+    defer arena.deinit();
+    const copy = try doc.root.clone(arena.allocator());
+    // Scribble over the source and free both before reading the copy.
+    @memset(src, 'X');
+    doc.deinit();
+    gpa.free(src);
+    const json = try copy.toJsonAlloc(gpa);
+    defer gpa.free(json);
+    try testing.expectEqualStrings("{\"s\":\"plain\",\"e\":\"é\",\"n\":1.50,\"a\":[true,null,{\"k\":\"v\"}]}", json);
 }
 
 test "unit: proto: jsonc isValidLiteral works at comptime" {
