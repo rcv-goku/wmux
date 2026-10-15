@@ -175,7 +175,11 @@ pub const WriteFileReq = struct { path: []const u8, data: []const u8, append: bo
 pub const OpError = error{ OutOfMemory, Failed };
 
 pub const OpCtx = struct {
-    /// Per-run arena: results (snapshots, captured text) may live here.
+    /// Per-run arena. Results (snapshots, captured text, file contents)
+    /// must stay valid until `Engine.run` returns, because the engine keeps
+    /// using an earlier snapshot after later operations (`kill-pane -a`,
+    /// placement after a split): allocate them here or keep them alive at
+    /// least that long, and never mutate a returned snapshot.
     arena: Allocator,
     /// Set by an op before returning `error.Failed`; printed on stderr.
     message: ?[]const u8 = null,
