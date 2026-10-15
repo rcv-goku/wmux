@@ -12,8 +12,9 @@
 //!
 //! Mapping: workspace `name` → `title.custom` (source `user`), `working_dir`
 //! → `cwd`, `direction`/`ratio`/`left`/`right` → `split.dir/ratio/a/b`,
-//! leaf order (left before right) → `panes[]`, `active_container` (leaf
-//! index) → `focused_pane`, `active_tab` → `selected_tab`, tab `title` →
+//! leaf order (left before right) → `panes[]`, `active_container` (a
+//! position in v2's own container order, see `v2Container`) →
+//! `focused_pane`, `active_tab` → `selected_tab`, tab `title` →
 //! `title.auto`, tab `cwd` → terminal `cwd`, `kind: "browser"` → a browser
 //! tab at `about:blank` (v2 stored no URL). Leaves without tabs disappear
 //! and their split collapses to the sibling.
@@ -147,8 +148,11 @@ const Migrator = struct {
             if (getObject(o, "split_tree")) |root| {
                 ws.layout = try self.node(root, &panes, 0);
             }
-            const active = getUsize(o, "active_container") orelse 0;
-            if (active < panes.items.len) ws.focused_pane = panes.items[active].id;
+            if (ws.layout) |layout| {
+                // Out of range: v2 focused its first container.
+                const active = getUsize(o, "active_container") orelse 0;
+                ws.focused_pane = v2Container(layout, active) orelse v2Container(layout, 0);
+            }
         } else {
             if (try self.pane(o, &panes)) |id| ws.layout = .{ .pane = id };
         }
@@ -219,6 +223,33 @@ const Migrator = struct {
         };
     }
 };
+
+/// The pane v2 meant by container `index`. v2 saved `active_container` as a
+/// position in `SplitTree.iterator()`, which walks the tree's node array,
+/// not the tree, and its reader rebuilt that array with
+/// `left.split(.root, dir, ratio, right)`: the right subtree's nodes come
+/// first and a lone left leaf moves to the end. So a split whose `a` is a
+/// single pane counts `b`'s panes and then that pane; any other split
+/// counts `a`'s panes and then `b`'s. A right split of one pane is thus
+/// [right, left]. Following the v2 reader keeps the focus v2 restored.
+fn v2Container(layout: schema.Layout, index: usize) ?[]const u8 {
+    var remaining = index;
+    return v2ContainerAt(layout, &remaining);
+}
+
+fn v2ContainerAt(l: schema.Layout, remaining: *usize) ?[]const u8 {
+    switch (l) {
+        .pane => |id| {
+            if (remaining.* == 0) return id;
+            remaining.* -= 1;
+            return null;
+        },
+        .split => |s| {
+            const first, const second = if (s.a == .pane) .{ s.b, s.a } else .{ s.a, s.b };
+            return v2ContainerAt(first, remaining) orelse v2ContainerAt(second, remaining);
+        },
+    }
+}
 
 fn asObject(v: Value) ?ObjectMap {
     return switch (v) {
@@ -310,8 +341,9 @@ test "unit: session: v2 migration maps tree, focus, tabs and cwd" {
     try testing.expectEqual(@as(f32, 0.3), split.ratio);
     try testing.expectEqualStrings(ws.panes[0].id.?, split.a.pane);
     try testing.expectEqualStrings(ws.panes[1].id.?, split.b.pane);
-    // active_container 1 = second leaf.
-    try testing.expectEqualStrings(ws.panes[1].id.?, ws.focused_pane.?);
+    // v2 counted this split's containers as [b, a]: active_container 1 is
+    // the left (`a`) pane.
+    try testing.expectEqualStrings(ws.panes[0].id.?, ws.focused_pane.?);
     // active_tab 1 selects the browser tab, which restores at about:blank.
     try testing.expectEqualStrings(ws.panes[0].tabs[1].id.?, ws.panes[0].selected_tab.?);
     try testing.expectEqualStrings("about:blank", ws.panes[0].tabs[1].panel.browser.url);
@@ -325,6 +357,49 @@ test "unit: session: v2 migration maps tree, focus, tabs and cwd" {
     try testing.expectEqual(@as(u32, 5), r.session.handles.next.surface);
     try testing.expectEqual(@as(u32, 4), r.session.handles.next.pane);
     try testing.expectEqual(@as(u32, 3), r.session.handles.next.workspace);
+}
+
+/// Title of the first tab of the focused pane of the first workspace.
+fn focusedTitle(r: Result) ?[]const u8 {
+    const ws = r.session.windows[0].workspaces[0];
+    const pane = schema.findPane(ws.panes, ws.focused_pane orelse return null) orelse return null;
+    return pane.tabs[0].title.auto;
+}
+
+test "unit: session: v2 active_container follows SplitTree node order" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    var prng: std.Random.DefaultPrng = undefined;
+    const leaf = struct {
+        fn f(comptime t: []const u8) []const u8 {
+            return "{\"node_type\":\"leaf\",\"container\":{\"tabs\":[{\"title\":\"" ++ t ++ "\"}]}}";
+        }
+    }.f;
+    const split = struct {
+        fn f(comptime a: []const u8, comptime b: []const u8) []const u8 {
+            return "{\"node_type\":\"split\",\"direction\":\"horizontal\",\"left\":" ++ a ++ ",\"right\":" ++ b ++ "}";
+        }
+    }.f;
+    const Case = struct { tree: []const u8, order: []const []const u8 };
+    const cases = [_]Case{
+        // One split, as after a right split of one pane: the right pane is
+        // container 0 (the common case).
+        .{ .tree = split(leaf("A"), leaf("B")), .order = &.{ "B", "A" } },
+        // The left side split again.
+        .{ .tree = split(split(leaf("A"), leaf("C")), leaf("B")), .order = &.{ "C", "A", "B" } },
+        // The right side split again.
+        .{ .tree = split(leaf("A"), split(leaf("B"), leaf("C"))), .order = &.{ "C", "B", "A" } },
+        .{ .tree = leaf("A"), .order = &.{"A"} },
+    };
+    for (cases) |c| {
+        for (0..c.order.len + 1) |active| {
+            const doc = try std.fmt.allocPrint(arena.allocator(), "{{\"version\":2,\"workspaces\":[{{\"split_tree\":{s},\"active_container\":{d}}}]}}", .{ c.tree, active });
+            const r = try migrate(arena.allocator(), doc, seeded(&prng));
+            // Out of range falls back to container 0, as v2 did.
+            const want = if (active < c.order.len) c.order[active] else c.order[0];
+            try testing.expectEqualStrings(want, focusedTitle(r).?);
+        }
+    }
 }
 
 test "unit: session: v1 fixture migrates flat tabs into one pane" {
