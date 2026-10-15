@@ -302,9 +302,14 @@ pub const Store = struct {
         var rec = try template.clone(self.gpa);
         errdefer rec.deinit(self.gpa);
         // Reserve everything up front so nothing below can fail half-way.
+        var superseded: usize = 0;
+        for (self.records.items) |r| {
+            if (supersedes(template, r)) superseded += 1;
+        }
+        const len_after = self.records.items.len - superseded + 1;
         try self.records.ensureUnusedCapacity(self.gpa, 1);
-        try result.replaced.ensureTotalCapacity(self.gpa, self.records.items.len);
-        try result.evicted.ensureTotalCapacity(self.gpa, self.records.items.len + 1);
+        try result.replaced.ensureTotalCapacity(self.gpa, superseded);
+        try result.evicted.ensureTotalCapacity(self.gpa, len_after -| @max(self.history_limit, 1));
 
         var i: usize = 0;
         while (i < self.records.items.len) {
@@ -331,8 +336,9 @@ pub const Store = struct {
     }
 
     /// Evicts oldest read records first, then oldest unread, never the
-    /// newest record. `out` must have capacity for every eviction.
-    fn enforceLimit(self: *Store, out: *IdList) void {
+    /// newest record. `out`, when given, must have capacity for every
+    /// eviction.
+    fn enforceLimit(self: *Store, out: ?*IdList) void {
         const limit = @max(self.history_limit, 1);
         while (self.records.items.len > limit) {
             var victim: usize = self.records.items.len - 1;
@@ -344,20 +350,18 @@ pub const Store = struct {
                     break;
                 }
             }
-            out.appendAssumeCapacity(self.records.items[victim].id);
+            if (out) |o| o.appendAssumeCapacity(self.records.items[victim].id);
             var old = self.records.orderedRemove(victim);
             old.deinit(self.gpa);
         }
     }
 
-    /// Applies a new history limit, evicting as `add` would.
+    /// Applies a new history limit, evicting as `add` would. On error
+    /// nothing changes.
     pub fn setHistoryLimit(self: *Store, limit: usize, out: ?*IdList) !void {
+        if (out) |o| try o.ensureUnusedCapacity(self.gpa, self.records.items.len -| @max(limit, 1));
         self.history_limit = limit;
-        var tmp: IdList = .empty;
-        defer tmp.deinit(self.gpa);
-        try tmp.ensureTotalCapacity(self.gpa, self.records.items.len);
-        self.enforceLimit(&tmp);
-        if (out) |o| try o.appendSlice(self.gpa, tmp.items);
+        self.enforceLimit(out);
     }
 
     pub fn markRead(self: *Store, id: Uuid) bool {
@@ -424,25 +428,36 @@ pub const Store = struct {
 
     /// Removes matching records (`read_only` restricts to read ones); with
     /// `tombstone_ids` their ids are tombstoned. Removed ids go to `out`.
+    /// On error nothing is removed.
     pub fn removeScope(self: *Store, scope: Scope, opts: struct {
         read_only: bool = false,
         tombstone_ids: bool = true,
     }, out: ?*IdList) !usize {
         var n: usize = 0;
-        var i: usize = 0;
-        while (i < self.records.items.len) {
-            const r = self.records.items[i];
-            if (!scope.matches(r) or (opts.read_only and !r.read)) {
-                i += 1;
+        for (self.records.items) |r| {
+            if (removable(scope, opts.read_only, r)) n += 1;
+        }
+        if (n == 0) return 0;
+        // Reserve first so the compaction below cannot fail half-way.
+        if (out) |o| try o.ensureUnusedCapacity(self.gpa, n);
+        if (opts.tombstone_ids) try self.tombstones.ensureUnusedCapacity(self.gpa, n);
+        var keep: usize = 0;
+        for (self.records.items) |*r| {
+            if (!removable(scope, opts.read_only, r.*)) {
+                self.records.items[keep] = r.*;
+                keep += 1;
                 continue;
             }
-            if (out) |o| try o.append(self.gpa, r.id);
-            if (opts.tombstone_ids) try self.tombstone(r.id, r.workspace);
-            var old = self.records.orderedRemove(i);
-            old.deinit(self.gpa);
-            n += 1;
+            if (out) |o| o.appendAssumeCapacity(r.id);
+            if (opts.tombstone_ids) self.tombstoneAssumeCapacity(r.id, r.workspace);
+            r.deinit(self.gpa);
         }
+        self.records.shrinkRetainingCapacity(keep);
         return n;
+    }
+
+    fn removable(scope: Scope, read_only: bool, r: Record) bool {
+        return scope.matches(r) and (!read_only or r.read);
     }
 
     /// Marks `id` unread and moves it just after the last other unread
@@ -756,6 +771,55 @@ test "unit: notifications: records own deep copies of all strings" {
     try testing.expectEqualStrings("sess", got.agent.?.session_id.?);
     try testing.expectEqualStrings("https://example.invalid/", got.click_action.?.open_url);
     try testing.expect(got.isAgentAttention());
+}
+
+test "unit: notifications: removeScope and setHistoryLimit change nothing on allocation failure" {
+    const S = struct {
+        fn run(gpa: std.mem.Allocator) !void {
+            var s = Store.init(gpa);
+            defer s.deinit();
+            for (0..6) |i| {
+                var res = try s.add(mk(@intCast(i + 1), ws_a, testUuid(@intCast(0x10 + i)), @intCast(i)));
+                res.deinit(gpa);
+            }
+            _ = s.markRead(testUuid(2));
+            var out: IdList = .empty;
+            defer out.deinit(gpa);
+            _ = s.removeScope(.all, .{}, &out) catch |err| {
+                // All or nothing: no id reported, every record kept.
+                try testing.expectEqual(@as(usize, 0), out.items.len);
+                try testing.expectEqual(@as(usize, 6), s.records.items.len);
+                try testing.expectEqual(@as(usize, 0), s.tombstones.count());
+                return err;
+            };
+            try testing.expectEqual(@as(usize, 6), out.items.len);
+            try testing.expectEqual(@as(usize, 6), s.tombstones.count());
+            for (0..3) |i| {
+                var res = try s.add(mk(@intCast(i + 10), ws_a, testUuid(@intCast(0x20 + i)), @intCast(i)));
+                res.deinit(gpa);
+            }
+            var ev: IdList = .empty;
+            defer ev.deinit(gpa);
+            s.setHistoryLimit(1, &ev) catch |err| {
+                try testing.expectEqual(@as(usize, 3), s.records.items.len);
+                try testing.expectEqual(default_history_limit, s.history_limit);
+                return err;
+            };
+            try testing.expectEqual(@as(usize, 2), ev.items.len);
+        }
+    };
+    try testing.checkAllAllocationFailures(testing.allocator, S.run, .{});
+}
+
+test "unit: notifications: removeScope keeps the order of the remaining records" {
+    var s = Store.init(testing.allocator);
+    defer s.deinit();
+    for (0..8) |i| try addOk(&s, mk(@intCast(i + 1), if (i % 2 == 0) ws_a else ws_b, testUuid(@intCast(0x30 + i)), @intCast(i)));
+    try testing.expectEqual(@as(usize, 4), try s.removeScope(.{ .workspace = ws_a }, .{ .tombstone_ids = false }, null));
+    const order = [_]u32{ 8, 6, 4, 2 };
+    for (order, 0..) |n, i| try testing.expectEqualStrings(&testUuid(n), &s.records.items[i].id);
+    try testing.expectEqual(@as(usize, 0), try s.removeScope(.{ .workspace = ws_a }, .{}, null));
+    try testing.expectEqual(@as(usize, 0), s.tombstones.count());
 }
 
 test "unit: notifications: add is leak-free under allocation failure" {

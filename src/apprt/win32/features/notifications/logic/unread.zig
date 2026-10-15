@@ -314,13 +314,11 @@ pub const Model = struct {
     }
 
     /// Manual unread on a pane (Toggle Unread, `@ghostty-attention:ring`).
+    /// Re-marking moves the pane to the most recent position.
     pub fn setSurfaceManualUnread(self: *Model, workspace: Uuid, surface: Uuid, on: bool) !void {
-        if (on) {
-            _ = self.marks.manual_surfaces.orderedRemove(surface);
-            try self.marks.manual_surfaces.put(self.gpa, surface, workspace);
-        } else {
-            _ = self.marks.manual_surfaces.orderedRemove(surface);
-        }
+        if (on) try self.marks.manual_surfaces.ensureUnusedCapacity(self.gpa, 1);
+        _ = self.marks.manual_surfaces.orderedRemove(surface);
+        if (on) self.marks.manual_surfaces.putAssumeCapacity(surface, workspace);
     }
 
     pub fn setWorkspaceManualUnread(self: *Model, workspace: Uuid, on: bool) !void {
@@ -351,6 +349,14 @@ pub const Model = struct {
     pub fn removeWorkspace(self: *Model, workspace: Uuid, out: ?*IdList) !usize {
         const n = try self.store.removeScope(.{ .workspace = workspace }, .{ .tombstone_ids = false }, out);
         _ = self.marks.clearWorkspace(workspace);
+        return n;
+    }
+
+    /// A surface closed: drop its records (not tombstoned), its markers and
+    /// its focused-read indicator, so a closed pane never keeps counting.
+    pub fn removeSurface(self: *Model, surface: Uuid, out: ?*IdList) !usize {
+        const n = try self.store.removeScope(.{ .surface = surface }, .{ .tombstone_ids = false }, out);
+        _ = self.marks.clearSurface(surface);
         return n;
     }
 
@@ -864,6 +870,124 @@ test "unit: notifications: retargeted pane notifies its new workspace" {
     try testing.expectEqual(@as(usize, 2), try m.removeWorkspace(ws2, null) + 1);
     try testing.expectEqual(@as(usize, 0), m.globalUnreadCount());
     try testing.expect(!m.store.isTombstoned(testUuid(1)));
+}
+
+test "unit: notifications: closing a pane drops its records and markers" {
+    var m = Model.init(testing.allocator);
+    defer m.deinit();
+    try addTo(&m, mk(1, ws1, pa, 1), .{});
+    try addTo(&m, mk(2, ws1, pb, 2), .{ .focused = true });
+    try addTo(&m, mk(3, ws1, null, 3), .{});
+    try m.setSurfaceManualUnread(ws1, pa, true);
+    try m.addRestoredSurfaceMark(ws1, pa);
+    var ids: IdList = .empty;
+    defer ids.deinit(testing.allocator);
+    try testing.expectEqual(@as(usize, 1), try m.removeSurface(pa, &ids));
+    try testing.expectEqualStrings(&testUuid(1), &ids.items[0]);
+    try testing.expect(!m.surfaceHasIndicator(pa));
+    try testing.expect(!m.store.isTombstoned(testUuid(1)));
+    // The focused-read ring of a closed pane goes too; other rows stay.
+    _ = try m.removeSurface(pb, null);
+    try testing.expect(!m.surfaceHasIndicator(pb));
+    try testing.expectEqual(@as(usize, 1), m.store.records.items.len);
+    try testing.expectEqual(@as(usize, 1), m.globalUnreadCount());
+    try testing.expectEqual(@as(usize, 0), try m.removeSurface(pc, null));
+}
+
+test "unit: notifications: re-marking a pane makes it the latest manual jump target" {
+    var m = Model.init(testing.allocator);
+    defer m.deinit();
+    try m.setSurfaceManualUnread(ws1, pa, true);
+    try m.setSurfaceManualUnread(ws1, pb, true);
+    try m.setSurfaceManualUnread(ws1, pa, true);
+    try testing.expectEqual(@as(usize, 2), m.globalUnreadCount());
+    try testing.expectEqualStrings(&pa, &m.peekJump(.{}).?.surface.?);
+    try m.setSurfaceManualUnread(ws1, pa, false);
+    try m.setSurfaceManualUnread(ws1, pa, false);
+    try testing.expectEqualStrings(&pb, &m.peekJump(.{}).?.surface.?);
+}
+
+test "unit: notifications: unread model is leak-free under allocation failure" {
+    const S = struct {
+        fn run(gpa: std.mem.Allocator) !void {
+            var m = Model.init(gpa);
+            defer m.deinit();
+            var ids: IdList = .empty;
+            defer ids.deinit(gpa);
+            var r1 = mk(1, ws1, pa, 1);
+            r1.agent = .{ .kind = "claude", .category = .needs_permission, .session_id = "s" };
+            var a = try m.add(r1, .{});
+            a.deinit(gpa);
+            var b = try m.add(mk(2, ws1, pb, 2), .{ .focused = true });
+            b.deinit(gpa);
+            var c = try m.add(mk(3, ws2, null, 3), .{});
+            c.deinit(gpa);
+            try m.setSurfaceManualUnread(ws2, pc, true);
+            try m.addRestoredWorkspaceMark(ws3);
+            try m.addRestoredSurfaceMark(ws3, testUuid(0x1D));
+            _ = try m.toggleUnread(ws1, pa, &ids);
+            _ = try m.markOldestUnreadAndJumpNext(ws2, null, .{ .workspace_order = &.{ ws1, ws2, ws3 } });
+            _ = try m.explicitInput(pa, &ids);
+            _ = try m.focusSurface(pb, &ids);
+            _ = try m.selectWorkspace(ws2, &ids);
+            _ = try m.clearScope(.{ .workspace = ws3 }, &ids);
+            _ = try m.removeSurface(pc, &ids);
+            _ = try m.markAllRead(&ids);
+            _ = try m.clearAll(&ids);
+        }
+    };
+    try testing.checkAllAllocationFailures(testing.allocator, S.run, .{});
+}
+
+test "unit: notifications: random operations keep counts consistent" {
+    var prng = std.Random.DefaultPrng.init(0x5EED);
+    const r = prng.random();
+    var m = Model.init(testing.allocator);
+    defer m.deinit();
+    m.store.history_limit = 16;
+    const wss = [_]Uuid{ ws1, ws2, ws3 };
+    var next_id: u32 = 1;
+    for (0..4000) |_| {
+        const ws = wss[r.uintLessThan(usize, wss.len)];
+        const sf: ?Uuid = if (r.uintLessThan(u8, 5) == 0) null else testUuid(0x100 + r.uintLessThan(u32, 8));
+        switch (r.uintLessThan(u8, 14)) {
+            0...4 => {
+                var rec = mk(next_id, ws, sf, next_id);
+                if (r.uintLessThan(u8, 4) == 0) rec.correlation_key = testUuid(0x900 + r.uintLessThan(u32, 3));
+                if (r.uintLessThan(u8, 4) == 0) rec.agent = .{ .kind = "claude", .category = .needs_permission };
+                next_id += 1;
+                var res = try m.add(rec, .{ .focused = r.uintLessThan(u8, 6) == 0 });
+                res.deinit(testing.allocator);
+            },
+            5 => if (sf) |s| {
+                _ = try m.focusSurface(s, null);
+            },
+            6 => _ = try m.selectWorkspace(ws, null),
+            7 => _ = try m.toggleUnread(ws, sf, null),
+            8 => _ = try m.markOldestUnreadAndJumpNext(ws, sf, .{ .workspace_order = &wss }),
+            9 => _ = m.jumpToLatestUnread(.{ .workspace_order = &wss }),
+            10 => if (sf) |s| {
+                _ = try m.explicitInput(s, null);
+            },
+            11 => if (sf) |s| m.retargetSurface(s, ws),
+            12 => if (sf) |s| {
+                _ = try m.removeSurface(s, null);
+            },
+            else => if (m.store.records.items.len > 0) {
+                const victim = m.store.records.items[r.uintLessThan(usize, m.store.records.items.len)].id;
+                _ = try m.store.dismiss(victim);
+            },
+        }
+        try testing.expect(m.store.records.items.len <= 16);
+        for (m.store.records.items, 0..) |a, i| {
+            for (m.store.records.items[i + 1 ..]) |b| try testing.expect(!uuidEql(a.id, b.id));
+        }
+        var sum: usize = 0;
+        for (wss) |w| sum += m.workspaceUnreadCount(w);
+        try testing.expectEqual(m.globalUnreadCount(), sum);
+        // A jump target exists exactly when something is unread.
+        try testing.expectEqual(m.globalUnreadCount() > 0, m.peekJump(.{ .workspace_order = &wss }) != null);
+    }
 }
 
 test "unit: notifications: restored and manual marks on one surface count once" {
