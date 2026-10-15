@@ -511,7 +511,9 @@ const MergeState = struct {
         for (patch.data.object) |*m| {
             try prefix.append(self.gpa, m.key);
             defer _ = prefix.pop();
-            if (m.value.data == .object and m.value.data.object.len > 0 and try self.existingIsObject(prefix.items)) {
+            // An object merges into an existing object key by key; `{}` adds
+            // no keys, so the existing section stays as it is.
+            if (m.value.data == .object and try self.existingIsObject(prefix.items)) {
                 try self.mergeAt(prefix, &m.value);
                 continue;
             }
@@ -787,4 +789,24 @@ test "unit: proto: json_edit merge applies a preset key by key" {
     const same = try merge(testing.allocator, src, "{\"sidebar\": {\"width\": 220}}", null);
     defer testing.allocator.free(same.text);
     try testing.expect(!same.changed);
+}
+
+test "unit: proto: json_edit merge of an empty object keeps the section" {
+    const gpa = testing.allocator;
+    const src = "{\n  \"sidebar\": {\n    \"showPorts\": true,\n    \"width\": 220\n  }\n}";
+    // Key-by-key merge: `{}` names no keys, so none change.
+    for ([_][]const u8{ "{\"sidebar\": {}}", "{}", "{\"sidebar\": {\"x\": {}}, \"sidebar\": {}}" }) |patch| {
+        const r = try merge(gpa, src, patch, null);
+        defer gpa.free(r.text);
+        if (std.mem.indexOf(u8, patch, "\"x\"") != null) {
+            try testing.expectEqualStrings("{\n  \"sidebar\": {\n    \"showPorts\": true,\n    \"width\": 220,\n    \"x\": {}\n  }\n}", r.text);
+        } else {
+            try testing.expect(!r.changed);
+            try testing.expectEqualStrings(src, r.text);
+        }
+    }
+    // A missing section is still created, and a scalar is still replaced.
+    const added = try merge(gpa, "{\n  \"a\": 1\n}", "{\"a\": {}, \"b\": {}}", null);
+    defer gpa.free(added.text);
+    try testing.expectEqualStrings("{\n  \"a\": {},\n  \"b\": {}\n}", added.text);
 }
