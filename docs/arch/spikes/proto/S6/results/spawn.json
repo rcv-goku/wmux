@@ -1,0 +1,14 @@
+{
+  "CreateProcessW(NULL, 'wmuxspikefwd exit 7')": "exit 7",
+  ".NET Process.Start('wmuxspikefwd')": "exit 7",
+  "CreateProcessW(NULL, 'wmuxspikefwdc exit 7')": "error 2",
+  ".NET Process.Start('wmuxspikefwdc')": "error: An error occurred trying to start process 'wmuxspikefwdc' with working directory '%USERPROFILE%\\claude'. The system cannot find the file specified.",
+  "CreateProcessW(NULL, 'wmuxspikefwdcmd exit 7')": "error 2",
+  ".NET Process.Start('wmuxspikefwdcmd')": "error: An error occurred trying to start process 'wmuxspikefwdcmd' with working directory '%USERPROFILE%\\claude'. The system cannot find the file specified.",
+  "CreateProcessW(NULL, 'wmuxspikefwdhl exit 7')": "exit 7",
+  ".NET Process.Start('wmuxspikefwdhl')": "exit 7",
+  "CreateProcessW(NULL, 'wmuxspikefwdc.com exit 7')": "exit 7",
+  ".NET Process.Start('wmuxspikefwdc.com')": "exit 7",
+  "CreateProcessW(NULL, 'wmuxspikefwdcmd.cmd exit 7')": "exit 7",
+  ".NET Process.Start('wmuxspikefwdcmd.cmd')": "exit 7"
+}

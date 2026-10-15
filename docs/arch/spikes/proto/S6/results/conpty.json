@@ -1,0 +1,231 @@
+{
+  "started": "2026-10-15T15:16:20.5345861-05:00",
+  "console_direct": {
+    "cmdline": "\"C:\\Windows\\System32\\cmd.exe\" /d /c \"%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\Programs X\\wmux spike\\cli\\wmuxspikefwd-target.exe\" argv con",
+    "exit": 0,
+    "ms": 943,
+    "steps": [],
+    "lines": [],
+    "target": {
+      "argv0": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\Programs X\\wmux spike\\cli\\wmuxspikefwd-target.exe",
+      "stdin": "console",
+      "stdout": "console",
+      "stderr": "console",
+      "ignore_ctrl_c_flag": false,
+      "console_cp": 437
+    }
+  },
+  "console_fwd": {
+    "cmdline": "\"C:\\Windows\\System32\\cmd.exe\" /d /c wmuxspikefwd argv con",
+    "exit": 0,
+    "ms": 830,
+    "steps": [],
+    "lines": [],
+    "target": {
+      "argv0": "wmuxspikefwd",
+      "stdin": "console",
+      "stdout": "console",
+      "stderr": "console",
+      "ignore_ctrl_c_flag": false,
+      "console_cp": 437
+    }
+  },
+  "console_cmdshim": {
+    "cmdline": "\"C:\\Windows\\System32\\cmd.exe\" /d /c wmuxspikefwdcmd argv con",
+    "exit": 0,
+    "ms": 753,
+    "steps": [],
+    "lines": [],
+    "target": {
+      "argv0": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\Programs X\\wmux spike\\cli\\wmuxspikefwd-target.exe",
+      "stdin": "console",
+      "stdout": "console",
+      "stderr": "console",
+      "ignore_ctrl_c_flag": false,
+      "console_cp": 437
+    }
+  },
+  "console_fwd_pwsh": {
+    "cmdline": "\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoLogo -NoProfile -Command \"& wmuxspikefwd argv con; exit $LASTEXITCODE\"",
+    "exit": 0,
+    "ms": 2775,
+    "steps": [],
+    "lines": [],
+    "target": {
+      "argv0": "%USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwd.exe",
+      "stdin": "console",
+      "stdout": "console",
+      "stderr": "console",
+      "ignore_ctrl_c_flag": false,
+      "console_cp": 437
+    }
+  },
+  "console_fwd_bash": {
+    "cmdline": "\"C:\\Program Files\\Git\\bin\\bash.exe\" --login -c \"wmuxspikefwd argv con\"",
+    "exit": 0,
+    "ms": 3786,
+    "steps": [],
+    "lines": [],
+    "target": {
+      "argv0": "%USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwd.exe",
+      "stdin": "console",
+      "stdout": "console",
+      "stderr": "console",
+      "ignore_ctrl_c_flag": false,
+      "console_cp": 437
+    }
+  },
+  "ctrlc_direct": {
+    "cmdline": "\"C:\\Windows\\System32\\cmd.exe\" /d /c \"%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\Programs X\\wmux spike\\cli\\wmuxspikefwd-target.exe\" ctrlc 15",
+    "exit": 130,
+    "ms": 1533,
+    "steps": [
+      "wait 'READY': True @ 582 ms",
+      "sent 3 @ 914 ms"
+    ],
+    "lines": [
+      "READY ignore_flag=0",
+      "GOT_CTRL_C"
+    ],
+    "target": null
+  },
+  "ctrlc_fwd": {
+    "cmdline": "\"C:\\Windows\\System32\\cmd.exe\" /d /c wmuxspikefwd ctrlc 15",
+    "exit": 130,
+    "ms": 2146,
+    "steps": [
+      "wait 'READY': True @ 1066 ms",
+      "sent 3 @ 1403 ms"
+    ],
+    "lines": [
+      "READY ignore_flag=0",
+      "GOT_CTRL_C"
+    ],
+    "target": null
+  },
+  "ctrlc_fwd_nullhandler": {
+    "cmdline": "\"C:\\Windows\\System32\\cmd.exe\" /d /c wmuxspikefwd ctrlc 6",
+    "exit": 124,
+    "ms": 8197,
+    "steps": [
+      "wait 'READY': True @ 918 ms",
+      "sent 3 @ 1228 ms"
+    ],
+    "lines": [
+      "READY ignore_flag=1",
+      "TIMEOUT"
+    ],
+    "target": null
+  },
+  "ctrlc_fwd_nohandler": {
+    "cmdline": "\"C:\\Windows\\System32\\cmd.exe\" /d /c wmuxspikefwd ctrlc 15",
+    "exit": 3221225786,
+    "ms": 1873,
+    "steps": [
+      "wait 'READY': True @ 872 ms",
+      "sent 3 @ 1182 ms"
+    ],
+    "lines": [
+      "READY ignore_flag=0",
+      "^C"
+    ],
+    "target": null
+  },
+  "ctrlc_direct_pwsh": {
+    "cmdline": "\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoLogo -NoProfile -Command \"& '%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\Programs X\\wmux spike\\cli\\wmuxspikefwd-target.exe' ctrlc 15; exit $LASTEXITCODE\"",
+    "exit": 1,
+    "ms": 5169,
+    "steps": [
+      "wait 'READY': True @ 3596 ms",
+      "sent 3 @ 3918 ms"
+    ],
+    "lines": [
+      "READY ignore_flag=0",
+      "GOT_CTRL_C"
+    ],
+    "target": null
+  },
+  "ctrlc_fwd_pwsh": {
+    "cmdline": "\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoLogo -NoProfile -Command \"& wmuxspikefwd ctrlc 15; exit $LASTEXITCODE\"",
+    "exit": 1,
+    "ms": 4516,
+    "steps": [
+      "wait 'READY': True @ 3029 ms",
+      "sent 3 @ 3354 ms"
+    ],
+    "lines": [
+      "READY ignore_flag=0",
+      "GOT_CTRL_C"
+    ],
+    "target": null
+  },
+  "ctrlc_direct_bash": {
+    "cmdline": "\"C:\\Program Files\\Git\\bin\\bash.exe\" --login -c \"'/c/%USERPROFILE%/claude/wmux-wt/W0-D-S6/zig-out/spike-s6/Programs X/wmux spike/cli/wmuxspikefwd-target.exe' ctrlc 15; echo RC=$?\"",
+    "exit": 512,
+    "ms": 11271,
+    "steps": [
+      "wait 'READY': True @ 9788 ms",
+      "sent 3 @ 10133 ms"
+    ],
+    "lines": [
+      "READY ignore_flag=0",
+      "GOT_CTRL_C"
+    ],
+    "target": null
+  },
+  "ctrlc_fwd_bash": {
+    "cmdline": "\"C:\\Program Files\\Git\\bin\\bash.exe\" --login -c \"wmuxspikefwd ctrlc 15; echo RC=$?\"",
+    "exit": 512,
+    "ms": 15954,
+    "steps": [
+      "wait 'READY': True @ 14701 ms",
+      "sent 3 @ 15017 ms"
+    ],
+    "lines": [
+      "READY ignore_flag=0",
+      "GOT_CTRL_C"
+    ],
+    "target": null
+  },
+  "ctrlc_cmdshim_answer_n": {
+    "cmdline": "\"C:\\Windows\\System32\\cmd.exe\" /d /c wmuxspikefwdcmd ctrlc 15",
+    "exit": 130,
+    "ms": 4335,
+    "steps": [
+      "wait 'READY': True @ 1903 ms",
+      "sent 3 @ 2218 ms",
+      "wait '(Y/N)': True @ 3280 ms",
+      "sent 110 @ 3589 ms"
+    ],
+    "lines": [
+      "READY ignore_flag=0",
+      "GOT_CTRL_C",
+      "Terminate batch job (Y/N)? n"
+    ],
+    "target": null
+  },
+  "ctrlc_cmdshim_answer_y": {
+    "cmdline": "\"C:\\Windows\\System32\\cmd.exe\" /d /c wmuxspikefwdcmd ctrlc 15",
+    "exit": 255,
+    "ms": 2752,
+    "steps": [
+      "wait 'READY': True @ 1168 ms",
+      "sent 3 @ 1486 ms",
+      "wait '(Y/N)': True @ 1875 ms",
+      "sent 121 @ 2187 ms"
+    ],
+    "lines": [
+      "READY ignore_flag=0",
+      "GOT_CTRL_C",
+      "Terminate batch job (Y/N)? y"
+    ],
+    "target": null
+  },
+  "cleanup": [
+    "removed: wmuxspikefwd.exe, wmuxspikefwdcmd.cmd, HKCU\\Software\\wmuxspikefwd",
+    "WindowsApps wmuxspikefwd* remaining: 0",
+    "HKCU\\Software\\wmuxspikefwd* keys remaining: 0",
+    "App Paths wmuxspikefwd* remaining: 0"
+  ],
+  "finished": "2026-10-15T15:17:33.3396172-05:00"
+}

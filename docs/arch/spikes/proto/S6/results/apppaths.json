@@ -1,0 +1,24 @@
+{
+  "cmd": {
+    "rc": 1,
+    "json": 0,
+    "err": "'wmuxspikefwdap' is not recognized as an internal or external command,"
+  },
+  "pwsh": {
+    "rc": "notfound:CommandNotFoundException",
+    "json": 0,
+    "err": ""
+  },
+  "winps": {
+    "rc": "notfound:CommandNotFoundException",
+    "json": 0,
+    "err": ""
+  },
+  "bash": {
+    "rc": 127,
+    "json": 0,
+    "err": "/c/%USERPROFILE%/claude/wmux-wt/W0-D-S6/zig-out/spike-s6/run/s-62985c01.sh: line 2: wmuxspikefwdap: command not found"
+  },
+  "pwsh_start_process_nonewwindow": "error: This command cannot be run due to the error: The system cannot find the file specified.",
+  "shellexecuteex_hidden": "exit=7"
+}

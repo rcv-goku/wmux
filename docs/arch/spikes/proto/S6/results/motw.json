@@ -1,0 +1,31 @@
+{
+  "stream/tagged.exe": true,
+  "stream/copy-item.exe": true,
+  "stream/file-copy.exe": true,
+  "stream/bytes.exe": false,
+  "stream/WindowsApps copy": true,
+  "run/cmd": {
+    "ok": true,
+    "rc": 0,
+    "ms": 696.7,
+    "err": ""
+  },
+  "run/pwsh": {
+    "ok": true,
+    "rc": 0,
+    "ms": 3122.0,
+    "err": ""
+  },
+  "run/winps": {
+    "ok": true,
+    "rc": 0,
+    "ms": 2443.8,
+    "err": ""
+  },
+  "run/bash": {
+    "ok": true,
+    "rc": 0,
+    "ms": 6918.6,
+    "err": ""
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "kill_forwarder/default": {
+    "target_pid": 43232,
+    "target_alive_after": false
+  },
+  "kill_forwarder/nojob": {
+    "target_pid": 5256,
+    "target_alive_after": true
+  },
+  "grandchild_survives_forwarder_exit": {
+    "forwarder_exit": 0,
+    "grandchild_alive": true
+  }
+}

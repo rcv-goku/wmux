@@ -1,0 +1,51 @@
+{
+  "running": "Windows Subsystem for Linux Distributions:\n\nUbuntu-24.04 (Default)",
+  "wsl_conf": "appendWindowsPath = false",
+  "default/markers": [
+    "@@MODE default",
+    "@@CMDV_EXE none",
+    "@@CMDV_NOEXT none",
+    "@@CMDV_SH none",
+    "@@RC_EXE 127",
+    "@@RC_SH 127",
+    "@@RC_PIPE 127",
+    "@@RC_300 127"
+  ],
+  "default/json": [],
+  "default/other": [],
+  "default/err": "/mnt/c/%USERPROFILE%/claude/wmux-wt/W0-D-S6/zig-out/spike-s6/run/wsl.sh: 6: wmuxspikefwd.exe: not found\n/mnt/c/%USERPROFILE%/claude/wmux-wt/W0-D-S6/zig-out/spike-s6/run/wsl.sh: 7: wmuxspikefwdsh: not found\n/mnt/c/%USERPROFILE%/claude/wmux-wt/W0-D-S6/zig-out/spike-s6/run/wsl.sh: 8: wmuxspikefwd.exe: not found\n/mnt/c/%USERPROFILE%/claude/wmux-wt/W0-D-S6/zig-out/spike-s6/run/wsl.sh: 9: wmuxspikefwd.exe: not found",
+  "append/markers": [
+    "@@MODE append",
+    "@@CMDV_EXE /mnt/c/%USERPROFILE%/AppData/Local/Microsoft/WindowsApps/wmuxspikefwd.exe",
+    "@@CMDV_NOEXT none",
+    "@@CMDV_SH /mnt/c/%USERPROFILE%/AppData/Local/Microsoft/WindowsApps/wmuxspikefwdsh",
+    "@@RC_EXE 0",
+    "@@RC_SH 0",
+    "@@RC_PIPE 0",
+    "@@RC_300 44"
+  ],
+  "append/json": [
+    {
+      "argv": [
+        "wmuxspikefwd.exe",
+        "argv",
+        "a b",
+        "",
+        "x\"y"
+      ],
+      "exe": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\Programs X\\wmux spike\\cli\\wmuxspikefwd-target.exe"
+    },
+    {
+      "argv": [
+        "wmuxspikefwd.exe",
+        "argv",
+        "via sh"
+      ],
+      "exe": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\Programs X\\wmux spike\\cli\\wmuxspikefwd-target.exe"
+    }
+  ],
+  "append/other": [
+    "6 5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03"
+  ],
+  "append/err": ""
+}

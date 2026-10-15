@@ -1,0 +1,10 @@
+{
+  "target_missing": {
+    "rc": 1,
+    "err": "wmuxspikefwd: wmux CLI not found under InstallDir (error 3); reinstall wmux or run 'cmux install-cli' again"
+  },
+  "registry_missing": {
+    "rc": 1,
+    "err": "wmuxspikefwd: wmux is not installed for this user (HKCU\\Software\\wmuxspikefwd\\InstallDir: error 2); reinstall wmux or run 'cmux install-cli' again"
+  }
+}

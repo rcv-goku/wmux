@@ -1,0 +1,31 @@
+{
+  "com+exe+cmd/cmd": ".com",
+  "com+exe+cmd/pwsh": ".com",
+  "com+exe+cmd/winps": ".com",
+  "com+exe+cmd/bash": ".exe",
+  "exe+cmd/cmd": ".exe",
+  "exe+cmd/pwsh": ".exe",
+  "exe+cmd/winps": ".exe",
+  "exe+cmd/bash": ".exe",
+  "cmd/cmd": ".cmd",
+  "cmd/pwsh": ".cmd",
+  "cmd/winps": ".cmd",
+  "cmd/bash": "none: /c/%USERPROFILE%/claude/wmux-wt/W0-D-S6/zig-out/spike-s6/run/s-a7650c38.sh: line 2: wmuxspikefwdp: command not found",
+  "sh+exe/bash": "extensionless-sh",
+  "sh+exe/cmd_where": [
+    "%USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwdp",
+    "%USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwdp.exe"
+  ],
+  "sh+exe/pwsh_get_command": [
+    "@@GC %USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwdp.exe",
+    "@@GC %USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwdp",
+    "@@FIRST %USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwdp.exe"
+  ],
+  "sh+exe/winps_get_command": [
+    "@@GC %USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwdp.exe",
+    "@@GC %USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwdp",
+    "@@FIRST %USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwdp.exe"
+  ],
+  "sh+com/bash": "extensionless-sh",
+  "com-only/bash": "none: /c/%USERPROFILE%/claude/wmux-wt/W0-D-S6/zig-out/spike-s6/run/s-43885de8.sh: line 2: wmuxspikefwdp: command not found"
+}
