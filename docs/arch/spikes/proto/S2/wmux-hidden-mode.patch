@@ -1,0 +1,365 @@
+diff --git a/src/apprt/win32/App.zig b/src/apprt/win32/App.zig
+index cf53305..46e2eee 100644
+--- a/src/apprt/win32/App.zig
++++ b/src/apprt/win32/App.zig
+@@ -13,6 +13,7 @@ const internal_os = @import("../../os/main.zig");
+ 
+ const agent_session = @import("agent_session.zig");
+ const BrowserPane = @import("BrowserPane.zig");
++const hidden_mode = @import("hidden_mode.zig");
+ const ipc = @import("ipc.zig");
+ const Pane = @import("Pane.zig");
+ const PaneContainer = @import("PaneContainer.zig");
+@@ -195,6 +196,9 @@ pub fn init(
+ ) !void {
+     _ = opts;
+ 
++    // S2 spike: read WMUX_TEST_HIDDEN before any window exists.
++    hidden_mode.init();
++
+     const hinstance = w32.GetModuleHandleW(null) orelse
+         return error.Win32Error;
+ 
+@@ -4993,6 +4997,9 @@ pub fn forceForegroundWindow(hwnd: w32.HWND) void {
+ /// every programmatic/notification path goes through forceForegroundWindow
+ /// so it can never yank the user out of another app.
+ pub fn raiseForegroundWindow(hwnd: w32.HWND) void {
++    // S2 spike: hidden test instances never raise, and never attach their
++    // input queue to the user's foreground thread (AttachThreadInput).
++    if (!hidden_mode.allowForeground("raiseForegroundWindow")) return;
+     const fg = w32.GetForegroundWindow();
+     if (fg) |fg_hwnd| {
+         const fg_tid = w32.GetWindowThreadProcessId(fg_hwnd, null);
+diff --git a/src/apprt/win32/Window.zig b/src/apprt/win32/Window.zig
+index 204bafc..7871b36 100644
+--- a/src/apprt/win32/Window.zig
++++ b/src/apprt/win32/Window.zig
+@@ -12,6 +12,7 @@ const App = @import("App.zig");
+ const AttentionRing = @import("AttentionRing.zig").AttentionRing;
+ const FlashOverlay = @import("FlashOverlay.zig").FlashOverlay;
+ const BrowserPane = @import("BrowserPane.zig");
++const hidden_mode = @import("hidden_mode.zig");
+ const PaneButtonsMod = @import("PaneButtons.zig");
+ const PaneButtons = PaneButtonsMod.PaneButtons;
+ const Pane = @import("Pane.zig");
+@@ -610,7 +611,12 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
+     self.active_workspace = 0;
+ 
+     const style: u32 = if (options.is_quick_terminal) w32.WS_POPUP else w32.WS_OVERLAPPEDWINDOW | w32.WS_CLIPCHILDREN;
+-    const ex_style: u32 = if (options.is_quick_terminal) w32.WS_EX_TOOLWINDOW else 0;
++    // S2 spike: WMUX_TEST_HIDDEN top-level windows are tool windows that
++    // can never be activated (not in the taskbar or Alt-Tab).
++    const hidden = hidden_mode.enabled();
++    const ex_style: u32 = if (hidden)
++        hidden_mode.exStyle(if (options.is_quick_terminal) w32.WS_EX_TOOLWINDOW else 0)
++    else if (options.is_quick_terminal) w32.WS_EX_TOOLWINDOW else 0;
+ 
+     // Window geometry. Defaults to a fixed 800x600 at the OS default
+     // position. Three cases, in priority order:
+@@ -631,7 +637,16 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
+     var have_restored = false;
+ 
+     const is_first_window = !options.is_quick_terminal and app.windows.items.len == 0;
+-    if (is_first_window) {
++    if (hidden) {
++        // Fixed 1600x1000 client area at the hidden position; never
++        // restore or cascade (have_restored also skips the cascade).
++        const hr = hidden_mode.initialRect(style, ex_style);
++        cx = hr.x;
++        cy = hr.y;
++        cw = hr.w;
++        ch = hr.h;
++        have_restored = true;
++    } else if (is_first_window) {
+         if (self.restorePlacement()) |saved| {
+             // restorePlacement already clamped the rect onto the current
+             // virtual screen, so cx/cy/cw/ch are guaranteed visible.
+@@ -765,6 +780,8 @@ fn windowStatePath(alloc: std.mem.Allocator) ![]u8 {
+ /// effort and must never affect normal operation.
+ pub fn savePlacement(self: *Window) void {
+     if (self.is_quick_terminal) return;
++    // S2 spike: test geometry must never overwrite the user's placement.
++    if (hidden_mode.enabled()) return;
+     // Only the first window in the App's list owns the persisted state.
+     // Additional session windows cascade and do not save (avoids two
+     // windows fighting over one file).
+diff --git a/src/apprt/win32/hidden_mode.zig b/src/apprt/win32/hidden_mode.zig
+new file mode 100644
+index 0000000..82405a2
+--- /dev/null
++++ b/src/apprt/win32/hidden_mode.zig
+@@ -0,0 +1,178 @@
++//! S2 spike (W0-D-S2) prototype of the WMUX_TEST_HIDDEN window policy
++//! (ARCHITECTURE ADR-12.3). Throwaway: kept only as a patch under
++//! docs/arch/spikes/proto/S2/. The real implementation belongs to
++//! app/runtime_env.zig + app/foreground.zig (W0-A/W1).
++//!
++//! WMUX_TEST_HIDDEN=1 makes every top-level window a WS_EX_TOOLWINDOW |
++//! WS_EX_NOACTIVATE window with a fixed 1600x1000 client area that is only
++//! ever shown with SW_SHOWNOACTIVATE, and suppresses every activation path
++//! (SetForegroundWindow, activating ShowWindow/SetWindowPos, SetFocus calls
++//! that would activate the top-level window).
++//!
++//! Spike-only knobs:
++//!   WMUX_TEST_HIDDEN_PLACEMENT=offscreen (default; ADR text: -32000,-32000)
++//!                             | cloak (primary work-area origin + DWMWA_CLOAK)
++//!   WMUX_TEST_HIDDEN_FOCUS=gate (default; SetFocus only when the top-level
++//!                         window is already the thread's active window)
++//!                         | keep (call SetFocus as usual)
++const std = @import("std");
++const w32 = @import("win32.zig");
++
++const log = std.log.scoped(.hidden_mode);
++
++pub const Placement = enum { offscreen, cloak };
++pub const FocusPolicy = enum { gate, keep };
++
++pub const client_width: i32 = 1600;
++pub const client_height: i32 = 1000;
++pub const offscreen_pos: i32 = -32000;
++
++const DWMWA_CLOAK: u32 = 13;
++const DWMWA_CLOAKED: u32 = 14;
++const GA_ROOT: u32 = 2;
++
++extern "user32" fn GetActiveWindow() callconv(.winapi) ?w32.HWND;
++extern "user32" fn GetAncestor(hwnd: w32.HWND, flags: u32) callconv(.winapi) ?w32.HWND;
++extern "dwmapi" fn DwmGetWindowAttribute(hwnd: w32.HWND, attr: u32, pv: *anyopaque, cb: u32) callconv(.winapi) i32;
++
++var enabled_flag: bool = false;
++var placement: Placement = .offscreen;
++var focus_policy: FocusPolicy = .gate;
++
++/// Counters for the spike report (UI thread only).
++pub var rewritten_show: u32 = 0;
++pub var rewritten_swp: u32 = 0;
++pub var suppressed_foreground: u32 = 0;
++pub var gated_setfocus: u32 = 0;
++
++/// Read the environment once, on the UI thread, before any window exists.
++pub fn init() void {
++    var buf: [64]u8 = undefined;
++    var fba = std.heap.FixedBufferAllocator.init(&buf);
++    const alloc = fba.allocator();
++    const v = std.process.getEnvVarOwned(alloc, "WMUX_TEST_HIDDEN") catch return;
++    enabled_flag = std.mem.eql(u8, v, "1");
++    if (!enabled_flag) return;
++    fba.reset();
++    if (std.process.getEnvVarOwned(alloc, "WMUX_TEST_HIDDEN_PLACEMENT")) |p| {
++        if (std.mem.eql(u8, p, "cloak")) placement = .cloak;
++    } else |_| {}
++    fba.reset();
++    if (std.process.getEnvVarOwned(alloc, "WMUX_TEST_HIDDEN_FOCUS")) |f| {
++        if (std.mem.eql(u8, f, "keep")) focus_policy = .keep;
++    } else |_| {}
++    log.info("hidden mode on placement={s} focus={s}", .{ @tagName(placement), @tagName(focus_policy) });
++}
++
++pub fn enabled() bool {
++    return enabled_flag;
++}
++
++pub fn exStyle(base: u32) u32 {
++    return base | w32.WS_EX_TOOLWINDOW | w32.WS_EX_NOACTIVATE;
++}
++
++pub const Rect = struct { x: i32, y: i32, w: i32, h: i32 };
++
++/// Window rect for a fixed 1600x1000 client area at the hidden position.
++pub fn initialRect(style: u32, ex_style: u32) Rect {
++    var r: w32.RECT = .{ .left = 0, .top = 0, .right = client_width, .bottom = client_height };
++    _ = w32.AdjustWindowRectEx(&r, style, 0, ex_style);
++    const w = r.right - r.left;
++    const h = r.bottom - r.top;
++    return switch (placement) {
++        .offscreen => .{ .x = offscreen_pos, .y = offscreen_pos, .w = w, .h = h },
++        .cloak => blk: {
++            // GL presents are clipped to window ∩ monitors, so the cloaked
++            // window must sit fully inside a monitor: use the primary
++            // monitor's work-area origin.
++            var x: i32 = 0;
++            var y: i32 = 0;
++            if (w32.MonitorFromPoint(.{ .x = 0, .y = 0 }, w32.MONITOR_DEFAULTTOPRIMARY)) |mon| {
++                var mi: w32.MONITORINFO = undefined;
++                mi.cbSize = @sizeOf(w32.MONITORINFO);
++                if (w32.GetMonitorInfoW(mon, &mi) != 0) {
++                    x = mi.rcWork.left;
++                    y = mi.rcWork.top;
++                }
++            }
++            break :blk .{ .x = x, .y = y, .w = w, .h = h };
++        },
++    };
++}
++
++fn isTopLevelCreate(style: u32, parent: ?w32.HWND) bool {
++    return style & w32.WS_CHILD == 0 and parent != w32.HWND_MESSAGE;
++}
++
++/// CreateWindowExW filter: every top-level window (the main window and all
++/// owned popups) is a tool window that cannot be activated.
++pub fn filterCreateExStyle(ex: u32, style: u32, parent: ?w32.HWND) u32 {
++    if (!enabled_flag or !isTopLevelCreate(style, parent)) return ex;
++    return exStyle(ex);
++}
++
++/// Called right after CreateWindowExW for every window. In cloak placement,
++/// cloak each top-level window before it can be shown; if cloaking fails,
++/// move it off-screen so a failure can never put a visible window on the
++/// user's screen.
++pub fn afterCreate(hwnd: w32.HWND, style: u32, parent: ?w32.HWND) void {
++    if (!enabled_flag or placement != .cloak or !isTopLevelCreate(style, parent)) return;
++    const on: u32 = 1;
++    const hr = w32.DwmSetWindowAttribute(hwnd, DWMWA_CLOAK, &on, @sizeOf(u32));
++    var state: u32 = 0;
++    _ = DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &state, @sizeOf(u32));
++    if (hr != 0 or state == 0) {
++        log.warn("DWMWA_CLOAK failed hr=0x{x:0>8} state={d}; falling back to off-screen", .{ @as(u32, @bitCast(hr)), state });
++        _ = w32.raw.SetWindowPos(hwnd, null, offscreen_pos, offscreen_pos, 0, 0, w32.SWP_NOSIZE | w32.SWP_NOZORDER | w32.SWP_NOACTIVATE);
++        return;
++    }
++    log.info("cloaked top-level hwnd=0x{x}", .{@intFromPtr(hwnd)});
++}
++
++fn isTopLevel(hwnd: w32.HWND) bool {
++    return (w32.GetWindowLongW(hwnd, w32.GWL_STYLE) & w32.WS_CHILD) == 0;
++}
++
++/// ShowWindow filter: top-level windows are only ever shown with
++/// SW_SHOWNOACTIVATE (SW_HIDE / SW_SHOWNA pass through).
++pub fn filterShow(hwnd: w32.HWND, cmd: i32) i32 {
++    if (!enabled_flag or !isTopLevel(hwnd)) return cmd;
++    return switch (cmd) {
++        0, 4, 8 => cmd, // SW_HIDE, SW_SHOWNOACTIVATE, SW_SHOWNA
++        else => blk: {
++            rewritten_show += 1;
++            log.info("ShowWindow hwnd=0x{x} cmd={d} -> SW_SHOWNOACTIVATE", .{ @intFromPtr(hwnd), cmd });
++            break :blk w32.SW_SHOWNOACTIVATE;
++        },
++    };
++}
++
++/// SetWindowPos filter: never activate a top-level window.
++pub fn filterSwpFlags(hwnd: w32.HWND, flags: u32) u32 {
++    if (!enabled_flag or !isTopLevel(hwnd) or flags & w32.SWP_NOACTIVATE != 0) return flags;
++    rewritten_swp += 1;
++    log.info("SetWindowPos hwnd=0x{x} flags=0x{x} += SWP_NOACTIVATE", .{ @intFromPtr(hwnd), flags });
++    return flags | w32.SWP_NOACTIVATE;
++}
++
++/// SetForegroundWindow / raise paths: never in hidden mode.
++pub fn allowForeground(what: []const u8) bool {
++    if (!enabled_flag) return true;
++    suppressed_foreground += 1;
++    log.info("suppressed foreground request: {s}", .{what});
++    return false;
++}
++
++/// SetFocus activates the target's top-level window when it is not the
++/// thread's active window. With the gate policy, only call SetFocus when
++/// that activation cannot happen (top-level already active).
++pub fn allowSetFocus(hwnd: ?w32.HWND) bool {
++    if (!enabled_flag or focus_policy == .keep) return true;
++    const h = hwnd orelse return true;
++    const root = GetAncestor(h, GA_ROOT) orelse return true;
++    if (GetActiveWindow() == root) return true;
++    gated_setfocus += 1;
++    log.info("gated SetFocus hwnd=0x{x} (top-level not active)", .{@intFromPtr(h)});
++    return false;
++}
+diff --git a/src/apprt/win32/win32.zig b/src/apprt/win32/win32.zig
+index c233240..90ef148 100644
+--- a/src/apprt/win32/win32.zig
++++ b/src/apprt/win32/win32.zig
+@@ -349,7 +349,7 @@ pub extern "user32" fn UnregisterClassW(
+     hInstance: ?HINSTANCE,
+ ) callconv(.winapi) i32;
+ 
+-pub extern "user32" fn CreateWindowExW(
++pub fn CreateWindowExW(
+     dwExStyle: u32,
+     lpClassName: [*:0]const u16,
+     lpWindowName: [*:0]const u16,
+@@ -362,12 +362,29 @@ pub extern "user32" fn CreateWindowExW(
+     hMenu: ?HMENU,
+     hInstance: ?HINSTANCE,
+     lpParam: ?*anyopaque,
+-) callconv(.winapi) ?HWND;
++) ?HWND {
++    // S2 spike: every top-level window (main window and owned popups) gets
++    // the hidden styles, and is cloaked before it can ever be shown.
++    const ex = hidden_mode.filterCreateExStyle(dwExStyle, dwStyle, hWndParent);
++    const hwnd = raw.CreateWindowExW(ex, lpClassName, lpWindowName, dwStyle, x, y, nWidth, nHeight, hWndParent, hMenu, hInstance, lpParam) orelse return null;
++    hidden_mode.afterCreate(hwnd, dwStyle, hWndParent);
++    return hwnd;
++}
+ 
+-pub extern "user32" fn ShowWindow(
+-    hWnd: HWND,
+-    nCmdShow: i32,
+-) callconv(.winapi) i32;
++// S2 spike: activation-capable user32 calls are routed through the
++// WMUX_TEST_HIDDEN policy (hidden_mode.zig). `raw` keeps the externs.
++const hidden_mode = @import("hidden_mode.zig");
++pub const raw = struct {
++    pub extern "user32" fn CreateWindowExW(dwExStyle: u32, lpClassName: [*:0]const u16, lpWindowName: [*:0]const u16, dwStyle: u32, x: i32, y: i32, nWidth: i32, nHeight: i32, hWndParent: ?HWND, hMenu: ?HMENU, hInstance: ?HINSTANCE, lpParam: ?*anyopaque) callconv(.winapi) ?HWND;
++    pub extern "user32" fn ShowWindow(hWnd: HWND, nCmdShow: i32) callconv(.winapi) i32;
++    pub extern "user32" fn SetWindowPos(hWnd: HWND, hWndInsertAfter: ?HWND, X: i32, Y: i32, cx: i32, cy: i32, uFlags: u32) callconv(.winapi) i32;
++    pub extern "user32" fn SetFocus(hWnd: ?HWND) callconv(.winapi) ?HWND;
++    pub extern "user32" fn SetForegroundWindow(hWnd: HWND) callconv(.winapi) i32;
++};
++
++pub fn ShowWindow(hWnd: HWND, nCmdShow: i32) i32 {
++    return raw.ShowWindow(hWnd, hidden_mode.filterShow(hWnd, nCmdShow));
++}
+ 
+ pub extern "user32" fn UpdateWindow(
+     hWnd: HWND,
+@@ -538,7 +555,7 @@ pub extern "user32" fn SetWindowLongW(
+     dwNewLong: u32,
+ ) callconv(.winapi) u32;
+ 
+-pub extern "user32" fn SetWindowPos(
++pub fn SetWindowPos(
+     hWnd: HWND,
+     hWndInsertAfter: ?HWND,
+     X: i32,
+@@ -546,7 +563,9 @@ pub extern "user32" fn SetWindowPos(
+     cx: i32,
+     cy: i32,
+     uFlags: u32,
+-) callconv(.winapi) i32;
++) i32 {
++    return raw.SetWindowPos(hWnd, hWndInsertAfter, X, Y, cx, cy, hidden_mode.filterSwpFlags(hWnd, uFlags));
++}
+ 
+ pub extern "user32" fn GetWindowRect(
+     hWnd: HWND,
+@@ -865,9 +884,10 @@ pub const WS_CHILD: u32 = 0x40000000;
+ pub const WS_VISIBLE_STYLE: u32 = 0x10000000;
+ pub const WS_BORDER: u32 = 0x00800000;
+ 
+-pub extern "user32" fn SetFocus(
+-    hWnd: ?HWND,
+-) callconv(.winapi) ?HWND;
++pub fn SetFocus(hWnd: ?HWND) ?HWND {
++    if (!hidden_mode.allowSetFocus(hWnd)) return null;
++    return raw.SetFocus(hWnd);
++}
+ 
+ pub extern "user32" fn GetFocus() callconv(.winapi) ?HWND;
+ 
+@@ -1329,9 +1349,10 @@ pub extern "user32" fn AttachThreadInput(
+     fAttach: i32,
+ ) callconv(.winapi) i32;
+ 
+-pub extern "user32" fn SetForegroundWindow(
+-    hWnd: HWND,
+-) callconv(.winapi) i32;
++pub fn SetForegroundWindow(hWnd: HWND) i32 {
++    if (!hidden_mode.allowForeground("SetForegroundWindow")) return 0;
++    return raw.SetForegroundWindow(hWnd);
++}
+ 
+ // -----------------------------------------------------------------------
+ // Window positioning constants (additional)
