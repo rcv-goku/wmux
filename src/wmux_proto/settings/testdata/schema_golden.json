@@ -104,8 +104,10 @@
           "enum": [
             "off",
             "cmuxOnly",
+            "automation",
+            "password",
             "allowAll",
-            "password"
+            "readOnly"
           ],
           "default": "cmuxOnly",
           "x-cmux-scopes": [

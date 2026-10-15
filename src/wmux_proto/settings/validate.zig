@@ -745,7 +745,7 @@ pub const test_fixture_specs = [_]Spec{
     .{ .path = "activePaneBorderColor", .ty = .color, .default = "\"#3B82F6\"", .section = "app", .label = "Active pane border", .doc = "Focused pane border." },
     .{ .path = "browser.urlAllowlist", .ty = .string_list, .default = "[]", .section = "browser", .label = "URL allowlist", .doc = "Allowed hosts." },
     .{ .path = "notifications.hooks", .ty = .object, .default = "{}", .scope = .both, .section = "automation", .label = "Notification hooks", .doc = "Hooks." },
-    .{ .path = "automation.socketControlMode", .ty = .{ .enumeration = &.{ "off", "cmuxOnly", "allowAll", "password" } }, .default = "\"cmuxOnly\"", .section = "automation", .label = "Socket control", .doc = "Who may connect.", .apply = .restart },
+    .{ .path = "automation.socketControlMode", .ty = .{ .enumeration = &.{ "off", "cmuxOnly", "automation", "password", "allowAll", "readOnly" } }, .default = "\"cmuxOnly\"", .section = "automation", .label = "Socket control", .doc = "Who may connect.", .apply = .restart },
     .{ .path = "automation.autoNamingAgent", .ty = .{ .string = .{ .pattern = "^[a-z0-9-]+$" } }, .default = "\"auto\"", .section = "automation", .label = "Auto-naming agent", .doc = "Agent slug." },
     .{ .path = "automation.claudeBinaryPath", .ty = .path, .default = "\"\"", .section = "automation", .label = "Claude binary", .doc = "Path override.", .policy_lockable = false },
     .{ .path = "wmux.sidebar.visible", .ty = .boolean, .default = "true", .section = "windows", .label = "Show sidebar", .doc = "Left sidebar.", .cmux_compat = false },

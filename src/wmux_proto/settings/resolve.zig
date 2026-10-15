@@ -300,20 +300,37 @@ fn policyNode(arena: Allocator, s: *const Spec, pv: *const PolicyValue) Allocato
 pub const LegacyGhosttyKey = struct {
     ghostty: []const u8,
     path: []const u8,
+    /// How Ghostty parses the key (its type in src/config/Config.zig). The
+    /// layer accepts exactly the values Ghostty accepts.
+    kind: Kind,
     /// Boolean meaning is inverted (`sidebar-metadata` vs `hideAllDetails`).
     invert: bool = false,
-    /// Ghostty value -> JSON string value; unmapped values pass through.
+    /// `.enumeration`: Ghostty value -> JSON string value.
     values: []const [2][]const u8 = &.{},
+
+    pub const Kind = enum {
+        /// Ghostty `bool`: 1/t/T/true and 0/f/F/false.
+        boolean,
+        /// Ghostty `u32`: `std.fmt.parseInt(u32, value, 0)`.
+        integer,
+        /// Ghostty enum: one of `values`.
+        enumeration,
+    };
 };
 
 pub const legacy_ghostty_keys = [_]LegacyGhosttyKey{
-    .{ .ghostty = "window-show-sidebar", .path = "wmux.sidebar.visible" },
-    .{ .ghostty = "window-sidebar-width", .path = "wmux.sidebar.width" },
-    .{ .ghostty = "sidebar-metadata", .path = "sidebar.hideAllDetails", .invert = true },
-    .{ .ghostty = "window-show-right-sidebar", .path = "wmux.rightSidebar.visible" },
-    .{ .ghostty = "window-right-sidebar-width", .path = "wmux.rightSidebar.width" },
-    .{ .ghostty = "socket-control", .path = "automation.socketControlMode", .values = &.{.{ "off", "off" }} },
-    .{ .ghostty = "desktop-notifications", .path = "wmux.notifications.desktop" },
+    .{ .ghostty = "window-show-sidebar", .path = "wmux.sidebar.visible", .kind = .boolean },
+    .{ .ghostty = "window-sidebar-width", .path = "wmux.sidebar.width", .kind = .integer },
+    .{ .ghostty = "sidebar-metadata", .path = "sidebar.hideAllDetails", .kind = .boolean, .invert = true },
+    .{ .ghostty = "window-show-right-sidebar", .path = "wmux.rightSidebar.visible", .kind = .boolean },
+    .{ .ghostty = "window-right-sidebar-width", .path = "wmux.rightSidebar.width", .kind = .integer },
+    // ADR-3.8: on -> automation, read-only -> readOnly, off -> off.
+    .{ .ghostty = "socket-control", .path = "automation.socketControlMode", .kind = .enumeration, .values = &.{
+        .{ "on", "automation" },
+        .{ "read-only", "readOnly" },
+        .{ "off", "off" },
+    } },
+    .{ .ghostty = "desktop-notifications", .path = "wmux.notifications.desktop", .kind = .boolean },
 };
 
 pub fn legacyGhosttyKey(ghostty_key: []const u8) ?*const LegacyGhosttyKey {
@@ -326,41 +343,43 @@ pub const GhosttyPair = struct { key: []const u8, value: []const u8 };
 
 /// Builds the Ghostty layer root object (allocated in `arena`) from the
 /// explicitly set pairs, in file order (later wins). Keys outside
-/// `legacy_ghostty_keys` and empty values (Ghostty's "reset") are skipped.
-/// Values convert by the target spec's type when `specs` has one.
-pub fn ghosttyLayer(arena: Allocator, specs: []const Spec, pairs: []const GhosttyPair) Allocator.Error!Node {
+/// `legacy_ghostty_keys` are skipped. An empty value is Ghostty's reset to
+/// the default, so it drops an earlier value of the same key. Values convert
+/// as Ghostty parses the key; one Ghostty would refuse is kept as a string,
+/// so validation rejects it and resolution falls back to the lower layer.
+/// The caller passes a bare boolean flag (`--window-show-sidebar`) as "true".
+pub fn ghosttyLayer(arena: Allocator, pairs: []const GhosttyPair) Allocator.Error!Node {
     var tree: Tree = .{};
     for (pairs) |pair| {
         const k = legacyGhosttyKey(pair.key) orelse continue;
         const raw = std.mem.trim(u8, pair.value, " \t\"");
-        if (raw.len == 0) continue;
-        const node = try ghosttyValue(arena, spec_mod.find(specs, k.path), k, raw);
-        try tree.put(arena, k.path, node);
+        if (raw.len == 0) {
+            tree.remove(k.path);
+            continue;
+        }
+        try tree.put(arena, k.path, try ghosttyValue(arena, k, raw));
     }
     return tree.toNode(arena);
 }
 
-fn ghosttyValue(arena: Allocator, s: ?*const Spec, k: *const LegacyGhosttyKey, raw: []const u8) Allocator.Error!Node {
-    const as_bool: ?bool = if (std.mem.eql(u8, raw, "true")) true else if (std.mem.eql(u8, raw, "false")) false else null;
-    const numeric = std.fmt.parseFloat(f64, raw) catch null;
-    const want: enum { boolean, number, string } = if (s) |sp| switch (sp.ty) {
-        .boolean => .boolean,
-        .integer, .number => .number,
-        else => .string,
-    } else if (as_bool != null) .boolean else if (numeric != null) .number else .string;
-
-    switch (want) {
-        .boolean => if (as_bool) |b| return .{ .start = 0, .end = 0, .data = .{ .boolean = b != k.invert } },
-        .number => if (numeric != null and jsonc.isValidLiteral(raw)) return .{ .start = 0, .end = 0, .data = .{ .number = try arena.dupe(u8, raw) } },
-        .string => {},
+fn ghosttyValue(arena: Allocator, k: *const LegacyGhosttyKey, raw: []const u8) Allocator.Error!Node {
+    switch (k.kind) {
+        .boolean => if (ghosttyBool(raw)) |b| return .{ .start = 0, .end = 0, .data = .{ .boolean = b != k.invert } },
+        .integer => if (std.fmt.parseInt(u32, raw, 0)) |n| {
+            return .{ .start = 0, .end = 0, .data = .{ .number = try std.fmt.allocPrint(arena, "{d}", .{n}) } };
+        } else |_| {},
+        .enumeration => for (k.values) |v| {
+            if (std.mem.eql(u8, v[0], raw)) return .{ .start = 0, .end = 0, .data = .{ .string = v[1] } };
+        },
     }
-    var mapped: []const u8 = raw;
-    for (k.values) |v| if (std.mem.eql(u8, v[0], raw)) {
-        mapped = v[1];
-    };
-    // A value that does not fit the type is kept as a string so validation
-    // rejects it and resolution falls back to the default.
-    return .{ .start = 0, .end = 0, .data = .{ .string = try arena.dupe(u8, mapped) } };
+    return .{ .start = 0, .end = 0, .data = .{ .string = try arena.dupe(u8, raw) } };
+}
+
+/// Ghostty's boolean spellings (`parseBool` in src/cli/args.zig).
+fn ghosttyBool(raw: []const u8) ?bool {
+    for ([_][]const u8{ "1", "t", "T", "true" }) |s| if (std.mem.eql(u8, raw, s)) return true;
+    for ([_][]const u8{ "0", "f", "F", "false" }) |s| if (std.mem.eql(u8, raw, s)) return false;
+    return null;
 }
 
 /// Small mutable object tree used to build layers from dotted paths.
@@ -388,6 +407,22 @@ const Tree = struct {
         } else {
             item.leaf = value;
             item.child = null;
+        }
+    }
+
+    /// Drops `path` if present, and any section it leaves empty.
+    fn remove(self: *Tree, path: []const u8) void {
+        const dot = std.mem.indexOfScalar(u8, path, '.');
+        const key = if (dot) |d| path[0..d] else path;
+        for (self.members.items, 0..) |*it, i| {
+            if (!std.mem.eql(u8, it.key, key)) continue;
+            if (dot) |d| {
+                const child = it.child orelse return;
+                child.remove(path[d + 1 ..]);
+                if (child.members.items.len > 0) return;
+            }
+            _ = self.members.orderedRemove(i);
+            return;
         }
     }
 
@@ -618,7 +653,7 @@ test "unit: settings: defaults apply without layers" {
 test "unit: settings: precedence defaults < ghostty < cmux.json < wmux.json < project < policy" {
     var g_arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer g_arena.deinit();
-    const groot = try ghosttyLayer(g_arena.allocator(), fixtures, &.{
+    const groot = try ghosttyLayer(g_arena.allocator(), &.{
         .{ .key = "window-sidebar-width", .value = "250" },
         .{ .key = "window-show-sidebar", .value = "false" },
     });
@@ -748,17 +783,17 @@ test "unit: settings: resolved values outlive the layers and policy strings" {
     try testing.expectEqualStrings("{\"k\":[\"v\"]}", hooks.json);
 }
 
-test "unit: settings: legacy ghostty keys convert by spec type" {
+test "unit: settings: legacy ghostty keys convert as Ghostty parses them" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const root = try ghosttyLayer(a, fixtures, &.{
+    const root = try ghosttyLayer(a, &.{
         .{ .key = "font-size", .value = "14" }, // not a legacy key
         .{ .key = "window-sidebar-width", .value = "180" },
         .{ .key = "window-sidebar-width", .value = "300" }, // later wins
-        .{ .key = "sidebar-metadata", .value = "false" }, // inverted, no spec in fixtures
+        .{ .key = "sidebar-metadata", .value = "false" }, // inverted
         .{ .key = "socket-control", .value = "off" },
-        .{ .key = "window-show-sidebar", .value = "" }, // reset: skipped
+        .{ .key = "window-show-sidebar", .value = "" }, // reset, nothing set before
         .{ .key = "desktop-notifications", .value = "true" },
         .{ .key = "window-right-sidebar-width", .value = "wide" },
     });
@@ -775,11 +810,67 @@ test "unit: settings: legacy ghostty keys convert by spec type" {
         json,
     );
     // An unconvertible value fails validation and the default applies.
-    const bad = try ghosttyLayer(a, fixtures, &.{.{ .key = "window-sidebar-width", .value = "abc" }});
+    const bad = try ghosttyLayer(a, &.{.{ .key = "window-sidebar-width", .value = "abc" }});
     var r = try resolve(testing.allocator, fixtures, &.{.{ .source = .ghostty, .root = &bad }}, &.{});
     defer r.deinit();
     try testing.expectEqual(@as(i64, 220), r.getInt("wmux.sidebar.width").?);
     try testing.expectEqual(@as(usize, 1), r.rejected.len);
+}
+
+test "unit: settings: legacy ghostty spellings, resets and socket-control" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // Ghostty's own boolean and u32 spellings.
+    const spelled = try ghosttyLayer(a, &.{
+        .{ .key = "window-show-sidebar", .value = "0" },
+        .{ .key = "window-show-right-sidebar", .value = "t" },
+        .{ .key = "sidebar-metadata", .value = "1" },
+        .{ .key = "desktop-notifications", .value = "F" },
+        .{ .key = "window-sidebar-width", .value = "0x100" },
+        .{ .key = "window-right-sidebar-width", .value = "-5" }, // not a u32
+    });
+    try testing.expectEqualStrings(
+        "{\"wmux\":{\"sidebar\":{\"visible\":false,\"width\":256},\"rightSidebar\":{\"visible\":true,\"width\":\"-5\"},\"notifications\":{\"desktop\":false}},\"sidebar\":{\"hideAllDetails\":false}}",
+        try spelled.toJsonAlloc(a),
+    );
+    // An empty value resets the key: an earlier value no longer counts, and
+    // a section left empty disappears.
+    const reset = try ghosttyLayer(a, &.{
+        .{ .key = "window-sidebar-width", .value = "300" },
+        .{ .key = "window-show-sidebar", .value = "false" },
+        .{ .key = "window-sidebar-width", .value = "" },
+        .{ .key = "socket-control", .value = "off" },
+        .{ .key = "window-show-sidebar", .value = "\"\"" },
+        .{ .key = "desktop-notifications", .value = "" },
+    });
+    try testing.expectEqualStrings("{\"automation\":{\"socketControlMode\":\"off\"}}", try reset.toJsonAlloc(a));
+    const again = try ghosttyLayer(a, &.{
+        .{ .key = "window-sidebar-width", .value = "" },
+        .{ .key = "window-sidebar-width", .value = "260" },
+    });
+    try testing.expectEqual(@as(i64, 260), again.getDotted("wmux.sidebar.width").?.asInt().?);
+    // ADR-3.8 maps every socket-control value; JSON beats it.
+    const modes = [_][2][]const u8{ .{ "on", "automation" }, .{ "read-only", "readOnly" }, .{ "off", "off" } };
+    for (modes) |m| {
+        const layer = try ghosttyLayer(a, &.{.{ .key = "socket-control", .value = m[0] }});
+        var r = try resolve(testing.allocator, fixtures, &.{.{ .source = .ghostty, .root = &layer }}, &.{});
+        defer r.deinit();
+        try testing.expectEqualStrings(m[1], r.getString("automation.socketControlMode").?);
+        try testing.expectEqual(Source.ghostty, r.get("automation.socketControlMode").?.source);
+    }
+    const legacy_on = try ghosttyLayer(a, &.{.{ .key = "socket-control", .value = "on" }});
+    var wmux = try Parsed.init("{\"automation\": {\"socketControlMode\": \"password\"}}");
+    defer wmux.deinit();
+    var r = try resolve(testing.allocator, fixtures, &.{ wmux.layer(.wmux_json), .{ .source = .ghostty, .root = &legacy_on } }, &.{});
+    defer r.deinit();
+    try testing.expectEqualStrings("password", r.getString("automation.socketControlMode").?);
+    // A value Ghostty would refuse is rejected; the default applies.
+    const bogus = try ghosttyLayer(a, &.{.{ .key = "socket-control", .value = "sometimes" }});
+    var rb = try resolve(testing.allocator, fixtures, &.{.{ .source = .ghostty, .root = &bogus }}, &.{});
+    defer rb.deinit();
+    try testing.expectEqualStrings("cmuxOnly", rb.getString("automation.socketControlMode").?);
+    try testing.expectEqual(@as(usize, 1), rb.rejected.len);
 }
 
 test "unit: settings: real registry resolves" {
