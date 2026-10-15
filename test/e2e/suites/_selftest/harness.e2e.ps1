@@ -564,13 +564,14 @@ Test-Case 'settings document, ghostty.conf and child environment follow D.2 (no 
         CMUX_SOCKET_PATH = '\\.\pipe\user'; CMUX_WORKSPACE_ID = 'X'; CMUX_SOCKET = 'old'; WMUX_SOCKET_PASSWORD = 'pw'
         WMUX_SOCKET_PATH = '\\.\pipe\user'; WMUX_WORKSPACE_ID = 'Y'; GHOSTTY_RESOURCES_DIR = 'C:\x'; GHOSTTY_PID = '42'
         WMUX_WEB_DIR = 'C:\web'; WMUX_CHANNEL = 'stable'; WMUX_STATE_DIR = 'C:\real'; CLAUDECODE = '1'; ANTHROPIC_API_KEY = 'sk'
-        CLAUDE_CODE_ENTRYPOINT = 'cli'; GH_TOKEN = 't'
+        CLAUDE_CODE_ENTRYPOINT = 'cli'; GH_TOKEN = 't'; XDG_STATE_HOME = 'C:\Users\u\.local\state'; XDG_CACHE_HOME = 'C:\Users\u\.cache'
     }
     $root = 'C:\tmp\wmux-e2e\0a1b2c3d'
     $envMap = InModule { param($b, $r) New-WmuxChildEnvironment -BaseEnvironment $b -Root $r -Id '0a1b2c3d' } $base $root
     foreach ($kept in 'PATH', 'USERPROFILE', 'WMUX_WEB_DIR') { Assert-True $envMap.ContainsKey($kept) "$kept is inherited" }
     foreach ($gone in 'CMUX_SOCKET_PATH', 'CMUX_WORKSPACE_ID', 'CMUX_SOCKET', 'WMUX_SOCKET_PASSWORD', 'WMUX_SOCKET_PATH', 'WMUX_WORKSPACE_ID',
-        'GHOSTTY_RESOURCES_DIR', 'GHOSTTY_PID', 'CLAUDECODE', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_ENTRYPOINT', 'GH_TOKEN', 'WMUX_TEST_SESSION_RESTORE') {
+        'GHOSTTY_RESOURCES_DIR', 'GHOSTTY_PID', 'CLAUDECODE', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_ENTRYPOINT', 'GH_TOKEN', 'WMUX_TEST_SESSION_RESTORE',
+        'XDG_STATE_HOME', 'XDG_CACHE_HOME') {
         Assert-True (-not $envMap.ContainsKey($gone)) "$gone is removed"
     }
     $want = [ordered]@{
@@ -584,6 +585,11 @@ Test-Case 'settings document, ghostty.conf and child environment follow D.2 (no 
     Assert-Equal '1' $visible['WMUX_TEST_SESSION_RESTORE'] '-Restore enables test session restore'
     Assert-True (-not $visible.ContainsKey('WMUX_DISABLE_SESSION_RESTORE')) '-Restore drops WMUX_DISABLE_SESSION_RESTORE'
     Assert-Equal 'C:\Users\u\AppData\Local' $visible['LOCALAPPDATA'] '-KeepLocalAppData keeps LOCALAPPDATA'
+    # The redirected LOCALAPPDATA is seeded so the legacy app skips its startup update check.
+    $lad = Join-Path $script:TempRoot 'localappdata'
+    InModule { param($d) Initialize-WmuxLocalAppData -LocalAppData $d } $lad
+    $stamp = [long]((Get-Content -LiteralPath (Join-Path $lad 'ghostty\update_check_at') -Raw).Trim())
+    Assert-True ([Math]::Abs([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - $stamp) -lt 600) "update_check_at holds the current Unix time, got $stamp"
     $tempBase = InModule { Get-WmuxTempBase }
     Assert-True (Test-Path -LiteralPath $tempBase -PathType Container) "instance roots live under an existing directory: $tempBase"
     Assert-True (-not $tempBase.Contains('~')) "8.3 short names are expanded: $tempBase"

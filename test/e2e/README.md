@@ -66,9 +66,11 @@ dotted keys expanded) and `ghostty.conf` (`command = cmd.exe /d /k prompt WMUX$G
 then `-Ghostty` lines), and launches `wmux.exe --config-default-files=false
 --config-file=<root>\ghostty.conf` with `WMUX_TEST_MODE`, `WMUX_TEST_HIDDEN`, a `test-<id>`
 channel and the D.2.4 variables. Inherited `CMUX_*`, `WMUX_*` (except `WMUX_WEB_DIR`,
-`WMUX_WEB_DEVTOOLS`), `GHOSTTY_*`, agent markers and API credentials are removed, and
-`LOCALAPPDATA` points into the root so the legacy app never touches the user's session files.
-Each instance runs in a kill-on-close job object, so nothing outlives the test process.
+`WMUX_WEB_DEVTOOLS`), `GHOSTTY_*`, `XDG_STATE_HOME`, `XDG_CACHE_HOME`, agent markers and API
+credentials are removed. `LOCALAPPDATA` points into the root, so the legacy app never touches
+the user's session files; it is seeded with a fresh `ghostty\update_check_at`, so the app also
+skips its startup update check and the tray balloon that can follow. Each instance runs in a
+kill-on-close job object, so nothing outlives the test process.
 
 A focus sampler checks the foreground window every 100 ms; if a test instance ever owns it, the
 running Test-Case fails with `focus stolen by test instance`. Start-WmuxInstance refuses to

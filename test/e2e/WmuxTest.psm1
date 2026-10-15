@@ -1077,7 +1077,9 @@ $script:EnvKeepNames = @('WMUX_WEB_DIR', 'WMUX_WEB_DEVTOOLS')
 $script:EnvStripPrefixes = @('CMUX_', 'CMUXTERM_', 'GHOSTTY_', 'WMUX_', 'CLAUDE_CODE_', 'ANTHROPIC_', 'CODEX_', 'OPENCODE_')
 $script:EnvStripNames = @(
     'CLAUDECODE', 'CLAUDE_CODE', 'OPENCODE', 'AI_AGENT',
-    'OPENAI_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GH_TOKEN', 'GITHUB_TOKEN'
+    'OPENAI_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GH_TOKEN', 'GITHUB_TOKEN',
+    # Ghostty's crash and cache dirs then fall back to the (redirected) LOCALAPPDATA.
+    'XDG_STATE_HOME', 'XDG_CACHE_HOME'
 )
 
 # Legacy +verbs that Invoke-WmuxCli may relay to wmux.exe before cli\cmux.exe exists (W1-2).
@@ -1582,6 +1584,16 @@ function New-WmuxChildEnvironment {
         $map['LOCALAPPDATA'] = Join-Path $Root 'localappdata'
     }
     return , $map
+}
+
+function Initialize-WmuxLocalAppData {
+    # Seeds the redirected LOCALAPPDATA of a legacy instance: a fresh update_check_at makes the
+    # app skip its startup update check (a network fetch that can end in a tray balloon on the
+    # user's screen). Remove once WMUX_TEST_MODE turns the update check off (ADR-12.3).
+    param([Parameter(Mandatory)][string]$LocalAppData)
+    $dir = Join-Path $LocalAppData 'ghostty'
+    $null = New-Item -ItemType Directory -Force -Path $dir
+    [IO.File]::WriteAllText((Join-Path $dir 'update_check_at'), [string][DateTimeOffset]::UtcNow.ToUnixTimeSeconds(), $script:Utf8NoBom)
 }
 
 function Get-WmuxCliEnvironment {
@@ -2215,6 +2227,7 @@ function Start-WmuxInstance {
     [IO.File]::WriteAllText($confPath, (New-WmuxGhosttyConfText -Shell $Shell -Ghostty $Ghostty -Id $id), $script:Utf8NoBom)
 
     $keepLad = $env:WMUX_E2E_KEEP_LOCALAPPDATA -eq '1'
+    if (-not $keepLad) { Initialize-WmuxLocalAppData -LocalAppData $dirs.localappdata }
     $childEnv = New-WmuxChildEnvironment -BaseEnvironment (Get-WmuxProcessEnvironment) -Root $root -Id $id `
         -Visible:$Visible -Restore:$Restore -KeepLocalAppData:$keepLad
 
