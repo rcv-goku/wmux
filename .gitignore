@@ -40,3 +40,4 @@ zig-pkg/
 # Windows installer build artifacts (produced by dist/windows/release.ps1)
 dist/windows/_staging/
 dist/windows/output/
+test-results/
