@@ -1,0 +1,3 @@
+# Keep the source patch byte-identical to git diff output (LF), so it
+# applies to the LF-only Zig sources on autocrlf checkouts.
+*.patch text eol=lf
