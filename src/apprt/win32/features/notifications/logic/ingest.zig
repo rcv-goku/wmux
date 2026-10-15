@@ -32,33 +32,48 @@ pub const Fields = struct {
 
 // --------------------------------------------------------------- OSC 777
 
-/// `777;notify;<title>;<body>`: `payload` is everything after `777;`. The
-/// body keeps any further `;`. Other 777 extensions return null.
+/// `777;notify;<title>;<body>`: `payload` is everything after `777;`. As in
+/// the core parser (`src/terminal/osc/parsers/rxvt_extension.zig`) both
+/// separators are required; the body may be empty and keeps any further
+/// `;`. Other 777 extensions return null.
 pub fn parseOsc777(payload: []const u8) ?Fields {
     const prefix = "notify;";
-    if (!std.mem.startsWith(u8, payload, prefix)) {
-        if (std.mem.eql(u8, payload, "notify")) return .{};
-        return null;
-    }
+    if (!std.mem.startsWith(u8, payload, prefix)) return null;
     const rest = payload[prefix.len..];
-    const semi = std.mem.indexOfScalar(u8, rest, ';') orelse return .{ .title = rest };
+    const semi = std.mem.indexOfScalar(u8, rest, ';') orelse return null;
     return .{ .title = rest[0..semi], .body = rest[semi + 1 ..] };
 }
 
 // ----------------------------------------------------------------- OSC 9
 
-/// `9;<text>`: the text is the body with an empty title (fallback applies at
-/// delivery). ConEmu subcommands `9;1`..`9;12` (sleep, message box, tab
-/// title, progress `9;4`, cwd `9;9`, ...) are not notifications.
+/// `9;<text>`: the text is the body with an empty title (the fallback title
+/// applies at delivery); empty text is no notification. ConEmu extensions
+/// are not notifications: `isConEmuOsc9` mirrors the core parser's routing.
 pub fn parseOsc9(payload: []const u8) ?Fields {
-    var digits: usize = 0;
-    while (digits < payload.len and digits < 3 and std.ascii.isDigit(payload[digits])) digits += 1;
-    if (digits > 0 and digits < 3 and (digits == payload.len or payload[digits] == ';')) {
-        const n = std.fmt.parseInt(u8, payload[0..digits], 10) catch 0;
-        if (n >= 1 and n <= 12) return null;
-    }
-    if (payload.len == 0) return null;
+    if (payload.len == 0 or isConEmuOsc9(payload)) return null;
     return .{ .body = payload };
+}
+
+/// The ConEmu forms that the core parser (`src/terminal/osc/parsers/osc9.zig`)
+/// routes away from notifications, so both paths agree: `1;` sleep, `10` and
+/// `10;0`..`10;3` emulation, `11;` comment, `12` prompt, `2;` message box,
+/// `3;` tab title, `4;0`..`4;4` progress, `5` wait, `6;` GUI macro, `7;` run,
+/// `8;` environment, `9;` cwd. Everything else (`1`, `4`, `4;9`, `13;x`) is
+/// notification text.
+fn isConEmuOsc9(p: []const u8) bool {
+    const semi = p.len >= 2 and p[1] == ';';
+    return switch (p[0]) {
+        '1' => p.len >= 2 and switch (p[1]) {
+            ';', '2' => true,
+            '0' => p.len == 2 or (p.len >= 4 and p[2] == ';' and p[3] >= '0' and p[3] <= '3'),
+            '1' => p.len >= 3 and p[2] == ';',
+            else => false,
+        },
+        '2', '3', '6', '7', '8', '9' => semi,
+        '4' => semi and p.len >= 3 and p[2] >= '0' and p[2] <= '4',
+        '5' => true,
+        else => false,
+    };
 }
 
 // ---------------------------------------------------------------- OSC 99
@@ -307,11 +322,12 @@ pub const Coalescer = struct {
         return h.final();
     }
 
-    /// True when the notification should be delivered (and records it).
+    /// True when the notification should be delivered (and records it). A
+    /// clock that jumps backwards never suppresses.
     pub fn admit(self: *Coalescer, surface: Uuid, title: []const u8, body: []const u8, now_ms: i64) !bool {
         const hash = hashText(title, body);
         if (self.last.get(surface)) |l| {
-            const dt = now_ms - l.at_ms;
+            const dt = now_ms -| l.at_ms;
             if (l.hash == hash and dt >= 0 and dt < coalesce_window_ms) return false;
         }
         if (self.last.count() >= 1024) self.prune(now_ms);
@@ -325,7 +341,7 @@ pub const Coalescer = struct {
         var n: usize = 0;
         while (it.next()) |e| {
             if (n == stale.len) break;
-            if (now_ms - e.value_ptr.at_ms >= coalesce_window_ms) {
+            if (now_ms -| e.value_ptr.at_ms >= coalesce_window_ms) {
                 stale[n] = e.key_ptr.*;
                 n += 1;
             }
@@ -385,6 +401,8 @@ pub const Fifo = struct {
     buf: []?Entry,
     head: usize = 0,
     len: usize = 0,
+    /// Entries dropped because the FIFO was full; read it with
+    /// `droppedCount` while producers may run.
     dropped: u64 = 0,
 
     pub fn init(gpa: std.mem.Allocator, capacity: usize) !Fifo {
@@ -435,6 +453,12 @@ pub const Fifo = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
         return self.len;
+    }
+
+    pub fn droppedCount(self: *Fifo) u64 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return self.dropped;
     }
 
     /// Discards everything pending (Clear All drops queued notifications).
@@ -526,12 +550,17 @@ test "unit: notifications: osc 777 maps title and body" {
     try testing.expectEqualStrings("Message body here", f.body);
     const g = parseOsc777("notify;T;a;b;c").?;
     try testing.expectEqualStrings("a;b;c", g.body);
-    const h = parseOsc777("notify;OnlyTitle").?;
-    try testing.expectEqualStrings("OnlyTitle", h.title);
-    try testing.expectEqualStrings("", h.body);
+    const t = parseOsc777("notify;T;").?;
+    try testing.expectEqualStrings("T", t.title);
+    try testing.expectEqualStrings("", t.body);
     const e = parseOsc777("notify;;").?;
     try testing.expectEqualStrings("", e.title);
-    try testing.expect(parseOsc777("notify") != null);
+    try testing.expectEqualStrings("", e.body);
+    // Like the core parser: both separators are required.
+    try testing.expect(parseOsc777("notify;OnlyTitle") == null);
+    try testing.expect(parseOsc777("notify") == null);
+    try testing.expect(parseOsc777("notify;") == null);
+    try testing.expect(parseOsc777("Notify;T;B") == null);
     try testing.expect(parseOsc777("precmd") == null);
     try testing.expect(parseOsc777("") == null);
     try testing.expectEqualStrings("\u{1F680} \u{00E9}t\u{00E9}", parseOsc777("notify;\u{1F680} \u{00E9}t\u{00E9};x").?.title);
@@ -541,16 +570,23 @@ test "unit: notifications: osc 9 text is a body, conemu subcommands are not noti
     const f = parseOsc9("Build finished").?;
     try testing.expectEqualStrings("", f.title);
     try testing.expectEqualStrings("Build finished", f.body);
-    try testing.expect(parseOsc9("4;1;50") == null);
-    try testing.expect(parseOsc9("4") == null);
-    try testing.expect(parseOsc9("9;C:\\src") == null);
-    try testing.expect(parseOsc9("1;100") == null);
-    try testing.expect(parseOsc9("12") == null);
     try testing.expect(parseOsc9("") == null);
-    try testing.expectEqualStrings("1 test failed", parseOsc9("1 test failed").?.body);
-    try testing.expectEqualStrings("13;x", parseOsc9("13;x").?.body);
-    try testing.expectEqualStrings("100", parseOsc9("100").?.body);
-    try testing.expectEqualStrings("0", parseOsc9("0").?.body);
+    // Routed away by the core parser (src/terminal/osc/parsers/osc9.zig).
+    const conemu = [_][]const u8{
+        "1;",  "1;420",   "10",    "10;0",      "10;3",   "11;note", "12", "12x",
+        "2;m", "3;",      "3;tab", "4;0",       "4;1;50", "4;4",     "5",  "5 tests",
+        "6;m", "7;a.exe", "8;VAR", "9;C:\\src",
+    };
+    for (conemu) |p| try testing.expectEqual(@as(?Fields, null), parseOsc9(p));
+    // Text the core parser delivers as a notification body.
+    const bodies = [_][]const u8{
+        "1", "1 test failed", "10;", "10;4", "100", "11", "13;x", "2",
+        "3", "4",             "4;",  "4;5",  "6",   "9",  "0",    "\u{1F680} done",
+    };
+    for (bodies) |p| {
+        const got = parseOsc9(p) orelse return error.TestUnexpectedResult;
+        try testing.expectEqualStrings(p, got.body);
+    }
 }
 
 test "unit: notifications: osc 99 accepts kitty and cmux-docs separators" {
@@ -671,6 +707,33 @@ test "unit: notifications: kitty pending entries are bounded and capped" {
     try testing.expect(std.unicode.utf8ValidateSlice(done.fields.body));
 }
 
+test "unit: notifications: kitty parsing and reassembly survive random input" {
+    const gpa = testing.allocator;
+    var prng = std.Random.DefaultPrng.init(99);
+    const r = prng.random();
+    var asm_ = KittyAssembler.init(gpa);
+    defer asm_.deinit();
+    const alphabet = "ipde=:;?01tlbosA-_+/x ";
+    var buf: [40]u8 = undefined;
+    for (0..3000) |_| {
+        const p = buf[0..r.uintAtMost(usize, buf.len)];
+        for (p) |*c| c.* = if (r.boolean()) alphabet[r.uintLessThan(usize, alphabet.len)] else r.int(u8);
+        const chunk = parseOsc99(p);
+        try testing.expect(chunk.payload.len <= p.len);
+        const decoded = try decodePayloadAlloc(gpa, chunk);
+        gpa.free(decoded);
+        if (try asm_.feed(testUuid(r.uintLessThan(u32, 3)), chunk)) |done| {
+            var x = done;
+            defer x.deinit(gpa);
+            for ([_][]const u8{ x.fields.title, x.fields.subtitle, x.fields.body }) |f| {
+                try testing.expect(std.unicode.utf8ValidateSlice(f));
+            }
+            try testing.expect(x.fields.title.len <= title_cap and x.id.len <= kitty_id_cap);
+        }
+        try testing.expect(asm_.pending.items.len <= max_pending_kitty);
+    }
+}
+
 test "unit: notifications: identical text from one surface within 1 s coalesces" {
     var c = Coalescer.init(testing.allocator);
     defer c.deinit();
@@ -686,6 +749,18 @@ test "unit: notifications: identical text from one surface within 1 s coalesces"
     try testing.expect(try c.admit(sf, "TB", "2", 1));
     c.forgetSurface(sf);
     try testing.expect(try c.admit(sf, "TB", "2", 2));
+    // Extreme clock values neither overflow nor suppress.
+    try testing.expect(try c.admit(sf, "x", "y", std.math.minInt(i64)));
+    try testing.expect(try c.admit(sf, "x", "y", std.math.maxInt(i64)));
+    try testing.expect(try c.admit(sf, "x", "y", std.math.minInt(i64)));
+}
+
+test "unit: notifications: coalescer prune tolerates extreme clock values" {
+    var c = Coalescer.init(testing.allocator);
+    defer c.deinit();
+    for (0..1030) |i| _ = try c.admit(testUuid(@intCast(i)), "t", "b", std.math.minInt(i64));
+    try testing.expect(try c.admit(testUuid(0x7777), "t", "b", std.math.maxInt(i64)));
+    try testing.expect(c.last.count() < 1031);
 }
 
 test "unit: notifications: coalescer prunes stale surfaces" {
@@ -754,7 +829,7 @@ test "unit: notifications: ingress fifo is safe across threads" {
             x.deinit(gpa);
             popped += 1;
         }
-        if (popped + q.dropped >= 500 and q.count() == 0) break;
+        if (popped + q.droppedCount() >= 500 and q.count() == 0) break;
     }
     t.join();
     while (q.pop()) |e| {
@@ -762,7 +837,7 @@ test "unit: notifications: ingress fifo is safe across threads" {
         x.deinit(gpa);
         popped += 1;
     }
-    try testing.expectEqual(@as(u64, 500), popped + q.dropped);
+    try testing.expectEqual(@as(u64, 500), popped + q.droppedCount());
 }
 
 test "unit: notifications: entries are sanitized and capped on code points" {
