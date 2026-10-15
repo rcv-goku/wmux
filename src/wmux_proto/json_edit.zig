@@ -16,7 +16,8 @@ pub const Error = error{
     OutOfMemory,
     /// The source does not parse as JSONC (see the diagnostic).
     SyntaxError,
-    /// Empty path or empty path segment.
+    /// Empty path, empty path segment, or a segment that is not UTF-8
+    /// (segments become JSON keys).
     InvalidPath,
     /// The document root is not an object.
     RootNotObject,
@@ -40,10 +41,16 @@ pub fn splitPath(gpa: Allocator, path: []const u8) Error![]const []const u8 {
     errdefer list.deinit(gpa);
     var it = std.mem.splitScalar(u8, path, '.');
     while (it.next()) |seg| {
-        if (seg.len == 0) return error.InvalidPath;
+        if (!validSegment(seg)) return error.InvalidPath;
         try list.append(gpa, seg);
     }
     return list.toOwnedSlice(gpa);
+}
+
+/// A segment is written as a JSON key, so it must be non-empty UTF-8. A
+/// lone surrogate (WTF-8 from a Windows command line) is not UTF-8.
+fn validSegment(seg: []const u8) bool {
+    return seg.len > 0 and std.unicode.utf8ValidateSlice(seg);
 }
 
 /// Sets the value at dotted `path` to the JSON text `value_json`, creating
@@ -205,7 +212,7 @@ fn isBlank(s: []const u8) bool {
 /// Sets the value at `segments` (see `set`).
 pub fn setPath(gpa: Allocator, src: []const u8, segments: []const []const u8, value_json: []const u8, diag: ?*jsonc.Diagnostic) Error!Result {
     if (segments.len == 0) return error.InvalidPath;
-    for (segments) |s| if (s.len == 0) return error.InvalidPath;
+    for (segments) |s| if (!validSegment(s)) return error.InvalidPath;
 
     var arena_state: std.heap.ArenaAllocator = .init(gpa);
     defer arena_state.deinit();
@@ -374,7 +381,7 @@ fn insertMember(
 /// Removes the member at `segments` (see `remove`).
 pub fn removePath(gpa: Allocator, src: []const u8, segments: []const []const u8, diag: ?*jsonc.Diagnostic) Error!Result {
     if (segments.len == 0) return error.InvalidPath;
-    for (segments) |s| if (s.len == 0) return error.InvalidPath;
+    for (segments) |s| if (!validSegment(s)) return error.InvalidPath;
 
     var text = try gpa.dupe(u8, src);
     errdefer gpa.free(text);
@@ -643,6 +650,18 @@ test "unit: proto: json_edit rejects bad input" {
     try testing.expectEqual(@as(u32, 2), diag.pos.line);
     try testing.expectEqual(@as(u32, 10), diag.pos.col);
     try testing.expectError(error.SyntaxError, remove(gpa, "{", "a", null));
+}
+
+test "unit: proto: json_edit refuses path segments that are not UTF-8" {
+    const gpa = testing.allocator;
+    // Written as a key, such a segment would leave a file that no longer parses.
+    try testing.expectError(error.InvalidPath, set(gpa, "{}", "a\xffb", "1", null));
+    try testing.expectError(error.InvalidPath, set(gpa, "{}", "x.\xED\xA0\x80", "1", null)); // lone surrogate
+    try testing.expectError(error.InvalidPath, setPath(gpa, "{}", &.{ "ok", "\xc3" }, "1", null));
+    try testing.expectError(error.InvalidPath, remove(gpa, "{\"a\": 1}", "\xff", null));
+    try testing.expectError(error.InvalidPath, splitPath(gpa, "a.\xe6\x97"));
+    // Valid multi-byte segments still work.
+    try expectSet("{}", "設定.é", "true", "{\n  \"設定\": {\n    \"é\": true\n  }\n}");
 }
 
 test "unit: proto: json_edit removes members losslessly" {
