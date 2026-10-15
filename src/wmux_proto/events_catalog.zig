@@ -167,7 +167,7 @@ fn omitted(n: []const u8) Key {
 pub const max_prompt_length: i64 = 1_048_576;
 
 // Shared payload key sets.
-const window_lifecycle = [_]Key{ req("window_id", .uuid), reqN("workspace_id", .uuid), count("workspace_count"), reqN("selected_workspace_index", .integer), req("is_key_window", .boolean), req("is_main_window", .boolean), req("origin", .string) };
+const window_lifecycle = [_]Key{ req("window_id", .uuid), reqN("workspace_id", .uuid), count("workspace_count"), .{ .name = "selected_workspace_index", .value_type = .integer, .nullable = true, .min = 0 }, req("is_key_window", .boolean), req("is_main_window", .boolean), req("origin", .string) };
 const workspace_selected = [_]Key{ reqN("previous_workspace_id", .uuid), count("index"), count("tab_count") };
 const workspace_reordered = [_]Key{ req("workspace_ids", .uuid_array), req("moved_workspace_ids", .uuid_array), req("pinned_workspace_ids", .uuid_array), count("count") };
 const workspace_prompt = [_]Key{ req("workspace_id", .uuid), redacted("message"), sensitive("message_preview"), count("message_length"), req("redacted_fields", .string_array) };
@@ -299,6 +299,12 @@ fn checkCatalog() void {
                 if (!has_len) @compileError("events_catalog: redacted key needs a _length companion: " ++ k.name ++ " in " ++ e.name);
             }
             if (k.privacy == .omitted and k.required) @compileError("events_catalog: omitted key cannot be required: " ++ k.name);
+            if (k.one_of.len > 0 and k.value_type != .string)
+                @compileError("events_catalog: one_of needs a string key: " ++ k.name ++ " in " ++ e.name);
+            if ((k.min != null or k.max != null) and k.value_type != .integer)
+                @compileError("events_catalog: min/max need an integer key: " ++ k.name ++ " in " ++ e.name);
+            if (k.min != null and k.max != null and k.min.? > k.max.?)
+                @compileError("events_catalog: min above max: " ++ k.name ++ " in " ++ e.name);
         }
     }
 }
@@ -566,24 +572,34 @@ fn checkValue(k: *const Key, v: std.json.Value) ?Reason {
 
 const IntegerValue = union(enum) { int: i64, huge };
 
-/// Integral JSON numbers only: integers, floats with no fractional part, and
-/// digit strings too large for i64 (reported as `huge`).
+/// Whole-number JSON values: integers and floats without a fraction. Values
+/// outside i64 are `huge`; anything else (fractions, non-numbers) is null.
 fn integerValue(v: std.json.Value) ?IntegerValue {
-    switch (v) {
-        .integer => |i| return .{ .int = i },
-        .float => |f| {
-            if (!std.math.isFinite(f) or @floor(f) != f) return null;
-            if (f < -9.2e18 or f > 9.2e18) return .huge;
-            return .{ .int = @intFromFloat(f) };
-        },
-        .number_string => |s| {
-            const digits = if (s.len > 0 and s[0] == '-') s[1..] else s;
-            if (digits.len == 0) return null;
-            for (digits) |c| if (!std.ascii.isDigit(c)) return null;
-            return .huge;
-        },
-        else => return null,
+    return switch (v) {
+        .integer => |i| .{ .int = i },
+        .float => |f| wholeFloat(f),
+        .number_string => |s| numberText(s),
+        else => null,
+    };
+}
+
+fn wholeFloat(f: f64) ?IntegerValue {
+    if (std.math.isNan(f) or @floor(f) != f) return null;
+    if (f < -9.2e18 or f > 9.2e18) return .huge;
+    return .{ .int = @intFromFloat(f) };
+}
+
+/// A number std.json kept as text: an i64 overflow, a value beyond f64, or
+/// any number when the caller parsed with `.parse_numbers = false`.
+fn numberText(s: []const u8) ?IntegerValue {
+    if (std.fmt.parseInt(i64, s, 10)) |i| {
+        return .{ .int = i };
+    } else |err| switch (err) {
+        error.Overflow => return .huge,
+        error.InvalidCharacter => {},
     }
+    const f = std.fmt.parseFloat(f64, s) catch return null;
+    return wholeFloat(f);
 }
 
 /// 8-4-4-4-12 hex, either case.
@@ -847,6 +863,9 @@ test "unit: events: catalog invariants for redacted and omitted keys" {
                 .omitted => try testing.expect(!k.required),
                 else => {},
             }
+            // checkValue relies on these (also enforced at comptime).
+            if (k.one_of.len > 0) try testing.expectEqual(ValueType.string, k.value_type);
+            if (k.min != null or k.max != null) try testing.expectEqual(ValueType.integer, k.value_type);
         }
     }
 }
@@ -944,6 +963,34 @@ test "unit: events: prompt_length accepts only integral 0..1048576" {
     }
     // Absent means unknown, not zero: still valid.
     try validatePayloadJson(testing.allocator, "agent.hook.UserPromptSubmit", "{\"hook_event_name\":\"UserPromptSubmit\",\"_source\":\"claude\",\"phase\":\"received\"}");
+}
+
+test "unit: events: integer keys give the same verdict when std.json keeps numbers as text" {
+    const gpa = testing.allocator;
+    const cases = [_]struct { []const u8, ?Reason }{
+        .{ "0", null },                                .{ "1", null },
+        .{ "-0", null },                               .{ "2.0", null },
+        .{ "1e2", null },                              .{ "-1", .out_of_range },
+        .{ "1.5", .wrong_type },                       .{ "1e-3", .wrong_type },
+        .{ "99999999999999999999999", .out_of_range }, .{ "1e400", .out_of_range },
+        .{ "-1e400", .out_of_range },
+    };
+    const e = lookup("workspace.selected").?;
+    var buf: [128]u8 = undefined;
+    for (cases) |c| {
+        const json = try std.fmt.bufPrint(&buf, "{{\"previous_workspace_id\":null,\"index\":{s},\"tab_count\":2}}", .{c[0]});
+        // parse_numbers=false hands every number over as .number_string.
+        for ([_]bool{ true, false }) |parse_numbers| {
+            const parsed = try std.json.parseFromSlice(std.json.Value, gpa, json, .{ .parse_numbers = parse_numbers });
+            defer parsed.deinit();
+            const got = checkPayload(e, parsed.value);
+            if (c[1]) |reason| {
+                const v = got orelse return error.ExpectedViolation;
+                try testing.expectEqual(reason, v.reason);
+                try testing.expectEqualStrings("index", v.key);
+            } else try testing.expect(got == null);
+        }
+    }
 }
 
 test "unit: events: hasRequiredKeys on huge and unicode payloads" {
