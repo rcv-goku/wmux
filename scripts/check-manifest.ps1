@@ -22,9 +22,9 @@
       - manifest entries or ext fields not sorted; an expected *Ext struct missing; an ext
         field type that does not import <id>/state.zig; a features/ subdirectory without
         mod.zig; a pre-seeded module of ARCHITECTURE section 1.5 missing from the manifest
-      - new alias lines (pub const f = @import("x.zig").f;) in App.zig / ui/Window.zig after
-        Wave 0, i.e. lines absent from the -AliasBaseline tag (default wave-0). Before that
-        tag exists aliases are allowed (W0 migration) and only counted.
+      - new alias lines (pub const f = @import("x.zig").f; or pub const f = x.f;) in App.zig /
+        ui/Window.zig after Wave 0, i.e. lines absent from the -AliasBaseline tag (default
+        wave-0). Before that tag exists aliases are allowed (W0 migration) and only counted.
 
     Before W0-A3 lands the skeleton, the registry checks report "skeleton not present yet"
     and pass; the logic and alias checks still run.
@@ -298,7 +298,9 @@ if (Test-Path -LiteralPath $fastTests -PathType Leaf) {
 # ---------------------------------------------------------------- W0 aliases
 $aliasFiles = @('src/apprt/win32/App.zig', 'src/apprt/win32/ui/Window.zig', 'src/apprt/win32/Window.zig') |
     Where-Object { Test-Path -LiteralPath (Join-Path $RepoRoot $_) -PathType Leaf }
-$aliasPattern = '^\s*pub\s+const\s+[A-Za-z_][A-Za-z0-9_]*\s*=\s*@import\(\s*"[^"]+"\s*\)(?:\.[A-Za-z_][A-Za-z0-9_]*)+\s*;'
+# Both alias forms W0 uses: `pub const f = @import("x.zig").f;` and, with the file imported
+# once as `const x = @import("x.zig");`, `pub const f = x.f;` (the form W0-A1 writes).
+$aliasPattern = '^\s*pub\s+const\s+[A-Za-z_][A-Za-z0-9_]*\s*=\s*(?:@import\(\s*"[^"]+"\s*\)|[A-Za-z_][A-Za-z0-9_]*)(?:\.[A-Za-z_][A-Za-z0-9_]*)+\s*;'
 $isGit = $false
 try { $isGit = ((Invoke-WmuxGit -RepoRoot $RepoRoot -Arguments @('rev-parse', '--is-inside-work-tree') -AllowFailure).Output.Trim() -eq 'true') } catch { $isGit = $false }
 $baselineOk = $false

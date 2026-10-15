@@ -316,6 +316,23 @@ try {
     $r2 = Invoke-Script 'check-manifest.ps1' @('-RepoRoot', $sk, '-WarningsAsErrors')
     Test-That 'manifest: -WarningsAsErrors still fails' ($r2.Code -eq 1)
 
+    # W0 aliases: both forms are counted during W0 and warned about when new after the wave-0 tag.
+    $al = Join-Path $fixtureRoot 'alias'
+    New-Item -ItemType Directory -Force -Path $al | Out-Null
+    Invoke-FixtureGit $al @('init', '-q', '-b', 'master')
+    $appLines = @('const std = @import("std");', 'const ring = @import("features/notifications/legacy_ring.zig");',
+        'pub const moved = @import("app/tasks.zig").moved;', 'pub const notifAt = ring.notifAt;',
+        'pub const must_draw_from_app_thread = false;', 'pub const NAME = std.unicode.utf8ToUtf16LeStringLiteral("x");')
+    Write-Fixture $al 'src/apprt/win32/App.zig' $appLines
+    Invoke-FixtureGit $al @('add', '-A')
+    Invoke-FixtureGit $al @('commit', '-q', '-m', 'w0')
+    $r = Invoke-Script 'check-manifest.ps1' @('-RepoRoot', $al)
+    Test-That 'manifest: both W0 alias forms are counted' (($r.Code -eq 0) -and ($r.Output -match '2 alias line\(s\)')) $r.Output
+    Invoke-FixtureGit $al @('tag', 'wave-0')
+    Write-Fixture $al 'src/apprt/win32/App.zig' ($appLines + @('pub const clearNotifs = ring.clearNotifs;', 'pub const later = @import("app/timers.zig").later;'))
+    $r = Invoke-Script 'check-manifest.ps1' @('-RepoRoot', $al)
+    Test-That 'manifest: new aliases after wave-0 warn (both forms)' (($r.Code -eq 0) -and ($r.Output -match 'new alias after Wave 0 \(pub const clearNotifs = ring\.clearNotifs;\)') -and ($r.Output -match 'new alias after Wave 0 \(pub const later = ') -and ($r.Output -match '0 error\(s\), 2 warning\(s\)')) $r.Output
+
     # ------------------------------------------------------------ gate / new-worktree (no execution)
     Write-Host 'gate.ps1 and new-worktree.ps1: plans only'
     $r = Invoke-Script 'gate.ps1' @('-Full', '-DryRun', '-FullTest')
