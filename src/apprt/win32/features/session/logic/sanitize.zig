@@ -1,9 +1,9 @@
 //! Untrusted-import sanitizer for `session.import` from a file path
 //! (`restore-session --from <path>`, ADR-9.8). Layout, cwds, titles,
 //! stripped text scrollback and http(s) browser tabs survive; workspace env
-//! vars, remote connections, spawn command lines, browser profiles,
-//! non-http(s) pages, unknown panel kinds and automatic agent resume data
-//! do not. Channel imports are trusted and skip this pass.
+//! vars, remote connections (at any level), spawn command lines, browser
+//! profiles, non-http(s) pages, unknown panel kinds and automatic agent
+//! resume data do not. Channel imports are trusted and skip this pass.
 
 const std = @import("std");
 const schema = @import("schema_v3.zig");
@@ -14,8 +14,11 @@ const Value = std.json.Value;
 
 /// Tab `ext` keys whose resume data is held back (manual restore only).
 pub const resume_ext_keys = [_][]const u8{ "agents", "resume" };
-/// Workspace and tab `ext` keys that carry remote connections.
-pub const remote_ext_keys = [_][]const u8{ "remote", "ssh", "cloud" };
+/// `ext` keys that carry remote connections, removed from windows,
+/// workspaces, panes and tabs: the `remote` (SSH workspaces) and
+/// `remote_tmux` (ssh-tmux mirror: tmux windows and panes map to workspaces
+/// and panes) features of ADR-13, plus `ssh` and `cloud`.
+pub const remote_ext_keys = [_][]const u8{ "remote", "remote_tmux", "ssh", "cloud" };
 /// Fields of `ext.agents` kept for a manual resume rebuilt from kind + id.
 pub const agent_identity_keys = [_][]const u8{ "kind", "session_id" };
 
@@ -51,6 +54,7 @@ pub fn sanitizeUntrusted(arena: Allocator, s: *schema.Session) !Report {
             var remote = ws.env.len > 0 or stripKeys(&ws.ext, &remote_ext_keys);
             ws.env = &.{};
             for (ws.panes) |*p| {
+                if (stripKeys(&p.ext, &remote_ext_keys)) remote = true;
                 var kept: usize = 0;
                 for (p.tabs) |tab_in| {
                     var t = tab_in;
@@ -271,6 +275,29 @@ test "unit: session: untrusted import filters browser schemes and scrollback ref
     const t = ws.panes[0].tabs[1];
     try testing.expect(t.panel.terminal.scrollback == null);
     try testing.expect(schema.extGet(t.ext, "resume") == null);
+}
+
+test "unit: session: untrusted import strips remote state at every level" {
+    var p = try schema.parse(testing.allocator,
+        \\{"schema":"wmux-session","version":3,"windows":[{"ext":{"remote":{"route":"r"},"keep":1},"workspaces":[
+        \\ {"panes":[{"id":"44444444-4444-4444-8444-444444444441","ext":{"remote_tmux":{"pane":"%3"},"keep":2},"tabs":[{}]}]},
+        \\ {"panes":[{"id":"44444444-4444-4444-8444-444444444442","tabs":[{"ext":{"remote_tmux":{},"keep":3}}]}]},
+        \\ {"ext":{"remote_tmux":{"session":"s"}},"panes":[]},
+        \\ {"panes":[{"id":"44444444-4444-4444-8444-444444444443","tabs":[{}]}]}]}]}
+    , .{}, null);
+    defer p.deinit();
+    const r = try sanitizeUntrusted(p.arena.allocator(), &p.session);
+    try testing.expectEqual(@as(usize, 3), r.dropped_remote_workspace_count);
+    const w = p.session.windows[0];
+    try testing.expect(schema.extGet(w.ext, "remote") == null);
+    try testing.expect(schema.extGet(w.ext, "keep") != null);
+    const pane_ext = w.workspaces[0].panes[0].ext;
+    try testing.expect(schema.extGet(pane_ext, "remote_tmux") == null);
+    try testing.expect(schema.extGet(pane_ext, "keep") != null);
+    const tab_ext = w.workspaces[1].panes[0].tabs[0].ext;
+    try testing.expect(schema.extGet(tab_ext, "remote_tmux") == null);
+    try testing.expect(schema.extGet(tab_ext, "keep") != null);
+    try testing.expect(schema.extGet(w.workspaces[2].ext, "remote_tmux") == null);
 }
 
 test "unit: session: http url check" {
