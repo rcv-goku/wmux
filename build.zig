@@ -2,6 +2,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const builtin = @import("builtin");
 const buildpkg = @import("src/build/main.zig");
+const WmuxSteps = @import("src/build/WmuxSteps.zig");
 
 /// App version from build.zig.zon.
 const app_zon_version = @import("build.zig.zon").version;
@@ -83,6 +84,11 @@ pub fn build(b: *std.Build) !void {
 
     // Ghostty executable, the actual runnable Ghostty program.
     const exe = try buildpkg.GhosttyExe.init(b, &config, &deps);
+
+    // wmux steps (cmux CLI, test-fast, test-cli, settings-schema, web assets,
+    // remote-daemon) live in src/build/WmuxSteps.zig (ADR-1.8).
+    const wmux = try WmuxSteps.init(b, &config, .{ .test_filters = test_filters });
+    wmux.addImports(exe.exe.root_module);
 
     // Ghostty docs
     const docs = try buildpkg.GhosttyDocs.init(b, &deps);
@@ -179,6 +185,7 @@ pub fn build(b: *std.Build) !void {
             exe.install();
             resources.install();
             if (i18n) |v| v.install();
+            wmux.install();
         }
     } else if (!config.emit_lib_vt) {
         // The macOS Ghostty Library
@@ -305,6 +312,7 @@ pub fn build(b: *std.Build) !void {
                 &deps,
             );
         };
+        wmux.addImports(valgrind_exe.exe.root_module);
 
         const run_cmd = b.addSystemCommand(&.{
             "valgrind",
@@ -354,6 +362,7 @@ pub fn build(b: *std.Build) !void {
         });
         if (config.emit_test_exe) b.installArtifact(test_exe);
         _ = try deps.add(test_exe);
+        wmux.addImports(test_exe.root_module);
 
         // Verify our internal libghostty header.
         const ghostty_h = b.addTranslateC(.{

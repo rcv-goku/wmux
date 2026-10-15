@@ -28,6 +28,9 @@ Makefile text eol=lf
 # Text data files - always LF (embedded in Zig, parsed with \n split)
 *.txt text eol=lf
 
+# sh launchers installed as cli\cmux and cli\wmux (Git Bash, WSL) - always LF
+src/wmux_cli/scripts/* text eol=lf
+
 # Windows resource files - preserve as-is (native Windows tooling)
 *.rc -text
 *.manifest -text
@@ -38,6 +41,19 @@ Makefile text eol=lf
 *.icns binary
 *.ttf binary
 *.otf binary
+
+#--------------------------------------------------------------------
+# wmux registries and shared-appendable files (ADR-1.7): one entry per
+# line, sorted; union merges keep every branch's added lines
+#--------------------------------------------------------------------
+src/apprt/win32/features/ext.zig merge=union
+src/apprt/win32/features/manifest.zig merge=union
+src/apprt/win32/platform/win32.zig merge=union
+src/wmux_cli/agents/manifest.zig merge=union
+src/wmux_cli/commands/manifest.zig merge=union
+src/wmux_proto/actions_catalog.zig merge=union
+src/wmux_proto/events_catalog.zig merge=union
+src/wmux_proto/settings/specs_manifest.zig merge=union
 
 #--------------------------------------------------------------------
 # Linguist

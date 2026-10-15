@@ -1,0 +1,11 @@
+#!/bin/sh
+# wmux launcher for POSIX shells (Git Bash, MSYS2, WSL): runs the sibling
+# cmux.exe. WMUX_ARGV0 carries the invoked name (ADR-4.1); WSLENV forwards
+# it to the Windows process when this runs inside WSL.
+WMUX_ARGV0=wmux
+case ":${WSLENV-}:" in
+*:WMUX_ARGV0:*) ;;
+*) WSLENV="${WSLENV:+$WSLENV:}WMUX_ARGV0" ;;
+esac
+export WMUX_ARGV0 WSLENV
+exec "$(dirname "$0")/cmux.exe" "$@"

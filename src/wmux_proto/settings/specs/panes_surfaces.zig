@@ -1,0 +1,4 @@
+//! Settings specs of feature `panes_surfaces` (ADR-5.2), filled by the WP that owns the
+//! feature (wave W2). The `Spec` type lives in ../spec.zig (W0-P2).
+
+test {}
