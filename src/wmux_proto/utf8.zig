@@ -61,6 +61,9 @@ pub const ToUtf16Error = error{ InvalidUtf8, TooLong, OutOfMemory };
 /// UTF-8 → UTF-16LE, failing with `TooLong` when the result would exceed
 /// `max_units` code units (terminator not counted).
 pub fn utf8ToUtf16LeAlloc(gpa: Allocator, s: []const u8, max_units: usize) ToUtf16Error![]u16 {
+    // calcUtf16LeLen panics (not errors) on a truncated trailing sequence, so
+    // validate first: this is the designated bounds-safe wrapper (G6).
+    if (!std.unicode.utf8ValidateSlice(s)) return error.InvalidUtf8;
     const n = std.unicode.calcUtf16LeLen(s) catch return error.InvalidUtf8;
     if (n > max_units) return error.TooLong;
     const out = try gpa.alloc(u16, n);
@@ -74,6 +77,8 @@ pub fn utf8ToUtf16LeAlloc(gpa: Allocator, s: []const u8, max_units: usize) ToUtf
 /// Embedded NULs are rejected (`InvalidUtf8`) since Win32 would truncate there.
 pub fn utf8ToUtf16LeAllocZ(gpa: Allocator, s: []const u8, max_units: usize) ToUtf16Error![:0]u16 {
     if (std.mem.indexOfScalar(u8, s, 0) != null) return error.InvalidUtf8;
+    // calcUtf16LeLen panics (not errors) on a truncated trailing sequence.
+    if (!std.unicode.utf8ValidateSlice(s)) return error.InvalidUtf8;
     const n = std.unicode.calcUtf16LeLen(s) catch return error.InvalidUtf8;
     if (n > max_units) return error.TooLong;
     const out = try gpa.allocSentinel(u16, n, 0);
@@ -301,6 +306,18 @@ test "unit: proto: utf8 to utf16 caps and errors" {
     const empty = try utf8ToUtf16LeAlloc(gpa, "", 0);
     defer gpa.free(empty);
     try testing.expectEqual(@as(usize, 0), empty.len);
+}
+
+test "unit: proto: utf8 to utf16 rejects truncated sequences without panic" {
+    const gpa = testing.allocator;
+    // Valid lead byte but the sequence runs past the end of the slice: the
+    // underlying std.unicode.calcUtf16LeLen panics on these, so the wrapper
+    // must validate first (G6).
+    const truncated = [_][]const u8{ "a\xe2\x82", "\xf0\x9f\x98", "\xc3", "ok\xe4\xbd", "\xf0" };
+    for (truncated) |s| {
+        try testing.expectError(error.InvalidUtf8, utf8ToUtf16LeAlloc(gpa, s, 64));
+        try testing.expectError(error.InvalidUtf8, utf8ToUtf16LeAllocZ(gpa, s, 64));
+    }
 }
 
 test "unit: proto: utf8 to utf16 nul terminated" {
