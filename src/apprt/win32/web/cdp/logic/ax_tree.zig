@@ -320,8 +320,10 @@ pub const content_roles = [_][]const u8{
     "listitem", "article", "region",   "main",         "navigation",
 };
 
+/// Exact names only: snapshot lines print the role verbatim, so an unknown
+/// page-supplied role (say "menuitem" followed by an escape sequence) must
+/// never pass. The list already holds every menuitem* role.
 pub fn isInteractiveRole(role: []const u8) bool {
-    if (std.mem.startsWith(u8, role, "menuitem")) return true;
     for (interactive_roles) |r| if (std.mem.eql(u8, r, role)) return true;
     return false;
 }

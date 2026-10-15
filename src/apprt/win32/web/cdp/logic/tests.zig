@@ -610,6 +610,32 @@ test "unit: browser: snapshot text excerpt is capped at 240 code points" {
     try testing.expectEqual(@as(usize, 240), try std.unicode.utf8CountCodepoints(inner));
 }
 
+test "unit: browser: snapshot prints only known roles" {
+    // Explicit roles come from page markup and are printed verbatim. A
+    // "menuitem" prefix used to be enough to pass, so a role carrying an
+    // escape sequence reached the terminal that prints the snapshot.
+    const j =
+        \\{"root":{"nodeType":9,"children":[{"nodeType":1,"localName":"body","children":[
+        \\ {"nodeType":1,"localName":"div","attributes":["role","menuitem\u001b]0;pwned\u0007\u001b[31m"],"children":[{"nodeType":3,"nodeValue":"x"}]},
+        \\ {"nodeType":1,"localName":"div","attributes":["role","menuitemfoo"],"children":[{"nodeType":3,"nodeValue":"y"}]},
+        \\ {"nodeType":1,"localName":"div","attributes":["role","MenuItemCheckbox","aria-checked","true"],"children":[{"nodeType":3,"nodeValue":"Wrap"}]},
+        \\ {"nodeType":1,"localName":"div","attributes":["role","menuitemradio"],"children":[{"nodeType":3,"nodeValue":"Left"}]}]}]}}
+    ;
+    var tree = try ax.parseDomDocument(gpa, j, .{});
+    defer tree.deinit();
+    var table = refs.RefTable.init(gpa);
+    defer table.deinit();
+    const text = try renderText(&tree, &table, .{ .cursor = true });
+    defer gpa.free(text);
+    try testing.expectEqualStrings(
+        \\- document ""
+        \\- menuitemcheckbox "Wrap" [ref=e1] [checked]
+        \\- menuitemradio "Left" [ref=e2]
+    , text);
+    for (text) |c| try testing.expect(c >= 0x20 or c == '\n');
+    try testing.expect(!ax.isInteractiveRole("menuitemfoo"));
+}
+
 test "unit: browser: snapshot names are sanitized, unicode-safe and capped at 120" {
     var long: std.ArrayList(u8) = .empty;
     defer long.deinit(gpa);
