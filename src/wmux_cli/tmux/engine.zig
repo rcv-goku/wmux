@@ -435,7 +435,7 @@ pub const Engine = struct {
             .kill_session => try self.cmdKillSession(cmd),
             .respawn_pane => {
                 const f = try self.resolve(a.get('t'), .pane);
-                const spawn = try self.spawnFrom(a);
+                const spawn = try self.spawnFrom(a, f);
                 try self.call("respawnPane", cmd.word, RespawnReq{ .pane = f.pane.?.id, .kill = a.has('k'), .spawn = spawn });
             },
             .list_panes => try self.cmdListPanes(cmd),
@@ -1000,7 +1000,14 @@ pub const Engine = struct {
 
     // -- spawning ------------------------------------------------------------
 
-    fn spawnFrom(self: *Engine, a: parse.Args) Error!Spawn {
+    /// `here` is the format context for `-c`, which tmux expands as a format
+    /// (`-c '#{pane_current_path}'`); an empty result means the host's
+    /// default directory.
+    fn spawnFrom(self: *Engine, a: parse.Args, here: Found) Error!Spawn {
+        const cwd: ?[]const u8 = if (a.get('c')) |c| blk: {
+            const dir = try self.expandFound(here, c);
+            break :blk if (dir.len > 0) dir else null;
+        } else null;
         const env = try a.getAll(self.arena, 'e');
         for (env) |kv| {
             const eq = std.mem.indexOfScalar(u8, kv, '=') orelse 0;
@@ -1014,7 +1021,7 @@ pub const Engine = struct {
             else if (std.mem.trim(u8, pos[0], " \t").len == 0) .none else .{ .shell = pos[0] },
             else => .{ .argv = pos },
         };
-        return .{ .cwd = a.get('c'), .env = env, .command = command };
+        return .{ .cwd = cwd, .env = env, .command = command };
     }
 
     // -- commands ------------------------------------------------------------
@@ -1035,7 +1042,9 @@ pub const Engine = struct {
                 return;
             }
         }
-        const spawn = try self.spawnFrom(a);
+        // No target: -c expands against the current pane, if any.
+        const here: Found = if (a.get('c') != null) (try self.current()) orelse .{} else .{};
+        const spawn = try self.spawnFrom(a, here);
         const id = try self.call("newSession", cmd.word, NewSessionReq{ .name = a.get('s'), .window_name = a.get('n'), .detached = a.has('d'), .spawn = spawn });
         _ = try self.recordPane(id);
         if (a.has('P')) try self.printForPane(id, fmt);
@@ -1045,7 +1054,7 @@ pub const Engine = struct {
         const a = cmd.args;
         // tmux: -t is a target window; the new window joins its session.
         const f = try self.resolve(a.get('t'), .window);
-        const spawn = try self.spawnFrom(a);
+        const spawn = try self.spawnFrom(a, f);
         const id = try self.call("newWindow", cmd.word, NewWindowReq{ .session = f.session.?.id, .name = a.get('n'), .detached = a.has('d'), .spawn = spawn });
         _ = try self.recordPane(id);
         if (a.has('P')) try self.printForPane(id, a.get('F') orelse default_formats.new_window);
@@ -1067,7 +1076,8 @@ pub const Engine = struct {
         else
             (if (a.has('b')) .up else .down);
         var size = try self.sizeArg(a);
-        const spawn = try self.spawnFrom(a);
+        // Formats in -c see the pane as targeted, before placement moves it.
+        const spawn = try self.spawnFrom(a, f);
 
         const ws = try self.workspaceKey(window);
         const Placement = enum { none, column, seed };
@@ -1629,18 +1639,19 @@ pub const Engine = struct {
 
     fn cmdIfShell(self: *Engine, cmd: parse.Command, depth: usize) Error!void {
         const a = cmd.args;
-        const cond_src = a.positionals[0];
+        // tmux expands the condition as a format in both modes: with -F it
+        // is the answer, otherwise the shell command to run.
+        const f: Found = if (a.get('t') == null and (try self.current()) == null) .{} else try self.resolve(a.get('t'), .pane);
+        const cond = try self.expandFound(f, a.positionals[0]);
         var ok: bool = undefined;
         if (a.has('F')) {
-            const f: Found = if (a.get('t') == null and (try self.current()) == null) .{} else try self.resolve(a.get('t'), .pane);
-            ok = format.truthy(try self.expandFound(f, cond_src));
+            ok = format.truthy(cond);
         } else {
             const cwd: ?[]const u8 = blk: {
-                const f = (try self.current()) orelse break :blk null;
                 const p = f.pane orelse break :blk null;
                 break :blk if (p.current_path.len > 0) p.current_path else null;
             };
-            ok = (try self.call("runShell", cmd.word, ShellReq{ .command = cond_src, .cwd = cwd })) == 0;
+            ok = (try self.call("runShell", cmd.word, ShellReq{ .command = cond, .cwd = cwd })) == 0;
         }
         const branch: ?[]const u8 = if (ok) a.positionals[1] else if (a.positionals.len > 2) a.positionals[2] else null;
         if (branch) |b| try self.runString(b, depth + 1);

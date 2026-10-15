@@ -1182,6 +1182,27 @@ test "unit: tmux: find-window matches names, titles and content" {
     try h.expectLog("selectWindow @2\nselectWindow @3\ncapture %1 start=none join=false\nselectWindow @1\n");
 }
 
+test "unit: tmux: -c and if-shell commands expand formats as in tmux" {
+    const h = try Harness.create();
+    defer h.destroy();
+    h.eng.options.main_vertical_placement = false;
+    try h.expect(&.{ "split-window", "-d", "-c", "#{pane_current_path}/sub" }, 0, "", "");
+    try h.expect(&.{ "new-window", "-d", "-c", "#{pane_current_path}" }, 0, "", "");
+    try h.expect(&.{ "respawn-pane", "-t", "%2", "-c", "#{nosuch}" }, 0, "", ""); // empty: default
+    try h.expect(&.{ "new-session", "-d", "-c", "C:\\work #{session_name}" }, 0, "", "");
+    try h.expect(&.{ "if-shell", "test #{pane_active} = 1", "display -p yes", "display -p no" }, 0, "yes\n", "");
+    try h.expect(&.{ "if-shell", "-t", "%2", "test #{pane_id}", "display -p yes" }, 0, "yes\n", "");
+    try h.expectLog(
+        \\split window=@1 target=%1 dir=down size=- detached=true cwd=/home/me/proj/sub env= cmd=none
+        \\newWindow session=$0 name=- detached=true cwd=/home/me/proj env= cmd=none
+        \\respawn %2 kill=false cwd=- env= cmd=none
+        \\newSession name=- window=- detached=true cwd=C:\work main env= cmd=none
+        \\shell [test 1 = 1] cwd=/home/me/proj
+        \\shell [test %2] cwd=/home/me/proj
+        \\
+    );
+}
+
 test "unit: tmux: if-shell with formats and shell exit codes" {
     const h = try Harness.create();
     defer h.destroy();
