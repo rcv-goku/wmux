@@ -183,10 +183,14 @@ fn skipEscape(text: []const u8, i: usize) usize {
         '[' => skipCsi(text, i + 1),
         ']', 'P', 'X', '^', '_' => skipString(text, i + 1),
         else => blk: {
-            // nF: intermediates 0x20-0x2F then one final byte.
+            // Intermediates 0x20-0x2F, then a final byte 0x30-0x7E. Any
+            // other byte (a control, ESC, DEL, a UTF-8 lead byte) cannot end
+            // the sequence: drop ESC and the intermediates and resume at it,
+            // so line breaks and multi-byte characters survive.
             var j = i;
             while (j < text.len and text[j] >= 0x20 and text[j] <= 0x2f) j += 1;
-            break :blk @min(j + 1, text.len);
+            if (j < text.len and text[j] >= 0x30 and text[j] <= 0x7e) j += 1;
+            break :blk j;
         },
     };
 }
@@ -325,10 +329,16 @@ test "unit: session: scrollback control sequences are stripped" {
         .{ "trailing\x1b", "trailing" },
         .{ "unterminated \x1b]0;never ends", "unterminated " },
         .{ "csi broken \x1b[12\nnext", "csi broken \nnext" },
+        // A stray ESC goes alone: what follows is not swallowed.
+        .{ "a\x1b日b", "a日b" },
+        .{ "line1\x1b\nline2", "line1\nline2" },
+        .{ "x\x1b(\r\nz", "x\r\nz" },
+        .{ "\x1b\x1b[31mred", "red" },
     };
     for (cases) |c| {
         const out = try stripControlSequences(testing.allocator, c[0]);
         defer testing.allocator.free(out);
         try testing.expectEqualStrings(c[1], out);
+        try testing.expect(std.unicode.utf8ValidateSlice(out));
     }
 }
