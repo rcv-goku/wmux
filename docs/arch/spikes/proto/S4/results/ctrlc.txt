@@ -1,0 +1,724 @@
+==== T1 no wrapper; child handler
+HARNESS cmd="<R>\bin\child.exe" handler 8000
+HARNESS root pid=31684
+HARNESS t=281 armed (saw "CHILDPID=")
+HARNESS t=984 wrote 0x03
+HARNESS t=1078 root exited code=42 (0x2A)
+HARNESS snapshot t=1781
+HARNESS   root alive=no
+HARNESS   child pid=31684 alive=no exitcode=42 (0x2A)
+HARNESS conpty requested win32-input-mode (CSI ?9001h): yes
+--- pty output (VT stripped) ---
+  | CHILDPID=31684 mode=handler
+  | CHILD got ctrl event 0
+--- end ---
+
+
+==== T2 wrapper handler; child handler
+HARNESS cmd="<R>\shims\wrap\claude.exe" handler 8000
+HARNESS root pid=40240
+HARNESS t=297 armed (saw "CHILDPID=")
+HARNESS t=1000 wrote 0x03
+HARNESS t=1078 root exited code=42 (0x2A)
+HARNESS snapshot t=1782
+HARNESS   root alive=no
+HARNESS   wrapper-child pid=928 alive=no exitcode=42 (0x2A)
+HARNESS conpty requested win32-input-mode (CSI ?9001h): yes
+--- pty output (VT stripped) ---
+  | WRAPPER resolved in 41 us
+  | WRAPPER self=<R>\shims\wrap\claude.exe
+  | WRAPPER real=<R>\bin\child.exe kind=exe
+  | WRAPPER app=<R>\bin\child.exe
+  | WRAPPER cmdline="<R>\bin\child.exe" handler 8000
+  | WRAPPER spawned pid=928 in 93 ms; in wrapper job=1
+  | CHILDPID=928 mode=handler
+  | WRAPPER got ctrl event 0
+  | CHILD got ctrl event 0
+  | WRAPPER child exit code 42 (0x2A)
+--- end ---
+
+
+==== T3 wrapper SetConsoleCtrlHandler(NULL,TRUE) BEFORE CreateProcess; child handler
+HARNESS cmd="<R>\shims\wrap\claude.exe" handler 8000
+HARNESS root pid=43188
+HARNESS t=437 armed (saw "CHILDPID=")
+HARNESS t=1141 wrote 0x03
+HARNESS t=8594 root exited code=7 (0x7)
+HARNESS snapshot t=9312
+HARNESS   root alive=no
+HARNESS   wrapper-child pid=31888 alive=no exitcode=7 (0x7)
+HARNESS conpty requested win32-input-mode (CSI ?9001h): yes
+--- pty output (VT stripped) ---
+  | WRAPPER resolved in 35 us
+  | WRAPPER self=<R>\shims\wrap\claude.exe
+  | WRAPPER real=<R>\bin\child.exe kind=exe
+  | WRAPPER app=<R>\bin\child.exe
+  | WRAPPER cmdline="<R>\bin\child.exe" handler 8000
+  | WRAPPER spawned pid=31888 in 110 ms; in wrapper job=1
+  | CHILDPID=31888 mode=handler
+  | CHILD timeout (no exit via ctrl event)
+  | WRAPPER child exit code 7 (0x7)
+--- end ---
+
+
+==== T4 wrapper SetConsoleCtrlHandler(NULL,TRUE) AFTER CreateProcess; child handler
+HARNESS cmd="<R>\shims\wrap\claude.exe" handler 8000
+HARNESS root pid=14272
+HARNESS t=609 armed (saw "CHILDPID=")
+HARNESS t=1312 wrote 0x03
+HARNESS t=1453 root exited code=42 (0x2A)
+HARNESS snapshot t=2156
+HARNESS   root alive=no
+HARNESS   wrapper-child pid=42508 alive=no exitcode=42 (0x2A)
+HARNESS conpty requested win32-input-mode (CSI ?9001h): yes
+--- pty output (VT stripped) ---
+  | WRAPPER resolved in 26 us
+  | WRAPPER self=<R>\shims\wrap\claude.exe
+  | WRAPPER real=<R>\bin\child.exe kind=exe
+  | WRAPPER app=<R>\bin\child.exe
+  | WRAPPER cmdline="<R>\bin\child.exe" handler 8000
+  | WRAPPER spawned pid=42508 in 93 ms; in wrapper job=1
+  | CHILDPID=42508 mode=handler
+  | CHILD got ctrl event 0
+  | WRAPPER child exit code 42 (0x2A)
+--- end ---
+
+
+==== T5a wrapper no ctrl handling; child handles ^C and keeps running
+HARNESS cmd="<R>\shims\wrap\claude.exe" handler-continue 4000
+HARNESS root pid=35180
+HARNESS t=859 armed (saw "CHILDPID=")
+HARNESS t=1563 wrote 0x03
+HARNESS t=1609 root exited code=3221225786 (0xC000013A)
+HARNESS snapshot t=2359
+HARNESS   root alive=no
+HARNESS   wrapper-child pid=42496 alive=no exitcode=0 (0x0)
+HARNESS conpty requested win32-input-mode (CSI ?9001h): yes
+--- pty output (VT stripped) ---
+  | WRAPPER resolved in 50 us
+  | WRAPPER self=<R>\shims\wrap\claude.exe
+  | WRAPPER real=<R>\bin\child.exe kind=exe
+  | WRAPPER app=<R>\bin\child.exe
+  | WRAPPER cmdline="<R>\bin\child.exe" handler-continue 4000
+  | WRAPPER spawned pid=42496 in 156 ms; in wrapper job=1
+  | CHILDPID=42496 mode=handler-continue
+--- end ---
+
+
+==== T5b wrapper handler; child handles ^C and keeps running
+HARNESS cmd="<R>\shims\wrap\claude.exe" handler-continue 4000
+HARNESS root pid=26552
+HARNESS t=500 armed (saw "CHILDPID=")
+HARNESS t=1203 wrote 0x03
+HARNESS t=4563 root exited code=9 (0x9)
+HARNESS snapshot t=5266
+HARNESS   root alive=no
+HARNESS   wrapper-child pid=42528 alive=no exitcode=9 (0x9)
+HARNESS conpty requested win32-input-mode (CSI ?9001h): yes
+--- pty output (VT stripped) ---
+  | WRAPPER resolved in 27 us
+  | WRAPPER self=<R>\shims\wrap\claude.exe
+  | WRAPPER real=<R>\bin\child.exe kind=exe
+  | WRAPPER app=<R>\bin\child.exe
+  | WRAPPER cmdline="<R>\bin\child.exe" handler-continue 4000
+  | WRAPPER spawned pid=42528 in 94 ms; in wrapper job=1
+  | CHILDPID=42528 mode=handler-continue
+  | WRAPPER got ctrl event 0
+  | CHILD got ctrl event 0
+  | CHILD timeout (no exit via ctrl event)
+  | WRAPPER child exit code 9 (0x9)
+--- end ---
+
+
+==== T6 wrapper handler; child default ^C (dies)
+HARNESS cmd="<R>\shims\wrap\claude.exe" sleep 8000
+HARNESS root pid=33748
+HARNESS t=922 armed (saw "CHILDPID=")
+HARNESS t=1641 wrote 0x03
+HARNESS t=1688 root exited code=3221225786 (0xC000013A)
+HARNESS snapshot t=2406
+HARNESS   root alive=no
+HARNESS   wrapper-child pid=40044 alive=no exitcode=3221225786 (0xC000013A)
+HARNESS conpty requested win32-input-mode (CSI ?9001h): yes
+--- pty output (VT stripped) ---
+  | WRAPPER resolved in 37 us
+  | WRAPPER self=<R>\shims\wrap\claude.exe
+  | WRAPPER real=<R>\bin\child.exe kind=exe
+  | WRAPPER app=<R>\bin\child.exe
+  | WRAPPER cmdline="<R>\bin\child.exe" sleep 8000
+  | WRAPPER spawned pid=40044 in 140 ms; in wrapper job=1
+  | CHILDPID=40044 mode=sleep
+  | WRAPPER got ctrl event 0
+  | WRAPPER child exit code 3221225786 (0xC000013A)
+--- end ---
+
+
+==== T7 wrapper handler; child raw console mode (TUI)
+HARNESS cmd="<R>\shims\wrap\claude.exe" raw 8000
+HARNESS root pid=41464
+HARNESS t=297 armed (saw "CHILDPID=")
+HARNESS t=1000 wrote 0x03
+HARNESS t=1047 root exited code=43 (0x2B)
+HARNESS snapshot t=1750
+HARNESS   root alive=no
+HARNESS   wrapper-child pid=23096 alive=no exitcode=43 (0x2B)
+HARNESS conpty requested win32-input-mode (CSI ?9001h): yes
+--- pty output (VT stripped) ---
+  | WRAPPER resolved in 42 us
+  | WRAPPER self=<R>\shims\wrap\claude.exe
+  | WRAPPER real=<R>\bin\child.exe kind=exe
+  | WRAPPER app=<R>\bin\child.exe
+  | WRAPPER cmdline="<R>\bin\child.exe" raw 8000
+  | WRAPPER spawned pid=23096 in 79 ms; in wrapper job=1
+  | CHILDPID=23096 mode=raw
+  | CHILD raw mode set (old=0x1f7)
+  | CHILD raw got 0x03 key event (no CTRL_C_EVENT)
+  | WRAPPER child exit code 43 (0x2B)
+--- end ---
+
+
+==== T8a TerminateProcess(wrapper); job KILL_ON_JOB_CLOSE
+HARNESS cmd="<R>\shims\wrap\claude.exe" grandchild 15000
+HARNESS root pid=36660
+HARNESS t=578 armed (saw "GRANDCHILDPID=")
+HARNESS t=1078 TerminateProcess(root)
+HARNESS t=1094 root exited code=57005 (0xDEAD)
+HARNESS snapshot t=2594
+HARNESS   root alive=no
+HARNESS   wrapper-child pid=38376 alive=no exitcode=0 (0x0)
+HARNESS   grandchild pid=20340 alive=no exitcode=0 (0x0)
+HARNESS conpty requested win32-input-mode (CSI ?9001h): yes
+--- pty output (VT stripped) ---
+  | WRAPPER resolved in 27 us
+  | WRAPPER self=<R>\shims\wrap\claude.exe
+  | WRAPPER real=<R>\bin\child.exe kind=exe
+  | WRAPPER app=<R>\bin\child.exe
+  | WRAPPER cmdline="<R>\bin\child.exe" grandchild 15000
+  | WRAPPER spawned pid=38376 in 172 ms; in wrapper job=1
+  | CHILDPID=38376 mode=grandchild
+  | GRANDCHILDPID=20340
+  | CHILDPID=20340 mode=sleep
+--- end ---
+
+
+==== T8b TerminateProcess(wrapper); job KILL_ON_JOB_CLOSE|SILENT_BREAKAWAY_OK
+HARNESS cmd="<R>\shims\wrap\claude.exe" grandchild 15000
+HARNESS root pid=40968
+HARNESS t=781 armed (saw "GRANDCHILDPID=")
+HARNESS t=1281 TerminateProcess(root)
+HARNESS t=1328 root exited code=57005 (0xDEAD)
+HARNESS snapshot t=2828
+HARNESS   root alive=no
+HARNESS   wrapper-child pid=29976 alive=no exitcode=0 (0x0)
+HARNESS   grandchild pid=39920 alive=yes exitcode=259 (0x103)
+HARNESS cleanup: killed leftover grandchild pid=39920
+HARNESS conpty requested win32-input-mode (CSI ?9001h): yes
+--- pty output (VT stripped) ---
+  | WRAPPER resolved in 43 us
+  | WRAPPER self=<R>\shims\wrap\claude.exe
+  | WRAPPER real=<R>\bin\child.exe kind=exe
+  | WRAPPER app=<R>\bin\child.exe
+  | WRAPPER cmdline="<R>\bin\child.exe" grandchild 15000
+  | WRAPPER spawned pid=29976 in 140 ms; in wrapper job=1
+  | CHILDPID=29976 mode=grandchild
+  | GRANDCHILDPID=39920
+  | CHILDPID=39920 mode=sleep
+--- end ---
+
+
+==== T8c TerminateProcess(wrapper); NO job (control)
+HARNESS cmd="<R>\shims\wrap\claude.exe" grandchild 15000
+HARNESS root pid=32268
+HARNESS t=750 armed (saw "GRANDCHILDPID=")
+HARNESS t=1250 TerminateProcess(root)
+HARNESS t=1266 root exited code=57005 (0xDEAD)
+HARNESS snapshot t=2766
+HARNESS   root alive=no
+HARNESS   wrapper-child pid=43632 alive=yes exitcode=259 (0x103)
+HARNESS   grandchild pid=13632 alive=yes exitcode=259 (0x103)
+HARNESS cleanup: killed leftover wrapper-child pid=43632
+HARNESS cleanup: killed leftover grandchild pid=13632
+HARNESS conpty requested win32-input-mode (CSI ?9001h): yes
+--- pty output (VT stripped) ---
+  | WRAPPER resolved in 42 us
+  | WRAPPER self=<R>\shims\wrap\claude.exe
+  | WRAPPER real=<R>\bin\child.exe kind=exe
+  | WRAPPER app=<R>\bin\child.exe
+  | WRAPPER cmdline="<R>\bin\child.exe" grandchild 15000
+  | WRAPPER spawned pid=43632 in 109 ms; in wrapper job=0
+  | CHILDPID=43632 mode=grandchild
+  | GRANDCHILDPID=13632
+  | CHILDPID=13632 mode=sleep
+--- end ---
+
+
+==== T9 ClosePseudoConsole while wrapper+child run
+HARNESS cmd="<R>\shims\wrap\claude.exe" handler-continue 15000
+HARNESS root pid=37280
+HARNESS t=844 armed (saw "CHILDPID=")
+HARNESS t=1547 ClosePseudoConsole...
+HARNESS t=1547 ClosePseudoConsole returned
+HARNESS t=1625 root exited code=44 (0x2C)
+HARNESS snapshot t=3125
+HARNESS   root alive=no
+HARNESS   wrapper-child pid=37852 alive=no exitcode=44 (0x2C)
+HARNESS conpty requested win32-input-mode (CSI ?9001h): yes
+--- pty output (VT stripped) ---
+  | WRAPPER resolved in 34 us
+  | WRAPPER self=<R>\shims\wrap\claude.exe
+  | WRAPPER real=<R>\bin\child.exe kind=exe
+  | WRAPPER app=<R>\bin\child.exe
+  | WRAPPER cmdline="<R>\bin\child.exe" handler-continue 15000
+  | WRAPPER spawned pid=37852 in 203 ms; in wrapper job=1
+  | CHILDPID=37852 mode=handler-continue
+  | CHILD got ctrl event 2
+  | WRAPPER got ctrl event 2
+--- end ---
+
+
+==== T10a outer tab job (BREAKAWAY_OK) + wrapper job attr, kill
+HARNESS cmd="<R>\shims\wrap\claude.exe" grandchild 15000
+HARNESS root pid=37288
+HARNESS t=829 armed (saw "GRANDCHILDPID=")
+HARNESS snapshot t=1141
+HARNESS   root alive=yes in_outer_job=1
+HARNESS   wrapper-child pid=39940 alive=yes exitcode=259 (0x103) in_outer_job=1
+HARNESS   grandchild pid=43168 alive=yes exitcode=259 (0x103) in_outer_job=1
+HARNESS   outer job: assigned=3 listed=3 pids=37288 39940 43168 
+HARNESS t=1641 TerminateProcess(root)
+HARNESS t=1719 root exited code=57005 (0xDEAD)
+HARNESS snapshot t=3219
+HARNESS   root alive=no in_outer_job=1
+HARNESS   wrapper-child pid=39940 alive=no exitcode=0 (0x0) in_outer_job=1
+HARNESS   grandchild pid=43168 alive=no exitcode=0 (0x0) in_outer_job=1
+HARNESS   outer job: assigned=0 listed=0 pids=
+HARNESS conpty requested win32-input-mode (CSI ?9001h): yes
+--- pty output (VT stripped) ---
+  | WRAPPER resolved in 38 us
+  | WRAPPER self=<R>\shims\wrap\claude.exe
+  | WRAPPER real=<R>\bin\child.exe kind=exe
+  | WRAPPER app=<R>\bin\child.exe
+  | WRAPPER cmdline="<R>\bin\child.exe" grandchild 15000
+  | WRAPPER spawned pid=39940 in 78 ms; in wrapper job=1
+  | CHILDPID=39940 mode=grandchild
+  | GRANDCHILDPID=43168
+  | CHILDPID=43168 mode=sleep
+--- end ---
+
+
+==== T10b outer tab job + wrapper job attr, kill-silent
+HARNESS cmd="<R>\shims\wrap\claude.exe" grandchild 15000
+HARNESS root pid=43128
+HARNESS t=578 armed (saw "GRANDCHILDPID=")
+HARNESS snapshot t=890
+HARNESS   root alive=yes in_outer_job=1
+HARNESS   wrapper-child pid=38296 alive=yes exitcode=259 (0x103) in_outer_job=1
+HARNESS   grandchild pid=42856 alive=yes exitcode=259 (0x103) in_outer_job=1
+HARNESS   outer job: assigned=3 listed=3 pids=43128 42856 38296 
+HARNESS t=1390 TerminateProcess(root)
+HARNESS t=1406 root exited code=57005 (0xDEAD)
+HARNESS snapshot t=2906
+HARNESS   root alive=no in_outer_job=1
+HARNESS   wrapper-child pid=38296 alive=no exitcode=0 (0x0) in_outer_job=1
+HARNESS   grandchild pid=42856 alive=yes exitcode=259 (0x103) in_outer_job=1
+HARNESS   outer job: assigned=1 listed=1 pids=42856 
+HARNESS cleanup: killed leftover grandchild pid=42856
+HARNESS conpty requested win32-input-mode (CSI ?9001h): yes
+--- pty output (VT stripped) ---
+  | WRAPPER resolved in 38 us
+  | WRAPPER self=<R>\shims\wrap\claude.exe
+  | WRAPPER real=<R>\bin\child.exe kind=exe
+  | WRAPPER app=<R>\bin\child.exe
+  | WRAPPER cmdline="<R>\bin\child.exe" grandchild 15000
+  | WRAPPER spawned pid=38296 in 94 ms; in wrapper job=1
+  | CHILDPID=38296 mode=grandchild
+  | GRANDCHILDPID=42856
+  | CHILDPID=42856 mode=sleep
+--- end ---
+
+
+==== T10c outer tab job + wrapper job via CREATE_SUSPENDED+Assign
+HARNESS cmd="<R>\shims\wrap\claude.exe" grandchild 3000
+HARNESS root pid=41576
+HARNESS t=593 armed (saw "GRANDCHILDPID=")
+HARNESS snapshot t=906
+HARNESS   root alive=yes in_outer_job=1
+HARNESS   wrapper-child pid=928 alive=yes exitcode=259 (0x103) in_outer_job=1
+HARNESS   grandchild pid=26508 alive=yes exitcode=259 (0x103) in_outer_job=1
+HARNESS   outer job: assigned=3 listed=3 pids=41576 928 26508 
+HARNESS t=3656 root exited code=0 (0x0)
+HARNESS snapshot t=4359
+HARNESS   root alive=no in_outer_job=1
+HARNESS   wrapper-child pid=928 alive=no exitcode=0 (0x0) in_outer_job=1
+HARNESS   grandchild pid=26508 alive=no exitcode=0 (0x0) in_outer_job=1
+HARNESS   outer job: assigned=0 listed=0 pids=
+HARNESS conpty requested win32-input-mode (CSI ?9001h): yes
+--- pty output (VT stripped) ---
+  | WRAPPER resolved in 27 us
+  | WRAPPER self=<R>\shims\wrap\claude.exe
+  | WRAPPER real=<R>\bin\child.exe kind=exe
+  | WRAPPER app=<R>\bin\child.exe
+  | WRAPPER cmdline="<R>\bin\child.exe" grandchild 3000
+  | WRAPPER spawned pid=928 in 125 ms; in wrapper job=1
+  | CHILDPID=928 mode=grandchild
+  | GRANDCHILDPID=26508
+  | CHILDPID=26508 mode=sleep
+  | CHILD grandchild-parent done
+  | WRAPPER child exit code 0 (0x0)
+  | CHILD sleep done
+--- end ---
+
+
+==== T11a wrapper -> cmd.exe /c claude.cmd -> child default ^C
+HARNESS cmd="<R>\shims\wrap\claude.exe" sleep 8000
+HARNESS root pid=39352
+HARNESS t=735 armed (saw "CHILDPID=")
+HARNESS t=1438 wrote 0x03
+HARNESS t=3235 wrote 2 bytes
+HARNESS t=3344 root exited code=0 (0x0)
+HARNESS snapshot t=4047
+HARNESS   root alive=no
+HARNESS   wrapper-child pid=6452 alive=no exitcode=0 (0x0)
+HARNESS   child pid=40432 alive=no exitcode=3221225786 (0xC000013A)
+HARNESS conpty requested win32-input-mode (CSI ?9001h): yes
+--- pty output (VT stripped) ---
+  | WRAPPER resolved in 26 us
+  | WRAPPER self=<R>\shims\wrap\claude.exe
+  | WRAPPER real=<R>\ctrlc\claude.cmd kind=cmd
+  | WRAPPER app=C:\Windows\system32\cmd.exe
+  | WRAPPER cmdline="C:\Windows\system32\cmd.exe" /d /e:ON /v:OFF /s /c ""<R>\ctrlc\claude.cmd" "sleep" "8000""
+  | WRAPPER spawned pid=6452 in 31 ms; in wrapper job=1
+  | CHILDPID=40432 mode=sleep
+  | WRAPPER got ctrl event 0
+  | ^CTerminate batch job (Y/N)? n
+  | S4BATCH after-child errorlevel=-1073741510
+  | WRAPPER child exit code 0 (0x0)
+--- end ---
+
+
+==== T11b wrapper -> cmd.exe /c claude.cmd -> child swallows ^C
+HARNESS cmd="<R>\shims\wrap\claude.exe" handler-continue 3000
+HARNESS root pid=8604
+HARNESS t=1156 armed (saw "CHILDPID=")
+HARNESS t=1875 wrote 0x03
+HARNESS t=5656 wrote 2 bytes
+HARNESS t=5844 root exited code=0 (0x0)
+HARNESS snapshot t=6578
+HARNESS   root alive=no
+HARNESS   wrapper-child pid=36084 alive=no exitcode=0 (0x0)
+HARNESS   child pid=39380 alive=no exitcode=9 (0x9)
+HARNESS conpty requested win32-input-mode (CSI ?9001h): yes
+--- pty output (VT stripped) ---
+  | WRAPPER resolved in 29 us
+  | WRAPPER self=<R>\shims\wrap\claude.exe
+  | WRAPPER real=<R>\ctrlc\claude.cmd kind=cmd
+  | WRAPPER app=C:\Windows\system32\cmd.exe
+  | WRAPPER cmdline="C:\Windows\system32\cmd.exe" /d /e:ON /v:OFF /s /c ""<R>\ctrlc\claude.cmd" "handler-continue" "3000""
+  | WRAPPER spawned pid=36084 in 62 ms; in wrapper job=1
+  | CHILDPID=39380 mode=handler-continue
+  | CHILD got ctrl event 0
+  | WRAPPER got ctrl event 0
+  | CHILD timeout (no exit via ctrl event)
+  | Terminate batch job (Y/N)? n
+  | S4BATCH after-child errorlevel=9
+  | WRAPPER child exit code 0 (0x0)
+--- end ---
+
+
+==== T11c wrapper -> cmd.exe /c claude.cmd -> child raw mode
+HARNESS cmd="<R>\shims\wrap\claude.exe" raw 3000
+HARNESS root pid=24640
+HARNESS t=578 armed (saw "CHILDPID=")
+HARNESS t=1281 wrote 0x03
+HARNESS t=1672 root exited code=0 (0x0)
+HARNESS snapshot t=2375
+HARNESS   root alive=no
+HARNESS   wrapper-child pid=22316 alive=no exitcode=0 (0x0)
+HARNESS   child pid=37352 alive=no exitcode=43 (0x2B)
+HARNESS conpty requested win32-input-mode (CSI ?9001h): yes
+--- pty output (VT stripped) ---
+  | WRAPPER resolved in 28 us
+  | WRAPPER self=<R>\shims\wrap\claude.exe
+  | WRAPPER real=<R>\ctrlc\claude.cmd kind=cmd
+  | WRAPPER app=C:\Windows\system32\cmd.exe
+  | WRAPPER cmdline="C:\Windows\system32\cmd.exe" /d /e:ON /v:OFF /s /c ""<R>\ctrlc\claude.cmd" "raw" "3000""
+  | WRAPPER spawned pid=22316 in 31 ms; in wrapper job=1
+  | CHILDPID=37352 mode=raw
+  | CHILD raw mode set (old=0x1f7)
+  | CHILD raw got 0x03 key event (no CTRL_C_EVENT)
+  | S4BATCH after-child errorlevel=43
+  | WRAPPER child exit code 0 (0x0)
+--- end ---
+
+
+==== T12 wrapper bypasses npm claude.cmd -> node.exe directly; child default ^C
+HARNESS cmd="<R>\shims\wrap\claude.exe" sleep 8000
+HARNESS root pid=29484
+HARNESS t=625 armed (saw "CHILDPID=")
+HARNESS t=1407 wrote 0x03
+HARNESS t=1578 root exited code=3221225786 (0xC000013A)
+HARNESS snapshot t=2313
+HARNESS   root alive=no
+HARNESS   wrapper-child pid=42932 alive=no exitcode=3221225786 (0xC000013A)
+HARNESS conpty requested win32-input-mode (CSI ?9001h): yes
+--- pty output (VT stripped) ---
+  | WRAPPER resolved in 42 us
+  | WRAPPER self=<R>\shims\wrap\claude.exe
+  | WRAPPER real=<R>\ctrlc-npm\claude.cmd kind=cmd
+  | WRAPPER app=<R>\ctrlc-npm\node.exe
+  | WRAPPER cmdline="<R>\ctrlc-npm\node.exe" "<R>\ctrlc-npm\node_modules\@anthropic-ai\claude-code\cli.js" sleep 8000
+  | WRAPPER spawned pid=42932 in 265 ms; in wrapper job=1
+  | CHILDPID=42932 mode=sleep
+  | WRAPPER got ctrl event 0
+  | WRAPPER child exit code 3221225786 (0xC000013A)
+--- end ---
+
+
+==== T13a agent spawns detached daemon, exits; wrapper job KILL_ON_JOB_CLOSE
+HARNESS cmd="<R>\shims\wrap\claude.exe" daemon 15000
+HARNESS root pid=5672
+HARNESS t=593 armed (saw "GRANDCHILDPID=")
+HARNESS t=1187 root exited code=0 (0x0)
+HARNESS snapshot t=2687
+HARNESS   root alive=no
+HARNESS   wrapper-child pid=42936 alive=no exitcode=0 (0x0)
+HARNESS   grandchild pid=43048 alive=no exitcode=0 (0x0)
+HARNESS conpty requested win32-input-mode (CSI ?9001h): yes
+--- pty output (VT stripped) ---
+  | WRAPPER resolved in 36 us
+  | WRAPPER self=<R>\shims\wrap\claude.exe
+  | WRAPPER real=<R>\bin\child.exe kind=exe
+  | WRAPPER app=<R>\bin\child.exe
+  | WRAPPER cmdline="<R>\bin\child.exe" daemon 15000
+  | WRAPPER spawned pid=42936 in 94 ms; in wrapper job=1
+  | CHILDPID=42936 mode=daemon
+  | GRANDCHILDPID=43048
+  | CHILD daemon parent exiting
+  | WRAPPER child exit code 0 (0x0)
+--- end ---
+
+
+==== T13b agent spawns detached daemon, exits; wrapper job KILL_ON_JOB_CLOSE|SILENT_BREAKAWAY_OK
+HARNESS cmd="<R>\shims\wrap\claude.exe" daemon 15000
+HARNESS root pid=36592
+HARNESS t=484 armed (saw "GRANDCHILDPID=")
+HARNESS t=1093 root exited code=0 (0x0)
+HARNESS snapshot t=2593
+HARNESS   root alive=no
+HARNESS   wrapper-child pid=5156 alive=no exitcode=0 (0x0)
+HARNESS   grandchild pid=34760 alive=yes exitcode=259 (0x103)
+HARNESS cleanup: killed leftover grandchild pid=34760
+HARNESS conpty requested win32-input-mode (CSI ?9001h): yes
+--- pty output (VT stripped) ---
+  | WRAPPER resolved in 43 us
+  | WRAPPER self=<R>\shims\wrap\claude.exe
+  | WRAPPER real=<R>\bin\child.exe kind=exe
+  | WRAPPER app=<R>\bin\child.exe
+  | WRAPPER cmdline="<R>\bin\child.exe" daemon 15000
+  | WRAPPER spawned pid=5156 in 94 ms; in wrapper job=1
+  | CHILDPID=5156 mode=daemon
+  | GRANDCHILDPID=34760
+  | CHILD daemon parent exiting
+  | WRAPPER child exit code 0 (0x0)
+--- end ---
+
+
+==== T13c agent spawns detached daemon, exits; no wrapper (control)
+HARNESS cmd="<R>\bin\child.exe" daemon 15000
+HARNESS root pid=33112
+HARNESS t=375 armed (saw "GRANDCHILDPID=")
+HARNESS t=890 root exited code=0 (0x0)
+HARNESS snapshot t=2390
+HARNESS   root alive=no
+HARNESS   child pid=33112 alive=no exitcode=0 (0x0)
+HARNESS   grandchild pid=42736 alive=yes exitcode=259 (0x103)
+HARNESS cleanup: killed leftover grandchild pid=42736
+HARNESS conpty requested win32-input-mode (CSI ?9001h): yes
+--- pty output (VT stripped) ---
+  | CHILDPID=33112 mode=daemon
+  | GRANDCHILDPID=42736
+  | CHILD daemon parent exiting
+--- end ---
+
+
+==== W1 win32-input-mode Ctrl+C; wrapper handler; child handler
+HARNESS cmd="<R>\shims\wrap\claude.exe" handler 8000
+HARNESS root pid=30480
+HARNESS t=485 armed (saw "CHILDPID=")
+HARNESS t=1188 wrote 64 bytes
+HARNESS t=1281 root exited code=42 (0x2A)
+HARNESS snapshot t=1985
+HARNESS   root alive=no
+HARNESS   wrapper-child pid=43884 alive=no exitcode=42 (0x2A)
+HARNESS conpty requested win32-input-mode (CSI ?9001h): yes
+--- pty output (VT stripped) ---
+  | WRAPPER resolved in 34 us
+  | WRAPPER self=<R>\shims\wrap\claude.exe
+  | WRAPPER real=<R>\bin\child.exe kind=exe
+  | WRAPPER app=<R>\bin\child.exe
+  | WRAPPER cmdline="<R>\bin\child.exe" handler 8000
+  | WRAPPER spawned pid=43884 in 78 ms; in wrapper job=1
+  | CHILDPID=43884 mode=handler
+  | CHILD got ctrl event 0
+  | WRAPPER got ctrl event 0
+  | WRAPPER child exit code 42 (0x2A)
+--- end ---
+
+
+==== W2 win32-input-mode Ctrl+C; wrapper handler; child default
+HARNESS cmd="<R>\shims\wrap\claude.exe" sleep 8000
+HARNESS root pid=18540
+HARNESS t=297 armed (saw "CHILDPID=")
+HARNESS t=1000 wrote 64 bytes
+HARNESS t=1188 root exited code=3221225786 (0xC000013A)
+HARNESS snapshot t=1891
+HARNESS   root alive=no
+HARNESS   wrapper-child pid=32464 alive=no exitcode=3221225786 (0xC000013A)
+HARNESS conpty requested win32-input-mode (CSI ?9001h): yes
+--- pty output (VT stripped) ---
+  | WRAPPER resolved in 25 us
+  | WRAPPER self=<R>\shims\wrap\claude.exe
+  | WRAPPER real=<R>\bin\child.exe kind=exe
+  | WRAPPER app=<R>\bin\child.exe
+  | WRAPPER cmdline="<R>\bin\child.exe" sleep 8000
+  | WRAPPER spawned pid=32464 in 78 ms; in wrapper job=1
+  | CHILDPID=32464 mode=sleep
+  | WRAPPER got ctrl event 0
+  | WRAPPER child exit code 3221225786 (0xC000013A)
+--- end ---
+
+
+==== W3 win32-input-mode Ctrl+C; wrapper handler; child raw (TUI)
+HARNESS cmd="<R>\shims\wrap\claude.exe" raw 8000
+HARNESS root pid=24640
+HARNESS t=453 armed (saw "CHILDPID=")
+HARNESS t=1156 wrote 64 bytes
+HARNESS t=1328 root exited code=43 (0x2B)
+HARNESS snapshot t=2031
+HARNESS   root alive=no
+HARNESS   wrapper-child pid=42368 alive=no exitcode=43 (0x2B)
+HARNESS conpty requested win32-input-mode (CSI ?9001h): yes
+--- pty output (VT stripped) ---
+  | WRAPPER resolved in 35 us
+  | WRAPPER self=<R>\shims\wrap\claude.exe
+  | WRAPPER real=<R>\bin\child.exe kind=exe
+  | WRAPPER app=<R>\bin\child.exe
+  | WRAPPER cmdline="<R>\bin\child.exe" raw 8000
+  | WRAPPER spawned pid=42368 in 94 ms; in wrapper job=1
+  | CHILDPID=42368 mode=raw
+  | CHILD raw mode set (old=0x1f7)
+  | CHILD raw got 0x03 key event (no CTRL_C_EVENT)
+  | WRAPPER child exit code 43 (0x2B)
+--- end ---
+
+
+==== G1 GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0); wrapper handler; child handler
+HARNESS cmd="<R>\shims\wrap\claude.exe" handler 8000
+HARNESS root pid=29900
+HARNESS t=406 armed (saw "CHILDPID=")
+HARNESS t=1109 GenerateConsoleCtrlEvent(CTRL_C_EVENT, group=0) ok=1 err=0
+HARNESS t=1109 root exited code=42 (0x2A)
+HARNESS snapshot t=1812
+HARNESS   root alive=no
+HARNESS   wrapper-child pid=38108 alive=no exitcode=42 (0x2A)
+HARNESS conpty requested win32-input-mode (CSI ?9001h): yes
+--- pty output (VT stripped) ---
+  | WRAPPER resolved in 28 us
+  | WRAPPER self=<R>\shims\wrap\claude.exe
+  | WRAPPER real=<R>\bin\child.exe kind=exe
+  | WRAPPER app=<R>\bin\child.exe
+  | WRAPPER cmdline="<R>\bin\child.exe" handler 8000
+  | WRAPPER spawned pid=38108 in 109 ms; in wrapper job=1
+  | CHILDPID=38108 mode=handler
+  | CHILD got ctrl event 0
+  | WRAPPER got ctrl event 0
+  | WRAPPER child exit code 42 (0x2A)
+--- end ---
+
+
+==== G2a root in NEW process group; CTRL_BREAK_EVENT to that group
+HARNESS cmd="<R>\shims\wrap\claude.exe" handler 8000
+HARNESS root pid=35904
+HARNESS t=297 armed (saw "CHILDPID=")
+HARNESS t=1000 GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, group=35904) ok=1 err=0
+HARNESS t=1000 root exited code=42 (0x2A)
+HARNESS snapshot t=1704
+HARNESS   root alive=no
+HARNESS   wrapper-child pid=38964 alive=no exitcode=42 (0x2A)
+HARNESS conpty requested win32-input-mode (CSI ?9001h): yes
+--- pty output (VT stripped) ---
+  | WRAPPER resolved in 43 us
+  | WRAPPER self=<R>\shims\wrap\claude.exe
+  | WRAPPER real=<R>\bin\child.exe kind=exe
+  | WRAPPER app=<R>\bin\child.exe
+  | WRAPPER cmdline="<R>\bin\child.exe" handler 8000
+  | WRAPPER spawned pid=38964 in 109 ms; in wrapper job=1
+  | CHILDPID=38964 mode=handler
+  | WRAPPER got ctrl event 1
+  | CHILD got ctrl event 1
+  | WRAPPER child exit code 42 (0x2A)
+--- end ---
+
+
+==== G2b root in NEW process group; CTRL_C_EVENT to that group
+HARNESS cmd="<R>\shims\wrap\claude.exe" handler 8000
+HARNESS root pid=39984
+HARNESS t=219 armed (saw "CHILDPID=")
+HARNESS t=922 GenerateConsoleCtrlEvent(CTRL_C_EVENT, group=39984) ok=1 err=0
+HARNESS t=8250 root exited code=7 (0x7)
+HARNESS snapshot t=8953
+HARNESS   root alive=no
+HARNESS   wrapper-child pid=27572 alive=no exitcode=7 (0x7)
+HARNESS conpty requested win32-input-mode (CSI ?9001h): yes
+--- pty output (VT stripped) ---
+  | WRAPPER resolved in 46 us
+  | WRAPPER self=<R>\shims\wrap\claude.exe
+  | WRAPPER real=<R>\bin\child.exe kind=exe
+  | WRAPPER app=<R>\bin\child.exe
+  | WRAPPER cmdline="<R>\bin\child.exe" handler 8000
+  | WRAPPER spawned pid=27572 in 93 ms; in wrapper job=1
+  | CHILDPID=27572 mode=handler
+  | CHILD timeout (no exit via ctrl event)
+  | WRAPPER child exit code 7 (0x7)
+--- end ---
+
+
+==== G2c root in NEW process group; typed ^C (0x03)
+HARNESS cmd="<R>\shims\wrap\claude.exe" handler 8000
+HARNESS root pid=11456
+HARNESS t=343 armed (saw "CHILDPID=")
+HARNESS t=1047 wrote 0x03
+HARNESS t=8390 root exited code=7 (0x7)
+HARNESS snapshot t=9093
+HARNESS   root alive=no
+HARNESS   wrapper-child pid=42796 alive=no exitcode=7 (0x7)
+HARNESS conpty requested win32-input-mode (CSI ?9001h): yes
+--- pty output (VT stripped) ---
+  | WRAPPER resolved in 27 us
+  | WRAPPER self=<R>\shims\wrap\claude.exe
+  | WRAPPER real=<R>\bin\child.exe kind=exe
+  | WRAPPER app=<R>\bin\child.exe
+  | WRAPPER cmdline="<R>\bin\child.exe" handler 8000
+  | WRAPPER spawned pid=42796 in 78 ms; in wrapper job=1
+  | CHILDPID=42796 mode=handler
+  | CHILD timeout (no exit via ctrl event)
+  | WRAPPER child exit code 7 (0x7)
+--- end ---
+
+
+==== G3 no wrapper; child in NEW process group; typed ^C (0x03)
+HARNESS cmd="<R>\bin\child.exe" handler 8000
+HARNESS root pid=30204
+HARNESS t=125 armed (saw "CHILDPID=")
+HARNESS t=828 wrote 0x03
+HARNESS t=8250 root exited code=7 (0x7)
+HARNESS snapshot t=8969
+HARNESS   root alive=no
+HARNESS   child pid=30204 alive=no exitcode=7 (0x7)
+HARNESS conpty requested win32-input-mode (CSI ?9001h): yes
+--- pty output (VT stripped) ---
+  | CHILDPID=30204 mode=handler
+  | CHILD timeout (no exit via ctrl event)
+--- end ---
+
+

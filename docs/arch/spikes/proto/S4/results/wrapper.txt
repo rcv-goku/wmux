@@ -1,0 +1,415 @@
+==== E1 native :: cmd
+S4IDENT exe=<R>\native\claude.exe
+S4IDENT cmdline="<R>\native\claude.exe" a "b c" 
+S4IDENT argv[0]=<<R>\native\claude.exe>
+S4IDENT argv[1]=<a>
+S4IDENT argv[2]=<b c>
+S4IDENT cwd=<R>
+S4IDENT env S4_WRAPPED_BY=38524
+EXIT=42
+
+--- stderr ---
+WRAPPER skip own dir (string match): <R>\shims\wrap
+WRAPPER self=<R>\shims\wrap\claude.exe
+WRAPPER real=<R>\native\claude.exe kind=exe
+WRAPPER app=<R>\native\claude.exe
+WRAPPER cmdline="<R>\native\claude.exe" a "b c" 
+WRAPPER spawned pid=39244 in 156 ms; in wrapper job=1
+WRAPPER child exit code 42 (0x2A)
+
+--- exit 0 (1301 ms)
+==== E1 native :: pwsh 7
+S4IDENT exe=<R>\native\claude.exe
+S4IDENT cmdline="<R>\native\claude.exe" a "b c"
+S4IDENT argv[0]=<<R>\native\claude.exe>
+S4IDENT argv[1]=<a>
+S4IDENT argv[2]=<b c>
+S4IDENT cwd=<R>
+S4IDENT env S4_WRAPPED_BY=42852
+EXIT=42
+
+--- stderr ---
+WRAPPER skip own dir (string match): <R>\shims\wrap
+WRAPPER self=<R>\shims\wrap\claude.exe
+WRAPPER real=<R>\native\claude.exe kind=exe
+WRAPPER app=<R>\native\claude.exe
+WRAPPER cmdline="<R>\native\claude.exe" a "b c"
+WRAPPER spawned pid=36004 in 203 ms; in wrapper job=1
+WRAPPER child exit code 42 (0x2A)
+
+--- exit 0 (4681 ms)
+==== E1 native :: ps 5.1
+S4IDENT exe=<R>\native\claude.exe
+S4IDENT cmdline="<R>\native\claude.exe" a "b c"
+S4IDENT argv[0]=<<R>\native\claude.exe>
+S4IDENT argv[1]=<a>
+S4IDENT argv[2]=<b c>
+S4IDENT cwd=<R>
+S4IDENT env S4_WRAPPED_BY=19500
+EXIT=42
+
+--- stderr ---
+WRAPPER skip own dir (string match): <R>\shims\wrap
+WRAPPER self=<R>\shims\wrap\claude.exe
+WRAPPER real=<R>\native\claude.exe kind=exe
+WRAPPER app=<R>\native\claude.exe
+WRAPPER cmdline="<R>\native\claude.exe" a "b c"
+WRAPPER spawned pid=26484 in 188 ms; in wrapper job=1
+WRAPPER child exit code 42 (0x2A)
+
+--- exit 0 (3753 ms)
+==== E1 native :: git bash
+S4IDENT exe=<R>\native\claude.exe
+S4IDENT cmdline="<R>\native\claude.exe" a "b c"
+S4IDENT argv[0]=<<R>\native\claude.exe>
+S4IDENT argv[1]=<a>
+S4IDENT argv[2]=<b c>
+S4IDENT cwd=<R>
+S4IDENT env S4_WRAPPED_BY=36132
+EXIT=42
+
+--- stderr ---
+WRAPPER skip own dir (string match): <R>\shims\wrap
+WRAPPER self=<R>\shims\wrap\claude.exe
+WRAPPER real=<R>\native\claude.exe kind=exe
+WRAPPER app=<R>\native\claude.exe
+WRAPPER cmdline="<R>\native\claude.exe" a "b c"
+WRAPPER spawned pid=20072 in 343 ms; in wrapper job=1
+WRAPPER child exit code 42 (0x2A)
+
+--- exit 0 (2224 ms)
+==== E2 npm (bypass) :: cmd
+S4IDENT exe=<R>\npm\node.exe
+S4IDENT cmdline="<R>\npm\node.exe" "<R>\npm\node_modules\@anthropic-ai\claude-code\cli.js" a "b c" 
+S4IDENT argv[0]=<<R>\npm\node.exe>
+S4IDENT argv[1]=<<R>\npm\node_modules\@anthropic-ai\claude-code\cli.js>
+S4IDENT argv[2]=<a>
+S4IDENT argv[3]=<b c>
+S4IDENT cwd=<R>
+S4IDENT env S4_WRAPPED_BY=41676
+EXIT=42
+
+--- stderr ---
+WRAPPER skip own dir (string match): <R>\shims\wrap
+WRAPPER self=<R>\shims\wrap\claude.exe
+WRAPPER real=<R>\npm\claude.cmd kind=cmd
+WRAPPER app=<R>\npm\node.exe
+WRAPPER cmdline="<R>\npm\node.exe" "<R>\npm\node_modules\@anthropic-ai\claude-code\cli.js" a "b c" 
+WRAPPER spawned pid=38984 in 390 ms; in wrapper job=1
+WRAPPER child exit code 42 (0x2A)
+
+--- exit 0 (1437 ms)
+==== E2 npm (bypass) :: pwsh 7
+S4IDENT exe=<R>\npm\node.exe
+S4IDENT cmdline="<R>\npm\node.exe" "<R>\npm\node_modules\@anthropic-ai\claude-code\cli.js" a "b c"
+S4IDENT argv[0]=<<R>\npm\node.exe>
+S4IDENT argv[1]=<<R>\npm\node_modules\@anthropic-ai\claude-code\cli.js>
+S4IDENT argv[2]=<a>
+S4IDENT argv[3]=<b c>
+S4IDENT cwd=<R>
+S4IDENT env S4_WRAPPED_BY=22732
+EXIT=42
+
+--- stderr ---
+WRAPPER skip own dir (string match): <R>\shims\wrap
+WRAPPER self=<R>\shims\wrap\claude.exe
+WRAPPER real=<R>\npm\claude.cmd kind=cmd
+WRAPPER app=<R>\npm\node.exe
+WRAPPER cmdline="<R>\npm\node.exe" "<R>\npm\node_modules\@anthropic-ai\claude-code\cli.js" a "b c"
+WRAPPER spawned pid=42872 in 79 ms; in wrapper job=1
+WRAPPER child exit code 42 (0x2A)
+
+--- exit 0 (6993 ms)
+==== E2 npm (bypass) :: ps 5.1
+S4IDENT exe=<R>\npm\node.exe
+S4IDENT cmdline="<R>\npm\node.exe" "<R>\npm\node_modules\@anthropic-ai\claude-code\cli.js" a "b c"
+S4IDENT argv[0]=<<R>\npm\node.exe>
+S4IDENT argv[1]=<<R>\npm\node_modules\@anthropic-ai\claude-code\cli.js>
+S4IDENT argv[2]=<a>
+S4IDENT argv[3]=<b c>
+S4IDENT cwd=<R>
+S4IDENT env S4_WRAPPED_BY=40792
+EXIT=42
+
+--- stderr ---
+WRAPPER skip own dir (string match): <R>\shims\wrap
+WRAPPER self=<R>\shims\wrap\claude.exe
+WRAPPER real=<R>\npm\claude.cmd kind=cmd
+WRAPPER app=<R>\npm\node.exe
+WRAPPER cmdline="<R>\npm\node.exe" "<R>\npm\node_modules\@anthropic-ai\claude-code\cli.js" a "b c"
+WRAPPER spawned pid=36492 in 78 ms; in wrapper job=1
+WRAPPER child exit code 42 (0x2A)
+
+--- exit 0 (3642 ms)
+==== E2 npm (bypass) :: git bash
+S4IDENT exe=<R>\npm\node.exe
+S4IDENT cmdline="<R>\npm\node.exe" "<R>\npm\node_modules\@anthropic-ai\claude-code\cli.js" a "b c"
+S4IDENT argv[0]=<<R>\npm\node.exe>
+S4IDENT argv[1]=<<R>\npm\node_modules\@anthropic-ai\claude-code\cli.js>
+S4IDENT argv[2]=<a>
+S4IDENT argv[3]=<b c>
+S4IDENT cwd=<R>
+S4IDENT env S4_WRAPPED_BY=42384
+EXIT=42
+
+--- stderr ---
+WRAPPER skip own dir (string match): <R>\shims\wrap
+WRAPPER self=<R>\shims\wrap\claude.exe
+WRAPPER real=<R>\npm\claude.cmd kind=cmd
+WRAPPER app=<R>\npm\node.exe
+WRAPPER cmdline="<R>\npm\node.exe" "<R>\npm\node_modules\@anthropic-ai\claude-code\cli.js" a "b c"
+WRAPPER spawned pid=39276 in 125 ms; in wrapper job=1
+WRAPPER child exit code 42 (0x2A)
+
+--- exit 0 (1545 ms)
+==== E3 native exe (verbatim tail)
+S4IDENT exe=<R>\native\claude.exe
+S4IDENT cmdline="<R>\native\claude.exe" plain "with space" "quote\"inside" "amp&echo INJECTED" pct%PATH%pct caret^x bang!x paren(x) trail\ "back\\\\\"slash" "" pipe|x lt<x>gt uni-é
+S4IDENT argv[0]=<<R>\native\claude.exe>
+S4IDENT argv[1]=<plain>
+S4IDENT argv[2]=<with space>
+S4IDENT argv[3]=<quote"inside>
+S4IDENT argv[4]=<amp&echo INJECTED>
+S4IDENT argv[5]=<pct%PATH%pct>
+S4IDENT argv[6]=<caret^x>
+S4IDENT argv[7]=<bang!x>
+S4IDENT argv[8]=<paren(x)>
+S4IDENT argv[9]=<trail\>
+S4IDENT argv[10]=<back\\"slash>
+S4IDENT argv[11]=<>
+S4IDENT argv[12]=<pipe|x>
+S4IDENT argv[13]=<lt<x>gt>
+S4IDENT argv[14]=<uni-é>
+S4IDENT cwd=<R>
+S4IDENT env S4_WRAPPED_BY=27708
+
+--- stderr ---
+WRAPPER skip own dir (string match): <R>\shims\wrap
+WRAPPER self=<R>\shims\wrap\claude.exe
+WRAPPER real=<R>\native\claude.exe kind=exe
+WRAPPER app=<R>\native\claude.exe
+WRAPPER cmdline="<R>\native\claude.exe" plain "with space" "quote\"inside" "amp&echo INJECTED" pct%PATH%pct caret^x bang!x paren(x) trail\ "back\\\\\"slash" "" pipe|x lt<x>gt uni-é
+WRAPPER spawned pid=43212 in 140 ms; in wrapper job=1
+WRAPPER child exit code 0 (0x0)
+
+--- exit 0 (901 ms)
+==== E3 npm .cmd bypass -> node.exe
+S4IDENT exe=<R>\npm\node.exe
+S4IDENT cmdline="<R>\npm\node.exe" "<R>\npm\node_modules\@anthropic-ai\claude-code\cli.js" plain "with space" "quote\"inside" "amp&echo INJECTED" pct%PATH%pct caret^x bang!x paren(x) trail\ "back\\\\\"slash" "" pipe|x lt<x>gt uni-é
+S4IDENT argv[0]=<<R>\npm\node.exe>
+S4IDENT argv[1]=<<R>\npm\node_modules\@anthropic-ai\claude-code\cli.js>
+S4IDENT argv[2]=<plain>
+S4IDENT argv[3]=<with space>
+S4IDENT argv[4]=<quote"inside>
+S4IDENT argv[5]=<amp&echo INJECTED>
+S4IDENT argv[6]=<pct%PATH%pct>
+S4IDENT argv[7]=<caret^x>
+S4IDENT argv[8]=<bang!x>
+S4IDENT argv[9]=<paren(x)>
+S4IDENT argv[10]=<trail\>
+S4IDENT argv[11]=<back\\"slash>
+S4IDENT argv[12]=<>
+S4IDENT argv[13]=<pipe|x>
+S4IDENT argv[14]=<lt<x>gt>
+S4IDENT argv[15]=<uni-é>
+S4IDENT cwd=<R>
+S4IDENT env S4_WRAPPED_BY=9428
+
+--- stderr ---
+WRAPPER skip own dir (string match): <R>\shims\wrap
+WRAPPER self=<R>\shims\wrap\claude.exe
+WRAPPER real=<R>\npm\claude.cmd kind=cmd
+WRAPPER app=<R>\npm\node.exe
+WRAPPER cmdline="<R>\npm\node.exe" "<R>\npm\node_modules\@anthropic-ai\claude-code\cli.js" plain "with space" "quote\"inside" "amp&echo INJECTED" pct%PATH%pct caret^x bang!x paren(x) trail\ "back\\\\\"slash" "" pipe|x lt<x>gt uni-é
+WRAPPER spawned pid=40336 in 204 ms; in wrapper job=1
+WRAPPER child exit code 0 (0x0)
+
+--- exit 0 (1341 ms)
+==== E3 npm .cmd via cmd.exe (safe quoting)
+S4NPM via=claude.cmd
+S4IDENT exe=<R>\npm\node.exe
+S4IDENT cmdline="<R>\npm\\node.exe"   "<R>\npm\\node_modules\@anthropic-ai\claude-code\cli.js" "plain" "with space" "quote""inside" "amp&echo INJECTED" "pct%PATH%pct" "caret^x" "bang!x" "paren(x)" "trail\\" "back\\\\""slash" "" "pipe|x" "lt<x>gt" "uni-é"
+S4IDENT argv[0]=<<R>\npm\\node.exe>
+S4IDENT argv[1]=<<R>\npm\\node_modules\@anthropic-ai\claude-code\cli.js>
+S4IDENT argv[2]=<plain>
+S4IDENT argv[3]=<with space>
+S4IDENT argv[4]=<quote"inside>
+S4IDENT argv[5]=<amp&echo INJECTED>
+S4IDENT argv[6]=<pct%PATH%pct>
+S4IDENT argv[7]=<caret^x>
+S4IDENT argv[8]=<bang!x>
+S4IDENT argv[9]=<paren(x)>
+S4IDENT argv[10]=<trail\>
+S4IDENT argv[11]=<back\\"slash>
+S4IDENT argv[12]=<>
+S4IDENT argv[13]=<pipe|x>
+S4IDENT argv[14]=<lt<x>gt>
+S4IDENT argv[15]=<uni-é>
+S4IDENT cwd=<R>
+S4IDENT env S4_WRAPPED_BY=24452
+
+--- stderr ---
+WRAPPER skip own dir (string match): <R>\shims\wrap
+WRAPPER self=<R>\shims\wrap\claude.exe
+WRAPPER real=<R>\npm\claude.cmd kind=cmd
+WRAPPER app=C:\Windows\system32\cmd.exe
+WRAPPER cmdline="C:\Windows\system32\cmd.exe" /d /e:ON /v:OFF /s /c ""<R>\npm\claude.cmd" "plain" "with space" "quote""inside" "amp&echo INJECTED" "pct%%cd:~,%PATH%%cd:~,%pct" "caret^x" "bang!x" "paren(x)" "trail\\" "back\\\\""slash" "" "pipe|x" "lt<x>gt" "uni-é""
+WRAPPER spawned pid=33760 in 31 ms; in wrapper job=1
+WRAPPER child exit code 0 (0x0)
+
+--- exit 0 (1455 ms)
+==== E3 npm .cmd via cmd.exe (raw tail, unsafe)
+S4NPM via=claude.cmd
+S4IDENT exe=<R>\npm\node.exe
+S4IDENT cmdline="<R>\npm\\node.exe"   "<R>\npm\\node_modules\@anthropic-ai\claude-code\cli.js" plain "with space" "quote\"inside" "amp
+S4IDENT argv[0]=<<R>\npm\\node.exe>
+S4IDENT argv[1]=<<R>\npm\\node_modules\@anthropic-ai\claude-code\cli.js>
+S4IDENT argv[2]=<plain>
+S4IDENT argv[3]=<with space>
+S4IDENT argv[4]=<quote"inside>
+S4IDENT argv[5]=<amp>
+S4IDENT cwd=<R>
+S4IDENT env S4_WRAPPED_BY=4224
+
+--- stderr ---
+WRAPPER skip own dir (string match): <R>\shims\wrap
+WRAPPER self=<R>\shims\wrap\claude.exe
+WRAPPER real=<R>\npm\claude.cmd kind=cmd
+WRAPPER app=C:\Windows\system32\cmd.exe
+WRAPPER cmdline="C:\Windows\system32\cmd.exe" /d /s /c ""<R>\npm\claude.cmd" plain "with space" "quote\"inside" "amp&echo INJECTED" pct%PATH%pct caret^x bang!x paren(x) trail\ "back\\\\\"slash" "" pipe|x lt<x>gt uni-é"
+WRAPPER spawned pid=38176 in 47 ms; in wrapper job=1
+The system cannot find the file specified.
+WRAPPER child exit code 255 (0xFF)
+
+--- exit 255 (2384 ms)
+==== E3 npm .ps1 via pwsh -File
+S4NPM via=claude.ps1
+S4IDENT exe=<R>\npm\node.exe
+S4IDENT cmdline="<R>\npm\node.exe" <R>\npm/node_modules/@anthropic-ai/claude-code/cli.js plain "with space" "quote\"inside" "amp&echo INJECTED" pct%PATH%pct caret^x bang!x paren(x) trail\ "back\\\\\"slash" "" pipe|x lt<x>gt uni-é
+S4IDENT argv[0]=<<R>\npm\node.exe>
+S4IDENT argv[1]=<<R>\npm/node_modules/@anthropic-ai/claude-code/cli.js>
+S4IDENT argv[2]=<plain>
+S4IDENT argv[3]=<with space>
+S4IDENT argv[4]=<quote"inside>
+S4IDENT argv[5]=<amp&echo INJECTED>
+S4IDENT argv[6]=<pct%PATH%pct>
+S4IDENT argv[7]=<caret^x>
+S4IDENT argv[8]=<bang!x>
+S4IDENT argv[9]=<paren(x)>
+S4IDENT argv[10]=<trail\>
+S4IDENT argv[11]=<back\\"slash>
+S4IDENT argv[12]=<>
+S4IDENT argv[13]=<pipe|x>
+S4IDENT argv[14]=<lt<x>gt>
+S4IDENT argv[15]=<uni-é>
+S4IDENT cwd=<R>
+S4IDENT env S4_WRAPPED_BY=42532
+
+--- stderr ---
+WRAPPER self=<R>\shims\wrap\claude.exe
+WRAPPER real=<R>\npm\claude.ps1 kind=ps1
+WRAPPER app=C:\Program Files\PowerShell\7\pwsh.exe
+WRAPPER cmdline="C:\Program Files\PowerShell\7\pwsh.exe" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "<R>\npm\claude.ps1" plain "with space" "quote\"inside" "amp&echo INJECTED" pct%PATH%pct caret^x bang!x paren(x) trail\ "back\\\\\"slash" "" pipe|x lt<x>gt uni-é
+WRAPPER spawned pid=22356 in 47 ms; in wrapper job=1
+WRAPPER child exit code 0 (0x0)
+
+--- exit 0 (12556 ms)
+==== E4 explicit real = the shim itself
+
+--- stderr ---
+WRAPPER self=<R>\shims\wrap\claude.exe
+WRAPPER real=<R>\shims\wrap\claude.exe kind=exe
+WRAPPER app=<R>\shims\wrap\claude.exe
+WRAPPER cmdline="<R>\shims\wrap\claude.exe" x
+WRAPPER spawned pid=22732 in 235 ms; in wrapper job=1
+WRAPPER self=<R>\shims\wrap\claude.exe
+WRAPPER real=<R>\shims\wrap\claude.exe kind=exe
+WRAPPER app=<R>\shims\wrap\claude.exe
+WRAPPER cmdline="<R>\shims\wrap\claude.exe" x
+WRAPPER spawned pid=18468 in 625 ms; in wrapper job=1
+claude: wrapper recursion detected (depth 2); refusing to relaunch
+WRAPPER child exit code 126 (0x7E)
+WRAPPER child exit code 126 (0x7E)
+
+--- exit 126 (3385 ms)
+==== E4 PATH has 8.3 alias of shim dir, string skip
+
+--- stderr ---
+WRAPPER skip own dir (string match): <R>\shims\wrap
+WRAPPER self=<R>\shims\wrap\claude.exe
+WRAPPER real=<R-8.3>\shims\wrap\claude.exe kind=exe
+WRAPPER app=<R-8.3>\shims\wrap\claude.exe
+WRAPPER cmdline="<R-8.3>\shims\wrap\claude.exe" x
+WRAPPER spawned pid=8684 in 344 ms; in wrapper job=1
+WRAPPER self=<R-8.3>\shims\wrap\claude.exe
+WRAPPER real=<R>\shims\wrap\claude.exe kind=exe
+WRAPPER app=<R>\shims\wrap\claude.exe
+WRAPPER cmdline="<R>\shims\wrap\claude.exe" x
+WRAPPER spawned pid=2036 in 78 ms; in wrapper job=1
+claude: wrapper recursion detected (depth 2); refusing to relaunch
+WRAPPER child exit code 126 (0x7E)
+WRAPPER child exit code 126 (0x7E)
+
+--- exit 126 (2194 ms)
+==== E4 PATH has 8.3 alias of shim dir, file-id skip
+S4IDENT exe=<R>\native\claude.exe
+S4IDENT cmdline="<R>\native\claude.exe" x
+S4IDENT argv[0]=<<R>\native\claude.exe>
+S4IDENT argv[1]=<x>
+S4IDENT cwd=<R>
+S4IDENT env S4_WRAPPED_BY=43300
+
+--- stderr ---
+WRAPPER skip own dir (string match): <R>\shims\wrap
+WRAPPER skip self (same file id): <R-8.3>\shims\wrap\claude.exe
+WRAPPER self=<R>\shims\wrap\claude.exe
+WRAPPER real=<R>\native\claude.exe kind=exe
+WRAPPER app=<R>\native\claude.exe
+WRAPPER cmdline="<R>\native\claude.exe" x
+WRAPPER spawned pid=28348 in 250 ms; in wrapper job=1
+WRAPPER child exit code 0 (0x0)
+
+--- exit 0 (2061 ms)
+==== E4 stale wrapper copy later on PATH
+
+--- stderr ---
+WRAPPER skip own dir (string match): <R>\shims\wrap
+WRAPPER self=<R>\shims\wrap\claude.exe
+WRAPPER real=<R>\shims\wrapcopy\claude.exe kind=exe
+WRAPPER app=<R>\shims\wrapcopy\claude.exe
+WRAPPER cmdline="<R>\shims\wrapcopy\claude.exe" x
+WRAPPER spawned pid=8840 in 141 ms; in wrapper job=1
+WRAPPER self=<R>\shims\wrapcopy\claude.exe
+WRAPPER real=<R>\shims\wrap\claude.exe kind=exe
+WRAPPER app=<R>\shims\wrap\claude.exe
+WRAPPER cmdline="<R>\shims\wrap\claude.exe" x
+WRAPPER spawned pid=43456 in 62 ms; in wrapper job=1
+claude: wrapper recursion detected (depth 2); refusing to relaunch
+WRAPPER child exit code 126 (0x7E)
+WRAPPER child exit code 126 (0x7E)
+
+--- exit 126 (1400 ms)
+==== E5 stdin/stdout handles=list
+S4IDENT exe=<R>\native\claude.exe
+S4IDENT cmdline="<R>\native\claude.exe" pipe-test
+S4IDENT argv[0]=<<R>\native\claude.exe>
+S4IDENT argv[1]=<pipe-test>
+S4IDENT cwd=<R>
+S4IDENT env S4_WRAPPED_BY=27716
+S4IDENT stdin bytes=16 head=<hello from pipe>
+
+--- stderr ---
+
+--- exit 0 (727 ms)
+==== E5 stdin/stdout handles=inherit
+S4IDENT exe=<R>\native\claude.exe
+S4IDENT cmdline="<R>\native\claude.exe" pipe-test
+S4IDENT argv[0]=<<R>\native\claude.exe>
+S4IDENT argv[1]=<pipe-test>
+S4IDENT cwd=<R>
+S4IDENT env S4_WRAPPED_BY=37248
+S4IDENT stdin bytes=16 head=<hello from pipe>
+
+--- stderr ---
+
+--- exit 0 (961 ms)

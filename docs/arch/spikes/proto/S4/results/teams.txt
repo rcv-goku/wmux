@@ -1,0 +1,143 @@
+==== T-A bash -c (structured argv)
+S4IDENT exe=<R>\native\claude.exe
+S4IDENT cmdline=<R>\native\claude.exe --agent-id alice@team-x --agent-name alice --team-name team-x --agent-color blue --parent-session-id 0b7c9a5e-1f2d-4c3b-9a8e-7f6d5c4b3a21
+S4IDENT argv[0]=<<R>\native\claude.exe>
+S4IDENT argv[1]=<--agent-id>
+S4IDENT argv[2]=<alice@team-x>
+S4IDENT argv[3]=<--agent-name>
+S4IDENT argv[4]=<alice>
+S4IDENT argv[5]=<--team-name>
+S4IDENT argv[6]=<team-x>
+S4IDENT argv[7]=<--agent-color>
+S4IDENT argv[8]=<blue>
+S4IDENT argv[9]=<--parent-session-id>
+S4IDENT argv[10]=<0b7c9a5e-1f2d-4c3b-9a8e-7f6d5c4b3a21>
+S4IDENT cwd=<R>\proj dir with spaces
+S4IDENT env CLAUDECODE=1
+S4IDENT env CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
+S4IDENT env S4_MARK=teammate
+
+--- stderr ---
+
+--- exit 0 (4267 ms)
+==== T-A bash -lc (structured argv)
+S4IDENT exe=<R>\native\claude.exe
+S4IDENT cmdline=<R>\native\claude.exe --agent-id alice@team-x --agent-name alice --team-name team-x --agent-color blue --parent-session-id 0b7c9a5e-1f2d-4c3b-9a8e-7f6d5c4b3a21
+S4IDENT argv[0]=<<R>\native\claude.exe>
+S4IDENT argv[1]=<--agent-id>
+S4IDENT argv[2]=<alice@team-x>
+S4IDENT argv[3]=<--agent-name>
+S4IDENT argv[4]=<alice>
+S4IDENT argv[5]=<--team-name>
+S4IDENT argv[6]=<team-x>
+S4IDENT argv[7]=<--agent-color>
+S4IDENT argv[8]=<blue>
+S4IDENT argv[9]=<--parent-session-id>
+S4IDENT argv[10]=<0b7c9a5e-1f2d-4c3b-9a8e-7f6d5c4b3a21>
+S4IDENT cwd=<R>\proj dir with spaces
+S4IDENT env CLAUDECODE=1
+S4IDENT env CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
+S4IDENT env S4_MARK=teammate
+
+--- stderr ---
+
+--- exit 0 (14390 ms)
+==== T-A cmd /c
+
+--- stderr ---
+The filename, directory name, or volume label syntax is incorrect.
+
+--- exit 1 (746 ms)
+==== T-A pwsh -c
+
+--- stderr ---
+env: The term 'env' is not recognized as a name of a cmdlet, function, script file, or executable program.
+Check the spelling of the name, or if a path was included, verify that the path is correct and try again.
+
+--- exit 1 (7587 ms)
+==== T-C teams first CreateProcess "tmux -V"
+S4IDENT exe=<R>\teams\tmux.exe
+S4IDENT cmdline=tmux -V
+S4IDENT argv[0]=<tmux>
+S4IDENT argv[1]=<-V>
+S4IDENT cwd=<R>
+SPAWNER child exit=0
+
+--- stderr ---
+
+--- exit 0 (1455 ms)
+==== T-C teams first cmd /c tmux -V
+S4IDENT exe=<R>\teams\tmux.exe
+S4IDENT cmdline=tmux  -V
+S4IDENT argv[0]=<tmux>
+S4IDENT argv[1]=<-V>
+S4IDENT cwd=<R>
+
+--- stderr ---
+
+--- exit 0 (1507 ms)
+==== T-C teams first pwsh tmux -V
+S4IDENT exe=<R>\teams\tmux.exe
+S4IDENT cmdline="<R>\teams\tmux.exe" -V
+S4IDENT argv[0]=<<R>\teams\tmux.exe>
+S4IDENT argv[1]=<-V>
+S4IDENT cwd=<R>
+
+--- stderr ---
+
+--- exit 0 (4197 ms)
+==== T-C teams first bash -c tmux -V
+S4IDENT exe=<R>\teams\tmux.exe
+S4IDENT cmdline=<R>\teams\tmux.exe -V
+S4IDENT argv[0]=<<R>\teams\tmux.exe>
+S4IDENT argv[1]=<-V>
+S4IDENT cwd=<R>
+
+--- stderr ---
+
+--- exit 0 (1237 ms)
+==== T-C tmuxlater first CreateProcess "tmux -V"
+S4IDENT exe=<R>\teams\tmux.exe
+S4IDENT cmdline=tmux -V
+S4IDENT argv[0]=<tmux>
+S4IDENT argv[1]=<-V>
+S4IDENT cwd=<R>
+SPAWNER child exit=0
+
+--- stderr ---
+
+--- exit 0 (605 ms)
+==== T-C tmuxlater first cmd /c tmux -V
+S4TMUX via=tmux.cmd -V
+
+--- stderr ---
+
+--- exit 0 (844 ms)
+==== T-C tmuxlater first pwsh tmux -V
+S4TMUX via=tmux.cmd -V
+
+--- stderr ---
+
+--- exit 0 (4936 ms)
+==== T-C tmuxlater first bash -c tmux -V
+S4TMUX via=tmux(sh) -V
+
+--- stderr ---
+
+--- exit 0 (2718 ms)
+==== T-E msys conversion
+S4IDENT exe=<R>\native\claude.exe
+S4IDENT cmdline=<R>\native\claude.exe C:/Users --settings=<USERPROFILE-8.3>/AppData/Local/Temp/x.json -p "C:/Program Files/Git/etc" C:/already/win %1 #{pane_id}
+S4IDENT argv[0]=<<R>\native\claude.exe>
+S4IDENT argv[1]=<C:/Users>
+S4IDENT argv[2]=<--settings=<USERPROFILE-8.3>/AppData/Local/Temp/x.json>
+S4IDENT argv[3]=<-p>
+S4IDENT argv[4]=<C:/Program Files/Git/etc>
+S4IDENT argv[5]=<C:/already/win>
+S4IDENT argv[6]=<%1>
+S4IDENT argv[7]=<#{pane_id}>
+S4IDENT cwd=<R>
+
+--- stderr ---
+
+--- exit 0 (1234 ms)
