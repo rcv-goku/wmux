@@ -1,5 +1,5 @@
 //! Legacy wmux-v1 named-pipe transport for agent-scriptable control of a
-//! running wmux instance (`\.\pipe\wmux-ipc-<pid>`). Two layers:
+//! running wmux instance (`\\.\pipe\wmux-ipc-<pid>`). Two layers:
 //!
 //!   (a) a thin Win32 named-pipe layer (extern decls + a security
 //!       descriptor restricting the pipe to the current user);

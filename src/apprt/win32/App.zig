@@ -1098,6 +1098,9 @@ test {
     _ = @import("features/workspaces/worktree.zig");
     _ = @import("features/status/log_ring.zig");
     _ = @import("features/notifications/legacy_ring.zig");
+    // Unreferenced until W1-7 replaces it; imported here so the file at
+    // least keeps parsing (an unimported file is never compiled).
+    _ = @import("features/session/legacy_scrollback.zig");
     _ = config_files;
     _ = app_tasks;
     _ = app_timers;

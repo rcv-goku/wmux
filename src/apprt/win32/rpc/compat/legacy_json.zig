@@ -4,7 +4,7 @@
 //! any target. The pipe transport lives in `rpc/server/legacy_pipe.zig`.
 //!
 //! Wire protocol: newline-delimited JSON over a message-type named pipe
-//! at \.\pipe\wmux-ipc-<pid>.
+//! at \\.\pipe\wmux-ipc-<pid>.
 //!
 //!   request:  {"id":1,"cmd":"open","args":{"url":"https://..."}}\n
 //!   response: {"id":1,"ok":true,"data":...}\n
