@@ -200,6 +200,20 @@ test "unit: browser: dom document parses tags, attrs, title and url" {
     try testing.expectEqualStrings("body", tree.get(tree.bodyIndex()).tag);
 }
 
+test "unit: browser: page url survives later allocations in the tree arena" {
+    // The url used to be copied into an arena the tree no longer tracked, so
+    // finishDom / annotateFromDom overwrote it.
+    const url = "https://example.test/a/fairly/long/path?with=query&and=\u{00e9}";
+    var dom = try ax.parseDomDocument(gpa, dom_login, .{ .url = url });
+    defer dom.deinit();
+    try testing.expectEqualStrings(url, dom.url);
+    var tree = try ax.parseAxTree(gpa, ax_login, .{ .url = url });
+    defer tree.deinit();
+    try tree.annotateFromDom(&dom);
+    try testing.expectEqualStrings(url, tree.url);
+    try testing.expectEqualStrings("Sign in", tree.title);
+}
+
 test "unit: browser: dom implicit roles" {
     const Case = struct { tag: []const u8, attrs: []const ax.Attr = &.{}, role: []const u8 };
     const cases = [_]Case{

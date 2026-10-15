@@ -375,9 +375,11 @@ pub fn normalizeAxRole(role: []const u8) []const u8 {
 /// Accepts `{"nodes":[…]}`, the CDP response `{"id":…,"result":{"nodes":[…]}}`
 /// or a bare `[…]` array of AXNode objects.
 pub fn parseAxTree(gpa: Allocator, json: []const u8, opts: ParseOptions) ParseError!Tree {
-    var arena = std.heap.ArenaAllocator.init(gpa);
-    errdefer arena.deinit();
-    const a = arena.allocator();
+    // Every allocation goes through `tree.arena`: copying an arena by value
+    // and then allocating through the old copy loses track of the memory.
+    var tree: Tree = .{ .arena = .init(gpa), .nodes = &.{}, .root = 0, .source = .ax };
+    errdefer tree.arena.deinit();
+    const a = tree.arena.allocator();
 
     const doc = try parseJson(gpa, a, json);
     const list = axNodeList(doc) orelse return error.MissingNodes;
@@ -475,14 +477,11 @@ pub fn parseAxTree(gpa: Allocator, json: []const u8, opts: ParseOptions) ParseEr
     }
     if (nodes[root].kind == .document) title = nodes[root].name;
 
-    return .{
-        .arena = arena,
-        .nodes = nodes,
-        .root = root,
-        .source = .ax,
-        .title = title,
-        .url = try a.dupe(u8, opts.url),
-    };
+    tree.nodes = nodes;
+    tree.root = root;
+    tree.title = title;
+    tree.url = try a.dupe(u8, opts.url);
+    return tree;
 }
 
 /// Values live in the tree arena; the scanner's nesting stack uses `gpa`
@@ -631,9 +630,10 @@ fn stringField(o: std.json.ObjectMap, key: []const u8) ?[]const u8 {
 /// `opacity<=0.01`, `input[type=hidden]`, closed `<details>` bodies and
 /// non-rendered tags are hidden.
 pub fn parseDomDocument(gpa: Allocator, json: []const u8, opts: ParseOptions) ParseError!Tree {
-    var arena = std.heap.ArenaAllocator.init(gpa);
-    errdefer arena.deinit();
-    const a = arena.allocator();
+    // All allocations go through `tree.arena` (see parseAxTree).
+    var tree: Tree = .{ .arena = .init(gpa), .nodes = &.{}, .root = 0, .source = .dom };
+    errdefer tree.arena.deinit();
+    const a = tree.arena.allocator();
 
     const doc = try parseJson(gpa, a, json);
     const root_json = domRoot(doc) orelse return error.MissingNodes;
@@ -692,13 +692,8 @@ pub fn parseDomDocument(gpa: Allocator, json: []const u8, opts: ParseOptions) Pa
         try queue.appendSlice(a, kids.items);
     }
 
-    var tree: Tree = .{
-        .arena = arena,
-        .nodes = nodes.items,
-        .root = 0,
-        .source = .dom,
-        .url = try a.dupe(u8, opts.url),
-    };
+    tree.nodes = nodes.items;
+    tree.url = try a.dupe(u8, opts.url);
     try finishDom(&tree);
     if (tree.url.len == 0) {
         if (stringField(root_json, "documentURL")) |u| tree.url = u;
