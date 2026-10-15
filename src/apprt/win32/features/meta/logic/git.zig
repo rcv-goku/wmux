@@ -350,6 +350,9 @@ pub fn parseHead(contents: []const u8) ?Head {
     if (std.mem.startsWith(u8, line, "ref:")) {
         const ref = std.mem.trim(u8, line[4..], " \t");
         if (ref.len == 0) return null;
+        // Git ref names never contain spaces or control bytes, so such a
+        // HEAD is corrupt; its text must not reach the sidebar or the CLI.
+        for (ref) |c| if (c <= ' ' or c == 0x7f) return null;
         const heads = "refs/heads/";
         if (std.mem.startsWith(u8, ref, heads) and ref.len > heads.len)
             return .{ .branch = ref[heads.len..] };
@@ -753,6 +756,9 @@ test "unit: meta: git parseHead branch, other ref, detached, malformed" {
     try testing.expectEqualStrings("ab", shortSha("ab"));
     try testing.expect(parseHead("") == null);
     try testing.expect(parseHead("ref:   ") == null);
+    try testing.expect(parseHead("ref: refs/heads/main extra") == null);
+    try testing.expect(parseHead("ref: refs/heads/x\x1b[31mred") == null);
+    try testing.expect(parseHead("ref: refs/heads/main\x00junk") == null);
     try testing.expect(parseHead("0123") == null);
     try testing.expect(parseHead("zz23456789abcdef0123456789abcdef01234567") == null);
 }
