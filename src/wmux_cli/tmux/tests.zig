@@ -836,7 +836,24 @@ test "unit: tmux: empty argv means new-session" {
     const h = try Harness.create();
     defer h.destroy();
     try h.expect(&.{}, 0, "", "");
-    try h.expectLog("newSession name=- window=- detached=false cwd=- env= cmd=none\n");
+    try h.expect(&.{ "-L", "claude-swarm" }, 0, "", "");
+    try h.expectLog(
+        \\newSession name=- window=- detached=false cwd=- env= cmd=none
+        \\newSession name=- window=- detached=false cwd=- env= cmd=none
+        \\
+    );
+}
+
+test "unit: tmux: arguments without a command run nothing" {
+    const h = try Harness.create();
+    defer h.destroy();
+    // Only a missing command means new-session; a blank command string or
+    // bare separators must not open a session (a wmux workspace).
+    try h.expect(&.{" "}, 0, "", "");
+    try h.expect(&.{" \t\n"}, 0, "", "");
+    try h.expect(&.{";"}, 0, "", "");
+    try h.expect(&.{ ";", "\\;" }, 0, "", "");
+    try h.expectLog("");
 }
 
 test "unit: tmux: command chaining with ; and \\;" {

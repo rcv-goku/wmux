@@ -456,9 +456,12 @@ pub fn parseInvocation(arena: Allocator, argv: []const []const u8, diag: *Diag) 
         try splitArgvChain(arena, rest);
 
     if (groups.len == 0) {
-        // Plain `tmux` means new-session.
-        const cmd = try parseCommand(arena, &.{"new-session"}, diag);
-        inv.commands = try arena.dupe(Command, &.{cmd});
+        // Plain `tmux` (no command arguments at all) means new-session, as
+        // in tmux; arguments that hold no command (`" "`, `";"`) run nothing.
+        if (rest.len == 0) {
+            const cmd = try parseCommand(arena, &.{"new-session"}, diag);
+            inv.commands = try arena.dupe(Command, &.{cmd});
+        }
         return inv;
     }
     var cmds: std.ArrayList(Command) = .empty;
