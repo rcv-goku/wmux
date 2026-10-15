@@ -148,6 +148,7 @@ pub const all = [_]KnownKey{
     .{ .path = "sidebar.showLog", .support = .supported },
     .{ .path = "sidebar.showPorts", .support = .supported },
     .{ .path = "sidebar.showPullRequests", .support = .supported },
+    .{ .path = "surfaceTabBar.fontSize", .support = .supported },
     .{ .path = "terminal.adaptiveDefaultTheme", .support = .supported },
     .{ .path = "terminal.agentHibernation", .support = .supported },
     .{ .path = "terminal.agentHibernation.enabled", .support = .supported },

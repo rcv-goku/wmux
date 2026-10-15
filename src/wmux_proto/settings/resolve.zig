@@ -543,10 +543,10 @@ pub fn packPaths(gpa: Allocator, config_dir: []const u8, entry: []const u8) (All
 /// Top-level sections that are not settings: `config get/set` refuse them.
 pub const non_setting_sections = [_][]const u8{ "$schema", "schemaVersion", "packs", "actions", "commands", "ui", "settingPresets" };
 
-/// Legacy CLI shorthands mapped to JSON paths.
+/// Legacy CLI shorthands mapped to JSON paths (the cmux keys they alias).
 pub const legacy_shorthands = [_][2][]const u8{
     .{ "sidebar-font-size", "sidebar.fontSize" },
-    .{ "surface-tab-bar-font-size", "wmux.tabBar.fontSize" },
+    .{ "surface-tab-bar-font-size", "surfaceTabBar.fontSize" },
 };
 
 pub fn expandShorthand(path: []const u8) []const u8 {
@@ -613,6 +613,7 @@ pub fn cycleIndex(gpa: Allocator, current: *const Node, values: []const []const 
 
 const testing = std.testing;
 const fixtures = &validate.test_fixture_specs;
+const known_keys = @import("cmux_known_keys.zig");
 
 const Parsed = struct {
     arena: std.heap.ArenaAllocator,
@@ -970,7 +971,10 @@ test "unit: settings: config path checks and shorthands" {
     try testing.expect(settingPathProblem(fixtures, "workspaceGroups.byCwd.~/src/app.web") != null);
     try testing.expect(settingPathProblem(fixtures, "") != null);
     try testing.expectEqualStrings("sidebar.fontSize", expandShorthand("sidebar-font-size"));
+    try testing.expectEqualStrings("surfaceTabBar.fontSize", expandShorthand("surface-tab-bar-font-size"));
     try testing.expectEqualStrings("terminal.scrollSpeed", expandShorthand("terminal.scrollSpeed"));
+    // Every shorthand targets a cmux key that config doctor knows.
+    for (legacy_shorthands) |s| try testing.expect(known_keys.lookup(s[1]) != null);
 }
 
 test "unit: settings: toggle and cycle follow the effective value" {
