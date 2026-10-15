@@ -22,6 +22,7 @@ const Surface = @import("Surface.zig");
 const SessionState = @import("SessionState.zig");
 const WindowState = @import("WindowState.zig");
 const SplitTree = @import("../../datastruct/split_tree.zig").SplitTree;
+const app_foreground = @import("app/foreground.zig");
 const app_paths = @import("app/paths.zig");
 const w32 = @import("platform/win32.zig");
 
@@ -663,16 +664,27 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
         }
     }
 
+    // WMUX_TEST_HIDDEN replaces the geometry and adds
+    // WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE (app/foreground.zig).
+    const create = app_foreground.topLevelCreateParams(app, .{
+        .ex_style = ex_style,
+        .style = style,
+        .x = cx,
+        .y = cy,
+        .width = cw,
+        .height = ch,
+    });
+
     // Create the top-level container window using the GhosttyWindow class.
     const hwnd = w32.CreateWindowExW(
-        ex_style,
+        create.ex_style,
         App.WINDOW_CLASS_NAME,
         std.unicode.utf8ToUtf16LeStringLiteral("Ghostty"),
-        style,
-        cx,
-        cy,
-        cw,
-        ch,
+        create.style,
+        create.x,
+        create.y,
+        create.width,
+        create.height,
         null,
         null,
         app.hinstance,
@@ -687,6 +699,7 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
 
     // Store the Window pointer in GWLP_USERDATA for the WndProc.
     _ = w32.SetWindowLongPtrW(hwnd, w32.GWLP_USERDATA, @bitCast(@intFromPtr(self)));
+    app_foreground.finishTopLevelCreate(app, hwnd, create, &self.max_track_w, &self.max_track_h);
 
     applyChromeTheme(hwnd, app.config.background);
 
@@ -1318,7 +1331,7 @@ pub fn addTabWithCommand(
             if (self.hwnd) |h| {
                 const cmd: i32 = if (self.restore_maximized) w32.SW_SHOWMAXIMIZED else w32.SW_SHOW;
                 self.restore_maximized = false;
-                _ = w32.ShowWindow(h, cmd);
+                app_foreground.showTopLevel(self.app, h, cmd);
                 _ = w32.UpdateWindow(h);
             }
         }
@@ -1483,7 +1496,7 @@ pub fn addBrowserTab(self: *Window) !void {
 
     if (container.tab_count == 1) {
         if (self.hwnd) |h| {
-            _ = w32.ShowWindow(h, w32.SW_SHOW);
+            app_foreground.showTopLevel(self.app, h, w32.SW_SHOW);
             _ = w32.UpdateWindow(h);
         }
         container.active_tab = pos;

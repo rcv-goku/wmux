@@ -46,7 +46,7 @@ pub fn perform(
         },
         .config_change => configChange(app, value),
         .toggle_fullscreen => if (rtSurface(target)) |s| s.toggleFullscreen(),
-        .toggle_maximize => toggleMaximize(target),
+        .toggle_maximize => toggleMaximize(app, target),
         // Close the entire window (all tabs), not just one tab.
         .close_window => if (parentWindow(target)) |w| w.close(),
         .open_config => config_files.openConfigFile(app),
@@ -76,7 +76,7 @@ pub fn perform(
         .toggle_right_sidebar => if (parentWindow(target)) |w| w.toggleRightSidebar(),
         .restore_session => restoreSession(app),
         .focus_right_sidebar => if (parentWindow(target)) |w| w.focusRightSidebar(),
-        .initial_size => initialSize(target, value),
+        .initial_size => initialSize(app, target, value),
         .reload_config => config_files.reloadConfig(app, value.soft),
         .show_child_exited => notifications.onChildExited(app, target, value),
         .toggle_window_decorations => if (rtSurface(target)) |s| s.toggleWindowDecorations(),
@@ -86,7 +86,7 @@ pub fn perform(
         // With no tab bar, each "tab" is a window: goto_window and
         // goto_tab behave the same. Just acknowledge.
         .goto_window => {},
-        .reset_window_size => resetWindowSize(target),
+        .reset_window_size => resetWindowSize(app, target),
         .copy_title_to_clipboard => copyTitleToClipboard(app, target),
         .render => render(target),
 
@@ -233,15 +233,15 @@ fn configChange(self: *App, value: apprt.Action.Value(.config_change)) void {
     }
 }
 
-fn toggleMaximize(target: apprt.Target) void {
+fn toggleMaximize(self: *App, target: apprt.Target) void {
     switch (target) {
         .app => {},
         .surface => |core_surface| {
             if (core_surface.rt_surface.parent_window.hwnd) |hwnd| {
                 if (w32.IsZoomed(hwnd) != 0) {
-                    _ = w32.ShowWindow(hwnd, w32.SW_RESTORE);
+                    foreground.showTopLevel(self, hwnd, w32.SW_RESTORE);
                 } else {
-                    _ = w32.ShowWindow(hwnd, w32.SW_MAXIMIZE);
+                    foreground.showTopLevel(self, hwnd, w32.SW_MAXIMIZE);
                 }
             }
         },
@@ -298,7 +298,9 @@ fn restoreSession(self: *App) void {
     };
 }
 
-fn initialSize(target: apprt.Target, value: apprt.Action.Value(.initial_size)) void {
+fn initialSize(self: *App, target: apprt.Target, value: apprt.Action.Value(.initial_size)) void {
+    // WMUX_TEST_HIDDEN windows keep their fixed 1600x1000 client area.
+    if (self.runtime_env.test_hidden) return;
     switch (target) {
         .app => {},
         .surface => |core_surface| {
@@ -346,7 +348,9 @@ fn toggleBackgroundOpacity(self: *App, target: apprt.Target) void {
     }
 }
 
-fn resetWindowSize(target: apprt.Target) void {
+fn resetWindowSize(self: *App, target: apprt.Target) void {
+    // WMUX_TEST_HIDDEN windows keep their fixed 1600x1000 client area.
+    if (self.runtime_env.test_hidden) return;
     switch (target) {
         .app => {},
         .surface => |core_surface| {
@@ -527,7 +531,7 @@ fn presentTerminal(self: *App, target: apprt.Target) void {
                 // notification click would shrink/resize a maximized
                 // window. Gate on IsIconic so a maximized or normal
                 // window keeps its size/maximized state untouched.
-                if (w32.IsIconic(hwnd) != 0) _ = w32.ShowWindow(hwnd, w32.SW_RESTORE);
+                if (w32.IsIconic(hwnd) != 0) foreground.showTopLevel(self, hwnd, w32.SW_RESTORE);
                 // Only move OS foreground when we already own it;
                 // never yank the user out of another app (the
                 // critical OS-foreground gate, applied to every

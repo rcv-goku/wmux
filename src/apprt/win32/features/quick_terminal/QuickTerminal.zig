@@ -317,6 +317,19 @@ fn calculateRects(self: *QuickTerminal) void {
             self.hidden_rect = .{ .left = cx, .top = work.top - qh, .right = cx + qw, .bottom = work.top };
         },
     }
+
+    // WMUX_TEST_HIDDEN: keep the quick terminal off-screen like every other
+    // top-level window (same geometry, anchored at the hidden origin).
+    if (self.app.runtime_env.test_hidden) {
+        const dx = foreground.hidden_origin - self.target_rect.left;
+        const dy = foreground.hidden_origin - self.target_rect.top;
+        inline for (.{ &self.target_rect, &self.hidden_rect }) |r| {
+            r.left += dx;
+            r.right += dx;
+            r.top += dy;
+            r.bottom += dy;
+        }
+    }
 }
 
 fn getMonitor(self: *QuickTerminal) ?w32.HMONITOR {

@@ -56,6 +56,11 @@ const UPDATE_CHECK_INTERVAL_SECS: i64 = 60 * 60; // 1 hour
 /// Manual `.check_for_updates` actions force-refresh by setting
 /// `force=true`.
 pub fn startUpdateCheck(self: *App) void {
+    // WMUX_TEST_MODE: no network update check (ARCHITECTURE.md ADR-12.3).
+    if (self.runtime_env.test_mode) {
+        log.debug("test mode: update check skipped", .{});
+        return;
+    }
     if (!shouldRunUpdateCheck(self)) {
         log.debug("skipping update check (last run within {d}s)", .{UPDATE_CHECK_INTERVAL_SECS});
         return;

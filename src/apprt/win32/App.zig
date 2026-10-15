@@ -599,6 +599,9 @@ pub fn performAction(
 /// Register a system-wide hotkey for toggle_quick_terminal.
 /// Scans keybinds for entries with the `global` flag.
 fn registerGlobalHotkey(self: *App) void {
+    // WMUX_TEST_MODE: never claim a system-wide hotkey (ARCHITECTURE.md
+    // ADR-12.3).
+    if (self.runtime_env.test_mode) return;
     var it = self.config.keybind.set.bindings.iterator();
     while (it.next()) |entry| {
         const leaf = switch (entry.value_ptr.*) {

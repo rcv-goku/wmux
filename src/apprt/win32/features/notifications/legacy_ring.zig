@@ -314,6 +314,15 @@ pub fn showDesktopNotification(
         }
     }
 
+    // WMUX_TEST_MODE: no tray icon and no balloon. The toast that would
+    // have been shown is recorded in WMUX_TEST_TOAST_SINK (when set) for
+    // the e2e harness instead.
+    if (self.runtime_env.test_mode) {
+        appendToastSink(self, title_buf[0..title_len], body_buf[0..body_len], sender);
+        refreshTaskbarBadges(self);
+        return;
+    }
+
     // Record which surface notified so a click on the balloon can jump
     // back to it. Slots rotate; if all are in flight the oldest balloon
     // is replaced (NIM_ADD fails silently, NIM_MODIFY updates in place,
@@ -366,6 +375,98 @@ fn onDesktopNotifTimer(self: *App, slot: usize) void {
     clearDesktopNotif(self, slot);
 }
 
+/// One WMUX_TEST_TOAST_SINK line (a JSON object per line). `title` and
+/// `body` are what the balloon would have shown (truncated to the balloon
+/// limits); `surface_id` is the notifying terminal's stable id (the
+/// decimal GHOSTTY_SURFACE_ID) or null for app-level notifications.
+const ToastRecord = struct {
+    kind: []const u8 = "desktop_notification",
+    title: []const u8,
+    body: []const u8,
+    surface_id: ?u64,
+    timestamp_ms: i64,
+};
+
+/// Serializes the sink writer threads so lines never interleave.
+var toast_sink_mutex: std.Thread.Mutex = .{};
+
+/// WMUX_TEST_MODE: record the balloon `showDesktopNotification` would have
+/// shown as one JSON line in WMUX_TEST_TOAST_SINK (no-op when unset). The
+/// line is built here; the file append runs on a short worker thread so
+/// the UI thread never blocks on file I/O (G3).
+fn appendToastSink(self: *App, title: []const u16, body: []const u16, sender: ?DesktopNotif) void {
+    const sink = self.runtime_env.test_toast_sink orelse return;
+    const alloc = self.core_app.alloc;
+
+    const title8 = std.unicode.utf16LeToUtf8Alloc(alloc, title) catch return;
+    defer alloc.free(title8);
+    const body8 = std.unicode.utf16LeToUtf8Alloc(alloc, body) catch return;
+    defer alloc.free(body8);
+    const surface_id: ?u64 = if (sender) |s|
+        (if (s.surface.core_surface_initialized) s.surface.core_surface.id else null)
+    else
+        null;
+
+    var aw: std.Io.Writer.Allocating = .init(alloc);
+    defer aw.deinit();
+    std.json.Stringify.value(ToastRecord{
+        .title = title8,
+        .body = body8,
+        .surface_id = surface_id,
+        .timestamp_ms = std.time.milliTimestamp(),
+    }, .{}, &aw.writer) catch return;
+    aw.writer.writeByte('\n') catch return;
+
+    const ctx = alloc.create(ToastSinkWrite) catch return;
+    const path = alloc.dupe(u8, sink) catch {
+        alloc.destroy(ctx);
+        return;
+    };
+    const line = aw.toOwnedSlice() catch {
+        alloc.free(path);
+        alloc.destroy(ctx);
+        return;
+    };
+    ctx.* = .{ .alloc = alloc, .path = path, .line = line };
+    const thread = std.Thread.spawn(.{}, toastSinkWorker, .{ctx}) catch {
+        ctx.deinit();
+        return;
+    };
+    thread.detach();
+}
+
+const ToastSinkWrite = struct {
+    alloc: std.mem.Allocator,
+    path: []u8,
+    line: []u8,
+
+    fn deinit(self: *ToastSinkWrite) void {
+        const alloc = self.alloc;
+        alloc.free(self.path);
+        alloc.free(self.line);
+        alloc.destroy(self);
+    }
+};
+
+/// Worker thread: append one line to the toast sink (created if missing).
+fn toastSinkWorker(ctx: *ToastSinkWrite) void {
+    defer ctx.deinit();
+    toast_sink_mutex.lock();
+    defer toast_sink_mutex.unlock();
+    const file = std.fs.cwd().createFile(ctx.path, .{ .truncate = false }) catch |err| {
+        log.warn("toast sink: cannot open {s}: {}", .{ ctx.path, err });
+        return;
+    };
+    defer file.close();
+    file.seekFromEnd(0) catch |err| {
+        log.warn("toast sink: seek failed: {}", .{err});
+        return;
+    };
+    file.writeAll(ctx.line) catch |err| {
+        log.warn("toast sink: write failed: {}", .{err});
+    };
+}
+
 /// App hook for hooks.WM_APP_TRAY (wparam = icon uID, lparam = NIN_*
 /// event): claims the desktop-notification uIDs; a balloon click jumps to
 /// the surface that produced it. Other uIDs are left to their owners.
@@ -409,7 +510,7 @@ pub fn jumpToSurface(self: *App, window: *Window, surface: *Surface) bool {
     // to the restored rect, so a notification-jump click would shrink/resize
     // a maximized window. Gate on IsIconic so a maximized or normal window
     // keeps its size/maximized state untouched.
-    if (w32.IsIconic(win_hwnd) != 0) _ = w32.ShowWindow(win_hwnd, w32.SW_RESTORE);
+    if (w32.IsIconic(win_hwnd) != 0) foreground_mod.showTopLevel(self, win_hwnd, w32.SW_RESTORE);
     // The click may land outside the target window (shell tray, another
     // window's sidebar), where Windows treats us as a background
     // process; a plain SetForegroundWindow would only flash the
@@ -665,8 +766,8 @@ pub fn dropDesktopNotifsForWindow(self: *App, window: *Window) void {
 
 /// `.ring_bell`: audible + visual bell, sidebar bell mark and log entry.
 pub fn onBell(self: *App, target: apprt.Target) void {
-    // Audio bell.
-    _ = w32.MessageBeep(0xFFFFFFFF);
+    // Audio bell (no sounds in WMUX_TEST_MODE).
+    if (!self.runtime_env.test_mode) _ = w32.MessageBeep(0xFFFFFFFF);
     // Visual bell: flash the taskbar button if the window owning
     // this surface isn't currently the foreground window. Without
     // this, BEL on a backgrounded terminal is invisible.
