@@ -11,6 +11,7 @@ const App = @import("../../App.zig");
 const ipc = @import("../../rpc/compat/legacy_json.zig");
 const LegacyCommand = @import("../../rpc/compat/legacy_table.zig").LegacyCommand;
 const targets = @import("../../rpc/compat/legacy_targets.zig");
+const ring = @import("legacy_ring.zig");
 
 const IpcError = targets.IpcError;
 
@@ -89,11 +90,11 @@ fn ipcNotify(self: *App, req: *ipc.Request) anyerror!void {
 fn ipcNotifyNext(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
 
-    const display_idx = self.firstUnreadNotif() orelse {
+    const display_idx = ring.firstUnreadNotif(self) orelse {
         server.sendOk(req.id, "{\"jumped\":false}") catch {};
         return;
     };
-    const entry = self.notifAt(display_idx) orelse {
+    const entry = ring.notifAt(self, display_idx) orelse {
         server.sendOk(req.id, "{\"jumped\":false}") catch {};
         return;
     };
@@ -126,8 +127,8 @@ fn ipcNotifyNext(self: *App, req: *ipc.Request) anyerror!void {
     else
         0;
 
-    const jumped = self.jumpToSurface(window, surface);
-    if (jumped) _ = self.markNotifEntryRead(display_idx);
+    const jumped = ring.jumpToSurface(self, window, surface);
+    if (jumped) _ = ring.markNotifEntryRead(self, display_idx);
 
     var buf: [64]u8 = undefined;
     const reply = std.fmt.bufPrint(
@@ -142,9 +143,9 @@ fn ipcNotifyNext(self: *App, req: *ipc.Request) anyerror!void {
 /// Replies {toggled:true, read:<new_state>} or {toggled:false}.
 fn ipcNotifyToggleRead(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
-    const toggled = self.toggleNotifRead(0);
+    const toggled = ring.toggleNotifRead(self, 0);
     if (toggled) {
-        const entry = self.notifAt(0);
+        const entry = ring.notifAt(self, 0);
         const is_read = if (entry) |e| e.read else true;
         var buf: [48]u8 = undefined;
         const reply = std.fmt.bufPrint(
@@ -169,14 +170,14 @@ fn ipcNotifyMarkOldestNext(self: *App, req: *ipc.Request) anyerror!void {
         server.sendOk(req.id, "{\"jumped\":false}") catch {};
         return;
     };
-    _ = self.markNotifEntryRead(oldest_idx);
+    _ = ring.markNotifEntryRead(self, oldest_idx);
 
     // Now find the next unread (newest first, like ipcNotifyNext).
-    const next_idx = self.firstUnreadNotif() orelse {
+    const next_idx = ring.firstUnreadNotif(self) orelse {
         server.sendOk(req.id, "{\"jumped\":false}") catch {};
         return;
     };
-    const entry = self.notifAt(next_idx) orelse {
+    const entry = ring.notifAt(self, next_idx) orelse {
         server.sendOk(req.id, "{\"jumped\":false}") catch {};
         return;
     };
@@ -203,8 +204,8 @@ fn ipcNotifyMarkOldestNext(self: *App, req: *ipc.Request) anyerror!void {
     else
         0;
 
-    const jumped = self.jumpToSurface(window, surface);
-    if (jumped) _ = self.markNotifEntryRead(next_idx);
+    const jumped = ring.jumpToSurface(self, window, surface);
+    if (jumped) _ = ring.markNotifEntryRead(self, next_idx);
 
     var buf: [64]u8 = undefined;
     const reply = std.fmt.bufPrint(

@@ -11,6 +11,7 @@ const Window = @import("../../Window.zig");
 const ipc = @import("../../rpc/compat/legacy_json.zig");
 const LegacyCommand = @import("../../rpc/compat/legacy_table.zig").LegacyCommand;
 const targets = @import("../../rpc/compat/legacy_targets.zig");
+const notifications = @import("../notifications/api.zig");
 
 const IpcError = targets.IpcError;
 
@@ -74,7 +75,7 @@ fn ipcLog(self: *App, req: *ipc.Request) anyerror!void {
         const body_w = std.unicode.utf8ToUtf16LeAlloc(alloc, text[0..@min(text.len, 128)]) catch null;
         defer if (body_w) |bw| alloc.free(bw);
         const title_w = std.unicode.utf8ToUtf16LeStringLiteral("log");
-        self.pushNotif(.osc, target.window, surface, title_w, if (body_w) |bw| bw else &.{});
+        notifications.pushNotif(self, .osc, target.window, surface, title_w, if (body_w) |bw| bw else &.{});
     } else {
         target.window.invalidateSidebar();
     }
