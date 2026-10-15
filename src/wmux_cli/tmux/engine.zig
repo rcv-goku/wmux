@@ -1461,13 +1461,16 @@ pub const Engine = struct {
         const a = cmd.args;
         var src: *const Pane = undefined;
         var dst: *const Pane = undefined;
-        if (a.get('s')) |s| {
-            src = (try self.resolve(s, .pane)).pane.?;
-            dst = (try self.resolve(a.get('t'), .pane)).pane.?;
-        } else {
+        if (a.get('s') == null and (a.has('U') or a.has('D'))) {
+            // -U/-D without -s: the target and its previous/next pane.
             const base = try self.resolve(a.get('t'), .pane);
             src = base.pane.?;
-            dst = neighbor(base.window.?, src, !a.has('U'));
+            dst = neighbor(base.window.?, src, a.has('D'));
+        } else {
+            // tmux's source defaults to the marked pane, else the current
+            // pane; the shim has no marked pane.
+            src = (try self.resolve(a.get('s'), .pane)).pane.?;
+            dst = (try self.resolve(a.get('t'), .pane)).pane.?;
         }
         if (src.id == dst.id) return;
         try self.call("swapPane", cmd.word, SwapReq{ .src = src.id, .dst = dst.id, .focus = !a.has('d') });
@@ -1475,8 +1478,8 @@ pub const Engine = struct {
 
     fn cmdJoinPane(self: *Engine, cmd: parse.Command) Error!void {
         const a = cmd.args;
-        const s = a.get('s') orelse return self.fail("no marked target", .{});
-        const src = (try self.resolve(s, .pane)).pane.?;
+        // As for swap-pane, -s defaults to the current pane.
+        const src = (try self.resolve(a.get('s'), .pane)).pane.?;
         const dst = (try self.resolve(a.get('t'), .pane)).pane.?;
         if (src.id == dst.id) return self.fail("source and target panes must be different", .{});
         const direction: Direction = if (a.has('h'))

@@ -1126,9 +1126,29 @@ test "unit: tmux: select, rename, resize, navigation and pane moves" {
         \\
     );
     try h.expect(&.{ "resize-pane", "-L", "x" }, 1, "", "adjustment invalid: x\n");
-    try h.expect(&.{ "join-pane", "-t", "%1" }, 1, "", "no marked target\n");
+    try h.expect(&.{ "join-pane", "-t", "%1" }, 1, "", "source and target panes must be different\n");
     try h.expect(&.{ "join-pane", "-s", "%1", "-t", "%1" }, 1, "", "source and target panes must be different\n");
     try h.expect(&.{ "break-pane", "-d", "-s", "%2", "-n", "solo", "-P", "-F", "#{window_name} #{pane_id}" }, 0, "solo %2\n", "");
+}
+
+test "unit: tmux: swap-pane and join-pane default the source to the current pane" {
+    const h = try Harness.create();
+    defer h.destroy();
+    h.eng.options.main_vertical_placement = false;
+    try h.expect(&.{ "split-window", "-d" }, 0, "", ""); // %2 after %1 (the caller)
+    h.fake.log.clearRetainingCapacity();
+    try h.expect(&.{ "swap-pane", "-d", "-t", "%2" }, 0, "", ""); // current with the target
+    try h.expect(&.{"swap-pane"}, 0, "", ""); // current with itself: nothing to do
+    try h.expect(&.{ "swap-pane", "-D", "-t", "%2" }, 0, "", ""); // target with its next pane
+    try h.expect(&.{ "swap-pane", "-s", "%2" }, 0, "", ""); // source with the current pane
+    try h.expect(&.{ "join-pane", "-h", "-t", "%2" }, 0, "", ""); // current into the target
+    try h.expectLog(
+        \\swap %1 %2 focus=false
+        \\swap %2 %1 focus=true
+        \\swap %2 %1 focus=true
+        \\join %1 -> %2 dir=right size=-
+        \\
+    );
 }
 
 test "unit: tmux: find-window matches names, titles and content" {
