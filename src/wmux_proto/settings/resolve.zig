@@ -569,18 +569,25 @@ pub fn settingPathProblem(specs: []const Spec, path: []const u8) ?[]const u8 {
     return null;
 }
 
-/// `config set` value: JSON when it parses as one JSON value, otherwise the
-/// text as a JSON string. Caller owns the result.
-pub fn cliValueJson(gpa: Allocator, text: []const u8) Allocator.Error![]u8 {
+/// The value a `config set` text stands for: the JSON value when the text
+/// is exactly one strict JSON value, otherwise the text as a string. Nodes
+/// live in `arena` or borrow `text`.
+pub fn cliValueNode(arena: Allocator, text: []const u8) Allocator.Error!Node {
+    const strict: jsonc.Options = .{ .allow_comments = false, .allow_trailing_commas = false };
+    return jsonc.parseInto(arena, text, strict, null) catch |e| switch (e) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.SyntaxError => return .{ .start = 0, .end = 0, .data = .{ .string = text } },
+    };
+}
+
+/// `config set` value as minified JSON (see `cliValueNode`). Caller owns
+/// the result. Text that is not UTF-8 has no JSON string form (std.json
+/// would emit it as an array of byte values): `error.InvalidUtf8`.
+pub fn cliValueJson(gpa: Allocator, text: []const u8) (Allocator.Error || error{InvalidUtf8})![]u8 {
+    if (!std.unicode.utf8ValidateSlice(text)) return error.InvalidUtf8;
     var arena_state: std.heap.ArenaAllocator = .init(gpa);
     defer arena_state.deinit();
-    if (jsonc.parseInto(arena_state.allocator(), text, .{ .allow_comments = false, .allow_trailing_commas = false }, null)) |node| {
-        return node.toJsonAlloc(gpa);
-    } else |e| switch (e) {
-        error.OutOfMemory => return error.OutOfMemory,
-        error.SyntaxError => {},
-    }
-    const node: Node = .{ .start = 0, .end = 0, .data = .{ .string = text } };
+    const node = try cliValueNode(arena_state.allocator(), text);
     return node.toJsonAlloc(gpa);
 }
 
@@ -599,13 +606,8 @@ pub fn cycleIndex(gpa: Allocator, current: *const Node, values: []const []const 
     if (values.len == 0) return null;
     var arena_state: std.heap.ArenaAllocator = .init(gpa);
     defer arena_state.deinit();
-    const arena = arena_state.allocator();
     for (values, 0..) |v, i| {
-        const json = try cliValueJson(arena, v);
-        const node = jsonc.parseInto(arena, json, .{}, null) catch |e| switch (e) {
-            error.OutOfMemory => return error.OutOfMemory,
-            error.SyntaxError => unreachable,
-        };
+        const node = try cliValueNode(arena_state.allocator(), v);
         if (node.eql(current)) return (i + 1) % values.len;
     }
     return 0;
@@ -960,6 +962,11 @@ test "unit: settings: config set value parsing" {
         defer gpa.free(got);
         try testing.expectEqualStrings(c[1], got);
     }
+    // Not UTF-8 (a lone surrogate is how a Windows argv can arrive): refused
+    // instead of becoming a JSON array of byte values.
+    for ([_][]const u8{ "\xff", "a\xc3", "\xED\xA0\x80" }) |bad| {
+        try testing.expectError(error.InvalidUtf8, cliValueJson(gpa, bad));
+    }
 }
 
 test "unit: settings: config path checks and shorthands" {
@@ -991,4 +998,7 @@ test "unit: settings: toggle and cycle follow the effective value" {
     try testing.expectEqual(@as(?usize, null), try cycleIndex(testing.allocator, appearance, &.{}));
     const speed = &r.get("terminal.scrollSpeed").?.value; // 1
     try testing.expectEqual(@as(?usize, 1), try cycleIndex(testing.allocator, speed, &.{ "1.0", "2" }));
+    // Odd values never match and never trap.
+    try testing.expectEqual(@as(?usize, 0), try cycleIndex(testing.allocator, appearance, &.{ "\xff", "[1,]", "" }));
+    try testing.expectEqual(@as(?usize, 0), try cycleIndex(testing.allocator, appearance, &.{"\"system\""}));
 }
