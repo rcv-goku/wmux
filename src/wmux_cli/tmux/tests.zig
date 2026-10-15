@@ -649,6 +649,23 @@ test "unit: tmux: send-keys key names, literal, hex, repeat and unicode" {
     try h.expect(&.{ "send-keys", "-t", "%99", "x" }, 1, "", "can't find pane: %99\n");
 }
 
+test "unit: tmux: send-keys -N repeats every item after allocations in between" {
+    const h = try Harness.create();
+    defer h.destroy();
+    // M-x and M-y allocate their bytes after the item list, so growing the
+    // list for the repeats cannot happen in place.
+    try h.expect(&.{ "send-keys", "-N", "2", "-t", "%1", "a", "M-x", "M-y" }, 0, "", "");
+    try h.expect(&.{ "send-keys", "-N", "3", "-F", "#{pane_id}", "C-c" }, 0, "", "");
+    try h.expectLog(
+        \\send %1 text:a key:\x1bx key:\x1by text:a key:\x1bx key:\x1by
+        \\send %1 text:%1 key:\x03 text:%1 key:\x03 text:%1 key:\x03
+        \\
+    );
+    try h.expect(&.{ "send-keys", "-N", "10000", "x" }, 0, "", "");
+    try testing.expectEqual(@as(usize, "send %1".len + 10000 * " text:x".len + 1), h.fake.log.items.len);
+    try h.expect(&.{ "send-keys", "-N", "10001", "x" }, 1, "", "repeat count invalid: 10001\n");
+}
+
 test "unit: tmux: send-keys with a huge literal payload" {
     const h = try Harness.create();
     defer h.destroy();

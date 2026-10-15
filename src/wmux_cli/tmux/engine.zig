@@ -1115,8 +1115,11 @@ pub const Engine = struct {
             }
         }
         if (items.items.len == 0) return;
+        // Reserve the repeats up front: appending the list to itself must
+        // never reallocate while the source slice points at the old buffer.
         const once = items.items.len;
-        for (1..repeat) |_| try items.appendSlice(self.arena, items.items[0..once]);
+        try items.ensureTotalCapacityPrecise(self.arena, once * repeat);
+        for (1..repeat) |_| items.appendSliceAssumeCapacity(items.items[0..once]);
         try self.call("sendKeys", cmd.word, SendReq{ .pane = f.pane.?.id, .items = items.items });
     }
 
