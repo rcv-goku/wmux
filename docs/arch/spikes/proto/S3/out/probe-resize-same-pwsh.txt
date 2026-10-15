@@ -1,0 +1,31 @@
+cmd: pwsh.exe -NoLogo -NoProfile
+size: 100x30 flags: 0 run_ms: 9000 total_bytes: 158 chunks: 3 reader_exit_err: 109
+sequence counts (first byte offset):
+  \e[2J = 1 (first at byte 22)
+  \e[3J = 0
+  \e[J = 0
+  \e[0J = 0
+  \e[H = 2 (first at byte 29)
+  \e[1;1H = 0
+  \e[?25l = 1 (first at byte 16)
+  \e[?25h = 1 (first at byte 136)
+  \e[?1049h = 0
+  \e[6n = 0
+  \e[?9001h = 1 (first at byte 0)
+  \e[?1004h = 1 (first at byte 8)
+  \e]0; = 1 (first at byte 93)
+  \e[K = 0
+  \e[m = 1 (first at byte 26)
+  \e[0m = 0
+  \e[?2026h = 0
+  \ec = 0
+markers:
+  [+   +14ms] child spawned
+  [+  +170ms] ResizePseudoConsole(100x30) hr=0x0
+  [+ +9032ms] TerminateProcess(child)
+  [+ +9906ms] ClosePseudoConsole
+  [+ +9906ms] ClosePseudoConsole returned
+chunks:
+[+  +581ms] (16 bytes) \e[?9001h\e[?1004h
+[+  +582ms] (126 bytes) \e[?25l\e[2J\e[m\e[H\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\e[H\e]0;C:\\Program Files\\PowerShell\\7\\pwsh.exe\a\e[?25h
+[+ +9974ms] (16 bytes) \e[?9001l\e[?1004l

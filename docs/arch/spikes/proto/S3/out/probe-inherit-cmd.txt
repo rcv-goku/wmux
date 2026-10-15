@@ -1,0 +1,38 @@
+cmd: cmd.exe
+size: 100x30 flags: 1 run_ms: 5000 total_bytes: 518 chunks: 11 reader_exit_err: 109
+sequence counts (first byte offset):
+  \e[2J = 0
+  \e[3J = 0
+  \e[J = 0
+  \e[0J = 0
+  \e[H = 0
+  \e[1;1H = 0
+  \e[?25l = 1 (first at byte 189)
+  \e[?25h = 2 (first at byte 55)
+  \e[?1049h = 0
+  \e[6n = 1 (first at byte 0)
+  \e[?9001h = 1 (first at byte 4)
+  \e[?1004h = 1 (first at byte 12)
+  \e]0; = 1 (first at byte 23)
+  \e[K = 31 (first at byte 256)
+  \e[m = 1 (first at byte 20)
+  \e[0m = 0
+  \e[?2026h = 0
+  \ec = 0
+markers:
+  [+   +66ms] child spawned
+  [+  +634ms] answered DSR-CPR with ESC[10;1R
+  [+ +3519ms] ResizePseudoConsole(100x40) hr=0x0
+  [+ +5032ms] ClosePseudoConsole
+chunks:
+[+  +634ms] (4 bytes) \e[6n
+[+  +634ms] (16 bytes) \e[?9001h\e[?1004h
+[+  +634ms] (41 bytes) \e[m\e]0;C:\\Windows\\SYSTEM32\\cmd.exe\a\e[?25h
+[+ +1424ms] (43 bytes) Microsoft Windows [Version 10.0.26200.9448]
+[+ +1592ms] (2 bytes) \r\n
+[+ +1747ms] (47 bytes) (c) Microsoft Corporation. All rights reserved.
+[+ +1847ms] (2 bytes) \r\n
+[+ +2050ms] (2 bytes) \r\n
+[+ +2141ms] (32 bytes) C:\\Users\\<user>\\claude>
+[+ +3519ms] (313 bytes) \e[?25l\e[8;40;100t\e[10;1HMicrosoft Windows [Version 10.0.26200.9448]\e[K\r\n(c) Microsoft Corporation. All rights reserved.\e[K\r\n\e[K\r\nC:\\Users\\<user>\\claude>\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\e[13;33H\e[?25h
+[+ +5146ms] (16 bytes) \e[?9001l\e[?1004l

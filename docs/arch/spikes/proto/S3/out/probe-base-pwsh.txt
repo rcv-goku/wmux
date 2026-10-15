@@ -1,0 +1,27 @@
+cmd: pwsh.exe -NoLogo
+size: 100x30 flags: 0 run_ms: 5000 total_bytes: 97 chunks: 2 reader_exit_err: 109
+sequence counts (first byte offset):
+  \e[2J = 1 (first at byte 38)
+  \e[3J = 0
+  \e[J = 0
+  \e[0J = 0
+  \e[H = 1 (first at byte 45)
+  \e[1;1H = 0
+  \e[?25l = 1 (first at byte 16)
+  \e[?25h = 1 (first at byte 91)
+  \e[?1049h = 0
+  \e[6n = 0
+  \e[?9001h = 1 (first at byte 0)
+  \e[?1004h = 1 (first at byte 8)
+  \e]0; = 1 (first at byte 48)
+  \e[K = 0
+  \e[m = 1 (first at byte 42)
+  \e[0m = 0
+  \e[?2026h = 0
+  \ec = 0
+markers:
+  [+   +25ms] child spawned
+  [+ +5009ms] ClosePseudoConsole
+chunks:
+[+  +394ms] (16 bytes) \e[?9001h\e[?1004h
+[+ +5308ms] (81 bytes) \e[?25l\e[?9001l\e[?1004l\e[2J\e[m\e[H\e]0;C:\\Program Files\\PowerShell\\7\\pwsh.exe\a\e[?25h

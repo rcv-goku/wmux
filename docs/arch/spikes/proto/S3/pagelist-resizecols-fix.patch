@@ -1,0 +1,110 @@
+diff --git a/src/terminal/PageList.zig b/src/terminal/PageList.zig
+index 2888010..9bfd8fa 100644
+--- a/src/terminal/PageList.zig
++++ b/src/terminal/PageList.zig
+@@ -1033,6 +1033,11 @@ fn resizeCols(
+         untrack: bool,
+         remaining_rows: usize,
+         wrapped_rows: usize,
++        // SPIKE S3: the pre-reflow top of the active area, so the wrap
++        // compensation below only counts rows that were above the cursor
++        // inside the old active area (not scrollback rows that slide into
++        // the active area because trailing blank rows are not rewritten).
++        old_active_top: ?*Pin,
+     } = if (cursor) |c| cursor: {
+         const p = if (c.pin) |cursor_pin| cursor_pin.* else self.pin(.{ .active = .{
+             .x = c.x,
+@@ -1071,10 +1076,12 @@ fn resizeCols(
+             .untrack = c.pin == null,
+             .remaining_rows = self.rows -| (c.y + 1),
+             .wrapped_rows = wrapped,
++            .old_active_top = if (active_pin) |ap| try self.trackPin(ap) else null,
+         };
+     } else null;
+     defer if (preserved_cursor) |c| {
+         if (c.untrack) self.untrackPin(c.tracked_pin);
++        if (c.old_active_top) |t| self.untrackPin(t);
+     };
+ 
+     // Update our cols. We have to do this early because grow() that we
+@@ -1193,7 +1200,18 @@ fn resizeCols(
+         const wrapped = wrapped: {
+             var wrapped: usize = 0;
+ 
+-            var row_it = c.tracked_pin.rowIterator(.left_up, active_pin);
++            // SPIKE S3: stop at whichever is lower, the new active top or
++            // the old one, so scrollback that slid into the active area is
++            // not mistaken for re-wrapped rows above the cursor.
++            const stop: ?Pin = stop: {
++                const new_top = active_pin orelse break :stop null;
++                const old_top = c.old_active_top orelse break :stop new_top;
++                if (old_top.before(new_top)) break :stop new_top;
++                if (c.tracked_pin.before(old_top.*)) break :stop new_top;
++                break :stop old_top.*;
++            };
++
++            var row_it = c.tracked_pin.rowIterator(.left_up, stop);
+             while (row_it.next()) |next| {
+                 const row = next.rowAndCell().row;
+                 if (row.wrap_continuation) wrapped += 1;
+diff --git a/src/terminal/Terminal.zig b/src/terminal/Terminal.zig
+index 0a5fa02..b2616df 100644
+--- a/src/terminal/Terminal.zig
++++ b/src/terminal/Terminal.zig
+@@ -13257,3 +13257,56 @@ test "Terminal: glyph APC stores session glossary entries" {
+     t.fullReset();
+     try testing.expect(!t.glyph_glossary.contains(0xE0A0));
+ }
++
++// SPIKE S3: replayed history (scrolled into scrollback with rows x CRLF)
++// versus a resize that lands before ConPTY's first frame
++// (ESC[2J ESC[m ESC[H). Returns how many of the 30 history lines survive.
++const S3Placement = enum { bottom, home };
++const S3Resize = enum { none, grow, short, narrow, narrow_grow };
++fn s3Survivors(alloc: Allocator, placement: S3Placement, resize_kind: S3Resize) !usize {
++    var t = try init(alloc, .{ .cols = 20, .rows = 6 });
++    defer t.deinit(alloc);
++    for (0..30) |i| {
++        var buf: [32]u8 = undefined;
++        try t.printString(try std.fmt.bufPrint(&buf, "H{d:0>2} abcdefghijk", .{i}));
++        if (i != 29) {
++            t.carriageReturn();
++            try t.linefeed();
++        }
++    }
++    for (0..t.rows) |_| {
++        t.carriageReturn();
++        try t.linefeed();
++    }
++    if (placement == .home) t.setCursorPos(1, 1);
++    switch (resize_kind) {
++        .none => {},
++        .grow => try t.resize(alloc, 20, 10),
++        .short => try t.resize(alloc, 20, 4),
++        .narrow => try t.resize(alloc, 10, 6),
++        .narrow_grow => try t.resize(alloc, 10, 9),
++    }
++    // ConPTY's first frame.
++    t.eraseDisplay(.complete, false);
++    t.setCursorPos(1, 1);
++    try t.printString("PROMPT>");
++    const s = try t.screens.active.dumpStringAllocUnwrapped(alloc, .{ .screen = .{} });
++    defer alloc.free(s);
++    var count: usize = 0;
++    for (0..30) |i| {
++        var buf: [8]u8 = undefined;
++        if (std.mem.indexOf(u8, s, try std.fmt.bufPrint(&buf, "H{d:0>2} ", .{i})) != null) count += 1;
++    }
++    return count;
++}
++
++test "S3 spike: replay placement vs early resize" {
++    const alloc = testing.allocator;
++    inline for (.{ S3Placement.bottom, S3Placement.home }) |pl| {
++        inline for (.{ S3Resize.none, S3Resize.grow, S3Resize.short, S3Resize.narrow, S3Resize.narrow_grow }) |rk| {
++            const n = try s3Survivors(alloc, pl, rk);
++            std.debug.print("S3 placement={s} resize={s} survivors={d}/30\n", .{ @tagName(pl), @tagName(rk), n });
++            if (pl == .home) try testing.expectEqual(@as(usize, 30), n);
++        }
++    }
++}

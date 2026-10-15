@@ -1,0 +1,619 @@
+diff --git a/src/Surface.zig b/src/Surface.zig
+index 11aef6d..441f2bc 100644
+--- a/src/Surface.zig
++++ b/src/Surface.zig
+@@ -676,6 +676,19 @@ pub fn init(
+         var io_mailbox = try termio.Mailbox.initSPSC(alloc);
+         errdefer io_mailbox.deinit(alloc);
+ 
++        // SPIKE S3 glue: saved scrollback from WMUX_SPIKE_RESTORE_FILE.
++        // W1-7 passes the tab's scrollback/<surface-uuid>.vt instead.
++        const spike_history: ?[]u8 = spike: {
++            const path = std.process.getEnvVarOwned(alloc, "WMUX_SPIKE_RESTORE_FILE") catch
++                break :spike null;
++            defer alloc.free(path);
++            break :spike std.fs.cwd().readFileAlloc(alloc, path, 8 * 1024 * 1024) catch |err| {
++                log.warn("S3: cannot read restore file err={}", .{err});
++                break :spike null;
++            };
++        };
++        defer if (spike_history) |h| alloc.free(h);
++
+         log.debug("creating termio...", .{});
+         try termio.Termio.init(&self.io, alloc, .{
+             .size = size,
+@@ -692,6 +705,7 @@ pub fn init(
+             .renderer_wakeup = &self.renderer_thread.wakeup,
+             .renderer_mailbox = render_thread.mailbox,
+             .surface_mailbox = .{ .surface = self, .app = app_mailbox },
++            .restore_history = spike_history,
+         });
+     }
+     // Outside the block, IO has now taken ownership of our temporary state
+diff --git a/src/apprt/win32/App.zig b/src/apprt/win32/App.zig
+index cf53305..335ac70 100644
+--- a/src/apprt/win32/App.zig
++++ b/src/apprt/win32/App.zig
+@@ -1124,7 +1124,8 @@ pub fn performAction(
+                         std.unicode.utf8ToUtf16LeStringLiteral("Process exited"),
+                     );
+                     const exit_code = value.exit_code;
+-                    if (exit_code != 0) {
++                    // SPIKE S3: never show a dialog from a hidden test instance.
++                    if (exit_code != 0 and !Window.testHidden()) {
+                         // Show a message box including the actual exit code.
+                         const hwnd_val = rt_surface.parent_window.hwnd;
+                         var utf8_buf: [128]u8 = undefined;
+diff --git a/src/apprt/win32/Surface.zig b/src/apprt/win32/Surface.zig
+index 3358543..4e092d8 100644
+--- a/src/apprt/win32/Surface.zig
++++ b/src/apprt/win32/Surface.zig
+@@ -291,7 +291,7 @@ pub fn init(
+     // window to be visible and have valid dimensions. On the old
+     // top-level architecture, ShowWindow was called in createWindow()
+     // before core_surface.init(). We must preserve that order.
+-    _ = w32.ShowWindow(hwnd, w32.SW_SHOW);
++    _ = w32.ShowWindow(hwnd, if (Window.testHidden()) w32.SW_SHOWNOACTIVATE else w32.SW_SHOW);
+     _ = w32.UpdateWindow(hwnd);
+ 
+     // --- Core terminal surface initialization ---
+diff --git a/src/apprt/win32/Window.zig b/src/apprt/win32/Window.zig
+index 204bafc..285eff7 100644
+--- a/src/apprt/win32/Window.zig
++++ b/src/apprt/win32/Window.zig
+@@ -610,7 +610,9 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
+     self.active_workspace = 0;
+ 
+     const style: u32 = if (options.is_quick_terminal) w32.WS_POPUP else w32.WS_OVERLAPPEDWINDOW | w32.WS_CLIPCHILDREN;
+-    const ex_style: u32 = if (options.is_quick_terminal) w32.WS_EX_TOOLWINDOW else 0;
++    var ex_style: u32 = if (options.is_quick_terminal) w32.WS_EX_TOOLWINDOW else 0;
++    // SPIKE S3 (S2 technique): hidden test instance, never activatable.
++    if (testHidden()) ex_style |= w32.WS_EX_NOACTIVATE | w32.WS_EX_TOOLWINDOW;
+ 
+     // Window geometry. Defaults to a fixed 800x600 at the OS default
+     // position. Three cases, in priority order:
+@@ -663,6 +665,15 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
+         }
+     }
+ 
++    // SPIKE S3 (S2 technique): park the hidden test instance off-screen
++    // with a deterministic size (1600x1000 px).
++    if (testHidden()) {
++        cx = -32000;
++        cy = -32000;
++        cw = 1600;
++        ch = 1000;
++    }
++
+     // Create the top-level container window using the GhosttyWindow class.
+     const hwnd = w32.CreateWindowExW(
+         ex_style,
+@@ -738,6 +749,13 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
+     // timing issues with ConPTY.
+ }
+ 
++/// SPIKE S3 (S2 technique): WMUX_TEST_HIDDEN=1 creates top-level windows
++/// off-screen with WS_EX_NOACTIVATE|WS_EX_TOOLWINDOW, shows them with
++/// SW_SHOWNOACTIVATE and never calls SetFocus.
++pub fn testHidden() bool {
++    return std.process.hasEnvVarConstant("WMUX_TEST_HIDDEN");
++}
++
+ /// Name of the persisted window-state file, under %LOCALAPPDATA%\ghostty.
+ const WINDOW_STATE_FILE = "window-state";
+ 
+@@ -1321,7 +1339,9 @@ pub fn addTabWithCommand(
+     if (container.tab_count == 1) {
+         if (!self.is_quick_terminal) {
+             if (self.hwnd) |h| {
+-                const cmd: i32 = if (self.restore_maximized) w32.SW_SHOWMAXIMIZED else w32.SW_SHOW;
++                const cmd: i32 = if (testHidden())
++                    w32.SW_SHOWNOACTIVATE
++                else if (self.restore_maximized) w32.SW_SHOWMAXIMIZED else w32.SW_SHOW;
+                 self.restore_maximized = false;
+                 _ = w32.ShowWindow(h, cmd);
+                 _ = w32.UpdateWindow(h);
+@@ -1329,7 +1349,7 @@ pub fn addTabWithCommand(
+         }
+         container.active_tab = pos;
+         self.updateWindowTitle();
+-        if (!self.is_quick_terminal) {
++        if (!self.is_quick_terminal and !testHidden()) {
+             if (surface.hwnd) |h| _ = w32.SetFocus(h);
+         }
+     } else {
+diff --git a/src/terminal/PageList.zig b/src/terminal/PageList.zig
+index 2888010..9bfd8fa 100644
+--- a/src/terminal/PageList.zig
++++ b/src/terminal/PageList.zig
+@@ -1033,6 +1033,11 @@ fn resizeCols(
+         untrack: bool,
+         remaining_rows: usize,
+         wrapped_rows: usize,
++        // SPIKE S3: the pre-reflow top of the active area, so the wrap
++        // compensation below only counts rows that were above the cursor
++        // inside the old active area (not scrollback rows that slide into
++        // the active area because trailing blank rows are not rewritten).
++        old_active_top: ?*Pin,
+     } = if (cursor) |c| cursor: {
+         const p = if (c.pin) |cursor_pin| cursor_pin.* else self.pin(.{ .active = .{
+             .x = c.x,
+@@ -1071,10 +1076,12 @@ fn resizeCols(
+             .untrack = c.pin == null,
+             .remaining_rows = self.rows -| (c.y + 1),
+             .wrapped_rows = wrapped,
++            .old_active_top = if (active_pin) |ap| try self.trackPin(ap) else null,
+         };
+     } else null;
+     defer if (preserved_cursor) |c| {
+         if (c.untrack) self.untrackPin(c.tracked_pin);
++        if (c.old_active_top) |t| self.untrackPin(t);
+     };
+ 
+     // Update our cols. We have to do this early because grow() that we
+@@ -1193,7 +1200,18 @@ fn resizeCols(
+         const wrapped = wrapped: {
+             var wrapped: usize = 0;
+ 
+-            var row_it = c.tracked_pin.rowIterator(.left_up, active_pin);
++            // SPIKE S3: stop at whichever is lower, the new active top or
++            // the old one, so scrollback that slid into the active area is
++            // not mistaken for re-wrapped rows above the cursor.
++            const stop: ?Pin = stop: {
++                const new_top = active_pin orelse break :stop null;
++                const old_top = c.old_active_top orelse break :stop new_top;
++                if (old_top.before(new_top)) break :stop new_top;
++                if (c.tracked_pin.before(old_top.*)) break :stop new_top;
++                break :stop old_top.*;
++            };
++
++            var row_it = c.tracked_pin.rowIterator(.left_up, stop);
+             while (row_it.next()) |next| {
+                 const row = next.rowAndCell().row;
+                 if (row.wrap_continuation) wrapped += 1;
+diff --git a/src/terminal/Terminal.zig b/src/terminal/Terminal.zig
+index 0a5fa02..b2616df 100644
+--- a/src/terminal/Terminal.zig
++++ b/src/terminal/Terminal.zig
+@@ -13257,3 +13257,56 @@ test "Terminal: glyph APC stores session glossary entries" {
+     t.fullReset();
+     try testing.expect(!t.glyph_glossary.contains(0xE0A0));
+ }
++
++// SPIKE S3: replayed history (scrolled into scrollback with rows x CRLF)
++// versus a resize that lands before ConPTY's first frame
++// (ESC[2J ESC[m ESC[H). Returns how many of the 30 history lines survive.
++const S3Placement = enum { bottom, home };
++const S3Resize = enum { none, grow, short, narrow, narrow_grow };
++fn s3Survivors(alloc: Allocator, placement: S3Placement, resize_kind: S3Resize) !usize {
++    var t = try init(alloc, .{ .cols = 20, .rows = 6 });
++    defer t.deinit(alloc);
++    for (0..30) |i| {
++        var buf: [32]u8 = undefined;
++        try t.printString(try std.fmt.bufPrint(&buf, "H{d:0>2} abcdefghijk", .{i}));
++        if (i != 29) {
++            t.carriageReturn();
++            try t.linefeed();
++        }
++    }
++    for (0..t.rows) |_| {
++        t.carriageReturn();
++        try t.linefeed();
++    }
++    if (placement == .home) t.setCursorPos(1, 1);
++    switch (resize_kind) {
++        .none => {},
++        .grow => try t.resize(alloc, 20, 10),
++        .short => try t.resize(alloc, 20, 4),
++        .narrow => try t.resize(alloc, 10, 6),
++        .narrow_grow => try t.resize(alloc, 10, 9),
++    }
++    // ConPTY's first frame.
++    t.eraseDisplay(.complete, false);
++    t.setCursorPos(1, 1);
++    try t.printString("PROMPT>");
++    const s = try t.screens.active.dumpStringAllocUnwrapped(alloc, .{ .screen = .{} });
++    defer alloc.free(s);
++    var count: usize = 0;
++    for (0..30) |i| {
++        var buf: [8]u8 = undefined;
++        if (std.mem.indexOf(u8, s, try std.fmt.bufPrint(&buf, "H{d:0>2} ", .{i})) != null) count += 1;
++    }
++    return count;
++}
++
++test "S3 spike: replay placement vs early resize" {
++    const alloc = testing.allocator;
++    inline for (.{ S3Placement.bottom, S3Placement.home }) |pl| {
++        inline for (.{ S3Resize.none, S3Resize.grow, S3Resize.short, S3Resize.narrow, S3Resize.narrow_grow }) |rk| {
++            const n = try s3Survivors(alloc, pl, rk);
++            std.debug.print("S3 placement={s} resize={s} survivors={d}/30\n", .{ @tagName(pl), @tagName(rk), n });
++            if (pl == .home) try testing.expectEqual(@as(usize, 30), n);
++        }
++    }
++}
+diff --git a/src/termio/Exec.zig b/src/termio/Exec.zig
+index 881739d..04d3f43 100644
+--- a/src/termio/Exec.zig
++++ b/src/termio/Exec.zig
+@@ -1503,6 +1503,9 @@ pub const ReadThread = struct {
+         defer crash.sentry.thread_state = null;
+ 
+         var buf: [1024]u8 = undefined;
++        // SPIKE S3: log the first ConPTY output chunks (escaped) in situ.
++        var spike_chunks: usize = 0;
++        const spike_t0 = std.time.Instant.now() catch null;
+         while (true) {
+             while (true) {
+                 var n: windows.DWORD = 0;
+@@ -1519,6 +1522,30 @@ pub const ReadThread = struct {
+                     }
+                 }
+ 
++                if (spike_chunks < 6) {
++                    spike_chunks += 1;
++                    var esc_buf: [1200]u8 = undefined;
++                    var len: usize = 0;
++                    for (buf[0..@min(n, 280)]) |c| {
++                        if (len + 4 > esc_buf.len) break;
++                        if (c == 0x1b) {
++                            @memcpy(esc_buf[len..][0..2], "\\e");
++                            len += 2;
++                        } else if (c < 0x20 or c == 0x7f) {
++                            _ = std.fmt.bufPrint(esc_buf[len..][0..4], "\\x{x:0>2}", .{c}) catch break;
++                            len += 4;
++                        } else {
++                            esc_buf[len] = c;
++                            len += 1;
++                        }
++                    }
++                    const ms: u64 = if (spike_t0) |t0|
++                        if (std.time.Instant.now()) |t1| t1.since(t0) / std.time.ns_per_ms else |_| 0
++                    else
++                        0;
++                    log.warn("S3 conpty chunk#{d} +{d}ms len={d}: {s}", .{ spike_chunks, ms, n, esc_buf[0..len] });
++                }
++
+                 @call(.always_inline, termio.Termio.processOutput, .{ io, buf[0..n] });
+             }
+ 
+diff --git a/src/termio/Options.zig b/src/termio/Options.zig
+index c123b52..85d747b 100644
+--- a/src/termio/Options.zig
++++ b/src/termio/Options.zig
+@@ -42,3 +42,8 @@ renderer_mailbox: *renderer.Thread.Mailbox,
+ 
+ /// The mailbox for sending the surface messages.
+ surface_mailbox: apprt.surface.Mailbox,
++
++/// SPIKE S3 (ADR-9.5): saved scrollback (VT text, SGR only) replayed into
++/// the terminal before the PTY read thread starts. Borrowed; Termio.init
++/// copies it.
++restore_history: ?[]const u8 = null,
+diff --git a/src/termio/Termio.zig b/src/termio/Termio.zig
+index 06ff3da..a1af056 100644
+--- a/src/termio/Termio.zig
++++ b/src/termio/Termio.zig
+@@ -74,6 +74,10 @@ last_cursor_reset: ?std.time.Instant = null,
+ /// to keep track of any state or if its already been freed.
+ thread_enter_state: ?*ThreadEnterState = null,
+ 
++/// SPIKE S3 (ADR-9.5): owned copy of the saved scrollback to replay in
++/// threadEnter before the backend (subprocess + PTY read thread) starts.
++restore_history: ?[]u8 = null,
++
+ /// The state we need to keep around only until we enter the IO
+ /// thread. Then we can throw it all away.
+ const ThreadEnterState = struct {
+@@ -298,6 +302,12 @@ pub fn init(self: *Termio, alloc: Allocator, opts: termio.Options) !void {
+         opts.full_config,
+     );
+ 
++    const restore_history: ?[]u8 = if (opts.restore_history) |h|
++        try alloc.dupe(u8, h)
++    else
++        null;
++    errdefer if (restore_history) |h| alloc.free(h);
++
+     self.* = .{
+         .alloc = alloc,
+         .terminal = term,
+@@ -311,10 +321,12 @@ pub fn init(self: *Termio, alloc: Allocator, opts: termio.Options) !void {
+         .mailbox = opts.mailbox,
+         .terminal_stream = .initAlloc(alloc, handler),
+         .thread_enter_state = thread_enter_state,
++        .restore_history = restore_history,
+     };
+ }
+ 
+ pub fn deinit(self: *Termio) void {
++    if (self.restore_history) |h| self.alloc.free(h);
+     self.backend.deinit();
+     self.terminal.deinit(self.alloc);
+     self.config.deinit();
+@@ -355,6 +367,17 @@ pub fn threadEnter(
+         .backend = undefined, // Backend must replace this on threadEnter
+     };
+ 
++    // SPIKE S3 (ADR-9.5): replay saved scrollback BEFORE the backend
++    // starts the subprocess and the PTY read thread, so no ConPTY output
++    // can interleave with it.
++    if (self.restore_history) |h| {
++        defer {
++            self.alloc.free(h);
++            self.restore_history = null;
++        }
++        self.replayRestoreHistory(h);
++    }
++
+     // Setup our backend
+     try self.backend.threadEnter(self.alloc, self, data);
+     errdefer self.backend.threadExit(data);
+@@ -386,6 +409,48 @@ pub fn threadExit(self: *Termio, data: *ThreadData) void {
+     self.backend.threadExit(data);
+ }
+ 
++/// SPIKE S3: feed the sanitized saved scrollback through the stream
++/// handler, reset SGR, then scroll it into history with one CRLF per row
++/// (optionally parking the cursor at the top-left). Runs on the IO thread
++/// before the backend starts. Mode from WMUX_SPIKE_RESTORE_MODE:
++/// `none` (text only, the failing control), `crlf` (ADR-9.5 as written),
++/// `crlf_home` (default; ADR + ESC[H).
++fn replayRestoreHistory(self: *Termio, history: []const u8) void {
++    const spike_replay = @import("spike_replay.zig");
++    const Mode = enum { none, crlf, crlf_home };
++    const mode: Mode = mode: {
++        const v = std.process.getEnvVarOwned(self.alloc, "WMUX_SPIKE_RESTORE_MODE") catch
++            break :mode .crlf_home;
++        defer self.alloc.free(v);
++        break :mode std.meta.stringToEnum(Mode, v) orelse .crlf_home;
++    };
++
++    const t_start = std.time.Instant.now() catch null;
++    self.renderer_state.mutex.lock();
++    defer self.renderer_state.mutex.unlock();
++
++    const rows = self.terminal.rows;
++    const bytes: []u8 = switch (mode) {
++        .none => spike_replay.sanitize(self.alloc, history),
++        .crlf => spike_replay.buildReplay(self.alloc, history, .{ .rows = rows, .home = false }),
++        .crlf_home => spike_replay.buildReplay(self.alloc, history, .{ .rows = rows, .home = true }),
++    } catch |err| {
++        log.warn("S3 replay: build failed err={}", .{err});
++        return;
++    };
++    defer self.alloc.free(bytes);
++
++    self.processOutputLocked(bytes);
++
++    const elapsed_us: u64 = if (t_start) |t0|
++        if (std.time.Instant.now()) |t1| t1.since(t0) / std.time.ns_per_us else |_| 0
++    else
++        0;
++    log.warn("S3 replay: mode={s} in={d}B fed={d}B rows={d} cols={d} took={d}us", .{
++        @tagName(mode), history.len, bytes.len, rows, self.terminal.cols, elapsed_us,
++    });
++}
++
+ /// Send a message to the mailbox. Depending on the mailbox type in use
+ /// this may process now or it may just enqueue and process later.
+ ///
+diff --git a/src/termio/spike_replay.zig b/src/termio/spike_replay.zig
+new file mode 100644
+index 0000000..d926e07
+--- /dev/null
++++ b/src/termio/spike_replay.zig
+@@ -0,0 +1,213 @@
++//! S3 spike reference prototype (not shipped): the pure part of
++//! terminal-side scrollback replay (ARCHITECTURE ADR-9.5).
++//!
++//! `buildReplay` turns a saved scrollback file into the exact byte stream
++//! that W1-7 feeds through the termio stream handler in Termio.threadEnter,
++//! BEFORE the backend starts the subprocess and the PTY read thread:
++//!
++//!   sanitize(saved) ++ ESC[0m ++ "\r\n" x rows ++ ESC[H
++//!
++//! * sanitize: the file is untrusted at replay time (another process may
++//!   have written it). Only printable text, TAB, line breaks and SGR
++//!   (CSI ... m) survive. Everything else is dropped, so a replay can never
++//!   make the stream handler answer a query (DSR/DA/XTVERSION responses
++//!   would be queued as PTY writes and typed into the new shell), set the
++//!   clipboard (OSC 52), change the title/pwd/colors, or switch screens.
++//!   Lone LF becomes CRLF, lone CR is dropped, trailing line breaks are
++//!   trimmed (so the new prompt follows the last saved line directly).
++//! * ESC[0m BEFORE the line feeds: Ghostty fills rows that scroll in with
++//!   the current background (BCE), so an unterminated SGR background in the
++//!   file would otherwise paint the whole blank screen.
++//! * "\r\n" x rows: scrolls every replayed line into scrollback and leaves
++//!   a blank active area. ConPTY's first frame is
++//!   ESC[?25l ESC[2J ESC[m ESC[H (measured, in-box conhost 10.0.26100),
++//!   and Ghostty's ED2 clears only the active area.
++//! * ESC[H: parks the cursor at the top-left (where ConPTY assumes it is).
++//!   With the cursor on the bottom row, a row-growing resize before the
++//!   shell's first frame makes Ghostty "pull down" scrollback into the
++//!   active area (PageList.resizeWithoutReflow), where ConPTY's ED2 then
++//!   erases it. With the cursor at the top, Ghostty adds blank rows instead.
++//!
++//! Test: zig test replay.zig
++
++const std = @import("std");
++const Allocator = std.mem.Allocator;
++
++pub const Options = struct {
++    /// Terminal rows at replay time (Termio.terminal.rows).
++    rows: u16,
++    /// Emit ESC[H after the line feeds (recommended; see file comment).
++    home: bool = true,
++    /// Byte cap applied to the sanitized text (tail kept, cut on a line
++    /// boundary). ADR-9.2 caps the saved file at 400,000 characters.
++    max_bytes: usize = 1_600_000,
++};
++
++/// Build the replay byte stream. Caller owns the result.
++pub fn buildReplay(gpa: Allocator, saved: []const u8, opts: Options) Allocator.Error![]u8 {
++    var out: std.ArrayList(u8) = .empty;
++    errdefer out.deinit(gpa);
++
++    const clean = try sanitize(gpa, saved);
++    defer gpa.free(clean);
++
++    // Keep the tail if over the cap, starting at a line boundary.
++    var text: []const u8 = clean;
++    if (text.len > opts.max_bytes) {
++        text = text[text.len - opts.max_bytes ..];
++        if (std.mem.indexOf(u8, text, "\r\n")) |nl| text = text[nl + 2 ..];
++    }
++
++    try out.ensureTotalCapacity(gpa, text.len + 8 + 2 * @as(usize, opts.rows));
++    out.appendSliceAssumeCapacity(text);
++    out.appendSliceAssumeCapacity("\x1b[0m");
++    for (0..opts.rows) |_| out.appendSliceAssumeCapacity("\r\n");
++    if (opts.home) out.appendSliceAssumeCapacity("\x1b[H");
++    return out.toOwnedSlice(gpa);
++}
++
++/// SGR-only filter (see file comment). Caller owns the result.
++pub fn sanitize(gpa: Allocator, in: []const u8) Allocator.Error![]u8 {
++    var out: std.ArrayList(u8) = .empty;
++    errdefer out.deinit(gpa);
++    try out.ensureTotalCapacity(gpa, in.len + in.len / 16);
++
++    var i: usize = 0;
++    while (i < in.len) {
++        const c = in[i];
++        switch (c) {
++            0x1b => i = try escape(gpa, &out, in, i),
++            '\n' => {
++                try out.appendSlice(gpa, "\r\n");
++                i += 1;
++            },
++            '\r' => {
++                if (i + 1 < in.len and in[i + 1] == '\n') {
++                    try out.appendSlice(gpa, "\r\n");
++                    i += 2;
++                } else i += 1; // lone CR: dropped
++            },
++            '\t' => {
++                try out.append(gpa, c);
++                i += 1;
++            },
++            0x00...0x08, 0x0b...0x0c, 0x0e...0x1a, 0x1c...0x1f, 0x7f => i += 1,
++            0xc2 => {
++                // UTF-8 encoded C1 controls (U+0080..U+009F): dropped.
++                if (i + 1 < in.len and in[i + 1] >= 0x80 and in[i + 1] <= 0x9f) {
++                    i += 2;
++                } else {
++                    try out.append(gpa, c);
++                    i += 1;
++                }
++            },
++            else => {
++                try out.append(gpa, c);
++                i += 1;
++            },
++        }
++    }
++
++    // Trim trailing line breaks and whitespace-only tail so the new prompt
++    // directly follows the last saved line.
++    var end = out.items.len;
++    while (end > 0) : (end -= 1) {
++        const b = out.items[end - 1];
++        if (b != '\r' and b != '\n' and b != ' ') break;
++    }
++    out.shrinkRetainingCapacity(end);
++    return out.toOwnedSlice(gpa);
++}
++
++/// Handle an escape sequence starting at in[start] == ESC. Appends it to
++/// `out` only if it is a well-formed SGR. Returns the index after it.
++fn escape(gpa: Allocator, out: *std.ArrayList(u8), in: []const u8, start: usize) Allocator.Error!usize {
++    var i = start + 1;
++    if (i >= in.len) return i;
++    switch (in[i]) {
++        '[' => {
++            // CSI: params 0x30-0x3F, intermediates 0x20-0x2F, final 0x40-0x7E.
++            i += 1;
++            var sgr_ok = true;
++            while (i < in.len and in[i] >= 0x30 and in[i] <= 0x3f) : (i += 1) {
++                const p = in[i];
++                if (!((p >= '0' and p <= '9') or p == ';' or p == ':')) sgr_ok = false;
++            }
++            while (i < in.len and in[i] >= 0x20 and in[i] <= 0x2f) : (i += 1) sgr_ok = false;
++            if (i >= in.len) return i; // truncated: drop
++            const final = in[i];
++            i += 1;
++            if (final < 0x40 or final > 0x7e) return i; // malformed: drop
++            if (sgr_ok and final == 'm') try out.appendSlice(gpa, in[start..i]);
++            return i;
++        },
++        ']', 'P', 'X', '^', '_' => {
++            // OSC / DCS / SOS / PM / APC: skip to BEL (OSC only) or ST.
++            const is_osc = in[i] == ']';
++            i += 1;
++            while (i < in.len) : (i += 1) {
++                if (is_osc and in[i] == 0x07) return i + 1;
++                if (in[i] == 0x1b and i + 1 < in.len and in[i + 1] == '\\') return i + 2;
++            }
++            return i;
++        },
++        else => {
++            // Two-byte escapes (ESC c, ESC 7, ESC =, ...) and nF sequences
++            // (ESC SP F, ESC ( B, ...): drop.
++            while (i < in.len and in[i] >= 0x20 and in[i] <= 0x2f) : (i += 1) {}
++            return @min(i + 1, in.len);
++        },
++    }
++}
++
++const testing = std.testing;
++
++test "sanitize keeps text, tabs and SGR" {
++    const out = try sanitize(testing.allocator, "a\tb \x1b[1;38;2;1;2;3mred\x1b[0m\x1b[38:5:9mx\x1b[m");
++    defer testing.allocator.free(out);
++    try testing.expectEqualStrings("a\tb \x1b[1;38;2;1;2;3mred\x1b[0m\x1b[38:5:9mx\x1b[m", out);
++}
++
++test "sanitize drops queries, OSC, DCS, mode changes and C0" {
++    const in = "A\x1b[6n\x1b[c\x1b[>q\x1b]52;c;SGVsbG8=\x07\x1b]0;title\x1b\\" ++
++        "\x1bP+q544e\x1b\\\x1b[?1049h\x1b[2J\x1b[3J\x1bc\x1b7\x1b(B\x07\x08B";
++    const out = try sanitize(testing.allocator, in);
++    defer testing.allocator.free(out);
++    try testing.expectEqualStrings("AB", out);
++}
++
++test "sanitize normalizes line breaks and trims the tail" {
++    const out = try sanitize(testing.allocator, "one\ntwo\r\nthree\rX\r\n\r\n  \n");
++    defer testing.allocator.free(out);
++    try testing.expectEqualStrings("one\r\ntwo\r\nthreeX", out);
++}
++
++test "sanitize drops UTF-8 C1 controls but keeps other UTF-8" {
++    const out = try sanitize(testing.allocator, "\xc2\x9b6n\xc3\xa9\xe2\x94\x80\xc2\xa0");
++    defer testing.allocator.free(out);
++    try testing.expectEqualStrings("6n\xc3\xa9\xe2\x94\x80\xc2\xa0", out);
++}
++
++test "sanitize drops truncated sequences" {
++    const out = try sanitize(testing.allocator, "ok\x1b[38;5");
++    defer testing.allocator.free(out);
++    try testing.expectEqualStrings("ok", out);
++}
++
++test "buildReplay appends reset, rows x CRLF and home" {
++    const out = try buildReplay(testing.allocator, "L1\nL2\n", .{ .rows = 3 });
++    defer testing.allocator.free(out);
++    try testing.expectEqualStrings("L1\r\nL2\x1b[0m\r\n\r\n\r\n\x1b[H", out);
++}
++
++test "buildReplay without home" {
++    const out = try buildReplay(testing.allocator, "L1", .{ .rows = 2, .home = false });
++    defer testing.allocator.free(out);
++    try testing.expectEqualStrings("L1\x1b[0m\r\n\r\n", out);
++}
++
++test "buildReplay caps on a line boundary and keeps the tail" {
++    const out = try buildReplay(testing.allocator, "aaaa\nbbbb\ncccc", .{ .rows = 1, .home = false, .max_bytes = 8 });
++    defer testing.allocator.free(out);
++    try testing.expectEqualStrings("cccc\x1b[0m\r\n", out);
++}

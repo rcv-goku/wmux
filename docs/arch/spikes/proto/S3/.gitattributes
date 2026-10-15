@@ -1,0 +1,2 @@
+# Keep the spike patches applicable with core.autocrlf=true.
+*.patch text eol=lf

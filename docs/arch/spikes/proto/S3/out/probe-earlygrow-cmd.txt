@@ -1,0 +1,29 @@
+cmd: cmd.exe
+size: 100x30 flags: 0 run_ms: 4000 total_bytes: 167 chunks: 3 reader_exit_err: 109
+sequence counts (first byte offset):
+  \e[2J = 1 (first at byte 22)
+  \e[3J = 0
+  \e[J = 0
+  \e[0J = 0
+  \e[H = 2 (first at byte 29)
+  \e[1;1H = 0
+  \e[?25l = 1 (first at byte 16)
+  \e[?25h = 1 (first at byte 145)
+  \e[?1049h = 0
+  \e[6n = 0
+  \e[?9001h = 1 (first at byte 0)
+  \e[?1004h = 1 (first at byte 8)
+  \e]0; = 1 (first at byte 113)
+  \e[K = 0
+  \e[m = 1 (first at byte 26)
+  \e[0m = 0
+  \e[?2026h = 0
+  \ec = 0
+markers:
+  [+  +145ms] child spawned
+  [+  +145ms] ResizePseudoConsole(100x40) hr=0x0
+  [+ +4026ms] ClosePseudoConsole
+chunks:
+[+  +939ms] (16 bytes) \e[?9001h\e[?1004h
+[+  +945ms] (135 bytes) \e[?25l\e[2J\e[m\e[H\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\e[H\e]0;C:\\Windows\\SYSTEM32\\cmd.exe\a\e[?25h
+[+ +4349ms] (16 bytes) \e[?9001l\e[?1004l
