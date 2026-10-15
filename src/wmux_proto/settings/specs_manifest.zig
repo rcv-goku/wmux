@@ -1,6 +1,12 @@
 //! Settings spec manifest [frozen, merge=union] (ADR-1.4, ADR-5.2): one line
-//! per feature spec file, sorted by feature id. W0-P2 aggregates the specs of
-//! these files and adds the comptime duplicate-path check.
+//! per feature spec file, sorted by feature id. A feature file contributes
+//! `pub const specs = [_]Spec{ ... };`; `all` concatenates them in manifest
+//! order and fails the build on a duplicate path, on a path that is both a
+//! setting and a section, or on a malformed spec (`spec.checkComptime`).
+
+const std = @import("std");
+const Spec = @import("spec.zig").Spec;
+const checkComptime = @import("spec.zig").checkComptime;
 
 pub const modules = .{
     @import("specs/a11y.zig"),
@@ -75,6 +81,67 @@ pub const modules = .{
     @import("specs/workspaces.zig"),
 };
 
+/// Every registered setting, in manifest order.
+pub const all: []const Spec = aggregate(modules);
+
+/// Concatenates the `specs` of `mods` and runs the comptime checks.
+pub fn aggregate(comptime mods: anytype) []const Spec {
+    comptime {
+        @setEvalBranchQuota(20_000_000);
+        var count: usize = 0;
+        for (mods) |m| {
+            if (@hasDecl(m, "specs")) count += m.specs.len;
+        }
+        var list: [count]Spec = undefined;
+        var n: usize = 0;
+        for (mods) |m| {
+            if (!@hasDecl(m, "specs")) continue;
+            for (m.specs) |s| {
+                checkComptime(s);
+                list[n] = s;
+                n += 1;
+            }
+        }
+        for (list, 0..) |a, i| {
+            for (list[i + 1 ..]) |b| {
+                if (std.mem.eql(u8, a.path, b.path))
+                    @compileError("duplicate settings path '" ++ a.path ++ "'");
+                if (isStrictPrefix(a.path, b.path) or isStrictPrefix(b.path, a.path))
+                    @compileError("settings paths '" ++ a.path ++ "' and '" ++ b.path ++ "': one is a section of the other");
+            }
+        }
+        const final = list;
+        return &final;
+    }
+}
+
+fn isStrictPrefix(section: []const u8, path: []const u8) bool {
+    return path.len > section.len and path[section.len] == '.' and std.mem.startsWith(u8, path, section);
+}
+
 test {
     inline for (modules) |m| _ = m;
+}
+
+test "unit: settings: manifest aggregates feature specs" {
+    const a = struct {
+        pub const specs = [_]Spec{
+            .{ .path = "sidebar.showPorts", .ty = .boolean, .default = "true", .section = "sidebarAppearance", .label = "Show ports", .doc = "" },
+        };
+    };
+    const b = struct {};
+    const c = struct {
+        pub const specs = [_]Spec{
+            .{ .path = "wmux.sidebar.width", .ty = .{ .integer = .{ .min = 120, .max = 600 } }, .default = "220", .section = "sidebarAppearance", .label = "Width", .doc = "", .cmux_compat = false },
+            .{ .path = "app.appearance", .ty = .{ .enumeration = &.{ "system", "light", "dark" } }, .default = "\"system\"", .section = "app", .label = "Theme", .doc = "" },
+        };
+    };
+    const agg = comptime aggregate(.{ a, b, c });
+    try std.testing.expectEqual(@as(usize, 3), agg.len);
+    try std.testing.expectEqualStrings("sidebar.showPorts", agg[0].path);
+    try std.testing.expectEqualStrings("app.appearance", agg[2].path);
+    try std.testing.expect(!isStrictPrefix("sidebar", "sidebarX.y"));
+    try std.testing.expect(isStrictPrefix("sidebar", "sidebar.y"));
+    // The real registry is consistent (checked at comptime by `all`).
+    _ = all.len;
 }

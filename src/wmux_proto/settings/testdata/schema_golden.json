@@ -1,0 +1,267 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schema.wmux.example/wmux.schema.json",
+  "title": "wmux settings",
+  "description": "Settings for wmux.json and the shared cmux.json. Keys use cmux names; wmux-only keys live under \"wmux\".",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "description": "Schema URL for editor completion (the wmux or the cmux schema).",
+      "type": "string"
+    },
+    "schemaVersion": {
+      "description": "Config format version; newer versions are read best effort.",
+      "type": "integer",
+      "minimum": 1,
+      "default": 1
+    },
+    "packs": {
+      "description": "Local pack files or directories loaded before this file, relative to it unless absolute. A directory resolves to wmux.pack.json, then cmux.pack.json.",
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "string",
+            "minLength": 1
+          },
+          {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "path"
+            ]
+          }
+        ]
+      },
+      "default": []
+    },
+    "activePaneBorderColor": {
+      "title": "Active pane border",
+      "description": "Focused pane border.",
+      "type": "string",
+      "pattern": "^#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$",
+      "default": "#3B82F6",
+      "x-cmux-scopes": [
+        "global"
+      ],
+      "x-wmux-section": "app"
+    },
+    "app": {
+      "type": "object",
+      "properties": {
+        "appearance": {
+          "title": "Theme",
+          "description": "Light, dark or follow the system.",
+          "type": "string",
+          "enum": [
+            "system",
+            "light",
+            "dark"
+          ],
+          "default": "system",
+          "x-cmux-scopes": [
+            "global"
+          ],
+          "x-wmux-section": "app"
+        }
+      }
+    },
+    "automation": {
+      "type": "object",
+      "properties": {
+        "autoNamingAgent": {
+          "title": "Auto-naming agent",
+          "description": "Agent slug.",
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$",
+          "default": "auto",
+          "x-cmux-scopes": [
+            "global"
+          ],
+          "x-wmux-section": "automation"
+        },
+        "claudeBinaryPath": {
+          "title": "Claude binary",
+          "description": "Path override.",
+          "type": "string",
+          "x-wmux-kind": "path",
+          "default": "",
+          "x-cmux-scopes": [
+            "global"
+          ],
+          "x-wmux-section": "automation",
+          "x-wmux-policy-lockable": false
+        },
+        "socketControlMode": {
+          "title": "Socket control",
+          "description": "Who may connect.",
+          "type": "string",
+          "enum": [
+            "off",
+            "cmuxOnly",
+            "allowAll",
+            "password"
+          ],
+          "default": "cmuxOnly",
+          "x-cmux-scopes": [
+            "global"
+          ],
+          "x-wmux-section": "automation",
+          "x-wmux-apply": "restart"
+        }
+      }
+    },
+    "browser": {
+      "type": "object",
+      "properties": {
+        "urlAllowlist": {
+          "title": "URL allowlist",
+          "description": "Allowed hosts.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "x-cmux-scopes": [
+            "global"
+          ],
+          "x-wmux-section": "browser"
+        }
+      }
+    },
+    "fileEditor": {
+      "type": "object",
+      "properties": {
+        "wordWrap": {
+          "title": "Word wrap",
+          "description": "Soft-wrap long lines.",
+          "type": "boolean",
+          "default": true,
+          "x-cmux-scopes": [
+            "global"
+          ],
+          "x-wmux-section": "app",
+          "x-wmux-palette-toggle": true
+        }
+      }
+    },
+    "notifications": {
+      "type": "object",
+      "properties": {
+        "hooks": {
+          "title": "Notification hooks",
+          "description": "Hooks.",
+          "type": "object",
+          "default": {},
+          "x-cmux-scopes": [
+            "global",
+            "project"
+          ],
+          "x-wmux-section": "automation"
+        }
+      }
+    },
+    "sidebar": {
+      "type": "object",
+      "properties": {
+        "showPorts": {
+          "title": "Show ports",
+          "description": "Listening ports per workspace.",
+          "type": "boolean",
+          "default": true,
+          "x-cmux-scopes": [
+            "global"
+          ],
+          "x-wmux-section": "sidebarAppearance",
+          "x-wmux-keywords": [
+            "ports"
+          ]
+        }
+      }
+    },
+    "terminal": {
+      "type": "object",
+      "properties": {
+        "copyOnSelect": {
+          "title": "Copy on select",
+          "description": "Copy selected text.",
+          "type": "boolean",
+          "default": false,
+          "x-cmux-scopes": [
+            "global"
+          ],
+          "x-wmux-section": "terminal",
+          "x-wmux-ghostty-override": "copy-on-select"
+        },
+        "scrollSpeed": {
+          "title": "Scroll speed",
+          "description": "Scroll multiplier.",
+          "type": "number",
+          "minimum": 0.1,
+          "maximum": 3,
+          "default": 1,
+          "x-cmux-scopes": [
+            "global"
+          ],
+          "x-wmux-section": "terminal"
+        }
+      }
+    },
+    "wmux": {
+      "type": "object",
+      "properties": {
+        "quickTerminal": {
+          "type": "object",
+          "properties": {
+            "hotkey": {
+              "title": "Quick terminal hotkey",
+              "description": "Global hotkey.",
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "minItems": 1,
+                  "maxItems": 2
+                }
+              ],
+              "x-wmux-kind": "strokes",
+              "default": "ctrl+`",
+              "x-cmux-scopes": [
+                "global"
+              ],
+              "x-wmux-section": "globalHotkey"
+            }
+          }
+        },
+        "sidebar": {
+          "type": "object",
+          "properties": {
+            "width": {
+              "title": "Sidebar width",
+              "description": "Pixels.",
+              "type": "integer",
+              "minimum": 120,
+              "maximum": 600,
+              "default": 220,
+              "x-cmux-scopes": [
+                "global"
+              ],
+              "x-wmux-section": "windows"
+            }
+          }
+        }
+      }
+    }
+  }
+}
