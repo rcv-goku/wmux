@@ -281,16 +281,19 @@ pub fn mintUuid(random: std.Random, out: *[36]u8) void {
 
 // ── Timestamps ──────────────────────────────────────────────────────
 
-/// Formats Unix milliseconds as `YYYY-MM-DDTHH:MM:SS.mmmZ`. Negative input
-/// clamps to the epoch.
+/// 9999-12-31T23:59:59.999Z, the last instant with a four-digit year.
+const max_timestamp_ms: i64 = 253_402_300_799_999;
+
+/// Formats Unix milliseconds as `YYYY-MM-DDTHH:MM:SS.mmmZ`. Input before
+/// the epoch or after year 9999 is clamped to that range.
 pub fn formatTimestamp(ms: i64, out: *[24]u8) []const u8 {
-    const clamped: u64 = @intCast(@max(ms, 0));
+    const clamped: u64 = @intCast(std.math.clamp(ms, 0, max_timestamp_ms));
     const secs = std.time.epoch.EpochSeconds{ .secs = clamped / 1000 };
     const yd = secs.getEpochDay().calculateYearDay();
     const md = yd.calculateMonthDay();
     const ds = secs.getDaySeconds();
     return std.fmt.bufPrint(out, "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}.{d:0>3}Z", .{
-        yd.year % 10000,
+        yd.year,
         md.month.numeric(),
         md.day_index + 1,
         ds.getHoursIntoDay(),
@@ -301,17 +304,18 @@ pub fn formatTimestamp(ms: i64, out: *[24]u8) []const u8 {
 }
 
 /// Parses `YYYY-MM-DDTHH:MM:SS[.fff]Z` (the `formatTimestamp` shape;
-/// 1 to 9 fraction digits) into Unix milliseconds. Years before 1970 and
-/// out-of-range fields are rejected.
+/// 1 to 9 fraction digits) into Unix milliseconds. Years before 1970,
+/// out-of-range fields and anything but ASCII digits in a field are
+/// rejected.
 pub fn parseTimestamp(s: []const u8) ?i64 {
     if (s.len < 20 or s[4] != '-' or s[7] != '-' or s[10] != 'T' or s[13] != ':' or s[16] != ':') return null;
     if (s[s.len - 1] != 'Z') return null;
-    const year = std.fmt.parseInt(u16, s[0..4], 10) catch return null;
-    const month = std.fmt.parseInt(u8, s[5..7], 10) catch return null;
-    const day = std.fmt.parseInt(u8, s[8..10], 10) catch return null;
-    const hour = std.fmt.parseInt(u8, s[11..13], 10) catch return null;
-    const minute = std.fmt.parseInt(u8, s[14..16], 10) catch return null;
-    const second = std.fmt.parseInt(u8, s[17..19], 10) catch return null;
+    const year = decimalDigits(s[0..4]) orelse return null;
+    const month = decimalDigits(s[5..7]) orelse return null;
+    const day = decimalDigits(s[8..10]) orelse return null;
+    const hour = decimalDigits(s[11..13]) orelse return null;
+    const minute = decimalDigits(s[14..16]) orelse return null;
+    const second = decimalDigits(s[17..19]) orelse return null;
     var ms: i64 = 0;
     const rest = s[19 .. s.len - 1];
     if (rest.len > 0) {
@@ -334,6 +338,18 @@ pub fn parseTimestamp(s: []const u8) ?i64 {
     days += day - 1;
     const secs = days * 86400 + @as(i64, hour) * 3600 + @as(i64, minute) * 60 + second;
     return secs * 1000 + ms;
+}
+
+/// Value of a field of at most four ASCII digits (`std.fmt.parseInt`
+/// would also accept a sign).
+fn decimalDigits(s: []const u8) ?u16 {
+    std.debug.assert(s.len <= 4);
+    var v: u16 = 0;
+    for (s) |c| {
+        if (!std.ascii.isDigit(c)) return null;
+        v = v * 10 + (c - '0');
+    }
+    return v;
 }
 
 // ── Reader ──────────────────────────────────────────────────────────
@@ -1585,8 +1601,15 @@ test "unit: session: timestamps format and parse" {
     try testing.expectEqual(@as(?i64, 1_792_058_400_123), parseTimestamp("2026-10-15T10:00:00.123456789Z"));
     const bad = [_][]const u8{ "", "2026-10-15", "2026-13-15T10:00:00Z", "2025-02-29T10:00:00Z", "2026-10-15T24:00:00Z", "2026-10-15T10:00:00.Z", "2026-10-15T10:00:00+01:00", "1969-12-31T23:59:59Z", "2026-10-15T10:00:00.12aZ" };
     for (bad) |b| try testing.expect(parseTimestamp(b) == null);
+    // Signs and spaces are not digits.
+    const not_digits = [_][]const u8{ "2026-+1-15T10:00:00Z", "2026-10-15T-0:00:00Z", "+026-10-15T10:00:00Z", "2026-10- 5T10:00:00Z", "2026-10-15T10:00:0+Z" };
+    for (not_digits) |b| try testing.expect(parseTimestamp(b) == null);
     var ms: i64 = 0;
     while (ms < 4_000_000_000_000) : (ms += 97_654_321_987) {
         try testing.expectEqual(@as(?i64, ms), parseTimestamp(formatTimestamp(ms, &buf)));
     }
+    // Past year 9999 clamps instead of overflowing the year.
+    try testing.expectEqualStrings("9999-12-31T23:59:59.999Z", formatTimestamp(std.math.maxInt(i64), &buf));
+    try testing.expectEqualStrings("9999-12-31T23:59:59.999Z", formatTimestamp(max_timestamp_ms + 1, &buf));
+    try testing.expectEqual(@as(?i64, max_timestamp_ms), parseTimestamp(formatTimestamp(max_timestamp_ms, &buf)));
 }
