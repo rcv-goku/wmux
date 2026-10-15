@@ -2,4 +2,10 @@
 //! here and name tests "unit: notifications: <behavior>". Logic files use only std,
 //! wmux_proto and sibling logic files; they run in `zig build test-fast`.
 
-test {}
+test {
+    _ = @import("text.zig");
+    _ = @import("store.zig");
+    _ = @import("unread.zig");
+    _ = @import("ingest.zig");
+    _ = @import("persist.zig");
+}
