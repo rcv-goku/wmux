@@ -1,0 +1,69 @@
+cmd: pwsh.exe -NoLogo -NoProfile
+size: 100x30 flags: 0 run_ms: 14000 total_bytes: 886 chunks: 41 reader_exit_err: 109
+sequence counts (first byte offset):
+  \e[2J = 1 (first at byte 22)
+  \e[3J = 1 (first at byte 667)
+  \e[J = 0
+  \e[0J = 0
+  \e[H = 4 (first at byte 29)
+  \e[1;1H = 0
+  \e[?25l = 12 (first at byte 16)
+  \e[?25h = 12 (first at byte 114)
+  \e[?1049h = 0
+  \e[6n = 0
+  \e[?9001h = 1 (first at byte 0)
+  \e[?1004h = 1 (first at byte 8)
+  \e]0; = 1 (first at byte 71)
+  \e[K = 60 (first at byte 510)
+  \e[m = 11 (first at byte 26)
+  \e[0m = 0
+  \e[?2026h = 0
+  \ec = 0
+markers:
+  [+   +21ms] child spawned
+  [++10001ms] wrote input text
+  [++14061ms] TerminateProcess(child)
+  [++14156ms] ClosePseudoConsole
+  [++14156ms] ClosePseudoConsole returned
+chunks:
+[+  +532ms] (16 bytes) \e[?9001h\e[?1004h
+[+ +8498ms] (104 bytes) \e[?25l\e[2J\e[m\e[HPS C:\\Users\\<user>\\claude>\e[1C\e]0;C:\\Program Files\\PowerShell\\7\\pwsh.exe\a\e[?25h
+[++10209ms] (6 bytes) \e[?25l
+[++10262ms] (34 bytes) \e[93mC\e[97m\e[2m\e[3mlaude raw 15000
+[++10303ms] (3 bytes) \e[m
+[++10326ms] (13 bytes) \e[1;38H\e[?25h
+[++10450ms] (6 bytes) \e[?25l
+[++10484ms] (35 bytes) \e[93m\x08Cl\e[97m\e[2m\e[3maude raw 15000
+[++10514ms] (3 bytes) \e[m
+[++10532ms] (25 bytes) \e[93m\e[1;37HCle\e[13X\e[13C
+[++10548ms] (16 bytes) \e[m\e[1;40H\e[?25h
+[++10664ms] (6 bytes) \e[?25l
+[++10703ms] (16 bytes) \e[93m\e[1;37HClea
+[++10719ms] (3 bytes) \e[m
+[++10735ms] (6 bytes) \e[?25h
+[++10754ms] (6 bytes) \e[?25l
+[++10767ms] (17 bytes) \e[93m\e[1;37HClear
+[++10783ms] (27 bytes) \e[m\e[93m\e[1;37HClear-\e[?25h
+[++10817ms] (9 bytes) \e[m\e[?25l
+[++10862ms] (19 bytes) \e[93m\e[1;37HClear-H
+[++10894ms] (3 bytes) \e[m
+[++10909ms] (6 bytes) \e[?25h
+[++10940ms] (6 bytes) \e[?25l
+[++10971ms] (20 bytes) \e[93m\e[1;37HClear-Ho
+[++10987ms] (3 bytes) \e[m
+[++11003ms] (6 bytes) \e[?25h
+[++11036ms] (6 bytes) \e[?25l
+[++11067ms] (21 bytes) \e[93m\e[1;37HClear-Hos
+[++11130ms] (3 bytes) \e[m
+[++11150ms] (6 bytes) \e[?25h
+[++11182ms] (6 bytes) \e[?25l
+[++11195ms] (22 bytes) \e[93m\e[1;37HClear-Host
+[++11210ms] (3 bytes) \e[m
+[++11226ms] (6 bytes) \e[?25h
+[++11251ms] (2 bytes) \r\n
+[++11617ms] (15 bytes) \e[?25l\e[H\e[?25h
+[++11722ms] (163 bytes) \e[?25l\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\e[H\e[?25h
+[++11722ms] (4 bytes) \e[3J
+[++11757ms] (163 bytes) \e[?25l\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\e[H\e[?25h
+[++11771ms] (36 bytes) PS C:\\Users\\<user>\\claude> 
+[++14157ms] (16 bytes) \e[?9001l\e[?1004l

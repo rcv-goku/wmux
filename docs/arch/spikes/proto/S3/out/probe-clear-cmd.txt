@@ -1,0 +1,38 @@
+cmd: cmd.exe
+size: 100x30 flags: 0 run_ms: 4000 total_bytes: 525 chunks: 10 reader_exit_err: 109
+sequence counts (first byte offset):
+  \e[2J = 1 (first at byte 22)
+  \e[3J = 1 (first at byte 424)
+  \e[J = 0
+  \e[0J = 0
+  \e[H = 3 (first at byte 29)
+  \e[1;1H = 0
+  \e[?25l = 4 (first at byte 16)
+  \e[?25h = 4 (first at byte 107)
+  \e[?1049h = 0
+  \e[6n = 0
+  \e[?9001h = 1 (first at byte 0)
+  \e[?1004h = 1 (first at byte 8)
+  \e]0; = 3 (first at byte 75)
+  \e[K = 30 (first at byte 264)
+  \e[m = 1 (first at byte 26)
+  \e[0m = 0
+  \e[?2026h = 0
+  \ec = 0
+markers:
+  [+   +65ms] child spawned
+  [+ +2007ms] wrote input text
+  [+ +4056ms] TerminateProcess(child)
+  [+ +4146ms] ClosePseudoConsole
+  [+ +4147ms] ClosePseudoConsole returned
+chunks:
+[+  +236ms] (16 bytes) \e[?9001h\e[?1004h
+[+  +450ms] (97 bytes) \e[?25l\e[2J\e[m\e[HMicrosoft Windows [Version 10.0.26200.9448]\e]0;C:\\Windows\\SYSTEM32\\cmd.exe\a\e[?25h
+[+  +469ms] (99 bytes) \e[?25l\r\n(c) Microsoft Corporation. All rights reserved.\e[4;1HC:\\Users\\<user>\\claude>\e[?25h
+[+ +2007ms] (5 bytes) cls\r\n
+[+ +2048ms] (38 bytes) \e]0;C:\\Windows\\SYSTEM32\\cmd.exe - cls\a
+[+ +2056ms] (169 bytes) \e[?25l\e[H\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\e[5;1H\e[?25h
+[+ +2058ms] (4 bytes) \e[3J
+[+ +2074ms] (47 bytes) \e[?25l\e[H\e]0;C:\\Windows\\SYSTEM32\\cmd.exe\a\e[?25h
+[+ +2090ms] (34 bytes) \r\nC:\\Users\\<user>\\claude>
+[+ +4154ms] (16 bytes) \e[?9001l\e[?1004l

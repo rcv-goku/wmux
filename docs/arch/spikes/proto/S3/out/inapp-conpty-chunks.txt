@@ -1,0 +1,68 @@
+##### cmd-crlf_home
+warning(io_exec): S3 replay: mode=crlf_home in=6232B fed=6235B rows=29 cols=88 took=64468us
+debug(io_thread): mailbox message=resize
+debug(io_thread): mailbox message=resize
+warning(io_exec): S3 conpty chunk#1 +1107ms len=16: \e[?9001h\e[?1004h
+warning(io_exec): S3 conpty chunk#2 +1108ms len=109: \e[?25l\e[2J\e[m\e[H\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\e[H\e]0;C:\Windows\system32\cmd.exe\x07\e[?25h
+warning(io_exec): S3 conpty chunk#3 +1506ms len=43: Microsoft Windows [Version 10.0.26200.9448]
+warning(io_exec): S3 conpty chunk#4 +1615ms len=2: \x0d\x0a
+warning(io_exec): S3 conpty chunk#5 +1749ms len=47: (c) Microsoft Corporation. All rights reserved.
+warning(io_exec): S3 conpty chunk#6 +1892ms len=2: \x0d\x0a
+##### wsl-crlf_home
+warning(io_exec): S3 replay: mode=crlf_home in=6232B fed=6235B rows=29 cols=88 took=70439us
+debug(io_thread): mailbox message=resize
+debug(io_thread): mailbox message=resize
+warning(io_exec): S3 conpty chunk#1 +230ms len=16: \e[?9001h\e[?1004h
+warning(io_exec): S3 conpty chunk#2 +232ms len=109: \e[?25l\e[2J\e[m\e[H\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\e[H\e]0;C:\Windows\SYSTEM32\wsl.exe\x07\e[?25h
+warning(io_exec): S3 conpty chunk#3 +4560ms len=8: \e[?2004h
+warning(io_exec): S3 conpty chunk#4 +4561ms len=387: \e[38;2;243;174;53m\e[38;2;38;43;68m\e[48;2;243;174;53m <wsluser> \e[38;2;243;174;53m\e[49m\e[38;2;240;118;35m\e[7m\e[38;2;224;222;244m\e[48;2;240;118;35m\e[27m  \e]8;id=37500-1;file:C:/Users/<user>\e\<user>\e]8;;\e\ \e[38;2;240;118;35m\e[49m\e[38;2;75;...
+warning(io_exec): S3 conpty chunk#5 +4617ms len=3: \e[m
+##### pwsh-crlf_home
+warning(io_exec): S3 replay: mode=crlf_home in=6232B fed=6235B rows=29 cols=88 took=225364us
+debug(io_thread): mailbox message=resize
+debug(io_thread): mailbox message=resize
+warning(io_exec): S3 conpty chunk#1 +108ms len=16: \e[?9001h\e[?1004h
+warning(io_exec): S3 conpty chunk#2 +109ms len=120: \e[?25l\e[2J\e[m\e[H\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\e[H\e]0;C:\Program Files\PowerShell\7\pwsh.exe\x0...
+warning(io_exec): S3 conpty chunk#3 +13691ms len=8: \e]133;A\x07
+warning(io_exec): S3 conpty chunk#4 +13718ms len=51: \e]7;file://<host>/C%3A/Users/<user>\x07
+warning(io_exec): S3 conpty chunk#5 +13743ms len=20: \e]0;<user>\x07
+warning(io_exec): S3 conpty chunk#6 +21037ms len=8: \e]133;B\x07
+##### cmd-crlf-earlygrow
+warning(io_exec): S3 replay: mode=crlf in=6232B fed=6232B rows=29 cols=88 took=58333us
+debug(io_thread): mailbox message=resize
+debug(io_thread): mailbox message=resize
+debug(io_thread): mailbox message=resize
+warning(io_exec): S3 conpty chunk#1 +475ms len=16: \e[?9001h\e[?1004h
+warning(io_exec): S3 conpty chunk#2 +476ms len=141: \e[?25l\e[2J\e[m\e[H\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x...
+warning(io_exec): S3 conpty chunk#3 +1333ms len=43: Microsoft Windows [Version 10.0.26200.9448]
+warning(io_exec): S3 conpty chunk#4 +1392ms len=2: \x0d\x0a
+warning(io_exec): S3 conpty chunk#5 +1489ms len=47: (c) Microsoft Corporation. All rights reserved.
+warning(io_exec): S3 conpty chunk#6 +1579ms len=2: \x0d\x0a
+##### cmd-crlf_home-earlynarrow
+warning(io_exec): S3 replay: mode=crlf_home in=6232B fed=6235B rows=29 cols=88 took=63967us
+debug(io_thread): mailbox message=resize
+debug(io_thread): mailbox message=resize
+debug(io_thread): mailbox message=resize
+warning(io_exec): S3 conpty chunk#1 +218ms len=16: \e[?9001h\e[?1004h
+warning(io_exec): S3 conpty chunk#2 +219ms len=109: \e[?25l\e[2J\e[m\e[H\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\e[H\e]0;C:\Windows\system32\cmd.exe\x07\e[?25h
+warning(io_exec): S3 conpty chunk#3 +620ms len=43: Microsoft Windows [Version 10.0.26200.9448]
+warning(io_exec): S3 conpty chunk#4 +737ms len=2: \x0d\x0a
+warning(io_exec): S3 conpty chunk#5 +852ms len=47: (c) Microsoft Corporation. All rights reserved.
+warning(io_exec): S3 conpty chunk#6 +964ms len=2: \x0d\x0a
+##### cmd-crlf_home-earlynarrow-fixed
+warning(io_exec): S3 replay: mode=crlf_home in=6232B fed=6235B rows=29 cols=88 took=78019us
+debug(io_thread): mailbox message=resize
+debug(io_thread): mailbox message=resize
+debug(io_thread): mailbox message=resize
+warning(io_exec): S3 conpty chunk#1 +132ms len=16: \e[?9001h\e[?1004h
+warning(io_exec): S3 conpty chunk#2 +134ms len=109: \e[?25l\e[2J\e[m\e[H\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\e[H\e]0;C:\Windows\system32\cmd.exe\x07\e[?25h
+warning(io_exec): S3 conpty chunk#3 +308ms len=43: Microsoft Windows [Version 10.0.26200.9448]
+warning(io_exec): S3 conpty chunk#4 +326ms len=92: \e[?25l\x0d\x0a(c) Microsoft Corporation. All rights reserved.\e[5;1HC:\Users\<user>>\e[?25h
+##### cmd-crlf_home-4000-debug
+warning(io_exec): S3 replay: mode=crlf_home in=424893B fed=424896B rows=29 cols=88 took=17099985us
+debug(io_thread): mailbox message=resize
+debug(io_thread): mailbox message=resize
+warning(io_exec): S3 conpty chunk#1 +517ms len=16: \e[?9001h\e[?1004h
+warning(io_exec): S3 conpty chunk#2 +519ms len=109: \e[?25l\e[2J\e[m\e[H\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\x0d\x0a\e[H\e]0;C:\Windows\system32\cmd.exe\x07\e[?25h
+warning(io_exec): S3 conpty chunk#3 +590ms len=43: Microsoft Windows [Version 10.0.26200.9448]
+warning(io_exec): S3 conpty chunk#4 +701ms len=92: \e[?25l\x0d\x0a(c) Microsoft Corporation. All rights reserved.\e[4;1HC:\Users\<user>>\e[?25h

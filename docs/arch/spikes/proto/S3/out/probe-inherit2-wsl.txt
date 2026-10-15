@@ -1,0 +1,37 @@
+cmd: wsl.exe -d Ubuntu-24.04
+size: 100x30 flags: 1 run_ms: 8000 total_bytes: 1014 chunks: 8 reader_exit_err: 109
+sequence counts (first byte offset):
+  \e[2J = 0
+  \e[3J = 0
+  \e[J = 0
+  \e[0J = 0
+  \e[H = 0
+  \e[1;1H = 0
+  \e[?25l = 1 (first at byte 61)
+  \e[?25h = 2 (first at byte 55)
+  \e[?1049h = 0
+  \e[6n = 1 (first at byte 0)
+  \e[?9001h = 1 (first at byte 4)
+  \e[?1004h = 1 (first at byte 12)
+  \e]0; = 2 (first at byte 23)
+  \e[K = 32 (first at byte 78)
+  \e[m = 3 (first at byte 20)
+  \e[0m = 0
+  \e[?2026h = 0
+  \ec = 0
+markers:
+  [+   +23ms] child spawned
+  [+  +328ms] answered DSR-CPR with ESC[10;1R
+  [+ +6025ms] ResizePseudoConsole(100x40) hr=0x0
+  [+ +8010ms] TerminateProcess(child)
+  [+ +8058ms] ClosePseudoConsole
+  [+ +8058ms] ClosePseudoConsole returned
+chunks:
+[+  +328ms] (4 bytes) \e[6n
+[+  +329ms] (16 bytes) \e[?9001h\e[?1004h
+[+  +329ms] (41 bytes) \e[m\e]0;C:\\Windows\\SYSTEM32\\wsl.exe\a\e[?25h
+[+ +6025ms] (183 bytes) \e[?25l\e[8;40;100t\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\r\n\e[K\e[10;1H\e[?25h
+[+ +6192ms] (8 bytes) \e[?2004h
+[+ +6192ms] (376 bytes) \e[38;2;243;174;53m\e[38;2;38;43;68m\e[48;2;243;174;53m <wsluser> \e[38;2;243;174;53m\e[49m\e[38;2;240;118;35m\e[7m\e[38;2;224;222;244m\e[48;2;240;118;35m\e[27m  \e]8;id=35856-1;file:C:/Users/<user>/claude\e\\claude\e]8;;\e\\ \e[38;2;240;118;35m\e[49m\e[38;2;75;149;233m\e[7m\e[38;2;224;222;244m\e[48;2;75;149;233m\e[27m  \e[38;2;75;149;233m\e[49m \e]0;bash in claude\a
+[+ +6212ms] (367 bytes) \e[m\e[38;2;243;174;53m\r\e[38;2;38;43;68m\e[48;2;243;174;53m <wsluser> \e[38;2;243;174;53m\e[49m\e[38;2;240;118;35m\e[7m\e[38;2;224;222;244m\e[48;2;240;118;35m\e[27m  \e]8;id=35856-2;file:C:/Users/<user>/claude\e\\claude\e]8;;\e\\ \e[38;2;240;118;35m\e[49m\e[38;2;75;149;233m\e[7m\e[38;2;224;222;244m\e[48;2;75;149;233m\e[27m  \e[38;2;75;149;233m\e[49m\e[K\e[1C
+[+ +8158ms] (19 bytes) \e[?9001l\e[?1004l\e[m
