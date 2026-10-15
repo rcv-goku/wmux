@@ -1,0 +1,119 @@
+{
+  "started": "2026-10-15T15:18:23.6486361-05:00",
+  "cpu_load_start": 100.0,
+  "steady_state_ms": {
+    "direct": {
+      "n": 60,
+      "min": 115.4,
+      "median": 269.5,
+      "p90": 403.4
+    },
+    "fwd(job)": {
+      "n": 60,
+      "min": 256.7,
+      "median": 656.6,
+      "p90": 980.9
+    },
+    "fwd(nojob)": {
+      "n": 60,
+      "min": 218.6,
+      "median": 660.5,
+      "p90": 1243.8
+    },
+    "hardlink": {
+      "n": 60,
+      "min": 93.9,
+      "median": 237.3,
+      "p90": 425.3
+    },
+    "cmd-shim": {
+      "n": 60,
+      "min": 303.7,
+      "median": 957.5,
+      "p90": 1969.3
+    },
+    "paired overhead vs direct: fwd(job)": {
+      "n": 60,
+      "min": -20.9,
+      "median": 389.4,
+      "p90": 741.4
+    },
+    "paired overhead vs direct: fwd(nojob)": {
+      "n": 60,
+      "min": 49.9,
+      "median": 399.6,
+      "p90": 881.1
+    },
+    "paired overhead vs direct: hardlink": {
+      "n": 60,
+      "min": -505.6,
+      "median": -13.6,
+      "p90": 160.5
+    },
+    "paired overhead vs direct: cmd-shim": {
+      "n": 60,
+      "min": -166.9,
+      "median": 653.6,
+      "p90": 1599.9
+    }
+  },
+  "first_launch_ms": {
+    "cli@scratch/first": {
+      "n": 8,
+      "min": 248.6,
+      "median": 758.3,
+      "p90": 928.1
+    },
+    "cli@scratch/second": {
+      "n": 8,
+      "min": 94.3,
+      "median": 230.5,
+      "p90": 355.9
+    },
+    "cli@scratch/third": {
+      "n": 8,
+      "min": 109.7,
+      "median": 207.9,
+      "p90": 472.9
+    },
+    "fwd@scratch/first": {
+      "n": 8,
+      "min": 502.2,
+      "median": 680.4,
+      "p90": 970.8
+    },
+    "fwd@scratch/second": {
+      "n": 8,
+      "min": 289.6,
+      "median": 403.3,
+      "p90": 474.0
+    },
+    "fwd@scratch/third": {
+      "n": 8,
+      "min": 215.2,
+      "median": 355.2,
+      "p90": 609.9
+    },
+    "fwd@WindowsApps/first": {
+      "n": 8,
+      "min": 510.8,
+      "median": 681.1,
+      "p90": 1279.8
+    },
+    "fwd@WindowsApps/second": {
+      "n": 8,
+      "min": 251.7,
+      "median": 355.3,
+      "p90": 779.0
+    },
+    "fwd@WindowsApps/third": {
+      "n": 8,
+      "min": 242.3,
+      "median": 409.8,
+      "p90": 748.2
+    }
+  },
+  "cpu_load_end": 100.0,
+  "cleanup_remaining": 0,
+  "finished": "2026-10-15T15:22:16.5542614-05:00"
+}

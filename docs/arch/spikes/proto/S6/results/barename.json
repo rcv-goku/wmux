@@ -1,0 +1,158 @@
+{
+  "cmd/wmuxspikefwd": {
+    "rc": 0,
+    "ok": true,
+    "argv0": "wmuxspikefwd",
+    "exe": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\Programs X\\wmux spike\\cli\\wmuxspikefwd-target.exe",
+    "stdin": "pipe",
+    "stdout": "pipe",
+    "err": ""
+  },
+  "cmd/wmuxspikefwdc": {
+    "rc": 0,
+    "ok": true,
+    "argv0": "wmuxspikefwdc",
+    "exe": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\Programs X\\wmux spike\\cli\\wmuxspikefwd-target.exe",
+    "stdin": "pipe",
+    "stdout": "pipe",
+    "err": ""
+  },
+  "cmd/wmuxspikefwdcmd": {
+    "rc": 0,
+    "ok": true,
+    "argv0": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\Programs X\\wmux spike\\cli\\wmuxspikefwd-target.exe",
+    "exe": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\Programs X\\wmux spike\\cli\\wmuxspikefwd-target.exe",
+    "stdin": "pipe",
+    "stdout": "pipe",
+    "err": ""
+  },
+  "cmd/wmuxspikefwdhl": {
+    "rc": 0,
+    "ok": true,
+    "argv0": "wmuxspikefwdhl",
+    "exe": "%USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwdhl.exe",
+    "stdin": "pipe",
+    "stdout": "pipe",
+    "err": ""
+  },
+  "cmd/wmuxspikefwdsh": "skipped (extensionless; see resolution)",
+  "pwsh/wmuxspikefwd": {
+    "rc": 0,
+    "ok": true,
+    "argv0": "%USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwd.exe",
+    "exe": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\Programs X\\wmux spike\\cli\\wmuxspikefwd-target.exe",
+    "stdin": "pipe",
+    "stdout": "pipe",
+    "err": ""
+  },
+  "pwsh/wmuxspikefwdc": {
+    "rc": 0,
+    "ok": true,
+    "argv0": "%USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwdc.com",
+    "exe": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\Programs X\\wmux spike\\cli\\wmuxspikefwd-target.exe",
+    "stdin": "pipe",
+    "stdout": "pipe",
+    "err": ""
+  },
+  "pwsh/wmuxspikefwdcmd": {
+    "rc": 0,
+    "ok": true,
+    "argv0": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\Programs X\\wmux spike\\cli\\wmuxspikefwd-target.exe",
+    "exe": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\Programs X\\wmux spike\\cli\\wmuxspikefwd-target.exe",
+    "stdin": "pipe",
+    "stdout": "pipe",
+    "err": ""
+  },
+  "pwsh/wmuxspikefwdhl": {
+    "rc": 0,
+    "ok": true,
+    "argv0": "%USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwdhl.exe",
+    "exe": "%USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwdhl.exe",
+    "stdin": "pipe",
+    "stdout": "pipe",
+    "err": ""
+  },
+  "pwsh/wmuxspikefwdsh": "skipped (extensionless; see resolution)",
+  "winps/wmuxspikefwd": {
+    "rc": 0,
+    "ok": true,
+    "argv0": "%USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwd.exe",
+    "exe": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\Programs X\\wmux spike\\cli\\wmuxspikefwd-target.exe",
+    "stdin": "pipe",
+    "stdout": "pipe",
+    "err": ""
+  },
+  "winps/wmuxspikefwdc": {
+    "rc": 0,
+    "ok": true,
+    "argv0": "%USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwdc.com",
+    "exe": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\Programs X\\wmux spike\\cli\\wmuxspikefwd-target.exe",
+    "stdin": "pipe",
+    "stdout": "pipe",
+    "err": ""
+  },
+  "winps/wmuxspikefwdcmd": {
+    "rc": 0,
+    "ok": true,
+    "argv0": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\Programs X\\wmux spike\\cli\\wmuxspikefwd-target.exe",
+    "exe": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\Programs X\\wmux spike\\cli\\wmuxspikefwd-target.exe",
+    "stdin": "pipe",
+    "stdout": "pipe",
+    "err": ""
+  },
+  "winps/wmuxspikefwdhl": {
+    "rc": 0,
+    "ok": true,
+    "argv0": "%USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwdhl.exe",
+    "exe": "%USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwdhl.exe",
+    "stdin": "pipe",
+    "stdout": "pipe",
+    "err": ""
+  },
+  "winps/wmuxspikefwdsh": "skipped (extensionless; see resolution)",
+  "bash/wmuxspikefwd": {
+    "rc": 0,
+    "ok": true,
+    "argv0": "%USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwd.exe",
+    "exe": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\Programs X\\wmux spike\\cli\\wmuxspikefwd-target.exe",
+    "stdin": "pipe",
+    "stdout": "pipe",
+    "err": ""
+  },
+  "bash/wmuxspikefwdc": {
+    "rc": 127,
+    "ok": false,
+    "argv0": null,
+    "exe": null,
+    "stdin": null,
+    "stdout": null,
+    "err": "/c/%USERPROFILE%/claude/wmux-wt/W0-D-S6/zig-out/spike-s6/run/s-52f36f08.sh: line 2: wmuxspikefwdc: command not found"
+  },
+  "bash/wmuxspikefwdcmd": {
+    "rc": 127,
+    "ok": false,
+    "argv0": null,
+    "exe": null,
+    "stdin": null,
+    "stdout": null,
+    "err": "/c/%USERPROFILE%/claude/wmux-wt/W0-D-S6/zig-out/spike-s6/run/s-995a8887.sh: line 2: wmuxspikefwdcmd: command not found"
+  },
+  "bash/wmuxspikefwdhl": {
+    "rc": 0,
+    "ok": true,
+    "argv0": "%USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwdhl.exe",
+    "exe": "%USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwdhl.exe",
+    "stdin": "pipe",
+    "stdout": "pipe",
+    "err": ""
+  },
+  "bash/wmuxspikefwdsh": {
+    "rc": 0,
+    "ok": true,
+    "argv0": "%USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwd.exe",
+    "exe": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\Programs X\\wmux spike\\cli\\wmuxspikefwd-target.exe",
+    "stdin": "pipe",
+    "stdout": "pipe",
+    "err": ""
+  }
+}

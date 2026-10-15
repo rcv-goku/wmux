@@ -1,0 +1,36 @@
+{
+  "create": 0,
+  "initial": {
+    "t": "00000000:000B714100000000 links=393216",
+    "link": "00000000:000B714100000000 links=393216"
+  },
+  "link_reports_exe": "%USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwdhlu.exe",
+  "after_copy_overwrite": {
+    "t": "00000000:000B714100000000 links=393216",
+    "link": "00000000:000B714100000000 links=393216",
+    "same_content": true
+  },
+  "after_rename_replace": {
+    "t": "00000000:000B5ACD00000000 links=589824",
+    "link": "00000000:000B714100000000 links=393216",
+    "same_content": false,
+    "link_is_v2": true
+  },
+  "locks_while_running_via_link": {
+    "overwrite": "The process cannot access the file '%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\run\\hl\\cli\\t.exe' because it is being used by another process.",
+    "delete": "ok",
+    "rename": "Cannot rename because item at '%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\run\\hl\\cli\\t.exe' does not exist."
+  },
+  "locks_forwarder_in_windowsapps": {
+    "overwrite": "Exception calling \"Copy\" with \"3\" argument(s): \"The process cannot access the file '%USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwd.exe' because it is being used by another process.\"",
+    "rename": "ok",
+    "copy_new_after_rename": "ok",
+    "delete_old_while_running": "Access to the path '%USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwd.exe.old' is denied.",
+    "delete_old_after_exit": "ok"
+  },
+  "symlink_unprivileged_flag": 1314,
+  "symlink_plain": 1314,
+  "fixed_volumes": [
+    "C:"
+  ]
+}

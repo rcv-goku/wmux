@@ -1,0 +1,44 @@
+{
+  "started": "2026-10-15T14:51:58.9348315-05:00",
+  "desktop": "WinSta0\\wmuxspikefwd-desk",
+  "direct target, parent DETACHED_PROCESS": {
+    "exit": "0",
+    "report_reached_caller_stdout": true,
+    "target_console_cp": 0,
+    "target_console_window": false,
+    "target_stdin": "null",
+    "target_stdout": "pipe"
+  },
+  "forwarder, parent DETACHED_PROCESS": {
+    "exit": "0",
+    "report_reached_caller_stdout": true,
+    "target_console_cp": 0,
+    "target_console_window": false,
+    "target_stdin": "null",
+    "target_stdout": "pipe"
+  },
+  "forwarder nodetach (bug), parent DETACHED_PROCESS": {
+    "exit": "0",
+    "report_reached_caller_stdout": false,
+    "target_console_cp": 437,
+    "target_console_window": true,
+    "target_stdin": "console",
+    "target_stdout": "console"
+  },
+  "forwarder, parent CREATE_NO_WINDOW": {
+    "exit": "0",
+    "report_reached_caller_stdout": true,
+    "target_console_cp": 437,
+    "target_console_window": false,
+    "target_stdin": "console",
+    "target_stdout": "pipe"
+  },
+  "desktop_closed": true,
+  "cleanup": [
+    "removed: wmuxspikefwd.exe, HKCU\\Software\\wmuxspikefwd",
+    "WindowsApps wmuxspikefwd* remaining: 0",
+    "HKCU\\Software\\wmuxspikefwd* keys remaining: 0",
+    "App Paths wmuxspikefwd* remaining: 0"
+  ],
+  "finished": "2026-10-15T14:52:08.5889379-05:00"
+}

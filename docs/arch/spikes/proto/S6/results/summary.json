@@ -1,0 +1,70 @@
+{
+  "started": "2026-10-15T14:54:27.9218925-05:00",
+  "groups": {
+    "resolution": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\results\\resolution.json",
+    "barename": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\results\\barename.json",
+    "argv": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\results\\argv.json",
+    "long": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\results\\long.json",
+    "stdio": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\results\\stdio.json",
+    "exit": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\results\\exit.json",
+    "fresh": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\results\\fresh.json",
+    "running": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\results\\running.json",
+    "precedence": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\results\\precedence.json",
+    "unicode": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\results\\unicode.json",
+    "apppaths": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\results\\apppaths.json",
+    "motw": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\results\\motw.json",
+    "links": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\results\\links.json",
+    "job": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\results\\job.json",
+    "wsl": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\results\\wsl.json",
+    "spawn": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\results\\spawn.json",
+    "errors": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\results\\errors.json"
+  },
+  "install_ms": 283.8017,
+  "installed": [
+    {
+      "name": "wmuxspikefwd.exe",
+      "length": 16384,
+      "attributes": "Archive",
+      "id": "00000000:0005278800000000 links=3866624"
+    },
+    {
+      "name": "wmuxspikefwdc.com",
+      "length": 16384,
+      "attributes": "Archive",
+      "id": "00000000:000B119900000000 links=524288"
+    },
+    {
+      "name": "wmuxspikefwdcmd.cmd",
+      "length": 122,
+      "attributes": "Archive",
+      "id": "00000000:000BD85C00000000 links=786432"
+    },
+    {
+      "name": "wmuxspikefwdhl.exe",
+      "length": 569344,
+      "attributes": "Archive",
+      "id": "00000000:000F9EA500000000 links=131072"
+    },
+    {
+      "name": "wmuxspikefwdsh",
+      "length": 55,
+      "attributes": "Archive",
+      "id": "00000000:000C020300000000 links=655360"
+    }
+  ],
+  "target_id": "00000000:000F9EA500000000 links=131072",
+  "present_at_end": [
+    "wmuxspikefwd.exe",
+    "wmuxspikefwdc.com",
+    "wmuxspikefwdcmd.cmd",
+    "wmuxspikefwdhl.exe",
+    "wmuxspikefwdsh"
+  ],
+  "cleanup": [
+    "removed: wmuxspikefwd.exe, wmuxspikefwdc.com, wmuxspikefwdcmd.cmd, wmuxspikefwdhl.exe, wmuxspikefwdsh, HKCU\\Software\\wmuxspikefwd",
+    "WindowsApps wmuxspikefwd* remaining: 0",
+    "HKCU\\Software\\wmuxspikefwd* keys remaining: 0",
+    "App Paths wmuxspikefwd* remaining: 0"
+  ],
+  "finished": "2026-10-15T15:13:11.9853445-05:00"
+}

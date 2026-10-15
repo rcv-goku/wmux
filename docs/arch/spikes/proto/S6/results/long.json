@@ -1,0 +1,80 @@
+{
+  "api/32000/fwd": {
+    "rc": 0,
+    "cmdline_len": 32000,
+    "pad_ok": true,
+    "err": ""
+  },
+  "api/32000/direct": {
+    "rc": 0,
+    "cmdline_len": 32000,
+    "pad_ok": true,
+    "err": ""
+  },
+  "api/32760/fwd": {
+    "rc": 0,
+    "cmdline_len": 32760,
+    "pad_ok": true,
+    "err": ""
+  },
+  "api/32760/direct": {
+    "rc": 0,
+    "cmdline_len": 32760,
+    "pad_ok": true,
+    "err": ""
+  },
+  "api/32766/fwd": {
+    "rc": 0,
+    "cmdline_len": 32766,
+    "pad_ok": true,
+    "err": ""
+  },
+  "api/32766/direct": {
+    "rc": 0,
+    "cmdline_len": 32766,
+    "pad_ok": true,
+    "err": ""
+  },
+  "api/32767/fwd": {
+    "error": "Exception calling \"Start\" with \"1\" argument(s): \"An error occurred trying to start process '%USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwd.exe' with working directory '%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\run'. The filename or extension is too long.\""
+  },
+  "api/32767/direct": {
+    "error": "Exception calling \"Start\" with \"1\" argument(s): \"An error occurred trying to start process '%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\Programs X\\wmux spike\\cli\\wmuxspikefwd-target.exe' with working directory '%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\run'. The filename or extension is too long.\""
+  },
+  "shell/pwsh/direct": {
+    "rc": 0,
+    "argc": 292,
+    "cmdline_len": 29121,
+    "err": ""
+  },
+  "shell/pwsh/fwd": {
+    "rc": 0,
+    "argc": 292,
+    "cmdline_len": 29084,
+    "err": ""
+  },
+  "shell/bash/direct": {
+    "rc": 0,
+    "argc": 292,
+    "cmdline_len": 29121,
+    "err": ""
+  },
+  "shell/bash/fwd": {
+    "rc": 0,
+    "argc": 292,
+    "cmdline_len": 29082,
+    "err": ""
+  },
+  "shell/cmd/direct": {
+    "rc": 0,
+    "argc": 80,
+    "cmdline_len": 7922,
+    "err": ""
+  },
+  "shell/cmd/fwd": {
+    "rc": 0,
+    "argc": 80,
+    "cmdline_len": 7818,
+    "err": ""
+  }
+}

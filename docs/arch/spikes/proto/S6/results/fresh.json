@@ -1,0 +1,29 @@
+{
+  "fresh_path_has_windowsapps": true,
+  "fresh_path_index_of_windowsapps": 12,
+  "fresh_path_entries": 16,
+  "cmd": {
+    "rc": 0,
+    "ok": true,
+    "exe": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\Programs X\\wmux spike\\cli\\wmuxspikefwd-target.exe",
+    "err": ""
+  },
+  "pwsh": {
+    "rc": 0,
+    "ok": true,
+    "exe": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\Programs X\\wmux spike\\cli\\wmuxspikefwd-target.exe",
+    "err": ""
+  },
+  "winps": {
+    "rc": 0,
+    "ok": true,
+    "exe": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\Programs X\\wmux spike\\cli\\wmuxspikefwd-target.exe",
+    "err": ""
+  },
+  "bash": {
+    "rc": 0,
+    "ok": true,
+    "exe": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\Programs X\\wmux spike\\cli\\wmuxspikefwd-target.exe",
+    "err": ""
+  }
+}

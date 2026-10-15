@@ -1,0 +1,18 @@
+{
+  "HKCU\\Software\\wmuxspikefwd-regtest\\Sz :: RRF_RT_REG_SZ": "rc=0 type=1 C:\\Wmux Spike",
+  "HKCU\\Software\\wmuxspikefwd-regtest\\Sz :: RRF_RT_REG_EXPAND_SZ": "rc=1630 type=1 ",
+  "HKCU\\Software\\wmuxspikefwd-regtest\\Sz :: RRF_RT_REG_EXPAND_SZ|RRF_NOEXPAND": "rc=1630 type=1 ",
+  "HKCU\\Software\\wmuxspikefwd-regtest\\Sz :: RRF_RT_REG_SZ|RRF_RT_REG_EXPAND_SZ": "rc=0 type=1 C:\\Wmux Spike",
+  "HKCU\\Software\\wmuxspikefwd-regtest\\Sz :: RRF_RT_REG_SZ|RRF_RT_REG_EXPAND_SZ|NOEXPAND": "rc=0 type=1 C:\\Wmux Spike",
+  "HKCU\\Software\\wmuxspikefwd-regtest\\Exp :: RRF_RT_REG_SZ": "rc=0 type=1 %USERPROFILE%\\AppData\\Local\\Programs\\wmux",
+  "HKCU\\Software\\wmuxspikefwd-regtest\\Exp :: RRF_RT_REG_EXPAND_SZ": "rc=1630 type=1 ",
+  "HKCU\\Software\\wmuxspikefwd-regtest\\Exp :: RRF_RT_REG_EXPAND_SZ|RRF_NOEXPAND": "rc=0 type=2 %LOCALAPPDATA%\\Programs\\wmux",
+  "HKCU\\Software\\wmuxspikefwd-regtest\\Exp :: RRF_RT_REG_SZ|RRF_RT_REG_EXPAND_SZ": "rc=0 type=1 %USERPROFILE%\\AppData\\Local\\Programs\\wmux",
+  "HKCU\\Software\\wmuxspikefwd-regtest\\Exp :: RRF_RT_REG_SZ|RRF_RT_REG_EXPAND_SZ|NOEXPAND": "rc=0 type=2 %LOCALAPPDATA%\\Programs\\wmux",
+  "HKCU\\Environment\\Path :: RRF_RT_REG_SZ": "rc=0 type=1 %USERPROFILE%\\.local\\bin;%USERPROFILE%...",
+  "HKCU\\Environment\\Path :: RRF_RT_REG_EXPAND_SZ": "rc=1630 type=1 ",
+  "HKCU\\Environment\\Path :: RRF_RT_REG_EXPAND_SZ|RRF_NOEXPAND": "rc=0 type=2 %USERPROFILE%\\.local\\bin;%USERPROFILE%\\AppData\\Local\\Microso...",
+  "HKCU\\Environment\\Path :: RRF_RT_REG_SZ|RRF_RT_REG_EXPAND_SZ": "rc=0 type=1 %USERPROFILE%\\.local\\bin;%USERPROFILE%...",
+  "HKCU\\Environment\\Path :: RRF_RT_REG_SZ|RRF_RT_REG_EXPAND_SZ|NOEXPAND": "rc=0 type=2 %USERPROFILE%\\.local\\bin;%USERPROFILE%\\AppData\\Local\\Microso...",
+  "cleanup: regtest key exists": false
+}

@@ -1,0 +1,54 @@
+{
+  "cmd/chcp437/wmuxspikefwdu8": {
+    "ok": false,
+    "exit": 1,
+    "err": "The system cannot find the path specified."
+  },
+  "cmd/chcp437/wmuxspikefwdoem": {
+    "ok": true,
+    "exit": 0,
+    "err": ""
+  },
+  "cmd/chcp65001/wmuxspikefwdu8": {
+    "ok": false,
+    "exit": 1,
+    "err": "The system cannot find the path specified."
+  },
+  "cmd/chcp65001/wmuxspikefwdoem": {
+    "ok": true,
+    "exit": 0,
+    "err": ""
+  },
+  "pwsh/wmuxspikefwdu8": {
+    "ok": false,
+    "rc": 1,
+    "err": "The system cannot find the path specified."
+  },
+  "pwsh/wmuxspikefwdoem": {
+    "ok": true,
+    "rc": 0,
+    "err": ""
+  },
+  "cmd/chcp437/wmuxspikefwd(exe)": {
+    "ok": true,
+    "exit": 0,
+    "exe": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\Prógrams é\\wmux\\cli\\wmuxspikefwd-target.exe",
+    "err": ""
+  },
+  "cmd/chcp65001/wmuxspikefwd(exe)": {
+    "ok": true,
+    "exit": 0,
+    "exe": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\Prógrams é\\wmux\\cli\\wmuxspikefwd-target.exe",
+    "err": ""
+  },
+  "pwsh/wmuxspikefwd(exe)": {
+    "ok": true,
+    "rc": 0,
+    "exe": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\Prógrams é\\wmux\\cli\\wmuxspikefwd-target.exe"
+  },
+  "bash/wmuxspikefwd(exe)": {
+    "ok": true,
+    "rc": 0,
+    "exe": "%USERPROFILE%\\claude\\wmux-wt\\W0-D-S6\\zig-out\\spike-s6\\Prógrams é\\wmux\\cli\\wmuxspikefwd-target.exe"
+  }
+}

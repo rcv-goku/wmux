@@ -1,0 +1,41 @@
+{
+  "cmd_where": {
+    "exit": 0,
+    "out": [
+      "%USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwd.exe",
+      "%USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwdc.com",
+      "%USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwdcmd.cmd",
+      "%USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwdhl.exe",
+      "%USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwdsh"
+    ],
+    "err": ""
+  },
+  "pwsh_get_command": [
+    "@@GC wmuxspikefwd Application %USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwd.exe",
+    "@@GC wmuxspikefwdc Application %USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwdc.com",
+    "@@GC wmuxspikefwdcmd Application %USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwdcmd.cmd",
+    "@@GC wmuxspikefwdhl Application %USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwdhl.exe",
+    "@@GC wmuxspikefwdsh Application %USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwdsh",
+    "@@GC wmuxspikefwdc.com Application %USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwdc.com",
+    "@@GC wmuxspikefwdcmd.cmd Application %USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwdcmd.cmd"
+  ],
+  "winps_get_command": [
+    "@@GC wmuxspikefwd Application %USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwd.exe",
+    "@@GC wmuxspikefwdc Application %USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwdc.com",
+    "@@GC wmuxspikefwdcmd Application %USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwdcmd.cmd",
+    "@@GC wmuxspikefwdhl Application %USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwdhl.exe",
+    "@@GC wmuxspikefwdsh Application %USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwdsh",
+    "@@GC wmuxspikefwdc.com Application %USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwdc.com",
+    "@@GC wmuxspikefwdcmd.cmd Application %USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\wmuxspikefwdcmd.cmd"
+  ],
+  "bash_type_P": [
+    "@@TYPE wmuxspikefwd /c/%USERPROFILE%/AppData/Local/Microsoft/WindowsApps/wmuxspikefwd",
+    "@@TYPE wmuxspikefwdc NOTFOUND",
+    "@@TYPE wmuxspikefwdcmd NOTFOUND",
+    "@@TYPE wmuxspikefwdhl /c/%USERPROFILE%/AppData/Local/Microsoft/WindowsApps/wmuxspikefwdhl",
+    "@@TYPE wmuxspikefwdsh /c/%USERPROFILE%/AppData/Local/Microsoft/WindowsApps/wmuxspikefwdsh",
+    "@@TYPE wmuxspikefwdc.com /c/%USERPROFILE%/AppData/Local/Microsoft/WindowsApps/wmuxspikefwdc.com",
+    "@@TYPE wmuxspikefwdcmd.cmd /c/%USERPROFILE%/AppData/Local/Microsoft/WindowsApps/wmuxspikefwdcmd.cmd"
+  ],
+  "bash_err": ""
+}
