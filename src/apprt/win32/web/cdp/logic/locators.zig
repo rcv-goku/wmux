@@ -303,18 +303,29 @@ pub fn resolveSelector(gpa: Allocator, tree: *const Tree, table: *const refs.Ref
     return matches[0];
 }
 
-/// Count of CSS matches and of those not hidden (diagnostics), using the
-/// whole tree including hidden subtrees for `match_count`.
+/// Count of CSS matches and of those not hidden (diagnostics `match_count`
+/// and `visible_match_count`). Hidden subtrees count toward `total`; like
+/// `document.querySelectorAll(selector).length`, only the root's document
+/// is searched (not iframe documents or shadow trees).
 pub fn countMatches(gpa: Allocator, tree: *const Tree, selector: []const u8) FindError!struct { total: usize, visible: usize } {
     var parsed = try css.parse(gpa, selector);
     defer parsed.deinit();
+    const Item = struct { idx: NodeIndex, hidden: bool };
+    var stack: std.ArrayList(Item) = .empty;
+    defer stack.deinit(gpa);
+    try stack.append(gpa, .{ .idx = tree.root, .hidden = tree.get(tree.root).hidden });
     var total: usize = 0;
     var visible: usize = 0;
-    for (0..tree.nodes.len) |i| {
-        const idx: NodeIndex = @intCast(i);
-        if (!parsed.matches(tree, idx)) continue;
-        total += 1;
-        if (!tree.isHidden(idx)) visible += 1;
+    while (stack.pop()) |item| {
+        if (parsed.matches(tree, item.idx)) {
+            total += 1;
+            if (!item.hidden) visible += 1;
+        }
+        for (tree.get(item.idx).children) |c| {
+            const cn = tree.get(c);
+            if (cn.kind == .document) continue;
+            try stack.append(gpa, .{ .idx = c, .hidden = item.hidden or cn.hidden });
+        }
     }
     return .{ .total = total, .visible = visible };
 }

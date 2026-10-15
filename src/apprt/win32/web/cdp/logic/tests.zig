@@ -1094,11 +1094,18 @@ test "unit: browser: iframes and shadow roots carry frame ids and css scope" {
     // document.querySelector cannot reach shadow content: "button" would
     // resolve to the "Top" button, so the ref keeps only its backend id.
     try testing.expect((try table.lookup("e3")).css_path == null);
-    // CSS combinators do not cross into the iframe document or shadow root.
+    // CSS queries stay in the queried document, like querySelectorAll: the
+    // iframe document and the shadow root are separate scopes.
     try testing.expectEqual(@as(usize, 0), try queryCount(&tree, "iframe button"));
     try testing.expectEqual(@as(usize, 0), try queryCount(&tree, "x-card button"));
-    try testing.expectEqual(@as(usize, 3), try queryCount(&tree, "button"));
-    try testing.expectEqual(@as(usize, 2), try queryCount(&tree, "body > button"));
+    try testing.expectEqual(@as(usize, 1), try queryCount(&tree, "button"));
+    try testing.expectEqual(@as(usize, 1), try queryCount(&tree, "body > button"));
+    var sel = try css.parse(gpa, "body > button#dup");
+    defer sel.deinit();
+    const in_frame = try sel.queryAll(gpa, &tree, tree.findByBackendId(6, null).?);
+    defer gpa.free(in_frame);
+    try testing.expectEqual(@as(usize, 1), in_frame.len);
+    try testing.expectEqual(@as(?i64, 9), tree.get(in_frame[0]).backend_id);
     // Lookup by backend id honours the frame.
     try testing.expect(tree.findByBackendId(9, "CHILD") != null);
     try testing.expect(tree.findByBackendId(9, "OTHER") == null);
@@ -1476,6 +1483,45 @@ test "unit: browser: find registers a ref usable by click (acceptance)" {
     try testing.expectEqualStrings(o.get("element_ref").?.string[1..], ref);
     try testing.expectEqualStrings("html > body > button:nth-of-type(1)", o.get("selector").?.string);
     try testing.expectEqual(@as(i64, 9), o.get("backend_node_id").?.integer);
+}
+
+test "unit: browser: css selectors resolve in the page document like querySelector" {
+    // A header web component (shadow buttons) and an iframe come before the
+    // page's own buttons in flattened order. `click button` must pick what
+    // document.querySelector("button") picks, as the in-page fallback for
+    // unsupported selectors would.
+    const j =
+        \\{"root":{"nodeType":9,"backendNodeId":1,"children":[{"nodeType":1,"localName":"html","backendNodeId":2,"children":[{"nodeType":1,"localName":"body","backendNodeId":3,"children":[
+        \\ {"nodeType":1,"localName":"site-header","backendNodeId":4,"shadowRoots":[{"nodeType":11,"backendNodeId":5,"children":[
+        \\  {"nodeType":1,"localName":"button","backendNodeId":6,"children":[{"nodeType":3,"nodeValue":"Menu"}]}]}]},
+        \\ {"nodeType":1,"localName":"iframe","backendNodeId":7,"frameId":"AD","contentDocument":{"nodeType":9,"backendNodeId":8,"children":[
+        \\  {"nodeType":1,"localName":"html","backendNodeId":9,"children":[{"nodeType":1,"localName":"body","backendNodeId":10,"children":[
+        \\   {"nodeType":1,"localName":"button","backendNodeId":11,"children":[{"nodeType":3,"nodeValue":"Ad"}]}]}]}]}},
+        \\ {"nodeType":1,"localName":"button","backendNodeId":12,"attributes":["hidden",""],"children":[{"nodeType":3,"nodeValue":"Old"}]},
+        \\ {"nodeType":1,"localName":"button","backendNodeId":13,"children":[{"nodeType":3,"nodeValue":"Buy"}]}]}]}]}}
+    ;
+    var tree = try ax.parseDomDocument(gpa, j, .{});
+    defer tree.deinit();
+    var table = refs.RefTable.init(gpa);
+    defer table.deinit();
+    const idx = try locators.resolveSelector(gpa, &tree, &table, "button");
+    try testing.expectEqual(@as(?i64, 13), tree.get(idx).backend_id);
+    const c = try locators.countMatches(gpa, &tree, "button");
+    try testing.expectEqual(@as(usize, 2), c.total);
+    try testing.expectEqual(@as(usize, 1), c.visible);
+    try testing.expectEqual(@as(?i64, 13), try findBackend(&tree, .{ .kind = .first, .value = "body > button" }));
+    try testing.expectEqual(@as(?i64, null), try findBackend(&tree, .{ .kind = .nth, .value = "button", .index = 1 }));
+    // Text/role locators still see every frame and shadow tree.
+    try testing.expectEqual(@as(?i64, 11), try findBackend(&tree, .{ .kind = .role, .value = "button", .name = "ad" }));
+    // The snapshot still lists shadow and iframe content.
+    const text = try renderText(&tree, &table, .{});
+    defer gpa.free(text);
+    try testing.expectEqualStrings(
+        \\- document ""
+        \\- button "Menu" [ref=e1]
+        \\- button "Ad" [ref=e2]
+        \\- button "Buy" [ref=e3]
+    , text);
 }
 
 test "unit: browser: count matches separates visible" {

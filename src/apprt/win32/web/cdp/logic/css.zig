@@ -6,8 +6,9 @@
 //! descendant (space) and child (`>`) combinators and `,` lists. Anything else
 //! (pseudo-classes, `+`, `~`, namespaces) returns `error.UnsupportedSelector`
 //! so the caller can fall back to `document.querySelectorAll` in the page.
-//! Matching stays within one document: it never crosses a shadow root or an
-//! iframe boundary, like the browser's own engine.
+//! Matching and queries stay within one document: they never cross a shadow
+//! root or an iframe boundary, like the browser's own engine, so native
+//! results agree with that in-page fallback.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -61,15 +62,22 @@ pub const Selector = struct {
     }
 
     /// Matching visible elements under `scope` (excluding `scope` itself, like
-    /// `querySelectorAll`) in document order. Caller frees.
+    /// `querySelectorAll`) in document order. Like the browser, the query
+    /// stays in the scope's document: iframe documents and shadow trees
+    /// below it are not searched (query from their `.document` node to
+    /// search them). Caller frees.
     pub fn queryAll(self: *const Selector, gpa: Allocator, tree: *const Tree, scope: NodeIndex) Allocator.Error![]NodeIndex {
-        const order = try tree.preorder(gpa, scope);
-        defer gpa.free(order);
         var out: std.ArrayList(NodeIndex) = .empty;
         errdefer out.deinit(gpa);
-        for (order) |idx| {
-            if (idx == scope) continue;
+        if (tree.get(scope).hidden) return out.toOwnedSlice(gpa);
+        var stack: std.ArrayList(NodeIndex) = .empty;
+        defer stack.deinit(gpa);
+        try ax.pushChildren(gpa, &stack, tree.get(scope).children);
+        while (stack.pop()) |idx| {
+            const n = tree.get(idx);
+            if (n.hidden or n.kind == .document) continue;
             if (self.matches(tree, idx)) try out.append(gpa, idx);
+            try ax.pushChildren(gpa, &stack, n.children);
         }
         return out.toOwnedSlice(gpa);
     }

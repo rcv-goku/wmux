@@ -912,8 +912,9 @@ fn firstLabelable(tree: *const Tree, gpa: Allocator, stack: *std.ArrayList(NodeI
     return null;
 }
 
-/// Push `kids` in reverse so they pop in document order.
-fn pushChildren(gpa: Allocator, stack: *std.ArrayList(NodeIndex), kids: []const NodeIndex) Allocator.Error!void {
+/// Push `kids` in reverse so they pop in document order (iterative
+/// pre-order walks).
+pub fn pushChildren(gpa: Allocator, stack: *std.ArrayList(NodeIndex), kids: []const NodeIndex) Allocator.Error!void {
     var i = kids.len;
     while (i > 0) {
         i -= 1;
