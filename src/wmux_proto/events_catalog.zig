@@ -79,8 +79,10 @@ pub const Privacy = enum {
     omitted,
 };
 
-/// Event-level privacy classification (the strongest key classification).
-pub const EventPrivacy = enum { none, sensitive, redacted };
+/// Event-level privacy, derived from the keys: `sensitive` when any key carries
+/// local-sensitive text as-is (forward only with explicit opt-in), else
+/// `redacted` when any key is redacted or omitted, else `none`.
+pub const EventPrivacy = enum { none, redacted, sensitive };
 
 pub const Key = struct {
     name: []const u8,
@@ -123,10 +125,8 @@ pub const Entry = struct {
         var p: EventPrivacy = .none;
         for (self.payload) |k| switch (k.privacy) {
             .plain => {},
-            .sensitive => if (p == .none) {
-                p = .sensitive;
-            },
             .redacted, .omitted => p = .redacted,
+            .sensitive => return .sensitive,
         };
         return p;
     }
@@ -751,11 +751,18 @@ test "unit: events: privacy classification" {
     try testing.expectEqual(EventPrivacy.redacted, lookup("browser.input").?.privacy());
     try testing.expectEqual(EventPrivacy.redacted, lookup("notification.created").?.privacy());
     try testing.expectEqual(EventPrivacy.redacted, lookup("notification.requested").?.privacy());
-    try testing.expectEqual(EventPrivacy.redacted, lookup("workspace.prompt.submitted").?.privacy());
+    // The redacted message does not hide the local-sensitive message_preview.
+    try testing.expectEqual(EventPrivacy.sensitive, lookup("workspace.prompt.submitted").?.privacy());
     try testing.expectEqual(EventPrivacy.redacted, lookup("agent.hook.PreToolUse").?.privacy());
     try testing.expectEqual(EventPrivacy.redacted, lookup("program_status.changed").?.privacy());
     try testing.expectEqual(EventPrivacy.none, lookup("window.created").?.privacy());
     try testing.expectEqual(EventPrivacy.none, lookup("pane.swapped").?.privacy());
+    // Any key that carries text as-is makes the whole event sensitive.
+    for (entries) |e| {
+        var has_sensitive = false;
+        for (e.payload) |k| has_sensitive = has_sensitive or k.privacy == .sensitive;
+        if (has_sensitive) try testing.expectEqual(EventPrivacy.sensitive, e.privacy());
+    }
 
     const nf = redactedFields(.@"notification.created");
     try testing.expectEqual(@as(usize, 3), nf.len);
