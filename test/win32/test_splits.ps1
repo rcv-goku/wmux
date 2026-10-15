@@ -88,7 +88,7 @@ function Take-Screenshot($proc, $name) {
     $bmp.Dispose()
 }
 
-# Send keystroke directly to Ghostty's window via SetForegroundWindow + SendKeys.
+# Send keystroke directly to the wmux window via SetForegroundWindow + SendKeys.
 # This ensures the target window receives the input.
 function Send-Shortcut($proc, $keys) {
     $proc.Refresh()
@@ -161,7 +161,7 @@ function Count-ChildWindows($proc, $className) {
     return $script:childCount
 }
 
-function Launch-Ghostty {
+function Launch-Wmux {
     $proc = Start-Process -FilePath $ExePath -PassThru
 
     # Wait for main window
@@ -178,7 +178,7 @@ function Launch-Ghostty {
     return $proc
 }
 
-function Kill-Ghostty($proc) {
+function Kill-Wmux($proc) {
     if (-not $proc.HasExited) {
         & taskkill /PID $proc.Id /T /F 2>$null | Out-Null
         Start-Sleep -Milliseconds 500
@@ -190,10 +190,10 @@ function Kill-Ghostty($proc) {
 # ===================================
 Write-Output ""
 Write-Output "=== TEST 1: New Split ==="
-$proc = Launch-Ghostty
+$proc = Launch-Wmux
 Write-Output "  Launched PID=$($proc.Id)"
 
-$childBefore = Count-ChildWindows $proc "GhosttyTerminal"
+$childBefore = Count-ChildWindows $proc "WmuxTerminal"
 Write-Output "  Terminal child windows before split: $childBefore"
 
 Take-Screenshot $proc "split_01_before"
@@ -202,7 +202,7 @@ Take-Screenshot $proc "split_01_before"
 Send-Shortcut $proc "^+o"
 Start-Sleep -Seconds 3
 
-$childAfter = Count-ChildWindows $proc "GhosttyTerminal"
+$childAfter = Count-ChildWindows $proc "WmuxTerminal"
 Write-Output "  Terminal child windows after split: $childAfter"
 
 Take-Screenshot $proc "split_02_after"
@@ -223,7 +223,7 @@ if ($proc.HasExited) {
     Write-Output "  OK: Process survived (no crash)"
     $pass++
 }
-Kill-Ghostty $proc
+Kill-Wmux $proc
 Write-Output "  DONE"
 
 # ===================================
@@ -231,14 +231,14 @@ Write-Output "  DONE"
 # ===================================
 Write-Output ""
 Write-Output "=== TEST 2: Close Split Pane ==="
-$proc = Launch-Ghostty
+$proc = Launch-Wmux
 Write-Output "  Launched PID=$($proc.Id)"
 
 # Create a split
 Send-Shortcut $proc "^+o"
 Start-Sleep -Seconds 3
 
-$childBefore = Count-ChildWindows $proc "GhosttyTerminal"
+$childBefore = Count-ChildWindows $proc "WmuxTerminal"
 Write-Output "  Terminals after split: $childBefore"
 
 # Close the active pane (Ctrl+Shift+W)
@@ -247,12 +247,12 @@ Start-Sleep -Seconds 2
 
 Assert-Alive $proc "after closing split pane"
 if ($script:alive) {
-    $childAfter = Count-ChildWindows $proc "GhosttyTerminal"
+    $childAfter = Count-ChildWindows $proc "WmuxTerminal"
     Write-Output "  Terminals after close: $childAfter"
 }
 
 Take-Screenshot $proc "split_03_after_close"
-Kill-Ghostty $proc
+Kill-Wmux $proc
 Write-Output "  DONE"
 
 # ===================================
@@ -260,7 +260,7 @@ Write-Output "  DONE"
 # ===================================
 Write-Output ""
 Write-Output "=== TEST 3: Multiple Splits ==="
-$proc = Launch-Ghostty
+$proc = Launch-Wmux
 Write-Output "  Launched PID=$($proc.Id)"
 
 # Create 3 splits (4 panes total)
@@ -269,13 +269,13 @@ for ($i = 0; $i -lt 3; $i++) {
     Start-Sleep -Seconds 2
 }
 
-$childCount = Count-ChildWindows $proc "GhosttyTerminal"
+$childCount = Count-ChildWindows $proc "WmuxTerminal"
 Write-Output "  Terminal windows: $childCount (expected 4)"
 
 Take-Screenshot $proc "split_04_multiple"
 
 Assert-Alive $proc "with $childCount panes after multiple splits"
-Kill-Ghostty $proc
+Kill-Wmux $proc
 Write-Output "  DONE"
 
 # ===================================
@@ -283,7 +283,7 @@ Write-Output "  DONE"
 # ===================================
 Write-Output ""
 Write-Output "=== TEST 4: Split Navigation ==="
-$proc = Launch-Ghostty
+$proc = Launch-Wmux
 Write-Output "  Launched PID=$($proc.Id)"
 
 # Create a split
@@ -305,7 +305,7 @@ Start-Sleep -Seconds 1
 Take-Screenshot $proc "split_05_navigation"
 
 Assert-Alive $proc "after split navigation"
-Kill-Ghostty $proc
+Kill-Wmux $proc
 Write-Output "  DONE"
 
 # ===================================
@@ -313,7 +313,7 @@ Write-Output "  DONE"
 # ===================================
 Write-Output ""
 Write-Output "=== TEST 5: Splits + Tabs ==="
-$proc = Launch-Ghostty
+$proc = Launch-Wmux
 Write-Output "  Launched PID=$($proc.Id)"
 
 # Create a split in tab 1
@@ -335,7 +335,7 @@ Start-Sleep -Seconds 1
 Take-Screenshot $proc "split_06_splits_tabs"
 
 Assert-Alive $proc "after splits + tab operations"
-Kill-Ghostty $proc
+Kill-Wmux $proc
 Write-Output "  DONE"
 
 # ===================================
@@ -343,7 +343,7 @@ Write-Output "  DONE"
 # ===================================
 Write-Output ""
 Write-Output "=== TEST 6: Close All Splits ==="
-$proc = Launch-Ghostty
+$proc = Launch-Wmux
 Write-Output "  Launched PID=$($proc.Id)"
 
 # Create 2 splits (3 panes)
@@ -352,7 +352,7 @@ Start-Sleep -Seconds 2
 Send-Shortcut $proc "^+o"
 Start-Sleep -Seconds 2
 
-$before = Count-ChildWindows $proc "GhosttyTerminal"
+$before = Count-ChildWindows $proc "WmuxTerminal"
 Write-Output "  Panes before closing: $before"
 
 # Close 2 panes
@@ -363,12 +363,12 @@ Start-Sleep -Seconds 2
 
 Assert-Alive $proc "with remaining pane after closing split panes"
 if ($script:alive) {
-    $after = Count-ChildWindows $proc "GhosttyTerminal"
+    $after = Count-ChildWindows $proc "WmuxTerminal"
     Write-Output "  Panes after closing 2: $after"
 }
 
 Take-Screenshot $proc "split_07_all_closed"
-Kill-Ghostty $proc
+Kill-Wmux $proc
 Write-Output "  DONE"
 
 # ===================================

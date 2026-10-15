@@ -2,7 +2,7 @@
 #
 # Usage (native Windows PowerShell 7):
 #   pwsh -NoProfile -ExecutionPolicy Bypass -File test\win32\test_sidebar.ps1 `
-#       -ExePath zig-out\bin\ghostty.exe [-ScreenshotDir <dir>]
+#       -ExePath zig-out\bin\wmux.exe [-ScreenshotDir <dir>]
 #
 # Launches with --config-default-files=false so the compiled defaults apply:
 #   terminal background  #282C34  (40,44,52)
@@ -14,10 +14,10 @@
 param([string]$ExePath = "", [string]$ScreenshotDir = "")
 
 if (-not $ExePath) {
-    $ExePath = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) "zig-out\bin\ghostty.exe"
+    $ExePath = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) "zig-out\bin\wmux.exe"
 }
 if (-not (Test-Path $ExePath)) {
-    Write-Output "FAIL: ghostty.exe not found at $ExePath (build first, or pass -ExePath)"
+    Write-Output "FAIL: wmux.exe not found at $ExePath (build first, or pass -ExePath)"
     exit 1
 }
 if ($ScreenshotDir -and -not (Test-Path $ScreenshotDir)) {
@@ -139,7 +139,7 @@ function Send-Text($proc, $text) {
     Send-Shortcut $proc $escaped
 }
 
-function Launch-Ghostty {
+function Launch-Wmux {
     $proc = Start-Process -FilePath $ExePath -ArgumentList $LaunchArgs -PassThru
     for ($i = 0; $i -lt 40; $i++) {
         Start-Sleep -Milliseconds 200
@@ -153,7 +153,7 @@ function Launch-Ghostty {
     return $proc
 }
 
-function Kill-Ghostty($proc) {
+function Kill-Wmux($proc) {
     if (-not $proc.HasExited) {
         & taskkill /PID $proc.Id /T /F 2>$null | Out-Null
         Start-Sleep -Milliseconds 500
@@ -269,7 +269,7 @@ function Click-ClientPoint($proc, $ci, $cx, $cy) {
 # ═══════════════════════════════════════
 Write-Output ""
 Write-Output "=== TEST 1: Launch With Sidebar ==="
-$proc = Launch-Ghostty
+$proc = Launch-Wmux
 Write-Output "  Launched PID=$($proc.Id) args: $LaunchArgs"
 Start-Sleep -Seconds 3
 
@@ -283,15 +283,15 @@ if ($proc.HasExited) {
     $h = $proc.MainWindowHandle
     $sb = New-Object System.Text.StringBuilder 256
     [W32]::GetClassName($h, $sb, 256) | Out-Null
-    if ($h -ne [IntPtr]::Zero -and [W32]::IsWindowVisible($h) -and $sb.ToString() -eq "GhosttyWindow") {
-        Write-Output "  OK: GhosttyWindow visible and process alive after 3s"
+    if ($h -ne [IntPtr]::Zero -and [W32]::IsWindowVisible($h) -and $sb.ToString() -eq "WmuxWindow") {
+        Write-Output "  OK: WmuxWindow visible and process alive after 3s"
         $pass++
     } else {
         Write-Output "  FAIL: Window missing/not visible (class='$($sb.ToString())')"
         $fail++
     }
 }
-Kill-Ghostty $proc
+Kill-Wmux $proc
 Write-Output "  DONE"
 
 # ═══════════════════════════════════════
@@ -299,7 +299,7 @@ Write-Output "  DONE"
 # ═══════════════════════════════════════
 Write-Output ""
 Write-Output "=== TEST 2: Sidebar Pixel Colors ==="
-$proc = Launch-Ghostty
+$proc = Launch-Wmux
 Write-Output "  Launched PID=$($proc.Id)"
 Start-Sleep -Seconds 2
 
@@ -382,7 +382,7 @@ if ($proc.HasExited) {
         }
     }
 }
-Kill-Ghostty $proc
+Kill-Wmux $proc
 Write-Output "  DONE"
 
 # ═══════════════════════════════════════
@@ -390,7 +390,7 @@ Write-Output "  DONE"
 # ═══════════════════════════════════════
 Write-Output ""
 Write-Output "=== TEST 3: Sidebar Row Click Switches Tab ==="
-$proc = Launch-Ghostty
+$proc = Launch-Wmux
 Write-Output "  Launched PID=$($proc.Id)"
 Start-Sleep -Seconds 2
 
@@ -479,7 +479,7 @@ if ($proc.HasExited) {
         Write-Output "  INFO: Active row bg sample = $(Fmt-Color $accCols[1]) (may have hit row text; non-fatal)"
     }
 }
-Kill-Ghostty $proc
+Kill-Wmux $proc
 Write-Output "  DONE"
 
 # ═══════════════════════════════════════

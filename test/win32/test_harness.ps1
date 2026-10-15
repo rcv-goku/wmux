@@ -1,14 +1,14 @@
-# Ghostty Win32 Test Harness
+# wmux Win32 Test Harness
 # Usage from WSL: powershell.exe -ExecutionPolicy Bypass -File test_harness.ps1 -Action <action> [args]
 #
 # Actions:
-#   launch      — Start ghostty.exe, output PID and HWND
-#   screenshot  — Capture ghostty window to PNG file
-#   sendkeys    — Send keystrokes to ghostty window
-#   sendtext    — Type text into ghostty window
-#   check       — Check if ghostty window exists, output title + size
-#   close       — Close ghostty window gracefully
-#   kill        — Force-kill ghostty process
+#   launch      — Start wmux.exe, output PID and HWND
+#   screenshot  — Capture the wmux window to PNG file
+#   sendkeys    — Send keystrokes to the wmux window
+#   sendtext    — Type text into the wmux window
+#   check       — Check if the wmux window exists, output title + size
+#   close       — Close the wmux window gracefully
+#   kill        — Force-kill a wmux process (-ProcessId), or every wmux.exe built in this repo
 #
 # Window finding: In WSL2, FindWindow/EnumWindows fail across sessions.
 # The launch action outputs HWND= which subsequent actions use via -Hwnd.
@@ -122,7 +122,7 @@ try {
     Write-Warning "SetThreadDpiAwarenessContext unavailable; continuing DPI-unaware ($($_.Exception.Message))"
 }
 
-function Find-GhosttyWindow {
+function Find-WmuxWindow {
     param([int]$ProcessId = 0, [long]$DirectHwnd = 0)
 
     # Strategy 0: Direct HWND passed from a previous launch action.
@@ -142,8 +142,12 @@ function Find-GhosttyWindow {
         $p = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
         if ($p) { $procs = @($p) }
     } else {
+        # Without -ProcessId only consider dev builds of this checkout, never the
+        # installed wmux the developer is working in.
+        $zigOut = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) "zig-out"
         $procs = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
-            $_.Name -like "*ghostty*"
+            $_.Name -like "*wmux*" -and $_.Path -and
+                $_.Path.StartsWith($zigOut, [System.StringComparison]::OrdinalIgnoreCase)
         })
     }
 
@@ -153,7 +157,7 @@ function Find-GhosttyWindow {
         if ($hWnd -ne [IntPtr]::Zero -and [Win32Test]::IsWindowVisible($hWnd)) {
             $sb = New-Object System.Text.StringBuilder 256
             [Win32Test]::GetClassName($hWnd, $sb, 256) | Out-Null
-            if ($sb.ToString() -eq "GhosttyWindow") {
+            if ($sb.ToString() -eq "WmuxWindow") {
                 $tb = New-Object System.Text.StringBuilder 256
                 [Win32Test]::GetWindowText($hWnd, $tb, 256) | Out-Null
                 return @{ Handle = $hWnd; Title = $tb.ToString(); Pid = $p.Id }
@@ -166,11 +170,11 @@ function Find-GhosttyWindow {
 
 function Invoke-Launch {
     $exe = if ($ExePath) { $ExePath } else {
-        # Default: find ghostty.exe relative to this script
+        # Default: find wmux.exe relative to this script
         $scriptDir = Split-Path -Parent $MyInvocation.ScriptName
-        $candidate = Join-Path (Split-Path -Parent (Split-Path -Parent $scriptDir)) "zig-out\bin\ghostty.exe"
+        $candidate = Join-Path (Split-Path -Parent (Split-Path -Parent $scriptDir)) "zig-out\bin\wmux.exe"
         if (Test-Path $candidate) { $candidate }
-        else { throw "ghostty.exe not found. Specify -ExePath." }
+        else { throw "wmux.exe not found. Specify -ExePath." }
     }
 
     # Use Start-Process -PassThru instead of ProcessStartInfo with
@@ -187,7 +191,7 @@ function Invoke-Launch {
     $deadline = (Get-Date).AddMilliseconds($WaitMs)
     while ((Get-Date) -lt $deadline) {
         Start-Sleep -Milliseconds 200
-        $win = Find-GhosttyWindow -ProcessId $proc.Id
+        $win = Find-WmuxWindow -ProcessId $proc.Id
         if ($win) {
             Write-Output "WINDOW_FOUND=true"
             Write-Output "HWND=$([long]$win.Handle)"
@@ -199,9 +203,9 @@ function Invoke-Launch {
 }
 
 function Invoke-Screenshot {
-    $win = Find-GhosttyWindow -ProcessId $ProcessId -DirectHwnd $Hwnd
+    $win = Find-WmuxWindow -ProcessId $ProcessId -DirectHwnd $Hwnd
     if (-not $win) {
-        Write-Error "No ghostty window found"
+        Write-Error "No wmux window found"
         exit 1
     }
 
@@ -228,7 +232,7 @@ function Invoke-Screenshot {
     $gfx.Dispose()
 
     $outFile = if ($OutputPath) { $OutputPath } else {
-        Join-Path $env:TEMP "ghostty_screenshot_$(Get-Date -Format 'yyyyMMdd_HHmmss').png"
+        Join-Path $env:TEMP "wmux_screenshot_$(Get-Date -Format 'yyyyMMdd_HHmmss').png"
     }
     $bmp.Save($outFile, [System.Drawing.Imaging.ImageFormat]::Png)
     $bmp.Dispose()
@@ -238,9 +242,9 @@ function Invoke-Screenshot {
 }
 
 function Invoke-SendKeys {
-    $win = Find-GhosttyWindow -ProcessId $ProcessId -DirectHwnd $Hwnd
+    $win = Find-WmuxWindow -ProcessId $ProcessId -DirectHwnd $Hwnd
     if (-not $win) {
-        Write-Error "No ghostty window found"
+        Write-Error "No wmux window found"
         exit 1
     }
 
@@ -263,9 +267,9 @@ function Invoke-SendKeys {
 }
 
 function Invoke-SendText {
-    $win = Find-GhosttyWindow -ProcessId $ProcessId -DirectHwnd $Hwnd
+    $win = Find-WmuxWindow -ProcessId $ProcessId -DirectHwnd $Hwnd
     if (-not $win) {
-        Write-Error "No ghostty window found"
+        Write-Error "No wmux window found"
         exit 1
     }
 
@@ -287,7 +291,7 @@ function Invoke-SendText {
 }
 
 function Invoke-Check {
-    $win = Find-GhosttyWindow -ProcessId $ProcessId -DirectHwnd $Hwnd
+    $win = Find-WmuxWindow -ProcessId $ProcessId -DirectHwnd $Hwnd
     if (-not $win) {
         Write-Output "EXISTS=false"
         return
@@ -308,7 +312,7 @@ function Invoke-Check {
 }
 
 function Invoke-Close {
-    $win = Find-GhosttyWindow -ProcessId $ProcessId -DirectHwnd $Hwnd
+    $win = Find-WmuxWindow -ProcessId $ProcessId -DirectHwnd $Hwnd
     if (-not $win) {
         Write-Output "NO_WINDOW"
         return
@@ -318,9 +322,9 @@ function Invoke-Close {
 }
 
 function Invoke-Resize {
-    $win = Find-GhosttyWindow -ProcessId $ProcessId -DirectHwnd $Hwnd
+    $win = Find-WmuxWindow -ProcessId $ProcessId -DirectHwnd $Hwnd
     if (-not $win) {
-        Write-Error "No ghostty window found"
+        Write-Error "No wmux window found"
         exit 1
     }
     if ($Width -le 0 -or $Height -le 0) {
@@ -339,12 +343,17 @@ function Invoke-Resize {
 
 function Invoke-Kill {
     if ($ProcessId) {
-        # Use taskkill /T to kill the entire process tree (ghostty + child cmd.exe).
+        # Use taskkill /T to kill the entire process tree (wmux + child cmd.exe).
         # Stop-Process only kills the main process, leaving orphaned children.
         & taskkill /PID $ProcessId /T /F 2>$null | Out-Null
         Write-Output "KILLED=$ProcessId"
     } else {
-        Get-Process ghostty*  -ErrorAction SilentlyContinue | ForEach-Object {
+        # Only dev builds of this checkout: a bare "wmux*" match would also kill the
+        # installed wmux the developer is working in.
+        $zigOut = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) "zig-out"
+        Get-Process wmux -ErrorAction SilentlyContinue | Where-Object {
+            $_.Path -and $_.Path.StartsWith($zigOut, [System.StringComparison]::OrdinalIgnoreCase)
+        } | ForEach-Object {
             & taskkill /PID $_.Id /T /F 2>$null | Out-Null
         }
         Write-Output "KILLED=all"
@@ -352,19 +361,19 @@ function Invoke-Kill {
 }
 
 function Invoke-ScrollbarQuery {
-    # Find the GhosttyWindow (top-level). -Hwnd is the main window HWND.
-    $win = Find-GhosttyWindow -ProcessId $ProcessId -DirectHwnd $Hwnd
+    # Find the WmuxWindow (top-level). -Hwnd is the main window HWND.
+    $win = Find-WmuxWindow -ProcessId $ProcessId -DirectHwnd $Hwnd
     if (-not $win) {
-        Write-Error "No ghostty window found"
+        Write-Error "No wmux window found"
         exit 1
     }
 
     $script:mainHwnd = [IntPtr]$win.Handle
 
     # Win32 traverses up to the top-level ancestor for popup ownership, so
-    # even though Scrollbar.create() is called with the GhosttyTerminal child
+    # even though Scrollbar.create() is called with the WmuxTerminal child
     # HWND, the resulting popup's effective owner is the top-level
-    # GhosttyWindow. Look for a GhosttyScrollbar whose GW_OWNER is mainHwnd.
+    # WmuxWindow. Look for a GhosttyScrollbar whose GW_OWNER is mainHwnd.
     $script:scrollbarHwnd = $null
     $enumCb = [Win32Test+EnumWindowsProc]{
         param([IntPtr]$h, [IntPtr]$l)

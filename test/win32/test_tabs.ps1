@@ -123,7 +123,7 @@ function Assert-Alive($proc, $context) {
 # NOTE: the parameter must NOT be named $pid - that shadows the pwsh automatic
 # variable $PID, and the EnumWindows callback then resolves it to the host
 # process id, making the count always 0 and the assertion vacuous.
-function Count-GhosttyWindows($ownerPid) {
+function Count-WmuxWindows($ownerPid) {
     $script:targetPid = [uint32]$ownerPid
     $script:wcount = 0
     $cb = [W32+EP]{param($h,$l)
@@ -132,7 +132,7 @@ function Count-GhosttyWindows($ownerPid) {
         if ($wp -eq $script:targetPid -and [W32]::IsWindowVisible($h)) {
             $sb = New-Object System.Text.StringBuilder 256
             [W32]::GetClassName($h, $sb, 256) | Out-Null
-            if ($sb.ToString() -eq "GhosttyWindow") { $script:wcount++ }
+            if ($sb.ToString() -eq "WmuxWindow") { $script:wcount++ }
         }
         return $true
     }
@@ -140,7 +140,7 @@ function Count-GhosttyWindows($ownerPid) {
     return $script:wcount
 }
 
-function Launch-Ghostty {
+function Launch-Wmux {
     $proc = Start-Process -FilePath $ExePath -PassThru
 
     # Wait for main window
@@ -161,7 +161,7 @@ function Launch-Ghostty {
 # ═══════════════════════════════════════
 Write-Output ""
 Write-Output "=== TEST: New Tab ==="
-$proc = Launch-Ghostty
+$proc = Launch-Wmux
 Write-Output "  Launched PID=$($proc.Id)"
 Start-Sleep -Seconds 2
 
@@ -173,15 +173,15 @@ Start-Sleep -Seconds 3
 
 Take-Screenshot $proc "02_after_new_tab"
 
-$wc = Count-GhosttyWindows $proc.Id
+$wc = Count-WmuxWindows $proc.Id
 if (-not $script:inputOK) {
     Write-Output "  DOWNGRADED: input unavailable - cannot assert window count after new tab (count=$wc)"
     $script:downgraded++
 } elseif ($wc -eq 1) {
-    Write-Output "  OK: Still 1 top-level GhosttyWindow (tab opened inside)"
+    Write-Output "  OK: Still 1 top-level WmuxWindow (tab opened inside)"
     $pass++
 } elseif ($wc -eq 0) {
-    Write-Output "  SKIPPED(env): EnumWindows found 0 GhosttyWindows (cross-session enumeration unavailable, e.g. WSL2)"
+    Write-Output "  SKIPPED(env): EnumWindows found 0 WmuxWindows (cross-session enumeration unavailable, e.g. WSL2)"
     $script:skipped++
 } else {
     Write-Output "  FAIL: Window count = $wc (expected 1 - a new tab must not create a new OS window)"
@@ -197,7 +197,7 @@ Write-Output "  DONE"
 # ═══════════════════════════════════════
 Write-Output ""
 Write-Output "=== TEST: Tab Switch ==="
-$proc = Launch-Ghostty
+$proc = Launch-Wmux
 Write-Output "  Launched PID=$($proc.Id)"
 Start-Sleep -Seconds 2
 
@@ -235,7 +235,7 @@ Write-Output "  DONE"
 # ═══════════════════════════════════════
 Write-Output ""
 Write-Output "=== TEST: Tab Close ==="
-$proc = Launch-Ghostty
+$proc = Launch-Wmux
 Write-Output "  Launched PID=$($proc.Id)"
 Start-Sleep -Seconds 2
 
@@ -301,7 +301,7 @@ Write-Output "  DONE"
 # ═══════════════════════════════════════
 Write-Output ""
 Write-Output "=== TEST: Rapid Tabs ==="
-$proc = Launch-Ghostty
+$proc = Launch-Wmux
 Write-Output "  Launched PID=$($proc.Id)"
 Start-Sleep -Seconds 2
 

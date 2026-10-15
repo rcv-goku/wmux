@@ -1,4 +1,4 @@
-# IME / Unicode Input Test for Ghostty
+# IME / Unicode Input Test for wmux
 # Tests that CJK characters can be input and rendered correctly.
 #
 # Usage from WSL:
@@ -114,7 +114,7 @@ public class Win32Ime {
 }
 "@
 
-function Find-GhosttyWindow {
+function Find-WmuxWindow {
     param([int]$ProcessId = 0)
     $found = $null
     $callback = [Win32Ime+EnumWindowsProc]{
@@ -156,7 +156,7 @@ function Take-Screenshot {
 
 Write-Output "=== IME / Unicode Input Test ==="
 
-# Launch ghostty
+# Launch wmux
 $psi = New-Object System.Diagnostics.ProcessStartInfo
 $psi.FileName = $ExePath
 $psi.UseShellExecute = $true
@@ -165,7 +165,7 @@ Write-Output "PID=$($proc.Id)"
 
 # Wait for window
 Start-Sleep -Seconds 3
-$win = Find-GhosttyWindow -ProcessId $proc.Id
+$win = Find-WmuxWindow -ProcessId $proc.Id
 if (-not $win) {
     Write-Output "FAIL: Window not found"
     exit 1
