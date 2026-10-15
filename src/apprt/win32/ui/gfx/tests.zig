@@ -149,7 +149,7 @@ fn bgra(c: Color) [4]u8 {
 
 fn expectQi(comptime T: type, obj: anytype) !void {
     const p = com.queryInterface(T, obj) catch |err| {
-        std.debug.print("QueryInterface({s}) failed: {s} hr=0x{x}\n", .{ @typeName(T), @errorName(err), @as(u32, @bitCast(com.last_failure)) });
+        std.log.scoped(.gfx).warn("QueryInterface({s}) failed: {s} hr=0x{x}", .{ @typeName(T), @errorName(err), @as(u32, @bitCast(com.last_failure)) });
         return err;
     };
     com.release(p);
@@ -460,15 +460,43 @@ test "gfx: headless: text measurement, trimming, line limits and caching" {
     try testing.expectEqual(@as(u32, 2), two.line_count);
     try testing.expect(two.truncated);
     try testing.expectApproxEqAbs(hello.height * 2, two.height, 1.5);
+    // Without trimming the lines past the limit overflow the box (drawing
+    // clips them) and still do not count, as with the fake measurer.
+    var two_clip = wrap;
+    two_clip.trim = .none;
+    const clip2 = text.measure(greek, &two_clip, 120);
+    try testing.expectEqual(@as(u32, 2), clip2.line_count);
+    try testing.expect(clip2.truncated);
+    try testing.expectApproxEqAbs(two.height, clip2.height, 0.5);
+    const fake: gfx.FakeMeasurer = .{};
+    try testing.expectEqual(clip2.line_count, fake.measure(greek, &two_clip, 120).line_count);
+    // The limit also caps explicit line breaks of single-line text.
+    const first_only: TextStyle = .{ .size = 13, .max_lines = 1 };
+    const first = text.measure("first\nsecond\nthird", &first_only, 200);
+    try testing.expectEqual(@as(u32, 1), first.line_count);
+    try testing.expect(first.truncated);
+    try testing.expectApproxEqAbs(hello.height, first.height, 1.5);
     wrap.max_lines = 0;
     const all = text.measure(greek, &wrap, 120);
     try testing.expect(all.line_count > 2 and !all.truncated);
-    // A box one line tall keeps one visible line.
+    // A box one line tall keeps one visible line, trimmed or clipped.
     const boxed = try text.layout(greek, &wrap, 120, hello.height + 1);
     defer boxed.deinit();
     const boxed_ext = try boxed.extent();
     try testing.expectEqual(@as(u32, 1), boxed_ext.line_count);
     try testing.expect(boxed_ext.truncated);
+    var clip_wrap = wrap;
+    clip_wrap.trim = .none;
+    const clipped = try text.layout(greek, &clip_wrap, 120, hello.height + 1);
+    defer clipped.deinit();
+    const clipped_ext = try clipped.extent();
+    try testing.expectEqual(@as(u32, 1), clipped_ext.line_count);
+    try testing.expect(clipped_ext.truncated);
+    try testing.expectApproxEqAbs(hello.height, clipped_ext.height, 1.5);
+
+    // No room at all truncates (the fake measurer agrees).
+    try testing.expect(text.measure("Hello", &single, 0).truncated);
+    try testing.expect(text.measure("Hello", &single, std.math.nan(f32)).truncated);
 
     // The measurer interface agrees with direct measurement.
     const via = text.measurer().measure("Hello", &single, gfx.text.unbounded);
@@ -485,6 +513,10 @@ test "gfx: headless: text measurement, trimming, line limits and caching" {
     zero.size = 0;
     _ = text.measure("x", &zero, 100);
     try testing.expectError(error.InvalidArg, text.layout("x", &zero, 100, 100));
+    // A non-finite line height is ignored instead of producing NaN extents.
+    var bad_lh = single;
+    bad_lh.line_height = std.math.inf(f32);
+    try testing.expectApproxEqAbs(hello.height, text.measure("Hello", &bad_lh, gfx.text.unbounded).height, 0.01);
 }
 
 test "gfx: headless: text hit testing, carets and range rectangles" {

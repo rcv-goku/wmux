@@ -221,7 +221,10 @@ pub const TextSystem = struct {
     /// Text layout for `text` (UTF-8; invalid bytes render as U+FFFD) in
     /// `style` within a `max_width` x `max_height` box. Cached; the returned
     /// handle holds its own reference: call `deinit`. Pass `unbounded` for
-    /// an unconstrained side.
+    /// an unconstrained side; zero, negative or NaN extents leave no room.
+    /// The layout object is shared with the cache: never modify it (range
+    /// formatting, drawing effects, max size); use `createLayout` for a
+    /// private one.
     pub fn layout(self: *TextSystem, text: []const u8, style_in: *const TextStyle, max_width: f32, max_height: f32) Error!TextLayout {
         const w = sanitizeExtent(max_width);
         const h = sanitizeExtent(max_height);
@@ -281,14 +284,17 @@ pub const TextSystem = struct {
         }
         if (style.underline) try raw.setUnderline(true, .all);
         if (style.strikethrough) try raw.setStrikethrough(true, .all);
-        if (style.line_height > 0) try raw.setLineSpacing(.uniform, style.line_height, style.line_height * 0.8);
-        if (style.max_lines > 0 and style.wrap != .none) try self.limitLines(raw, style.max_lines);
+        if (style.line_height > 0 and std.math.isFinite(style.line_height))
+            try raw.setLineSpacing(.uniform, style.line_height, style.line_height * 0.8);
+        // Also for `.none`: explicit line breaks still make lines.
+        if (style.max_lines > 0) try self.limitLines(raw, style.max_lines);
         return raw;
     }
 
-    /// Cap a wrapping layout at `max_lines` by shrinking its box height to
-    /// those lines; DirectWrite then hides the rest and trims the last
-    /// visible line (with the ellipsis when trimming is on).
+    /// Cap a layout at `max_lines` by shrinking its box height to those
+    /// lines. With trimming, DirectWrite hides the rest and trims the last
+    /// visible line (with the ellipsis when enabled); without it the rest
+    /// overflows the box, where drawing clips it and `extent` ignores it.
     fn limitLines(self: *TextSystem, raw: *dwrite.IDWriteTextLayout, max_lines: u16) Error!void {
         const count = try raw.getLineCount();
         if (count <= max_lines) return;
@@ -302,8 +308,9 @@ pub const TextSystem = struct {
         try raw.setMaxHeight(@min(raw.getMaxHeight(), h + 0.01));
     }
 
-    /// Extent of `text` in `style` within `max_width` (unbounded height).
-    /// Never fails: on error it logs at debug level and returns an estimate.
+    /// Extent of `text` in `style` within `max_width` (unbounded height;
+    /// width semantics as in `TextMeasurer.measure`). Never fails: on error
+    /// it logs at debug level and returns an estimate.
     pub fn measure(self: *TextSystem, text: []const u8, style: *const TextStyle, max_width: f32) TextExtent {
         const l = self.layout(text, style, max_width, unbounded) catch |err| return fallbackExtent(text, style, max_width, err);
         defer l.deinit();
@@ -330,7 +337,8 @@ pub const TextSystem = struct {
 
 /// A reference to a DirectWrite text layout. Positions and lengths are
 /// UTF-16 code units (convert with `logic/utf16_map.zig`); coordinates are
-/// relative to the layout origin.
+/// relative to the layout origin. Layouts from `TextSystem.layout` are
+/// shared with its cache: treat `raw` as read-only.
 pub const TextLayout = struct {
     raw: *dwrite.IDWriteTextLayout,
 
@@ -350,13 +358,26 @@ pub const TextLayout = struct {
         var out: TextExtent = .{ .width = m.width, .height = m.height, .line_count = m.lineCount };
         const overflow = m.width > m.layoutWidth + 0.01 or m.height > m.layoutHeight + 0.01;
         if (self.raw.getLineMetrics(&buf)) |lines| {
+            // With trimming, DirectWrite gives the lines below the box zero
+            // height. Without it they keep their height and overflow the box
+            // (drawing clips them), so only lines that fit count; the first
+            // line always does.
             var visible: u32 = 0;
+            var visible_height: f32 = 0;
+            var hidden = false;
             var trimmed = false;
             for (lines) |l| {
-                if (l.height > 0) visible += 1;
                 if (l.isTrimmed != com.FALSE) trimmed = true;
+                if (hidden or !(l.height > 0)) continue;
+                if (visible > 0 and visible_height + l.height > m.layoutHeight + 0.01) {
+                    hidden = true;
+                    continue;
+                }
+                visible += 1;
+                visible_height += l.height;
             }
             out.line_count = visible;
+            if (hidden) out.height = visible_height;
             out.truncated = trimmed or overflow;
             if (lines.len > 0) out.baseline = lines[0].baseline;
         } else |err| switch (err) {

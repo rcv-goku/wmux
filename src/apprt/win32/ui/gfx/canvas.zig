@@ -73,8 +73,9 @@ pub const Canvas = struct {
     /// reverse order across both kinds).
     pushes: [max_pushes]Push = undefined,
     push_depth: u8 = 0,
-    /// Pushes beyond `max_pushes` (or failed layer pushes) that were not
-    /// sent to Direct2D; matching pops are skipped so pairing stays intact.
+    /// Clip pushes beyond `max_pushes` that were not sent to Direct2D; their
+    /// pops are skipped so pairing stays intact. (A layer push that does not
+    /// fit returns an error instead and must not be popped.)
     skipped_pushes: u16 = 0,
     clip_depth: u16 = 0,
     layer_depth: u16 = 0,

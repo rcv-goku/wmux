@@ -91,7 +91,8 @@ pub const TextStyle = struct {
     trim_delimiter_count: u8 = 1,
     underline: bool = false,
     strikethrough: bool = false,
-    /// Maximum visible lines when wrapping; 0 = only the box height limits.
+    /// Maximum visible lines (wrapped lines and explicit line breaks); 0 =
+    /// only the box height limits.
     max_lines: u16 = 0,
     /// Uniform line height in layout units; 0 = the font's natural spacing.
     line_height: f32 = 0,
@@ -172,8 +173,9 @@ pub const TextMeasurer = struct {
     measure_fn: *const fn (ctx: *anyopaque, text: []const u8, style: *const TextStyle, max_width: f32) TextExtent,
 
     /// Extent of `text` laid out in `style` within `max_width` (use
-    /// `std.math.inf(f32)` for unconstrained). Never fails: implementations
-    /// fall back to an estimate.
+    /// `std.math.inf(f32)` for unconstrained; zero, negative or NaN leave no
+    /// room, so the text is truncated). Never fails: implementations fall
+    /// back to an estimate.
     pub fn measure(self: TextMeasurer, text: []const u8, style: *const TextStyle, max_width: f32) TextExtent {
         return self.measure_fn(self.ctx, text, style, max_width);
     }
@@ -198,8 +200,9 @@ pub const FakeMeasurer = struct {
 
     pub fn measure(self: *const FakeMeasurer, text: []const u8, style: *const TextStyle, max_width: f32) TextExtent {
         const adv = style.size * self.advance_em;
-        const line_h = if (style.line_height > 0) style.line_height else style.size * self.line_em;
-        const max_w = if (std.math.isNan(max_width) or max_width <= 0) std.math.inf(f32) else max_width;
+        const line_h = if (style.line_height > 0 and std.math.isFinite(style.line_height)) style.line_height else style.size * self.line_em;
+        // Same clamping as the DirectWrite measurer: no room at all.
+        const max_w: f32 = if (std.math.isNan(max_width) or max_width < 0) 0 else max_width;
 
         var lines: u32 = 0;
         var widest: f32 = 0;
@@ -239,7 +242,9 @@ pub const FakeMeasurer = struct {
                 const per_line = @max(@floor(max_w / adv), 1);
                 if (n == 0) return .{ .lines = 1, .width = 0, .overflow = false };
                 const lines = @ceil(n / per_line);
-                return .{ .lines = @intFromFloat(lines), .width = @min(n, per_line) * adv, .overflow = false };
+                const w = @min(n, per_line) * adv;
+                // A line narrower than one character still holds one.
+                return .{ .lines = @intFromFloat(lines), .width = w, .overflow = w > max_w };
             },
             .word => {
                 var lines: u32 = 1;
@@ -258,9 +263,10 @@ pub const FakeMeasurer = struct {
                         lines += 1;
                         cur = 0;
                     }
-                    // A word longer than the line breaks by characters.
-                    while (ww > max_w) {
-                        const chunk = @max(@floor(max_w / adv), 1) * adv;
+                    // A word longer than the line breaks by characters (at
+                    // least one per line, even when the line is narrower).
+                    const chunk = @max(@floor(max_w / adv), 1) * adv;
+                    while (ww > chunk) {
                         widest = @max(widest, chunk);
                         lines += 1;
                         ww -= chunk;
@@ -268,7 +274,7 @@ pub const FakeMeasurer = struct {
                     cur = ww;
                 }
                 widest = @max(widest, cur);
-                return .{ .lines = lines, .width = widest, .overflow = false };
+                return .{ .lines = lines, .width = widest, .overflow = widest > max_w };
             },
         }
     }
@@ -338,6 +344,37 @@ test "unit: gfx: fake measurer single line and trimming" {
     try testing.expectEqual(@as(u32, 1), m.measure("", &style, 100).line_count);
     // Unconstrained width.
     try testing.expect(!m.measure("hello", &style, std.math.inf(f32)).truncated);
+    // No room (zero, negative, NaN): truncated, as with DirectWrite.
+    const no_room = m.measure("hello", &style, 0);
+    try testing.expect(no_room.truncated);
+    try testing.expectEqual(@as(f32, 0), no_room.width);
+    try testing.expect(m.measure("hello", &style, -1).truncated);
+    try testing.expect(m.measure("hello", &style, std.math.nan(f32)).truncated);
+    try testing.expect(!m.measure("", &style, 0).truncated);
+    // A line limit also caps explicit line breaks of single-line text.
+    var one_line = style;
+    one_line.max_lines = 1;
+    const capped = m.measure("first\nsecond", &one_line, 1000);
+    try testing.expectEqual(@as(u32, 1), capped.line_count);
+    try testing.expect(capped.truncated);
+}
+
+test "unit: gfx: fake measurer wraps lines narrower than one character" {
+    var fake: FakeMeasurer = .{};
+    const m = fake.measurer();
+    // Advance 5 in a 3-wide box: one character per line, flagged as overflow.
+    const word: TextStyle = .{ .size = 10, .wrap = .word, .trim = .none };
+    const w = m.measure("abc", &word, 3);
+    try testing.expectEqual(@as(u32, 3), w.line_count);
+    try testing.expect(w.truncated);
+    try testing.expectEqual(@as(f32, 5), w.width);
+    const chars: TextStyle = .{ .size = 10, .wrap = .character, .trim = .none };
+    const c = m.measure("abc", &chars, 3);
+    try testing.expectEqual(@as(u32, 3), c.line_count);
+    try testing.expect(c.truncated);
+    // Non-finite line heights fall back to the font's spacing.
+    const bad_lh: TextStyle = .{ .size = 10, .line_height = std.math.inf(f32) };
+    try testing.expectEqual(@as(f32, 12.5), m.measure("x", &bad_lh, 100).height);
 }
 
 test "unit: gfx: fake measurer word and character wrapping" {
