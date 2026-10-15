@@ -92,12 +92,14 @@ Test-Case 'legacy: an unknown command is answered with an error and the pipe kee
 Test-Case 'cli: the CLI reaches the test instance and nothing else' {
     $w = Start-WmuxInstance
     try {
-        if (Test-Path -LiteralPath $w.CliExe -PathType Leaf) {
-            # W1-2 and later: the Appendix D.5 smoke contract is "cli\cmux.exe ping".
+        if ($w.Protocol -eq 'v2' -and (Test-Path -LiteralPath $w.CliExe -PathType Leaf)) {
+            # W1-2 and later: the Appendix D.5 smoke contract is "cli\cmux.exe ping". It needs
+            # the v2 server (W1-1a); the W0-K skeleton cli\cmux.exe only implements --version.
             $r = Invoke-WmuxCli $w @('ping')
             Assert-Equal 0 $r.ExitCode "cmux ping failed: $($r.Stderr)"
         } else {
-            # Before W1-2: the legacy +workspace verb of wmux.exe, aimed with GHOSTTY_PID.
+            # Legacy instance (before W1-1a): the legacy +workspace verb of wmux.exe, aimed with
+            # GHOSTTY_PID (Invoke-WmuxCli relays legacy +verbs of a legacy instance to wmux.exe).
             $r = Invoke-WmuxCli $w @('+workspace', 'list')
             Assert-Equal 0 $r.ExitCode "wmux +workspace list failed: $($r.Stderr)"
             $list = @($r.Stdout | ConvertFrom-Json)

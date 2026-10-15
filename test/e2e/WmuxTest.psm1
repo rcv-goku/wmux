@@ -1082,7 +1082,7 @@ $script:EnvStripNames = @(
     'XDG_STATE_HOME', 'XDG_CACHE_HOME'
 )
 
-# Legacy +verbs that Invoke-WmuxCli may relay to wmux.exe before cli\cmux.exe exists (W1-2).
+# Legacy +verbs that Invoke-WmuxCli relays to wmux.exe for a legacy instance (before W1-1a).
 # Anything else could start a second, unmanaged GUI, so it is refused.
 $script:LegacyCliVerbs = @(
     '+workspace', '+tab', '+send', '+notify', '+surface', '+split', '+status', '+log',
@@ -2399,9 +2399,9 @@ function Invoke-WmuxCli {
         Runs <install>\cli\cmux.exe (or wmux.com with -AsWmux) against the instance with
         WMUX_SOCKET_PATH set. Returns [pscustomobject]@{ ExitCode; Stdout; Stderr }.
     .NOTES
-        Transitional: before W1-2 ships cli\cmux.exe, a legacy instance accepts the legacy
-        +verbs (for example @('+workspace','list')), which run through wmux.exe with
-        GHOSTTY_PID pointing at the test instance.
+        Transitional: a legacy instance (before the W1-1a v2 server) accepts only the legacy
+        +verbs (for example @('+workspace','list')), which always run through wmux.exe with
+        GHOSTTY_PID pointing at the test instance, even when a cli\cmux.exe exists.
     #>
     [CmdletBinding()]
     param(
@@ -2413,13 +2413,13 @@ function Invoke-WmuxCli {
     )
     try {
         $exe = if ($AsWmux) { Join-Path (Split-Path -Parent $Instance.CliExe) 'wmux.com' } else { $Instance.CliExe }
-        if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
-            $first = if ($Arguments.Count -gt 0) { $Arguments[0] } else { '' }
-            if ($Instance.Protocol -eq 'legacy' -and ($script:LegacyCliVerbs -ccontains $first)) {
-                $exe = $Instance.Exe
-            } else {
-                throw (New-WmuxHarnessError -Code 'harness_cli_missing' -Message "CLI not found at '$exe' (cli\cmux.exe ships with W1-2); a legacy instance only relays these +verbs through wmux.exe: $($script:LegacyCliVerbs -join ' ')" -Method 'cli')
-            }
+        $first = if ($Arguments.Count -gt 0) { $Arguments[0] } else { '' }
+        if ($Instance.Protocol -eq 'legacy' -and ($script:LegacyCliVerbs -ccontains $first)) {
+            # A legacy instance only serves the legacy pipe, which only the +verbs of wmux.exe
+            # speak; the W0-K skeleton cli\cmux.exe and wmux.com (only --version) cannot reach it.
+            $exe = $Instance.Exe
+        } elseif (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
+            throw (New-WmuxHarnessError -Code 'harness_cli_missing' -Message "CLI not found at '$exe' (cli\cmux.exe ships with W1-2); a legacy instance only relays these +verbs through wmux.exe: $($script:LegacyCliVerbs -join ' ')" -Method 'cli')
         }
         $timeoutSec = 60
         if ($env:WMUX_E2E_CLI_TIMEOUT_SEC) { $timeoutSec = [double]$env:WMUX_E2E_CLI_TIMEOUT_SEC }
