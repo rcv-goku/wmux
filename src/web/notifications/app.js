@@ -491,11 +491,15 @@ export function createApp(options) {
     focusRow(ids[i]);
   }
 
-  /** Focus the list (pane shown or focused): the focused row, else the first. */
-  function focusList() {
+  /**
+   * Focus the list (pane shown or focused): the focused row, else the first.
+   * `scroll` brings that row into view; focus coming back to the window
+   * passes false (see start()).
+   */
+  function focusList(scroll = true) {
     if (state.records.length === 0) return;
     if (!state.focusedId || !find(state.focusedId)) state.focusedId = orderedIds()[0] || null;
-    applyFocus(true);
+    applyFocus(true, scroll);
   }
 
   function rowOf(target) {
@@ -688,9 +692,12 @@ export function createApp(options) {
     listen(doc, "mousedown", onDocPointerDown);
     listen(els.jump, "click", () => jumpToUnread());
     listen(els.clear, "click", () => clearAll());
-    // Pane shown or focused: the first (or last focused) row takes focus.
+    // Pane shown or focused: the first (or last focused) row takes focus,
+    // without scrolling. Focus usually comes back with a click into the
+    // list, and scrolling the list under the pointer would hand that click
+    // to another row (or drop it).
     listen(win, "focus", () => {
-      if (!els.list.contains(doc.activeElement) && !state.menuFor) focusList();
+      if (!els.list.contains(doc.activeElement) && !state.menuFor) focusList(false);
     });
     cleanups.push(bridge.on("cmux.event", onFrame));
     cleanups.push(bridge.on("panel.notifications.snapshot", (p) => applySnapshot(p)));

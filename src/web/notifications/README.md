@@ -117,7 +117,9 @@ not complete the action: <message>" and reloads the list.
   `k`/`j`, Home/End, PgUp/PgDn move; Enter opens; Space toggles read; Delete
   or Backspace dismisses; Ctrl+C copies. When the page gets focus (pane shown
   or focused) the last focused row, else the first, takes focus, so Return
-  opens the newest notification. Escape in the popover closes it.
+  opens the newest notification. That does not scroll the list: focus usually
+  comes back with a click, which must land on the row under the pointer.
+  Escape in the popover closes it.
 - **Copy.** Workspace title (if known), title, then the body (or the subtitle
   when the body is empty); each trimmed, empty lines dropped, the detail
   dropped when equal to the title; joined with `\n`.

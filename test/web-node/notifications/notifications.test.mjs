@@ -483,6 +483,32 @@ describe("unit: notifications app", () => {
     assert.deepEqual(host.calls("notification.open").map((m) => m.params.id), [uuid(1)]);
   });
 
+  test("unit: notifications: focus coming back to the window does not scroll the list", async () => {
+    // A click from another pane focuses the window before the press lands;
+    // scrolling the list then would put another row under the pointer.
+    const proto = window.HTMLElement.prototype;
+    const had = Object.prototype.hasOwnProperty.call(proto, "scrollIntoView");
+    const original = proto.scrollIntoView;
+    const scrolled = [];
+    proto.scrollIntoView = function scrollIntoView() {
+      scrolled.push(this.dataset ? this.dataset.id : null);
+    };
+    try {
+      await startApp({ records: Array.from({ length: 30 }, (_, i) => rec(i + 1)), params: { group_by: "none" } });
+      if (doc.activeElement && doc.activeElement !== doc.body) doc.activeElement.blur();
+      assert.equal(doc.activeElement, doc.body);
+      scrolled.length = 0;
+      window.dispatchEvent(new window.Event("focus"));
+      assert.equal(doc.activeElement, rows()[0], "the row still takes focus, so Return opens it");
+      assert.deepEqual(scrolled, [], "the list stays where the user left it");
+      host.emit("panel.notifications.command", { action: "focus" });
+      assert.deepEqual(scrolled, [uuid(1)], "an explicit focus command still brings the row into view");
+    } finally {
+      if (had) proto.scrollIntoView = original;
+      else delete proto.scrollIntoView;
+    }
+  });
+
   test("unit: notifications: Escape in the popover asks native to close it", async () => {
     await startApp({ params: { placement: "popover" } });
     key(window, doc.body, { key: "Escape" });
