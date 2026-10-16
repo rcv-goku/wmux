@@ -1,4 +1,4 @@
-Usage: cmux todo <add|list|check|uncheck|start|edit|rm|clear|set|open> [args]
+Usage: cmux todo <add|list|check|uncheck|start|edit|rm|move|clear|set|open> [args]
 
 Per-workspace checklist shared with the sidebar, the checklist popover and
 the Todos pane. Targets the caller's workspace by default.

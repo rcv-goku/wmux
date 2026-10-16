@@ -13,7 +13,7 @@ const output = @import("../../output.zig");
 const util = @import("../cli_misc/util.zig");
 const rules = @import("todo_rules.zig");
 
-pub const usage = "Usage: cmux todo <add|list|check|uncheck|start|edit|rm|clear|set|open> [args]";
+pub const usage = "Usage: cmux todo <add|list|check|uncheck|start|edit|rm|move|clear|set|open> [args]";
 
 pub const spec: CommandSpec = .{ .name = "todo", .group = .automation, .usage = usage, .help = @embedFile("../../help/todo.txt"), .run = run };
 
