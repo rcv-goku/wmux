@@ -202,33 +202,55 @@ pub const Mapped = struct {
 const NativeEntry = struct { []const u8, Mapped };
 
 /// Claude Code-style names shared by Claude, Codex, Grok, Copilot,
-/// CodeBuddy, Factory, Qoder, Kimi, Muse and others that adopted the same
-/// hook vocabulary. Matched after `canonicalName` folding, so `PreToolUse`,
-/// `preToolUse` and `pre_tool_use` are the same key.
+/// CodeBuddy, Factory, Qoder, Kimi, Muse, Kiro and others that adopted the
+/// same hook vocabulary (sources: WP R-hooks agent-hooks.md).
+/// Matched after `canonicalName` folding, so `PreToolUse`, `preToolUse`
+/// and `pre_tool_use` are the same key.
 const generic_natives = [_]NativeEntry{
     .{ "sessionstart", .{ .event = .session_start } },
     .{ "userpromptsubmit", .{ .event = .prompt_submit } },
+    // Copilot camelCase.
     .{ "userpromptsubmitted", .{ .event = .prompt_submit } },
     .{ "pretooluse", .{ .event = .pre_tool_use } },
     .{ "posttooluse", .{ .event = .post_tool_use } },
+    // Claude, Copilot, Grok, Kimi, CodeBuddy, Qoder, Muse: a failed tool
+    // still means the turn is running.
+    .{ "posttoolusefailure", .{ .event = .post_tool_use } },
     .{ "permissionrequest", .{ .event = .feed } },
+    // Kimi Code 2.x: the approval was answered.
+    .{ "permissionresult", .{ .event = .approval_response } },
     .{ "notification", .{ .event = .notification } },
     .{ "stop", .{ .event = .stop } },
+    // Copilot camelCase end of turn.
+    .{ "agentstop", .{ .event = .stop } },
     .{ "stopfailure", .{ .event = .stop, .failure = true } },
+    // Codex, Kimi Code 2.x, Muse: fired instead of Stop when the user
+    // interrupts a turn. Idle, not a failure.
+    .{ "interrupt", .{ .event = .stop } },
     .{ "subagentstop", .{ .event = .subagent_stop } },
     .{ "sessionend", .{ .event = .session_end } },
     .{ "precompact", .{ .event = .pre_compact } },
+    // Copilot; also fires for recoverable errors, see `normalize`.
     .{ "erroroccurred", .{ .event = .stop, .failure = true } },
     // Codex legacy `notify` program payload type.
     .{ "agentturncomplete", .{ .event = .stop } },
 };
 
+/// Gemini CLI (`BeforeTool`, not `PreToolUse`).
 const gemini_natives = [_]NativeEntry{
     .{ "beforeagent", .{ .event = .prompt_submit } },
     .{ "afteragent", .{ .event = .stop } },
     .{ "beforetool", .{ .event = .pre_tool_use } },
     .{ "aftertool", .{ .event = .post_tool_use } },
     .{ "precompress", .{ .event = .pre_compact } },
+};
+
+/// Antigravity (`agy`): SessionStart, PreToolUse, PostToolUse,
+/// PreInvocation, PostInvocation, Stop. PreInvocation fires before every
+/// model call (the closest thing to a prompt submit); PostInvocation is
+/// left unmapped. The rest resolve through the shared table.
+const antigravity_natives = [_]NativeEntry{
+    .{ "preinvocation", .{ .event = .prompt_submit } },
 };
 
 const cursor_natives = [_]NativeEntry{
@@ -240,28 +262,45 @@ const cursor_natives = [_]NativeEntry{
     .{ "beforereadfile", .{ .event = .pre_tool_use } },
     .{ "afterfileedit", .{ .event = .post_tool_use } },
     .{ "afteragentresponse", .{ .event = .agent_response } },
+    // cmux installs it with matcher `Shell`.
+    .{ "posttoolusefailure", .{ .event = .shell_failed } },
 };
 
 const kiro_natives = [_]NativeEntry{
     .{ "agentspawn", .{ .event = .session_start } },
 };
 
+/// Rovo Dev `eventHooks` events. Only `on_tool_permission` is in
+/// Atlassian's docs; the rest come from public third-party integrations.
 const rovodev_natives = [_]NativeEntry{
+    .{ "onsessionstart", .{ .event = .session_start } },
+    .{ "onuserprompt", .{ .event = .prompt_submit } },
+    .{ "ontoolstart", .{ .event = .pre_tool_use } },
+    .{ "ontoolend", .{ .event = .post_tool_use } },
     .{ "oncomplete", .{ .event = .stop } },
     .{ "onerror", .{ .event = .stop, .failure = true } },
     .{ "ontoolpermission", .{ .event = .notification } },
-};
-
-const hermes_natives = [_]NativeEntry{
-    .{ "prellmcall", .{ .event = .prompt_submit } },
-    .{ "postllmcall", .{ .event = .stop } },
-    .{ "pretoolcall", .{ .event = .pre_tool_use } },
-    .{ "posttoolcall", .{ .event = .post_tool_use } },
-    .{ "onsessionstart", .{ .event = .session_start } },
     .{ "onsessionend", .{ .event = .session_end } },
 };
 
-/// OpenCode plugin bus event types (`session.idle`, `tool.execute.before`).
+/// Hermes Agent hook names (`VALID_HOOKS`). `on_session_end` fires at the
+/// end of every turn (`extra.completed|interrupted|failed`), so it is the
+/// stop; `on_session_finalize` is the real end of the session.
+const hermes_natives = [_]NativeEntry{
+    .{ "onsessionstart", .{ .event = .session_start } },
+    .{ "onsessionreset", .{ .event = .session_start } },
+    .{ "prellmcall", .{ .event = .prompt_submit } },
+    .{ "postllmcall", .{ .event = .agent_response } },
+    .{ "pretoolcall", .{ .event = .pre_tool_use } },
+    .{ "posttoolcall", .{ .event = .post_tool_use } },
+    .{ "preapprovalrequest", .{ .event = .notification } },
+    .{ "postapprovalresponse", .{ .event = .approval_response } },
+    .{ "onsessionend", .{ .event = .stop } },
+    .{ "onsessionfinalize", .{ .event = .session_finalize } },
+};
+
+/// OpenCode plugin bus event types (`session.idle`, `tool.execute.before`)
+/// and direct hooks a plugin forwards (`chat.message`).
 const opencode_natives = [_]NativeEntry{
     .{ "sessioncreated", .{ .event = .session_start } },
     .{ "sessionidle", .{ .event = .stop } },
@@ -270,32 +309,52 @@ const opencode_natives = [_]NativeEntry{
     .{ "chatmessage", .{ .event = .prompt_submit } },
     .{ "toolexecutebefore", .{ .event = .pre_tool_use } },
     .{ "toolexecuteafter", .{ .event = .post_tool_use } },
+    // v1 SDK name; current builds emit `permission.asked`.
     .{ "permissionupdated", .{ .event = .notification } },
     .{ "permissionasked", .{ .event = .notification } },
+    .{ "permissionreplied", .{ .event = .approval_response } },
+    .{ "questionasked", .{ .event = .notification } },
 };
 
-/// Pi-family extension events (Pi, OMP, Campfire).
+/// Pi-family extension events (Pi, OMP, Campfire), the union of Pi and OMP.
+/// `agent_end` is not final in Pi 1.x (retries/compaction may follow): a
+/// bundled extension should forward Pi `agent_settled` / OMP `session_stop`.
 const pi_natives = [_]NativeEntry{
+    .{ "beforeagentstart", .{ .event = .prompt_submit } },
     .{ "agentstart", .{ .event = .prompt_submit } },
     .{ "agentend", .{ .event = .stop } },
+    .{ "agentsettled", .{ .event = .stop } },
+    .{ "sessionstop", .{ .event = .stop } },
+    .{ "toolcall", .{ .event = .pre_tool_use } },
+    .{ "toolresult", .{ .event = .post_tool_use } },
     .{ "toolexecutionstart", .{ .event = .pre_tool_use } },
     .{ "toolexecutionend", .{ .event = .post_tool_use } },
+    .{ "uipromptstart", .{ .event = .notification } },
+    .{ "toolapprovalrequested", .{ .event = .notification } },
+    .{ "sessionbeforecompact", .{ .event = .pre_compact } },
     .{ "sessionshutdown", .{ .event = .session_end } },
 };
 
-/// Amp plugin tab statuses.
+/// Amp plugin events (`amp.on(...)`), plus tab-status words a bundled
+/// plugin may derive (not Amp-native names).
 const amp_natives = [_]NativeEntry{
+    .{ "agentstart", .{ .event = .prompt_submit } },
+    .{ "toolcall", .{ .event = .pre_tool_use } },
+    .{ "toolresult", .{ .event = .post_tool_use } },
+    .{ "agentend", .{ .event = .stop } },
     .{ "thinking", .{ .event = .prompt_submit } },
     .{ "running", .{ .event = .pre_tool_use } },
     .{ "reading", .{ .event = .pre_tool_use } },
     .{ "done", .{ .event = .stop } },
     .{ "interrupted", .{ .event = .stop } },
+    .{ "cancelled", .{ .event = .stop } },
     .{ "error", .{ .event = .stop, .failure = true } },
 };
 
 fn agentNatives(agent: Agent) []const NativeEntry {
     return switch (agent) {
-        .gemini, .antigravity => &gemini_natives,
+        .gemini => &gemini_natives,
+        .antigravity => &antigravity_natives,
         .cursor => &cursor_natives,
         .kiro => &kiro_natives,
         .rovodev => &rovodev_natives,
@@ -351,6 +410,10 @@ pub const Normalized = struct {
     background_pending: bool = false,
     /// Set for events that put the agent in needs-input.
     input_kind: ?InputKind = null,
+    /// A notification that reports something (auth success, a background
+    /// task finished, ...) without waiting on the user. It must not move
+    /// the lifecycle to needs-input.
+    informational: bool = false,
 
     session_id: ?[]const u8 = null,
     transcript_path: ?[]const u8 = null,
@@ -383,12 +446,23 @@ pub fn normalize(agent: Agent, arg: []const u8, p: *const Payload) ?Normalized {
         mapped = fp;
     } else return null;
 
+    // Copilot `errorOccurred` also fires for errors the agent recovers
+    // from; only an unrecoverable one ends the turn. The others are
+    // informational: the agent keeps working, nothing waits on the user.
+    var recoverable_error = false;
+    if (Event.parseSubcommand(arg) == null) if (native) |nv| {
+        if (canonicalEql(nv, "erroroccurred") and mapped.event == .stop and p.recoverable != false) {
+            mapped = .{ .event = .notification };
+            recoverable_error = true;
+        }
+    };
+
     var n: Normalized = .{
         .agent = agent,
         .event = mapped.event,
         .native_event = native,
         .failure = mapped.failure,
-        .is_subagent = p.is_subagent,
+        .is_subagent = p.is_subagent or (p.agent_id != null and agentIdMarksSubagent(agent)),
         .session_id = p.session_id,
         .transcript_path = p.transcript_path,
         .cwd = p.cwd,
@@ -403,7 +477,7 @@ pub fn normalize(agent: Agent, arg: []const u8, p: *const Payload) ?Normalized {
             if (!n.failure) {
                 if (p.status) |s| n.failure = isErrorStatus(s);
             }
-            if (!n.failure and p.error_text != null) {
+            if (!n.failure and (p.error_text != null or p.failed)) {
                 // A stop that carries an error is a failed turn.
                 n.failure = true;
             }
@@ -419,12 +493,41 @@ pub fn normalize(agent: Agent, arg: []const u8, p: *const Payload) ?Normalized {
             if (eqlOpt(p.tool_name, "AskUserQuestion")) n.input_kind = .question;
             if (eqlOpt(p.tool_name, "ExitPlanMode")) n.input_kind = .plan;
         },
-        .notification => n.input_kind = notificationKind(p),
+        .notification => {
+            if (recoverable_error) {
+                n.informational = true;
+            } else if (agent == .factory and eqlOpt(p.notification_type, "idle_prompt")) {
+                // Factory sends Notification(idle_prompt) instead of Stop
+                // when the user cancels a turn.
+                n.event = .stop;
+            } else if (notificationKind(agent, native, p)) |k| {
+                n.input_kind = k;
+            } else {
+                n.informational = true;
+            }
+        },
         .feed => n.input_kind = .permission,
         .subagent_stop => n.is_subagent = true,
         else => {},
     }
     return n;
+}
+
+/// Whether a payload `agent_id` means the event comes from a subagent.
+/// Claude/Codex send it only inside subagents; Kimi Code 2.x sends the
+/// emitting agent's id on PermissionRequest/Notification for the main
+/// agent too.
+fn agentIdMarksSubagent(agent: Agent) bool {
+    return switch (agent) {
+        .kimi => false,
+        else => true,
+    };
+}
+
+fn canonicalEql(name: []const u8, key: []const u8) bool {
+    var buf: [64]u8 = undefined;
+    const c = canonicalName(&buf, name) orelse return false;
+    return std.mem.eql(u8, c, key);
 }
 
 fn eqlOpt(a: ?[]const u8, b: []const u8) bool {
@@ -438,12 +541,33 @@ fn isErrorStatus(s: []const u8) bool {
 }
 
 /// Needs-input reason of a Notification payload: Claude's
-/// `notification_type`, else the classifier's cue words.
-fn notificationKind(p: *const Payload) InputKind {
+/// `notification_type`, else the classifier's cue words. Null for
+/// notifications that do not wait on the user: the informational
+/// `notification_type` values of Claude/Copilot, and a Kimi Notification
+/// without a needs-input type. Kimi Code 2.x sends Notification only for
+/// background task status (its approval signal is PermissionRequest);
+/// legacy kimi-cli 1.x has no PermissionRequest and reports approvals as
+/// Notification `permission_prompt`. `native` is the event the payload
+/// names: a Kimi StopFailure that cmux routes through the `notification`
+/// subcommand is not a status report and keeps the classifier.
+fn notificationKind(agent: Agent, native: ?[]const u8, p: *const Payload) ?InputKind {
     if (p.notification_type) |t| {
         if (std.mem.eql(u8, t, "permission_prompt")) return .permission;
         if (std.mem.eql(u8, t, "idle_prompt")) return .waiting;
+        if (std.mem.eql(u8, t, "agent_needs_input")) return .waiting;
         if (std.mem.eql(u8, t, "elicitation_dialog")) return .question;
+        if (std.mem.eql(u8, t, "elicitation_url_dialog")) return .question;
+        const informational = [_][]const u8{
+            "auth_success",               "elicitation_complete",    "elicitation_response",
+            "agent_completed",            "agent_idle",              "shell_completed",
+            "shell_detached_completed",   "quota_auto_resume_fired", "quota_auto_resume_stale",
+            "quota_auto_resume_disabled",
+        };
+        for (informational) |w| if (std.mem.eql(u8, t, w)) return null;
+    }
+    if (agent == .kimi) {
+        const is_notification = if (native) |nv| canonicalEql(nv, "notification") else true;
+        if (is_notification) return null;
     }
     const msg = p.message orelse p.title orelse return .waiting;
     var toks: Tokens = .init(msg);
@@ -486,14 +610,22 @@ pub fn hooksDisabled(agent: Agent, env: *const std.process.EnvMap) bool {
 
 /// The neutral acknowledgment printed on stdout for (agent, event): `{}`
 /// for nearly everything; Cursor's gating hooks expect an explicit
-/// allow/continue decision.
+/// allow/continue decision, Antigravity's PreToolUse requires a
+/// `decision`, and Kiro adds a hook's stdout to the model context (so it
+/// gets nothing).
 pub fn neutralAck(agent: Agent, event: ?Event) []const u8 {
-    if (agent == .cursor) {
-        if (event) |ev| switch (ev) {
+    switch (agent) {
+        .cursor => if (event) |ev| switch (ev) {
             .prompt_submit => return "{\"continue\":true}",
             .shell_exec, .pre_tool_use => return "{\"permission\":\"allow\"}",
             else => {},
-        };
+        },
+        .antigravity => if (event) |ev| switch (ev) {
+            .pre_tool_use => return "{\"decision\":\"allow\"}",
+            else => {},
+        },
+        .kiro => return "",
+        else => {},
     }
     return "{}";
 }
@@ -506,7 +638,8 @@ pub fn storeLifecycle(n: Normalized, background_pending_at_stop: bool) ?[]const 
         .session_start => "idle",
         .prompt_submit, .post_tool_use, .push_notification, .shell_exec, .shell_done, .shell_failed, .approval_response => "running",
         .pre_tool_use => if (n.input_kind != null) "needsInput" else "running",
-        .notification, .feed => "needsInput",
+        .notification => if (n.informational) null else "needsInput",
+        .feed => "needsInput",
         .stop => if (background_pending_at_stop) "backgroundWorkPending" else "idle",
         .session_end, .session_finalize => "idle",
         else => null,
@@ -889,8 +1022,8 @@ pub const WireContext = struct {
 
 /// Write the `wmux.agent.hook` params object. Null fields are omitted.
 /// Keys beyond ADR-10.1's list (`hook_event_name`, `failure`,
-/// `is_subagent`, `background_pending`, `input_kind`) carry the signals the
-/// app-side lifecycle needs.
+/// `is_subagent`, `background_pending`, `input_kind`, `informational`)
+/// carry the signals the app-side lifecycle needs.
 pub fn writeHookParams(n: Normalized, ctx: WireContext, w: *std.Io.Writer) std.Io.Writer.Error!void {
     var jw: std.json.Stringify = .{ .writer = w };
     try jw.beginObject();
@@ -933,6 +1066,10 @@ pub fn writeHookParams(n: Normalized, ctx: WireContext, w: *std.Io.Writer) std.I
     if (n.input_kind) |k| {
         try jw.objectField("input_kind");
         try jw.write(@tagName(k));
+    }
+    if (n.informational) {
+        try jw.objectField("informational");
+        try jw.write(true);
     }
     try jw.endObject();
 }
