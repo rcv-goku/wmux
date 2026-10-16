@@ -666,9 +666,10 @@ fn addState(pat: []const u8, set: *StateSet, start: usize) void {
 
 /// Unanchored search (anchors `^`/`$` honored). The set of live pattern
 /// positions advances one text byte at a time (Thompson simulation), so the
-/// cost is O(text × pattern) whatever the pattern. `pat` must be `regexValid`.
+/// cost is O(text × pattern) whatever the pattern. An unsupported or
+/// over-long pattern matches nothing.
 pub fn regexSearch(pat: []const u8, text: []const u8, icase: bool) bool {
-    if (pat.len > max_regex_len) return false;
+    if (!regexValid(pat)) return false;
     const anchored = pat.len > 0 and pat[0] == '^';
     var cur: StateSet = .initEmpty();
     addState(pat, &cur, @intFromBool(anchored));
@@ -880,6 +881,9 @@ test "unit: keys: when-clause regex cost is linear (no backtracking blowup)" {
     try validate(testing.allocator, "a =~ /" ++ "x" ** max_regex_len ++ "/");
     try testing.expect(!regexValid("x" ** (max_regex_len + 1)));
     try testing.expect(!regexSearch("x" ** (max_regex_len + 1), "x" ** (max_regex_len + 1), false));
+    // Called directly with an unsupported pattern, the search fails closed.
+    for ([_][]const u8{ "a**", "(a)", "a|b", "[ab", "\\", "a$b", "^^a", "*" }) |bad|
+        try testing.expect(!regexSearch(bad, "a**(a)|b[ab\\$^", false));
 }
 
 /// Reference backtracking matcher (exponential worst case; tests only).
