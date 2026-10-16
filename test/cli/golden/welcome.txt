@@ -1,0 +1,29 @@
+
+  __        __ __  __  _   _ __  __
+  \ \      / /|  \/  || | | |\ \/ /
+   \ \ /\ / / | |\/| || | | | \  / 
+    \ V  V /  | |  | || |_| | /  \ 
+     \_/\_/   |_|  |_| \___/ /_/\_\
+
+  A Windows terminal for AI coding agents.
+
+  Shortcuts
+    Ctrl+Shift+P          Command Palette
+    Ctrl+Shift+N          New Workspace
+    Ctrl+Shift+Alt+N      New Window
+    Ctrl+Shift+D          Split Right
+    Ctrl+Shift+Alt+D      Split Down
+    Ctrl+Alt+Left         Focus Left Pane
+    Ctrl+Alt+Right        Focus Right Pane
+    Ctrl+Shift+W          Close Tab
+    Ctrl+Shift+Alt+R      Rename Workspace
+    Ctrl+Shift+1          Select Workspace 1…9
+    Ctrl+Shift+B          Toggle Sidebar
+    Alt+Shift+B           Toggle Right Sidebar
+    Ctrl+Shift+F          Find
+    Ctrl+Shift+I          Show Notifications
+    Ctrl+Shift+U          Jump to Latest Unread
+
+  Edit shortcuts: cmux shortcuts
+  Learn the CLI: cmux help, cmux guide
+

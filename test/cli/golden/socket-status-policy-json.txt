@@ -1,0 +1,13 @@
+{
+  "effective_mode": "off",
+  "configured_mode": "cmuxOnly",
+  "configured_source": "default",
+  "managed": true,
+  "managed_source": "machinePolicy",
+  "policy_key": "SocketControlMode",
+  "forced_value_status": "valid",
+  "socket_path": "\\\\.\\pipe\\wmux-stable-049061b1-s1",
+  "socket_path_state": "absent",
+  "live_enforcement": "not_observed",
+  "observation_scope": "profile_and_socket_path"
+}

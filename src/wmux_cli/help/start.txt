@@ -1,0 +1,31 @@
+Start & Resume:
+  open <path-or-url>...                       Open files, directories or URLs (focus only when interactive)
+  new-workspace [--name <title>] [--cwd <dir>] [--command <text>] [--env K=V]... [--env-file <path>] [--layout <name>] [--focus <true|false>]
+                                              Create a workspace
+  list-workspaces [--window <id|ref|index>]   List workspaces
+  current-workspace                           Print the current workspace
+  select-workspace --workspace <id|ref|index>
+                                              Select a workspace
+  rename-workspace [--workspace <id|ref|index>] <title>
+                                              Rename a workspace (alias: rename-window)
+  close-workspace [--workspace <id|ref|index>]
+                                              Close a workspace
+  workspace <list|create|env|close|rename|select|status|reconnect|disconnect|group> [args]
+                                              Workspace namespace
+  workspace-action --action <name> [--workspace <id|ref|index>]
+                                              Run a workspace context-menu action
+  reorder-workspace --workspace <id|ref|index> --index <n>
+                                              Move a workspace inside its window
+  reorder-workspaces <json>                   Reorder pinned and unpinned workspaces atomically
+  next-window                                 Select the next workspace
+  previous-window                             Select the previous workspace
+  last-window                                 Select the previously selected workspace
+  restore-session [--from <channel|path>] [--export <path> [--force]]
+                                              Restore the saved session (starts wmux if needed)
+  sessions [list] [options]                   List saved agent sessions (works offline)
+  session restore [--list] [--session <id>]...
+                                              Reopen Claude sessions that ended unexpectedly
+  markdown open <path>                        Open a Markdown file in a live viewer
+  guide | cmux --skill [--json]               Print the agent guide (works offline)
+  docs [topic]                                Print documentation pointers for a topic
+  welcome                                     Print the welcome screen and default shortcuts

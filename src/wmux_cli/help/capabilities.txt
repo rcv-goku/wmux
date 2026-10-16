@@ -1,0 +1,4 @@
+Usage: cmux capabilities
+
+Print what the connected app supports, as JSON: protocol, version, the pipe
+path, the access mode and the sorted list of supported v2 methods.

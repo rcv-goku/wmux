@@ -1,0 +1,285 @@
+cmux - control cmux via named pipe
+
+Usage: cmux [--socket <pipe>] [--password <pw>] [--window <id|ref|index>] <command> [options] [--json] [--id-format refs|uuids|both] [--] [args]
+       cmux <path>
+
+Start & Resume:
+  open <path-or-url>...                       Open files, directories or URLs (focus only when interactive)
+  new-workspace [--name <title>] [--cwd <dir>] [--command <text>] [--env K=V]... [--env-file <path>] [--layout <name>] [--focus <true|false>]
+                                              Create a workspace
+  list-workspaces [--window <id|ref|index>]   List workspaces
+  current-workspace                           Print the current workspace
+  select-workspace --workspace <id|ref|index>
+                                              Select a workspace
+  rename-workspace [--workspace <id|ref|index>] <title>
+                                              Rename a workspace (alias: rename-window)
+  close-workspace [--workspace <id|ref|index>]
+                                              Close a workspace
+  workspace <list|create|env|close|rename|select|status|reconnect|disconnect|group> [args]
+                                              Workspace namespace
+  workspace-action --action <name> [--workspace <id|ref|index>]
+                                              Run a workspace context-menu action
+  reorder-workspace --workspace <id|ref|index> --index <n>
+                                              Move a workspace inside its window
+  reorder-workspaces <json>                   Reorder pinned and unpinned workspaces atomically
+  next-window                                 Select the next workspace
+  previous-window                             Select the previous workspace
+  last-window                                 Select the previously selected workspace
+  restore-session [--from <channel|path>] [--export <path> [--force]]
+                                              Restore the saved session (starts wmux if needed)
+  sessions [list] [options]                   List saved agent sessions (works offline)
+  session restore [--list] [--session <id>]...
+                                              Reopen Claude sessions that ended unexpectedly
+  markdown open <path>                        Open a Markdown file in a live viewer
+  guide | cmux --skill [--json]               Print the agent guide (works offline)
+  docs [topic]                                Print documentation pointers for a topic
+  welcome                                     Print the welcome screen and default shortcuts
+
+Agents:
+  send [--surface <id|ref|index>] [--paste] [--force] [--] <text>
+                                              Type text into a terminal surface
+  send-key [--surface <id|ref|index>] [--force] <key>
+                                              Press a single key in a terminal
+  send-panel [--panel <id|ref|index>] [--force] <text>
+                                              Type text into a panel
+  send-key-panel [--panel <id|ref|index>] [--force] <key>
+                                              Send one key to a panel
+  paste [--surface <id|ref|index>] [--submit] [--force] [<text>|-]
+                                              Paste text through the paste path
+  read-screen [--surface <id|ref|index>] [--scrollback] [--lines <n>] [--selection]
+                                              Read terminal text
+  read-selection [--surface <id|ref|index>] [--json]
+                                              Read the active selection
+  capture-pane [--workspace <id|ref|index>] [--surface <id|ref|index>] [--window <id|ref|index>] [--scrollback] [--lines <n>]
+                                              tmux-style capture of terminal text
+  clear-history [--surface <id|ref|index>]    Clear a terminal's scrollback
+  respawn-pane [--surface <id|ref|index>]     Restart a terminal's process
+  pipe-pane [--workspace <id|ref|index>] [--surface <id|ref|index>] [--window <id|ref|index>] [--command <shell-command> | <shell-command>]
+                                              Pipe terminal output to a command
+  notify [--title <text>] [--body <text>] [--workspace <id|ref|index>] [--surface <id|ref|index>] [--desktop <true|false>] [--clear]
+                                              Post a notification
+  list-notifications                          List queued notifications
+  dismiss-notification [<id>|--all-read]      Remove notifications
+  mark-notification-read [<id>|--all]         Mark notifications read
+  open-notification <id>                      Focus a notification's surface and mark it read
+  jump-to-unread                              Jump to the newest unread notification
+  jump-to-last-prompt                         Focus the surface of the last agent prompt
+  clear-notifications [--workspace <id|ref|index>] [--surface <id|ref|index>]
+                                              Clear queued notifications
+  set-app-focus <active|inactive|clear>       Override app focus state (tests)
+  simulate-app-active                         Run app-activation handling (tests)
+  hooks setup [agent] [--agent <name>] [--yes|-y]
+                                              Agent hook integrations (setup, uninstall, <agent> install|uninstall)
+  setup-hooks                                 Alias of 'hooks setup'
+  uninstall-hooks                             Alias of 'hooks uninstall'
+  codex <install-hooks|uninstall-hooks>       Install or remove the Codex hooks
+  claude-hook <event>                         Claude Code hook entrypoint (stdin JSON)
+  session-debug                               Alias of 'sessions debug'
+  surface-resume <show|set|clear> [flags]     Read or change a surface's resume binding (also 'surface resume')
+  restore [--surface <id|ref>] <kind> <checkpoint-id>
+                                              Replace the CLI with a restored agent process
+  fork [--surface <id|ref>] <kind> <checkpoint-id>
+                                              Replace the CLI with a forked agent process
+  agent message <target> <text|->             Message the agent in another workspace or surface
+  agent inbox [--mark-read]                   List received agent messages
+  agent messages [on|off|status] [<target>] [--workspace]
+                                              Turn agent messages on or off
+  agent-hibernation <on|off> [--json]         Enable or disable Agent Hibernation
+  claude-teams [claude-args...]               Launch Claude Code with agent-team panes
+  codex-teams [codex-args...]                 Launch Codex with subagent panes
+  omo [opencode-args...]                      Run OpenCode through oh-my-openagent
+  omx [omx-args...]                           Launch Oh My Codex with pane integration
+  omc [omc-args...]                           Launch Oh My Claude Code with pane integration
+  wait-for [-S|--signal] <name> [--timeout <seconds>]
+                                              Wait for or signal a named event
+
+Navigate & Arrange:
+  list-windows                                List windows
+  current-window                              Print the selected window
+  new-window                                  Open a new window (starts wmux if needed)
+  focus-window --window <id|ref|index>        Focus a window
+  close-window --window <id|ref|index> [--force]
+                                              Close a window
+  resize-window --window <id|ref|index> [--width <points>] [--height <points>]
+                                              Resize or read a window's size
+  window <displays|display <name|index>>      List displays or move windows to one
+  move-workspace-to-window --workspace <id|ref|index> --window <id|ref|index>
+                                              Move a workspace into another window
+  workspace-group <list|create|rename|ungroup|delete|collapse|expand|pin|unpin|add|remove|set-anchor|set-color|set-icon|move|focus|new-workspace>
+                                              Sidebar workspace groups
+  new-split <left|right|up|down> [--surface <id|ref|index>] [--command <text>]
+                                              Split from a surface
+  new-pane [--type <terminal|browser>] [--command <text>]
+                                              Create a pane
+  new-surface [--pane <id|ref|index>] [--type <terminal|browser>] [--command <text>]
+                                              Create a surface in a pane
+  close-surface [--surface <id|ref|index>]    Close a surface
+  list-panes [--workspace <id|ref|index>]     List panes in a workspace
+  list-pane-surfaces [--pane <id|ref|index>]  List surfaces in a pane
+  list-panels [--workspace <id|ref|index>]    List panels (compatibility)
+  focus-pane --pane <id|ref|index>            Focus a pane
+  focus-panel --panel <id|ref|index>          Focus a panel (compatibility)
+  move-surface --surface <id|ref|index> [--pane|--workspace|--window <id|ref|index>] [--index <n>]
+                                              Move a surface
+  reorder-surface --surface <id|ref|index> --index <n>
+                                              Reorder a surface in its pane
+  split-off --surface <id|ref|index> <left|right|up|down>
+                                              Split a surface off into its own pane
+  drag-surface-to-split --surface <id|ref|index> <left|right|up|down>
+                                              Drag a surface to a pane edge to split
+  tab-action --action <name> [--surface <id|ref|index>]
+                                              Run a tab context-menu action
+  rename-tab [--surface <id|ref|index>] <title>
+                                              Rename a tab
+  move-tab-to-new-workspace [--surface <id|ref|index>]
+                                              Move a tab into a new workspace (alias: detach-tab)
+  resize-pane [--pane <id|ref|index>] [--workspace <id|ref|index>] [--window <id|ref|index>] [-L|-R|-U|-D] [--amount <n>]
+                                              Resize a pane
+  swap-pane --pane <id|ref|index> --target-pane <id|ref|index> [--workspace <id|ref|index>] [--window <id|ref|index>] [--focus <true|false>]
+                                              Swap two panes
+  break-pane [--workspace <id|ref|index>] [--pane <id|ref|index>] [--surface <id|ref|index>] [--window <id|ref|index>] [--focus <true|false>] [--no-focus]
+                                              Move a pane into its own workspace
+  join-pane --target-pane <id|ref|index> [--workspace <id|ref|index>] [--pane <id|ref|index>] [--surface <id|ref|index>] [--window <id|ref|index>] [--focus <true|false>] [--no-focus]
+                                              Move a surface into another pane
+  last-pane                                   Focus the previously focused pane
+  trigger-flash [--workspace <id|ref|index>] [--surface <id|ref|index>]
+                                              Flash a workspace or surface
+  set-hook                                    tmux-compatible hook (compatibility)
+  popup                                       tmux-compatible popup (compatibility)
+  bind-key                                    tmux-compatible key binding (compatibility)
+  unbind-key                                  tmux-compatible key unbinding (compatibility)
+  copy-mode                                   tmux-compatible copy mode (compatibility)
+  set-buffer                                  tmux-compatible paste buffer (compatibility)
+  paste-buffer                                tmux-compatible paste buffer (compatibility)
+  list-buffers                                tmux-compatible paste buffers (compatibility)
+  display-message                             tmux-compatible message (compatibility)
+
+Inspect:
+  identify                                    Show the connected app and the caller's workspace and surface
+  tree [--all] [--json]                       Print the window, workspace, pane and surface tree
+  top [--json]                                Process and resource usage per object
+  memory [--json]                             App memory versus terminal child memory
+  diff [<patch>|-] [--source ...] [--json]    Open a diff viewer panel
+  comments list [--repo <path>] [--all] [--json]
+                                              List saved diff review comments
+  review list [--repo <path>] [--json]        Read local review receipts (show, findings)
+  current [--limit <1...200>] [--json]        Print current-work facts
+  find-window <text>                          Find a window by title or content
+  shot [flags]                                Screenshot a wmux window (alias: screenshot)
+  record [start] [flags]                      Record a wmux window (stop, status, note, list)
+
+Customize:
+  set-status <key> <text> [--icon <name>] [--color <hex>]
+                                              Set a sidebar status pill
+  clear-status <key>                          Remove a sidebar status pill
+  list-status                                 List sidebar status pills
+  set-progress <0..1> [--label <text>]        Set sidebar progress
+  clear-progress                              Clear sidebar progress
+  log [--level <level>] <message>             Append a sidebar log entry
+  clear-log                                   Clear sidebar log entries
+  list-log                                    List sidebar log entries
+  sidebar-state                               Dump sidebar metadata
+  pr <url|number|clear> [--workspace <id|ref|index>]
+                                              Attach or clear a pull-request link
+  right-sidebar <command> [flags]             Control the right sidebar
+  config <doctor|check|validate|path|docs|reload|get|set|unset|toggle|cycle|preset>
+                                              Validate, read or change wmux.json (mostly offline)
+  reload-config                               Ask wmux to reload its configuration
+  themes [list|set <name>|clear]              List, set or clear Ghostty themes
+  settings [open [target]|path|docs|<target>]
+                                              Open Settings or print config paths
+  shortcuts                                   Open Settings at Keyboard Shortcuts
+  import [terminal] [--dry-run] [--path <file>] [--yes] [--json]
+                                              Import another terminal's appearance
+  canvas <info|mode|set-frame|align|reveal|overview|zoom|join|break|select-tab|set-viewport|new-pane>
+                                              Canvas layout commands
+
+Automation:
+  events [options]                            Stream events as newline-delimited JSON
+  layout <save|list|get|open|delete> [args]   Saved workspace layouts
+  todo <add|list|check|uncheck|start|edit|rm|clear|set|open> [args]
+                                              Per-workspace checklist
+  feed tui [--opentui|--legacy]               Feed TUI and history (also: feed clear)
+  vault <sessions|search|checkpoints|checkpoint|fork> [options]
+                                              Agent session index
+  automation <list|show|test|enable|disable|logs|reload> [args]
+                                              Config-backed event rules
+
+Browser:
+  browser <subcommand> [args]                 Browser automation (run 'cmux browser --help')
+  browser react-grab toggle [--surface <id>] [--return-to <terminal-surface>]
+                                              Toggle the element picker
+  browser devtools toggle|console [--surface <id>]
+                                              Developer tools
+  browser focus-mode enter|exit|toggle [--surface <id>]
+                                              Focus mode
+  browser design-mode enable|disable|toggle|status [--surface <id>]
+                                              Design mode
+  browser zoom in|out|reset|<factor> [--surface <id>]
+                                              Page zoom
+  browser history clear --force               Clear browsing history
+  browser console <list|clear>                Console messages
+  browser errors <list|clear>                 Page errors
+  open-browser                                Legacy alias for 'cmux browser open'
+  navigate                                    Legacy alias for 'cmux browser navigate'
+  browser-back                                Legacy alias for 'cmux browser back'
+  browser-forward                             Legacy alias for 'cmux browser forward'
+  browser-reload                              Legacy alias for 'cmux browser reload'
+  get-url                                     Legacy alias for 'cmux browser get-url'
+  focus-webview                               Legacy alias for 'cmux browser focus-webview'
+  is-webview-focused                          Legacy alias for 'cmux browser is-webview-focused'
+  disable-browser [--json]                    Disable browser creation and link interception
+  enable-browser [--json]                     Re-enable the browser
+  browser-status [--json]                     Print whether the browser is enabled
+
+Remote:
+  ssh <destination> [--name <title>] [--port <n>] [--identity <path>] [--transport <ssh|mosh>] [--command <text>] [-A|--forward-agent] [--focus|--no-focus]
+                                              Open an SSH-backed workspace
+  mosh <destination> [ssh options]            Open a Mosh-backed workspace
+  mosh-tmux <destination> [--session <name>] [ssh options]
+                                              Mosh workspace attached to a remote tmux session
+  ssh-tmux <destination> [list|ls [--json] | attach <session>] [--port <n>] [--identity <path>] [--name <title>] [--no-focus]
+                                              Mirror remote tmux sessions
+  ssh-session-list [--json]                   List saved SSH terminal sessions
+  ssh-session-attach --session-id <id>        Reattach to a persisted SSH PTY session
+  ssh-session-cleanup [--json]                Close persisted SSH PTY sessions
+  remote-daemon-status                        Print remote daemon version and cache status
+  local-tmux <start|attach|list|status|detach|close|cleanup> [args]
+                                              User-owned local tmux sessions (WSL)
+  tmux attach [args]                          Alias of 'local-tmux attach'
+  local-zellij <start|attach|list|status|close> [args]
+                                              zellij sessions (WSL)
+
+Diagnostics / Advanced:
+  ping                                        Check connectivity to the wmux control pipe
+  capabilities                                List the app's protocol and supported methods as JSON
+  rpc <method> [json-params|-]                Call a raw v2 method
+  socket-status [--json]                      Effective control-pipe access mode (never connects)
+  debug-terminals                             Print debug terminal state
+  surface-health                              Print terminal surface health
+  refresh-surfaces                            Ask wmux to refresh terminal surfaces
+  sudo <command> [args...]                    Run one command elevated after approval in wmux
+  version                                     Print the CLI version (also --version, -v)
+  help [topic]                                Print this help or one topic
+  wmux <subcommand> [args]                    wmux-only commands (attention, notification, quick-terminal, layout, sync-input, session, action)
+
+Global options (before the command):
+  --socket <pipe>                             Control pipe for this invocation (\\.\pipe\<name> or <name>)
+  --password <value>                          Socket password (takes precedence over CMUX_SOCKET_PASSWORD)
+  --window <id|ref|index>                     Route the command through one window
+
+Presentation options (before or after the command):
+  --json                                      Machine-readable output where supported
+  --id-format <refs|uuids|both>               Handle format in JSON and text output (default: refs)
+  --                                          Pass everything after it through untouched
+
+Environment:
+  CMUX_SOCKET_PATH, WMUX_SOCKET_PATH          Control pipe override (CMUX_SOCKET is a deprecated alias)
+  CMUX_SOCKET_PASSWORD, WMUX_SOCKET_PASSWORD  Password fallback when --password is absent
+  CMUX_WORKSPACE_ID, CMUX_SURFACE_ID          Default targets inside wmux terminals
+  CMUX_QUIET=1, WMUX_QUIET=1                  Silence legacy-alias notices
+
+More help:
+  cmux help <start|agents|navigate|inspect|customize|automation|browser|remote|diagnostics>
+  cmux <command> --help
+  cmux guide | cmux --skill

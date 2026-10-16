@@ -1,0 +1,60 @@
+Navigate & Arrange:
+  list-windows                                List windows
+  current-window                              Print the selected window
+  new-window                                  Open a new window (starts wmux if needed)
+  focus-window --window <id|ref|index>        Focus a window
+  close-window --window <id|ref|index> [--force]
+                                              Close a window
+  resize-window --window <id|ref|index> [--width <points>] [--height <points>]
+                                              Resize or read a window's size
+  window <displays|display <name|index>>      List displays or move windows to one
+  move-workspace-to-window --workspace <id|ref|index> --window <id|ref|index>
+                                              Move a workspace into another window
+  workspace-group <list|create|rename|ungroup|delete|collapse|expand|pin|unpin|add|remove|set-anchor|set-color|set-icon|move|focus|new-workspace>
+                                              Sidebar workspace groups
+  new-split <left|right|up|down> [--surface <id|ref|index>] [--command <text>]
+                                              Split from a surface
+  new-pane [--type <terminal|browser>] [--command <text>]
+                                              Create a pane
+  new-surface [--pane <id|ref|index>] [--type <terminal|browser>] [--command <text>]
+                                              Create a surface in a pane
+  close-surface [--surface <id|ref|index>]    Close a surface
+  list-panes [--workspace <id|ref|index>]     List panes in a workspace
+  list-pane-surfaces [--pane <id|ref|index>]  List surfaces in a pane
+  list-panels [--workspace <id|ref|index>]    List panels (compatibility)
+  focus-pane --pane <id|ref|index>            Focus a pane
+  focus-panel --panel <id|ref|index>          Focus a panel (compatibility)
+  move-surface --surface <id|ref|index> [--pane|--workspace|--window <id|ref|index>] [--index <n>]
+                                              Move a surface
+  reorder-surface --surface <id|ref|index> --index <n>
+                                              Reorder a surface in its pane
+  split-off --surface <id|ref|index> <left|right|up|down>
+                                              Split a surface off into its own pane
+  drag-surface-to-split --surface <id|ref|index> <left|right|up|down>
+                                              Drag a surface to a pane edge to split
+  tab-action --action <name> [--surface <id|ref|index>]
+                                              Run a tab context-menu action
+  rename-tab [--surface <id|ref|index>] <title>
+                                              Rename a tab
+  move-tab-to-new-workspace [--surface <id|ref|index>]
+                                              Move a tab into a new workspace (alias: detach-tab)
+  resize-pane [--pane <id|ref|index>] [--workspace <id|ref|index>] [--window <id|ref|index>] [-L|-R|-U|-D] [--amount <n>]
+                                              Resize a pane
+  swap-pane --pane <id|ref|index> --target-pane <id|ref|index> [--workspace <id|ref|index>] [--window <id|ref|index>] [--focus <true|false>]
+                                              Swap two panes
+  break-pane [--workspace <id|ref|index>] [--pane <id|ref|index>] [--surface <id|ref|index>] [--window <id|ref|index>] [--focus <true|false>] [--no-focus]
+                                              Move a pane into its own workspace
+  join-pane --target-pane <id|ref|index> [--workspace <id|ref|index>] [--pane <id|ref|index>] [--surface <id|ref|index>] [--window <id|ref|index>] [--focus <true|false>] [--no-focus]
+                                              Move a surface into another pane
+  last-pane                                   Focus the previously focused pane
+  trigger-flash [--workspace <id|ref|index>] [--surface <id|ref|index>]
+                                              Flash a workspace or surface
+  set-hook                                    tmux-compatible hook (compatibility)
+  popup                                       tmux-compatible popup (compatibility)
+  bind-key                                    tmux-compatible key binding (compatibility)
+  unbind-key                                  tmux-compatible key unbinding (compatibility)
+  copy-mode                                   tmux-compatible copy mode (compatibility)
+  set-buffer                                  tmux-compatible paste buffer (compatibility)
+  paste-buffer                                tmux-compatible paste buffer (compatibility)
+  list-buffers                                tmux-compatible paste buffers (compatibility)
+  display-message                             tmux-compatible message (compatibility)

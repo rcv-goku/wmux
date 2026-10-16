@@ -1,0 +1,26 @@
+Browser:
+  browser <subcommand> [args]                 Browser automation (run 'cmux browser --help')
+  browser react-grab toggle [--surface <id>] [--return-to <terminal-surface>]
+                                              Toggle the element picker
+  browser devtools toggle|console [--surface <id>]
+                                              Developer tools
+  browser focus-mode enter|exit|toggle [--surface <id>]
+                                              Focus mode
+  browser design-mode enable|disable|toggle|status [--surface <id>]
+                                              Design mode
+  browser zoom in|out|reset|<factor> [--surface <id>]
+                                              Page zoom
+  browser history clear --force               Clear browsing history
+  browser console <list|clear>                Console messages
+  browser errors <list|clear>                 Page errors
+  open-browser                                Legacy alias for 'cmux browser open'
+  navigate                                    Legacy alias for 'cmux browser navigate'
+  browser-back                                Legacy alias for 'cmux browser back'
+  browser-forward                             Legacy alias for 'cmux browser forward'
+  browser-reload                              Legacy alias for 'cmux browser reload'
+  get-url                                     Legacy alias for 'cmux browser get-url'
+  focus-webview                               Legacy alias for 'cmux browser focus-webview'
+  is-webview-focused                          Legacy alias for 'cmux browser is-webview-focused'
+  disable-browser [--json]                    Disable browser creation and link interception
+  enable-browser [--json]                     Re-enable the browser
+  browser-status [--json]                     Print whether the browser is enabled

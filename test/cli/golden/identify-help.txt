@@ -1,0 +1,5 @@
+Usage: cmux identify
+
+Print the connected app's identity (app, version, build, pipe path, install
+path, bundle identifier) and the caller's context as JSON. The caller is
+taken from CMUX_WORKSPACE_ID and CMUX_SURFACE_ID when they are set.
