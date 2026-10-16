@@ -264,6 +264,23 @@ pub fn envWorkspace(ctx: *Ctx) ?[]const u8 {
     return ctx.env.first(&.{ env_names.CMUX_WORKSPACE_ID, env_names.WMUX_WORKSPACE_ID });
 }
 
+/// Puts an explicit `--workspace` value under `key` (ADR-4.6). A blank value
+/// (`--workspace "${CMUX_WORKSPACE_ID:-}"`) means the caller's workspace,
+/// which, like every caller default, applies only when no window is named;
+/// otherwise the selection fails closed with cmux's message. Anything else
+/// is validated like any handle. False after printing the error (exit 2).
+pub fn putWorkspace(ctx: *Ctx, p: *Params, key: []const u8, text: []const u8, window_named: bool) !bool {
+    if (std.mem.trim(u8, text, " \t\r\n").len == 0) {
+        const ws = (if (window_named) null else envWorkspace(ctx)) orelse {
+            _ = ctx.usageError("{s}", .{proto.errors.msg.no_workspace_selected});
+            return false;
+        };
+        try p.str(key, ws);
+        return true;
+    }
+    return putHandle(ctx, p, key, .workspace, text);
+}
+
 pub fn envSurface(ctx: *Ctx) ?[]const u8 {
     return ctx.env.first(&.{ env_names.CMUX_SURFACE_ID, env_names.WMUX_SURFACE_ID });
 }
@@ -298,13 +315,7 @@ pub fn addTargets(ctx: *Ctx, p: *Params, o: Opts, spec: TargetSpec) !bool {
     const ws_flag = o.get(&.{"--workspace"});
     if (window) |w| if (!try putHandle(ctx, p, "window_id", .window, w)) return false;
     if (ws_flag) |w| {
-        if (std.mem.trim(u8, w, " \t\r\n").len == 0) {
-            const env_ws = envWorkspace(ctx) orelse {
-                _ = ctx.usageError("{s}", .{proto.errors.msg.no_workspace_selected});
-                return false;
-            };
-            try p.str("workspace_id", env_ws);
-        } else if (!try putHandle(ctx, p, "workspace_id", .workspace, w)) return false;
+        if (!try putWorkspace(ctx, p, "workspace_id", w, window != null)) return false;
     } else if (window == null and spec.env_workspace) {
         if (envWorkspace(ctx)) |w| try p.str("workspace_id", w);
     }

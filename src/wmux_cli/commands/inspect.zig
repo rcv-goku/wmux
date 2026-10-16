@@ -45,11 +45,12 @@ fn connectWithTimeout(ctx: *Ctx, ms: u32) !?void {
 }
 
 /// all_windows, window_id, workspace_id (no caller defaults: the scope is
-/// the current window) and the caller.
+/// the current window; a blank --workspace is the caller's, ADR-4.6).
 fn scopeParams(ctx: *Ctx, p: *Params, o: Opts) !bool {
     if (o.has("--all")) try p.boolean("all_windows", true);
-    if (ps.windowText(ctx, o)) |w| if (!try ps.putHandle(ctx, p, "window_id", .window, w)) return false;
-    if (o.get(&.{"--workspace"})) |w| if (!try ps.putHandle(ctx, p, "workspace_id", .workspace, w)) return false;
+    const window = ps.windowText(ctx, o);
+    if (window) |w| if (!try ps.putHandle(ctx, p, "window_id", .window, w)) return false;
+    if (o.get(&.{"--workspace"})) |w| if (!try ps.putWorkspace(ctx, p, "workspace_id", w, window != null)) return false;
     return true;
 }
 
@@ -69,13 +70,14 @@ pub fn identifyParams(ctx: *Ctx) !?Params {
         return null;
     }
     var p = Params.init(ctx.arena);
-    if (ps.windowText(ctx, o)) |w| if (!try ps.putHandle(ctx, &p, "window_id", .window, w)) return null;
+    const window = ps.windowText(ctx, o);
+    if (window) |w| if (!try ps.putHandle(ctx, &p, "window_id", .window, w)) return null;
     if (o.has("--no-caller")) return p;
     const ws_flag = o.get(&.{"--workspace"});
     const sf_flag = o.get(&.{"--surface"});
     var caller = Params.init(ctx.arena);
     if (ws_flag) |w| {
-        if (!try ps.putHandle(ctx, &caller, "workspace_id", .workspace, w)) return null;
+        if (!try ps.putWorkspace(ctx, &caller, "workspace_id", w, window != null)) return null;
     } else if (ps.envWorkspace(ctx)) |w| try caller.str("workspace_id", w);
     if (sf_flag) |s| {
         if (!try ps.putHandle(ctx, &caller, "surface_id", .surface, s)) return null;
@@ -417,7 +419,7 @@ pub fn runMemory(ctx: *Ctx) !u8 {
     if (o.positionals.len > 0) return unexpected(ctx, memory_usage, o.positionals[0]);
     var p = Params.init(ctx.arena);
     if (o.has("--all")) try p.boolean("all_windows", true);
-    if (o.get(&.{"--workspace"})) |w| if (!try ps.putHandle(ctx, &p, "workspace_id", .workspace, w)) return output.exit.usage;
+    if (o.get(&.{"--workspace"})) |w| if (!try ps.putWorkspace(ctx, &p, "workspace_id", w, ps.windowText(ctx, o) != null)) return output.exit.usage;
     if (o.get(&.{"--limit"})) |l| {
         const n = std.fmt.parseInt(i64, l, 10) catch -1;
         if (n < 1) return ps.usageWithLine(ctx, memory_usage, "--limit must be a positive integer", .{});
@@ -765,7 +767,12 @@ test "unit: cli-ps: memory separates the app from terminal children" {
     h.setEnv("WMUX_CLI_RESPONSE_TIMEOUT_SEC", "60");
     try pt.expectContains(h.run(&.{ "cmux", "memory" }).err, "timed out after 60s waiting for a response to system.memory");
     try pt.expectUsage(h.run(&.{ "cmux", "memory", "--limit", "0" }), "--limit must be a positive integer");
-    try pt.expectUsage(h.run(&.{ "cmux", "memory", "--workspace", "" }), "Workspace handle is blank");
+    // A blank --workspace is the caller's workspace; there is none here.
+    try pt.expectUsage(h.run(&.{ "cmux", "memory", "--workspace", "" }), "No workspace selected: --workspace was blank and CMUX_WORKSPACE_ID is unset");
+    h.setEnv("CMUX_WORKSPACE_ID", "WS-UUID");
+    h.ok("system.memory", "{}");
+    try pt.expectOk(h.run(&.{ "cmux", "memory", "--workspace", "" }));
+    try h.expectLast("system.memory", "{\"workspace_id\":\"WS-UUID\",\"caller\":{\"workspace_id\":\"WS-UUID\"}}");
 }
 
 test "unit: cli-ps: shot params, validation and text output" {

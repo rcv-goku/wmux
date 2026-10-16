@@ -621,6 +621,33 @@ test "unit: cli-ps: new-split argument validation" {
     try testing.expectEqual(@as(usize, 0), h.requests().len);
 }
 
+test "unit: cli-ps: a blank --workspace is the caller's only when no window is named" {
+    var h: Harness = undefined;
+    try h.init();
+    defer h.deinit();
+    h.setEnv("CMUX_WORKSPACE_ID", ws_uuid);
+    h.setEnv("CMUX_SURFACE_ID", sf_uuid);
+    // `--workspace "${CMUX_WORKSPACE_ID:-}"` inside a terminal names the
+    // caller's workspace (ADR-4.6).
+    _ = h.run(&.{ "cmux", "list-panes", "--workspace", "" });
+    try h.expectLast("pane.list", "{\"workspace_id\":\"" ++ ws_uuid ++ "\"}");
+    _ = h.run(&.{ "cmux", "tree", "--workspace", " " });
+    try h.expectLast("system.tree", "{\"workspace_id\":\"" ++ ws_uuid ++ "\",\"caller\":{\"workspace_id\":\"" ++ ws_uuid ++ "\",\"surface_id\":\"" ++ sf_uuid ++ "\"}}");
+    _ = h.run(&.{ "cmux", "identify", "--workspace", "" });
+    try h.expectLast("system.identify", "{\"caller\":{\"workspace_id\":\"" ++ ws_uuid ++ "\"}}");
+    // A named window (its own flag or the global one) never pairs with the
+    // caller's workspace: the selection fails closed, before any request.
+    h.clearRequests();
+    const msg = "cmux: No workspace selected: --workspace was blank and CMUX_WORKSPACE_ID is unset\n";
+    try pt.expectUsage(h.run(&.{ "cmux", "list-panes", "--window", "window:2", "--workspace", "" }), msg);
+    try pt.expectUsage(h.run(&.{ "cmux", "--window", "window:2", "send", "--workspace", "", "hi" }), msg);
+    try pt.expectUsage(h.run(&.{ "cmux", "--window", "1", "new-split", "down", "--workspace=" }), msg);
+    try pt.expectUsage(h.run(&.{ "cmux", "tree", "--window", "1", "--workspace", "" }), msg);
+    try pt.expectUsage(h.run(&.{ "cmux", "--window", "1", "top", "--workspace", "" }), msg);
+    try pt.expectUsage(h.run(&.{ "cmux", "identify", "--window", "1", "--workspace", "" }), msg);
+    try testing.expectEqual(@as(usize, 0), h.requests().len);
+}
+
 test "unit: cli-ps: new-split remote tmux mirror acceptance note" {
     var h: Harness = undefined;
     try h.init();
