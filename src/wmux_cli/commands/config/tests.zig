@@ -2,6 +2,7 @@
 //! shortcuts. Settings resolve against the validate.zig fixture specs.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const testing = std.testing;
 const proto = @import("wmux_proto");
 const harness = @import("../cli_misc/harness.zig");
@@ -229,6 +230,58 @@ test "unit: cli-config: a config file that exists but cannot be read is reported
     try harness.expectFail(h.run(&.{ "cmux", "themes", "clear" }), 1, "themes clear: cannot read");
     try testing.expectEqual(@as(usize, 0), h.writes);
     try testing.expectEqual(big.len, h.file(f.overlay).?.len);
+}
+
+test "unit: cli-config: the global files are not project files and explicit files get an inferred scope" {
+    var f: Fixture = undefined;
+    f.init();
+    defer f.deinit();
+    const h = &f.h;
+    const a = h.alloc();
+    // app.minimalMode is global-only: in project scope it is an error.
+    const global_only = "{\"app\": {\"minimalMode\": true}}\n";
+    h.addFile(f.wmux_json, global_only);
+    // From inside the config directory, wmux.json is only the global file.
+    h.fp.cwd_path = harness.p(a, &.{ harness.root, "cfg" });
+    const inside = h.run(&.{ "cmux", "config", "doctor" });
+    try harness.expectOk(inside);
+    try testing.expect(!harness.contains(inside.out, "project:"));
+    try testing.expectEqualStrings("true\n", h.run(&.{ "cmux", "config", "get", "app.minimalMode" }).out);
+    // A project file next to the cwd still counts, in project scope.
+    const repo = harness.p(a, &.{ harness.root, "repo" });
+    const project = harness.p(a, &.{ repo, ".wmux", "wmux.json" });
+    h.addFile(project, global_only);
+    h.fp.cwd_path = repo;
+    const in_repo = h.run(&.{ "cmux", "config", "doctor" });
+    try testing.expectEqual(@as(u8, 1), in_repo.code);
+    try harness.expectContains(in_repo.out, try std.fmt.allocPrint(a, "project: {s}: 1 error", .{project}));
+    try harness.expectContains(in_repo.out, "$.app.minimalMode: only allowed in the global config");
+
+    // --path: a wmux.json/cmux.json outside the config directory is a
+    // project file unless --scope says otherwise; the global file (however
+    // it is spelled) and other names are global.
+    const explicit = h.run(&.{ "cmux", "config", "doctor", "--path", project });
+    try testing.expectEqual(@as(u8, 1), explicit.code);
+    try harness.expectContains(explicit.out, "only allowed in the global config");
+    try harness.expectOk(h.run(&.{ "cmux", "config", "doctor", "--path", project, "--scope", "global" }));
+    try harness.expectOk(h.run(&.{ "cmux", "config", "doctor", "--path", harness.p(a, &.{ harness.root, "cfg", ".", "wmux.json" }) }));
+    const other = harness.p(a, &.{ repo, "team-settings.json" });
+    h.addFile(other, global_only);
+    try harness.expectOk(h.run(&.{ "cmux", "config", "doctor", "--path", other }));
+}
+
+test "unit: cli-config: samePath compares normalized spellings" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const w = harness.p(a, &.{ harness.root, "cfg", "wmux.json" });
+    try testing.expect(try files.samePath(a, w, harness.p(a, &.{ harness.root, "x", "..", "cfg", ".", "wmux.json" })));
+    try testing.expect(!try files.samePath(a, w, harness.p(a, &.{ harness.root, "cfg", "cmux.json" })));
+    if (builtin.os.tag == .windows) {
+        try testing.expect(try files.samePath(a, "C:\\T\\Cfg\\WMUX.json", "c:/t/cfg/wmux.json"));
+    } else {
+        try testing.expect(!try files.samePath(a, "/T/cfg/wmux.json", "/t/cfg/wmux.json"));
+    }
 }
 
 test "unit: cli-config: path and docs work offline; reload needs the app" {

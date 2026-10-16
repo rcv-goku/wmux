@@ -48,7 +48,11 @@ pub fn run(ctx: *Ctx, args: []const []const u8) !u8 {
     var findings: std.ArrayList(Finding) = .empty;
     const explicit = try flags.all(ctx.arena, "--path");
     if (explicit.len > 0) {
-        for (explicit) |p| try findings.append(ctx.arena, try check(ctx, loc, "file", try util.resolvePath(ctx, p), scope_override orelse .global, true));
+        for (explicit) |p| {
+            const path = try util.resolvePath(ctx, p);
+            const scope = scope_override orelse try files.inferScope(ctx.arena, loc, path);
+            try findings.append(ctx.arena, try check(ctx, loc, "file", path, scope, true));
+        }
     } else {
         if (loc.wmux_json) |p| try findings.append(ctx.arena, try check(ctx, loc, "wmux.json", p, scope_override orelse .global, false));
         if (loc.cmux_json) |p| try findings.append(ctx.arena, try check(ctx, loc, "cmux.json", p, scope_override orelse .global, false));

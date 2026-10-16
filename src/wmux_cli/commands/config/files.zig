@@ -35,26 +35,62 @@ pub const Locations = struct {
             .cmux => self.cmux_json,
         };
     }
+
+    /// `path` is wmux.json or the shared cmux.json.
+    pub fn isGlobal(self: Locations, arena: Allocator, path: []const u8) Allocator.Error!bool {
+        for ([_]?[]const u8{ self.wmux_json, self.cmux_json }) |g| {
+            if (g) |global| if (try samePath(arena, global, path)) return true;
+        }
+        return false;
+    }
 };
+
+/// True when `a` and `b` name the same path after lexical normalization
+/// (ASCII case-insensitive on Windows, whose file names are).
+pub fn samePath(arena: Allocator, a: []const u8, b: []const u8) Allocator.Error!bool {
+    const na = try std.fs.path.resolve(arena, &.{a});
+    const nb = try std.fs.path.resolve(arena, &.{b});
+    if (paths.Style.native == .windows) return std.ascii.eqlIgnoreCase(na, nb);
+    return std.mem.eql(u8, na, nb);
+}
 
 pub fn locate(ctx: *Ctx) !Locations {
     const style = paths.Style.native;
     const cfg = try paths.configDir(ctx.arena, ctx.env, style);
     const cmux_cfg = try paths.cmuxConfigDir(ctx.arena, ctx.env, style);
-    var project: ?[]const u8 = null;
-    if (ctx.platform.cwd(ctx.arena)) |cwd| {
-        const candidates = try settings.resolve.projectCandidates(ctx.arena, cwd);
-        for (candidates) |c| if (ctx.platform.pathExists(c)) {
-            project = c;
-            break;
-        };
-    }
-    return .{
+    var loc: Locations = .{
         .wmux_json = if (cfg) |d| try paths.join(ctx.arena, style, &.{ d, paths.files.wmux_json }) else null,
         .cmux_json = if (cmux_cfg) |d| try paths.join(ctx.arena, style, &.{ d, paths.files.cmux_json }) else null,
-        .project = project,
+        .project = null,
         .home = if (style == .windows) ctx.env.getNonEmpty(proto.env_names.USERPROFILE) else ctx.env.getNonEmpty(proto.env_names.HOME),
     };
+    if (ctx.platform.cwd(ctx.arena)) |cwd| {
+        const candidates = try settings.resolve.projectCandidates(ctx.arena, cwd);
+        for (candidates) |c| {
+            if (!ctx.platform.pathExists(c)) continue;
+            // From inside the config directory, `wmux.json`/`cmux.json` is
+            // the global file itself, not a project file: validating it in
+            // project scope would flag every global-only key.
+            if (try loc.isGlobal(ctx.arena, c)) continue;
+            loc.project = c;
+            break;
+        }
+    }
+    return loc;
+}
+
+/// Scope of an explicitly named file (`config doctor --path`): the global
+/// files and files with other names are global; a `wmux.json`/`cmux.json`
+/// elsewhere is a project file (`.wmux\wmux.json`, `.cmux\cmux.json`,
+/// `wmux.json`, `cmux.json`).
+pub fn inferScope(arena: Allocator, loc: Locations, path: []const u8) Allocator.Error!settings.validate.FileScope {
+    if (try loc.isGlobal(arena, path)) return .global;
+    const base = paths.basename(paths.Style.native, path);
+    for ([_][]const u8{ paths.files.wmux_json, paths.files.cmux_json }) |name| {
+        const same = if (paths.Style.native == .windows) std.ascii.eqlIgnoreCase(base, name) else std.mem.eql(u8, base, name);
+        if (same) return .project;
+    }
+    return .global;
 }
 
 /// Contents of `path`: null when the file does not exist;
