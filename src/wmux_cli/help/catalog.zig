@@ -27,7 +27,7 @@ pub const entries = [_]Entry{
     .{ .name = "workspace", .group = .start, .usage = "Usage: cmux workspace <list|create|env|close|rename|select|status|reconnect|disconnect|group> [args]", .summary = "Workspace namespace" },
     .{ .name = "workspace-action", .group = .start, .usage = "Usage: cmux workspace-action --action <name> [--workspace <id|ref|index>]", .summary = "Run a workspace context-menu action" },
     .{ .name = "reorder-workspace", .group = .start, .usage = "Usage: cmux reorder-workspace --workspace <id|ref|index> --index <n>", .summary = "Move a workspace inside its window" },
-    .{ .name = "reorder-workspaces", .group = .start, .usage = "Usage: cmux reorder-workspaces <json>", .summary = "Reorder pinned and unpinned workspaces atomically" },
+    .{ .name = "reorder-workspaces", .group = .start, .usage = "Usage: cmux reorder-workspaces --order <id|ref|index>,<id|ref|index>,... [--window <id|ref|index>] [--dry-run]", .summary = "Reorder pinned and unpinned workspaces atomically" },
     .{ .name = "next-window", .group = .start, .usage = "Usage: cmux next-window", .summary = "Select the next workspace" },
     .{ .name = "previous-window", .group = .start, .usage = "Usage: cmux previous-window", .summary = "Select the previous workspace" },
     .{ .name = "last-window", .group = .start, .usage = "Usage: cmux last-window", .summary = "Select the previously selected workspace" },

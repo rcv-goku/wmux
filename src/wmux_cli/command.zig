@@ -115,6 +115,9 @@ pub const Ctx = struct {
     channel: []const u8,
     /// `cmux <version> ...` without a newline.
     version_summary: []const u8,
+    /// A legacy `+verb` was rewritten (and its notice printed unless quiet);
+    /// the cmux legacy verb it maps to prints no second notice.
+    legacy_notice_shown: bool = false,
     socket: SocketNeed = .required,
     client: ?Client = null,
 

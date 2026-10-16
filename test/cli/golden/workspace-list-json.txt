@@ -1,0 +1,34 @@
+{
+  "window_ref": "window:1",
+  "workspaces": [
+    {
+      "ref": "workspace:1",
+      "index": 0,
+      "title": "api",
+      "custom_title": null,
+      "pinned": true,
+      "selected": false
+    },
+    {
+      "ref": "workspace:2",
+      "index": 1,
+      "title": "build été 🚀",
+      "custom_title": "build",
+      "selected": true,
+      "remote": {
+        "transport": "ssh",
+        "state": "connected"
+      }
+    },
+    {
+      "ref": "workspace:5",
+      "index": 2,
+      "title": "",
+      "selected": false,
+      "remote": {
+        "transport": "mosh",
+        "state": "reconnecting"
+      }
+    }
+  ]
+}

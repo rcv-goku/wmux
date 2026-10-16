@@ -1,0 +1,11 @@
+Usage: cmux close-workspace --workspace <id|ref|index> [--window <id|ref|index>] [--force]
+
+Close a workspace (default: the caller's workspace). Prints "OK". Legacy
+alias of "cmux workspace close".
+
+Options:
+  --workspace <id|ref|index>   Workspace to close
+  --window <id|ref|index>      Window that resolves an index
+  --force                      Close even when a running process would be
+                               killed
+  --json                       Print the result as JSON

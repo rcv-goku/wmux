@@ -1,0 +1,9 @@
+Usage: cmux select-workspace --workspace <id|ref|index> [--window <id|ref|index>]
+
+Select a workspace in its window. Prints "OK". Legacy alias of
+"cmux workspace select".
+
+Options:
+  --workspace <id|ref|index>   Workspace to select (required)
+  --window <id|ref|index>      Window that resolves an index
+  --json                       Print the result as JSON

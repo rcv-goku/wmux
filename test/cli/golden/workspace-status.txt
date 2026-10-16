@@ -1,0 +1,3 @@
+done
+inferred: working
+override: done (auto-clears when inferred moves off working)

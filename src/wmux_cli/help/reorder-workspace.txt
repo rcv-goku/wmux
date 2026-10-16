@@ -1,0 +1,14 @@
+Usage: cmux reorder-workspace [--workspace <id|ref|index> | <id|ref|index>] (--index <n> | --before <id|ref|index> | --after <id|ref|index>) [--window <id|ref|index>] [--dry-run]
+
+Move a workspace inside its window (default: the caller's workspace),
+respecting the pinned/unpinned tiers and groups. Prints "OK".
+
+Options:
+  --index <n>                  Final 0-based position
+  --before <id|ref|index>      Place it before this workspace
+                               (alias --before-workspace)
+  --after <id|ref|index>       Place it after this workspace
+                               (alias --after-workspace)
+  --window <id|ref|index>      Window that resolves indexes
+  --dry-run                    Print the resolved final index without moving
+  --json                       Print the result as JSON

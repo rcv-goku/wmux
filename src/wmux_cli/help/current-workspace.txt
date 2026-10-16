@@ -1,0 +1,7 @@
+Usage: cmux current-workspace [--window <id|ref|index>]
+
+Print the selected workspace's handle (--id-format picks ref, UUID or both).
+
+Options:
+  --window <id|ref|index>   Window to ask (default: the active window)
+  --json                    Print the result as JSON

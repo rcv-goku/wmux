@@ -727,7 +727,13 @@ test "unit: cli-dispatch: legacy +verb prints one notice unless quiet" {
     defer h.deinit();
     const r = h.run(&.{ "wmux", "+workspace", "list" });
     try testing.expect(std.mem.startsWith(u8, r.err, "wmux: '+workspace list' is now an alias for 'list-workspaces'. The legacy form keeps working indefinitely; set CMUX_QUIET=1 to silence this notice.\n"));
-    try expectContains(r.err, "'list-workspaces' is not available in this build of wmux yet");
+    // list-workspaces is a cmux legacy verb too, but the +verb notice is the
+    // only one; with no app running the command reaches discovery.
+    try testing.expectEqual(@as(usize, 1), std.mem.count(u8, r.err, "is now an alias"));
+    try expectContains(r.err, "No live wmux socket found");
+    // The cmux legacy verb on its own still prints its notice.
+    const direct = h.run(&.{ "wmux", "list-workspaces" });
+    try testing.expect(std.mem.startsWith(u8, direct.err, "wmux: 'list-workspaces' is now an alias for 'workspace list'."));
     h.setEnv("WMUX_QUIET", "1");
     const q = h.run(&.{ "wmux", "+workspace", "list" });
     try testing.expect(!contains(q.err, "is now an alias"));

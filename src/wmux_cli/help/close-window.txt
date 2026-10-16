@@ -1,0 +1,8 @@
+Usage: cmux close-window --window <id|ref|index> [--force]
+
+Close a window. Prints "OK".
+
+Options:
+  --window <id|ref|index>   Window to close (required)
+  --force                   Close even when a running process would be killed
+  --json                    Print the result as JSON

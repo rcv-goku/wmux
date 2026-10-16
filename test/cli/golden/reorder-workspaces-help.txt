@@ -1,0 +1,14 @@
+Usage: cmux reorder-workspaces --order <id|ref|index>,<id|ref|index>,... [--window <id|ref|index>] [--dry-run]
+
+Atomically place the listed workspaces first, in order, within the pinned
+and unpinned groups; unlisted workspaces keep their relative order. Prints
+"OK".
+
+Options:
+  --order <list>               Comma-separated workspace handles
+  --window <id|ref|index>      Window that resolves indexes
+  --dry-run                    Print the resulting order, one handle per
+                               line (or the planned moves as
+                               "<workspace> from=<i> to=<j>"), without
+                               applying it
+  --json                       Print the result as JSON

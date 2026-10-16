@@ -1,0 +1,2 @@
+* 0: window:1 (6F1D2C3B-0000-4000-8000-000000000001) selected_workspace=workspace:2 (9B690000-0000-4000-8000-000000000002) workspaces=3
+  1: window:3 (6F1D2C3B-0000-4000-8000-000000000003) selected_workspace=none workspaces=1

@@ -1,0 +1,22 @@
+{
+  "window_ref": "window:1",
+  "groups": [
+    {
+      "group_ref": "workspace_group:1",
+      "name": "Backend",
+      "workspace_count": 3,
+      "collapsed": true,
+      "pinned": false
+    },
+    {
+      "group_ref": "workspace_group:2",
+      "name": "Fronts été",
+      "workspace_ids": [
+        "A",
+        "B"
+      ],
+      "collapsed": false,
+      "pinned": true
+    }
+  ]
+}
