@@ -49,6 +49,7 @@ test {
     _ = keymap_presets;
     _ = paths;
     _ = pipe_name;
+    _ = remote;
     _ = selectors;
     _ = shell_quote;
     _ = strokes;
