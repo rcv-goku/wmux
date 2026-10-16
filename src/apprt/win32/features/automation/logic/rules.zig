@@ -271,19 +271,41 @@ pub fn empty(gpa: Allocator) Config {
 const Parser = struct {
     arena: Allocator,
     src: []const u8,
+    /// Positions of rule starts (visited in document order, so it never rewinds).
     cursor: jsonc.PosCursor = .{},
     issues: std.ArrayList(Issue) = .empty,
     /// Errors recorded for the current rule.
     rule_errors: usize = 0,
 
+    /// Objects with more members than this use a hash map for duplicate checks.
+    const small_object = 16;
+
     fn pos(self: *Parser, offset: usize) jsonc.Pos {
         return self.cursor.advance(self.src, offset);
     }
 
+    /// Records an issue; `finishIssues` fills in its position. Issues are
+    /// not produced in document order (a rule's keys are checked in a fixed
+    /// order), so computing positions here would rewind the cursor to the
+    /// top of the file for each out-of-order issue: quadratic on big files.
     fn add(self: *Parser, sev: Severity, path: []const u8, offset: usize, comptime fmt: []const u8, args: anytype) Allocator.Error!void {
         const message = try std.fmt.allocPrint(self.arena, fmt, args);
         if (sev == .err) self.rule_errors += 1;
-        try self.issues.append(self.arena, .{ .severity = sev, .path = path, .message = message, .offset = offset, .pos = self.pos(offset) });
+        try self.issues.append(self.arena, .{ .severity = sev, .path = path, .message = message, .offset = offset });
+    }
+
+    /// Sorts the issues into document order (stable, O(n log n)) and computes
+    /// every position in one forward pass over the source.
+    fn finishIssues(self: *Parser) Allocator.Error![]const Issue {
+        const items = self.issues.items;
+        std.sort.block(Issue, items, {}, struct {
+            fn lt(_: void, a: Issue, b: Issue) bool {
+                return a.offset < b.offset;
+            }
+        }.lt);
+        var cursor: jsonc.PosCursor = .{};
+        for (items) |*i| i.pos = cursor.advance(self.src, i.offset);
+        return self.issues.toOwnedSlice(self.arena);
     }
 
     fn err(self: *Parser, path: []const u8, offset: usize, comptime fmt: []const u8, args: anytype) Allocator.Error!void {
@@ -332,15 +354,41 @@ const Parser = struct {
         };
     }
 
-    /// Warns about members not in `known`, and about repeated keys (last wins).
-    fn checkKeys(self: *Parser, members: []const jsonc.Member, path: []const u8, known: []const []const u8) Allocator.Error!void {
-        for (members, 0..) |*m, i| {
-            for (members[0..i]) |*prev| {
-                if (std.mem.eql(u8, prev.key, m.key)) {
+    /// Warns at each member whose key repeats an earlier member's key (the
+    /// last value wins, as with `jsonc.Node.get`). When `shadowed` is given,
+    /// `shadowed[i]` is set for every member that a later one overrides.
+    /// Linear in the member count (a 4 MiB object can hold ~800k members).
+    fn checkDuplicates(self: *Parser, members: []const jsonc.Member, path: []const u8, shadowed: ?[]bool) Allocator.Error!void {
+        if (members.len <= small_object) {
+            for (members, 0..) |*m, i| {
+                var j = i;
+                while (j > 0) {
+                    j -= 1;
+                    if (!std.mem.eql(u8, members[j].key, m.key)) continue;
+                    if (shadowed) |s| s[j] = true;
                     try self.warn(try self.sub(path, m.key), m.key_start, "duplicate key \"{s}\"; the last value wins", .{m.key});
                     break;
                 }
             }
+            return;
+        }
+        var last: std.StringHashMapUnmanaged(usize) = .empty;
+        defer last.deinit(self.arena);
+        try last.ensureTotalCapacity(self.arena, @intCast(members.len));
+        for (members, 0..) |*m, i| {
+            const gop = last.getOrPutAssumeCapacity(m.key);
+            if (gop.found_existing) {
+                if (shadowed) |s| s[gop.value_ptr.*] = true;
+                try self.warn(try self.sub(path, m.key), m.key_start, "duplicate key \"{s}\"; the last value wins", .{m.key});
+            }
+            gop.value_ptr.* = i;
+        }
+    }
+
+    /// Warns about members not in `known`, and about repeated keys (last wins).
+    fn checkKeys(self: *Parser, members: []const jsonc.Member, path: []const u8, known: []const []const u8) Allocator.Error!void {
+        try self.checkDuplicates(members, path, null);
+        for (members) |*m| {
             const is_known = for (known) |k| {
                 if (std.mem.eql(u8, k, m.key)) break true;
             } else false;
@@ -831,8 +879,10 @@ pub fn parse(gpa: Allocator, src_in: []const u8) Allocator.Error!Config {
     };
 
     var p: Parser = .{ .arena = arena, .src = src };
-    const top = (try p.root(root_node)) orelse
-        return .{ .arena = arena_state, .src = src, .issues = try p.issues.toOwnedSlice(arena) };
+    const top = (try p.root(root_node)) orelse {
+        const issues = try p.finishIssues();
+        return .{ .arena = arena_state, .src = src, .issues = issues };
+    };
 
     var rules: std.ArrayList(Rule) = .empty;
     var invalid: std.ArrayList([]const u8) = .empty;
@@ -852,18 +902,18 @@ pub fn parse(gpa: Allocator, src_in: []const u8) Allocator.Error!Config {
         }
         if (r) |ok_rule| try rules.append(arena, ok_rule) else if (id) |s| try invalid.append(arena, s);
     }
-    std.sort.insertion(Issue, p.issues.items, {}, struct {
-        fn lt(_: void, a: Issue, b: Issue) bool {
-            return a.offset < b.offset;
-        }
-    }.lt);
+    const rules_out = try rules.toOwnedSlice(arena);
+    const invalid_out = try invalid.toOwnedSlice(arena);
+    const issues = try p.finishIssues();
+    // Copy the arena state into the result only after its last allocation:
+    // a copy taken earlier would miss buffers the arena adds afterwards.
     return .{
         .arena = arena_state,
         .src = src,
         .version = top.version,
-        .rules = try rules.toOwnedSlice(arena),
-        .issues = try p.issues.toOwnedSlice(arena),
-        .invalid_ids = try invalid.toOwnedSlice(arena),
+        .rules = rules_out,
+        .issues = issues,
+        .invalid_ids = invalid_out,
     };
 }
 
@@ -1115,6 +1165,53 @@ test "unit: automation: rules enforce size and nesting guards" {
     defer cfg2.deinit();
     try testing.expectEqual(@as(usize, 1), cfg2.issues.len);
     try testing.expectEqual(@as(usize, 0), cfg2.rules.len);
+}
+
+test "unit: automation: rules parse huge files in linear time" {
+    const gpa = testing.allocator;
+    // One rule object with 50k unknown keys and a repeated one: duplicate
+    // detection used to compare every key with every earlier key.
+    {
+        var buf: std.ArrayList(u8) = .empty;
+        defer buf.deinit(gpa);
+        try buf.appendSlice(gpa, "{\"version\":1,\"rules\":[{\"id\":\"x\",\"when\":{\"event\":\"*\"},\"then\":[]");
+        const n = 50_000;
+        for (0..n) |i| try buf.print(gpa, ",\"k{d}\":0", .{i});
+        try buf.appendSlice(gpa, ",\"k7\":1}]}");
+        var cfg = try parse(gpa, buf.items);
+        defer cfg.deinit();
+        try testing.expectEqual(@as(usize, 1), cfg.rules.len);
+        // n + 1 unknown keys, one duplicate key, one empty `then`.
+        try testing.expectEqual(@as(usize, n + 3), cfg.issues.len);
+        try expectIssue(&cfg, .warning, "$.rules[0].k7", "duplicate key");
+    }
+    // 5k rules whose warnings are produced out of document order (`then`
+    // before `when`): each one used to rescan the file from the top for its
+    // line:col.
+    {
+        var buf: std.ArrayList(u8) = .empty;
+        defer buf.deinit(gpa);
+        try buf.appendSlice(gpa, "{\"version\":1,\"rules\":[\n");
+        const n = 5_000;
+        for (0..n) |i| {
+            if (i > 0) try buf.appendSlice(gpa, ",\n");
+            try buf.print(gpa, "{{\"then\":[{{\"action\":\"notify\"}}],\"id\":\"r{d}\",\"when\":{{\"event\":\"no.such{d}\"}}}}", .{ i, i });
+        }
+        try buf.appendSlice(gpa, "\n]}");
+        var cfg = try parse(gpa, buf.items);
+        defer cfg.deinit();
+        try testing.expectEqual(@as(usize, n), cfg.rules.len);
+        try testing.expectEqual(@as(usize, 2 * n), cfg.issues.len);
+        // Document order, and positions agree with jsonc.position (sampled).
+        var i: usize = 0;
+        while (i < cfg.issues.len) : (i += 997) {
+            const issue = cfg.issues[i];
+            try testing.expectEqual(jsonc.position(cfg.src, issue.offset), issue.pos);
+            if (i > 0) try testing.expect(cfg.issues[i - 1].offset <= issue.offset);
+        }
+        try testing.expectEqual(@as(u32, n + 1), cfg.issues[cfg.issues.len - 1].pos.line);
+        try testing.expectEqual(@as(u32, n + 1), cfg.rules[n - 1].pos.line);
+    }
 }
 
 test "unit: automation: rules drop only the rule with errors" {

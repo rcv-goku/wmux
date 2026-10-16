@@ -13,6 +13,9 @@ const wmux_proto = @import("wmux_proto");
 const Allocator = std.mem.Allocator;
 
 pub const max_output_bytes: usize = 64 * 1024;
+/// Longest text between `{{` and `}}` that can be a placeholder; longer
+/// text stays literal without being examined (keeps scans linear).
+pub const max_placeholder_len: usize = 256;
 
 pub const Vars = struct {
     name: []const u8 = "",
@@ -29,6 +32,7 @@ const Placeholder = union(enum) {
 };
 
 fn classify(inner_raw: []const u8) ?Placeholder {
+    if (inner_raw.len > max_placeholder_len) return null;
     const inner = std.mem.trim(u8, inner_raw, " \t");
     if (std.mem.eql(u8, inner, "event.name")) return .event_name;
     if (std.mem.eql(u8, inner, "event.category")) return .event_category;
@@ -60,12 +64,23 @@ fn writeValue(out: *std.Io.Writer, v: std.json.Value) std.Io.Writer.Error!void {
     }
 }
 
+/// The first `}}` at or after `from`. `cache` keeps the last answer and is
+/// reused while `from` has not passed it (no `}}` can start in between), so
+/// a run of `{` before a distant `}}` is scanned once, not once per brace.
+/// Callers pass non-decreasing `from` values.
+fn findClose(tmpl: []const u8, from: usize, cache: *?usize) ?usize {
+    if (cache.*) |c| if (from <= c) return c;
+    cache.* = std.mem.indexOfPos(u8, tmpl, from, "}}");
+    return cache.*;
+}
+
 /// Renders `tmpl`. The result is owned by `gpa`.
 pub fn render(gpa: Allocator, tmpl: []const u8, vars: Vars) Allocator.Error![]u8 {
     var aw: std.Io.Writer.Allocating = .init(gpa);
     defer aw.deinit();
     const w = &aw.writer;
     var i: usize = 0;
+    var close_cache: ?usize = null;
     while (i < tmpl.len) {
         if (aw.written().len > max_output_bytes) break;
         const open = std.mem.indexOfPos(u8, tmpl, i, "{{") orelse {
@@ -73,7 +88,7 @@ pub fn render(gpa: Allocator, tmpl: []const u8, vars: Vars) Allocator.Error![]u8
             break;
         };
         w.writeAll(tmpl[i..open]) catch return error.OutOfMemory;
-        const close = std.mem.indexOfPos(u8, tmpl, open + 2, "}}") orelse {
+        const close = findClose(tmpl, open + 2, &close_cache) orelse {
             w.writeAll(tmpl[open..]) catch return error.OutOfMemory;
             break;
         };
@@ -107,8 +122,9 @@ pub const Problem = struct {
 /// The first placeholder `render` would leave literal, for a load-time warning.
 pub fn check(tmpl: []const u8) ?Problem {
     var i: usize = 0;
+    var close_cache: ?usize = null;
     while (std.mem.indexOfPos(u8, tmpl, i, "{{")) |open| {
-        const close = std.mem.indexOfPos(u8, tmpl, open + 2, "}}") orelse
+        const close = findClose(tmpl, open + 2, &close_cache) orelse
             return .{ .offset = open, .message = "unterminated {{ placeholder" };
         if (classify(tmpl[open + 2 .. close]) == null) {
             if (open + 2 < tmpl.len and tmpl[open + 2] == '{') {
@@ -179,4 +195,38 @@ test "unit: automation: template check reports placeholders render keeps literal
     try testing.expect(check("{{event.name") != null);
     try testing.expect(check("{{workspace.title}}") != null);
     try testing.expect(check("{{{event.name}}}") == null);
+}
+
+test "unit: automation: template scans stay linear on long brace runs" {
+    const gpa = testing.allocator;
+    var arena_state: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    // Sizes keep every output under max_output_bytes.
+    const n = 60_000;
+    // n literal braces before a real placeholder: each `{` used to rescan to the far `}}`.
+    const run = try arena.alloc(u8, n);
+    @memset(run, '{');
+    const tmpl = try std.mem.concat(arena, u8, &.{ run, "{{event.name}}" });
+    try testing.expect(check(tmpl) == null);
+    const out = try render(gpa, tmpl, .{ .name = "x" });
+    defer gpa.free(out);
+    try testing.expectEqual(@as(usize, n + 1), out.len);
+    try testing.expect(std.mem.endsWith(u8, out, "{x"));
+    // Braces followed by a long blank stretch: the blanks are not trimmed again for every brace.
+    const blank = try arena.alloc(u8, 40_000);
+    @memset(blank, ' ');
+    const tmpl2 = try std.mem.concat(arena, u8, &.{ run[0..20_000], blank, "}}" });
+    const out2 = try render(gpa, tmpl2, .{});
+    defer gpa.free(out2);
+    try testing.expectEqualStrings(tmpl2, out2);
+    try testing.expect(check(tmpl2) != null);
+    // A placeholder longer than max_placeholder_len stays literal, and check says so.
+    const long_key = try arena.alloc(u8, max_placeholder_len);
+    @memset(long_key, 'k');
+    const tmpl3 = try std.mem.concat(arena, u8, &.{ "{{payload.", long_key, "}}" });
+    const out3 = try render(gpa, tmpl3, .{});
+    defer gpa.free(out3);
+    try testing.expectEqualStrings(tmpl3, out3);
+    try testing.expect(check(tmpl3) != null);
 }
