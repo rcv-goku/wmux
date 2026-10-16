@@ -392,7 +392,10 @@ export function workstreams(items) {
       map.set(key, w);
     }
     w.item_count += 1;
-    if (isActionable(it)) w.pending_count += 1;
+    // Pending decisions only, like query.zig and the Actionable tab count:
+    // every turn ends with a stop card, so counting unanswered stops would
+    // grow with the session length.
+    if (isDecision(it) && isPending(it)) w.pending_count += 1;
     if (it.created_at_ms >= w.last_activity_ms) {
       w.last_activity_ms = it.created_at_ms;
       w.latest = it;

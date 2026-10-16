@@ -259,8 +259,16 @@ describe("unit: feed model", () => {
     const ws = model.workstreams(items);
     assert.deepEqual(ws.map((w) => w.session_id), ["b", "a"]);
     assert.equal(ws[1].item_count, 2);
-    assert.equal(ws[1].pending_count, 2);
+    assert.equal(ws[1].pending_count, 1, "the pending permission; the stop card is not a pending decision");
     assert.equal(ws[1].latest.id, uuid(3));
+  });
+
+  test("unit: feed: workstream pending counts do not grow with finished turns", () => {
+    const turns = Array.from({ length: 5 }, (_, i) => item(10 + i, "stop", { session_id: "a", hook_event_name: "Stop" }));
+    const ws = model.workstreams(model.itemsFrom([...turns, permission(1, { session_id: "a" }), permission(2, { session_id: "a", status: "resolved", options: [] })]));
+    assert.equal(ws.length, 1);
+    assert.equal(ws[0].item_count, 7);
+    assert.equal(ws[0].pending_count, 1, "like query.zig: only status pending counts");
   });
 
   test("unit: feed: plan markdown is sanitized and links are kept safe", () => {
@@ -840,11 +848,13 @@ describe("unit: feed app", () => {
   });
 
   test("unit: feed: workstream chips jump to each agent", async () => {
-    await startApp({ items: [permission(1, { session_id: "aaaaaaaa-1111" }), item(2, "message", { source: "codex", session_id: "bbbbbbbb-2222", surface_id: "AAAAAAAA-0000-4000-8000-000000000009" })] });
+    const codex = { source: "codex", session_id: "bbbbbbbb-2222", surface_id: "AAAAAAAA-0000-4000-8000-000000000009" };
+    await startApp({ items: [permission(1, { session_id: "aaaaaaaa-1111" }), item(2, "message", codex), item(3, "stop", { ...codex, hook_event_name: "Stop" })] });
     const chips = Array.from(doc.querySelectorAll("#feed-workstreams .feed-stream"));
     assert.equal($("feed-workstreams").hidden, false);
     assert.deepEqual(chips.map((c) => c.firstChild.textContent), ["Claude · aaaaaaaa", "Codex · bbbbbbbb"]);
     assert.equal(chips[0].querySelector(".feed-count").textContent, "1");
+    assert.equal(chips[1].querySelector(".feed-count"), null, "a finished turn is not a pending decision");
     click(window, chips[1]);
     await settle();
     assert.equal(host.calls("feed.jump")[0].params.id, uuid(2));
