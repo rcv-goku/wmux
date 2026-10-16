@@ -21,6 +21,7 @@ const Surface = @import("../Surface.zig");
 const Window = @import("../ui/Window.zig");
 const config_files = @import("../settings/legacy_config_files.zig");
 const foreground = @import("foreground.zig");
+const input_actions = @import("../input/actions.zig");
 const notifications = @import("../features/notifications/api.zig");
 const ops_surface = @import("../model/ops/surface.zig");
 const updater = @import("../features/updater/legacy_check.zig");
@@ -29,7 +30,8 @@ const w32 = @import("../platform/win32.zig");
 const log = std.log.scoped(.win32);
 
 /// Perform an apprt action (`App.performAction`). Every action is
-/// acknowledged (returns true) whether or not it has a win32 reaction.
+/// acknowledged (returns true) whether or not it has a win32 reaction,
+/// except `wmux_action`, which reports whether its action ran.
 pub fn perform(
     app: *App,
     target: apprt.Target,
@@ -141,6 +143,9 @@ pub fn perform(
         .mark_oldest_unread_jump => {
             _ = notifications.markOldestUnreadAndJumpNext(app);
         },
+        // A `wmux:<id>` binding: the actions registry runs it and reports
+        // whether it was performed (false lets `performable:` keys through).
+        .wmux_action => return input_actions.invoke(app, target, value.action),
     }
     return true;
 }

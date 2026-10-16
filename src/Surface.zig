@@ -5436,6 +5436,14 @@ pub fn performBindingAction(self: *Surface, action: input.Binding.Action) !bool 
             {},
         ),
 
+        // wmux: forwarded as is; the win32 apprt runs it through its
+        // actions registry and reports whether it was performed.
+        .wmux => |param| return try self.rt_app.performAction(
+            .{ .surface = self },
+            .wmux_action,
+            .{ .action = param },
+        ),
+
         .toggle_split_zoom => return try self.rt_app.performAction(
             .{ .surface = self },
             .toggle_split_zoom,

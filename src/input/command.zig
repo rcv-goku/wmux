@@ -806,6 +806,8 @@ fn actionCommands(action: Action.Key) []const Command {
         .deactivate_all_key_tables,
         .end_key_sequence,
         .crash,
+        // wmux actions are listed by the wmux palette (its action catalog).
+        .wmux,
         => comptime &.{},
 
         // No commands because I'm not sure they make sense in a command

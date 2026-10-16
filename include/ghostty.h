@@ -879,6 +879,12 @@ typedef struct {
   const char* needle;
 } ghostty_action_start_search_s;
 
+// apprt.action.WmuxAction.C
+typedef struct {
+  const char* action;
+  uintptr_t len;
+} ghostty_action_wmux_s;
+
 // apprt.action.SearchTotal
 typedef struct {
   ssize_t total;
@@ -978,6 +984,7 @@ typedef enum {
   GHOSTTY_ACTION_EDIT_WORKSPACE_DESCRIPTION,
   GHOSTTY_ACTION_TOGGLE_RIGHT_SIDEBAR,
   GHOSTTY_ACTION_FOCUS_RIGHT_SIDEBAR,
+  GHOSTTY_ACTION_WMUX_ACTION,
 } ghostty_action_tag_e;
 
 typedef union {
@@ -1022,6 +1029,7 @@ typedef union {
   ghostty_action_goto_split_e swap_split;
   ghostty_action_select_layout_e select_layout;
   ghostty_action_move_pane_target_e move_pane;
+  ghostty_action_wmux_s wmux_action;
 } ghostty_action_u;
 
 typedef struct {

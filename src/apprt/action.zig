@@ -404,6 +404,10 @@ pub const Action = union(Key) {
     /// keyboard input could scroll the log or navigate entries.
     focus_right_sidebar,
 
+    /// Run a wmux action by id (the `wmux:<id>[:<arg>]` binding action).
+    /// Windows apprt only; other runtimes do not perform it.
+    wmux_action: WmuxAction,
+
     /// Sync with: ghostty_action_tag_e
     pub const Key = enum(c_int) {
         quit,
@@ -488,6 +492,7 @@ pub const Action = union(Key) {
         edit_workspace_description,
         toggle_right_sidebar,
         focus_right_sidebar,
+        wmux_action,
 
         test "ghostty.h Action.Key" {
             try lib.checkGhosttyHEnum(Key, "GHOSTTY_ACTION_");
@@ -790,6 +795,25 @@ pub const SetTitle = struct {
         writer: *std.Io.Writer,
     ) !void {
         try writer.print("{s}{{ {s} }}", .{ @typeName(@This()), value.title });
+    }
+};
+
+/// The parameter of a `wmux:` binding action: `<id>` or `<id>:<arg>`
+/// (the win32 apprt splits it, input/actions.zig).
+pub const WmuxAction = struct {
+    action: []const u8,
+
+    // Sync with: ghostty_action_wmux_s
+    pub const C = extern struct {
+        action: [*]const u8,
+        len: usize,
+    };
+
+    pub fn cval(self: WmuxAction) C {
+        return .{
+            .action = self.action.ptr,
+            .len = self.action.len,
+        };
     }
 };
 

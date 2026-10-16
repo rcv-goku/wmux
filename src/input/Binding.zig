@@ -730,6 +730,20 @@ pub const Action = union(enum) {
     /// dismisses after ~200ms.
     flash_pane,
 
+    /// Run a wmux action by its action id, optionally with an argument
+    /// after a second colon:
+    ///
+    ///   - `keybind = ctrl+b>c=wmux:newSurface`
+    ///   - `keybind = ctrl+shift+alt+3=wmux:selectSurfaceByNumber:3`
+    ///
+    /// The ids are the action ids of wmux's shortcut settings (cmux
+    /// action ids such as `splitRight`, plus `wmux.*` ones). An unknown
+    /// id or an action that does not apply does nothing; with
+    /// `performable:` the key then reaches the terminal.
+    ///
+    /// Only implemented on Windows.
+    wmux: []const u8,
+
     /// Reset the window to the default size. The "default size" is the
     /// size that a new window would be created with. This has no effect
     /// if the window is fullscreen.
@@ -1516,6 +1530,7 @@ pub const Action = union(enum) {
             .equalize_splits,
             .select_layout,
             .flash_pane,
+            .wmux,
             .inspector,
             => .surface,
         };
@@ -3439,6 +3454,24 @@ test "parse: action with string" {
         try testing.expect(binding.action == .set_tab_title);
         try testing.expectEqualStrings("tab", binding.action.set_tab_title);
     }
+}
+
+test "unit: input: parse wmux binding actions with their argument" {
+    const testing = std.testing;
+    {
+        const binding = try parseSingle("ctrl+b=wmux:newSurface");
+        try testing.expect(binding.action == .wmux);
+        try testing.expectEqualStrings("newSurface", binding.action.wmux);
+        try testing.expectEqual(Action.Scope.surface, binding.action.scope());
+    }
+    {
+        // Everything after the first colon is the parameter, so the
+        // argument rides along for input/actions.zig to split off.
+        const binding = try parseSingle("ctrl+shift+alt+3=wmux:selectSurfaceByNumber:3");
+        try testing.expectEqualStrings("selectSurfaceByNumber:3", binding.action.wmux);
+    }
+    // The action id is required.
+    try testing.expectError(Error.InvalidFormat, parseSingle("a=wmux"));
 }
 
 test "parse: action with enum" {
