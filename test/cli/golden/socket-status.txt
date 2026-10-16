@@ -1,0 +1,2 @@
+Socket control mode: cmuxOnly. Live enforcement: not observed.
+Use --json for the profile source and socket-path observation. This command never connects to the automation socket.

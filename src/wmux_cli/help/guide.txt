@@ -1,0 +1,5 @@
+Usage: cmux guide | cmux --skill [--json]
+
+Print a short Markdown guide for agents: finding targets, driving terminals
+and the browser. Works without the app or network access. --json prints
+{"topic", "format": "markdown", "content"}.

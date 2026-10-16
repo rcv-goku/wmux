@@ -1,0 +1,4 @@
+Usage: cmux version
+
+Print the CLI's version summary: cmux <version> (<build>) [<commit>].
+Works without the app. The connected app's version is in 'cmux identify'.

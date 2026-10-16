@@ -1,0 +1,17 @@
+Remote:
+  ssh <destination> [--name <title>] [--port <n>] [--identity <path>] [--transport <ssh|mosh>] [--command <text>] [-A|--forward-agent] [--focus|--no-focus]
+                                              Open an SSH-backed workspace
+  mosh <destination> [ssh options]            Open a Mosh-backed workspace
+  mosh-tmux <destination> [--session <name>] [ssh options]
+                                              Mosh workspace attached to a remote tmux session
+  ssh-tmux <destination> [list|ls [--json] | attach <session>] [--port <n>] [--identity <path>] [--name <title>] [--no-focus]
+                                              Mirror remote tmux sessions
+  ssh-session-list [--json]                   List saved SSH terminal sessions
+  ssh-session-attach --session-id <id>        Reattach to a persisted SSH PTY session
+  ssh-session-cleanup [--json]                Close persisted SSH PTY sessions
+  remote-daemon-status                        Print remote daemon version and cache status
+  local-tmux <start|attach|list|status|detach|close|cleanup> [args]
+                                              User-owned local tmux sessions (WSL)
+  tmux attach [args]                          Alias of 'local-tmux attach'
+  local-zellij <start|attach|list|status|close> [args]
+                                              zellij sessions (WSL)

@@ -1,0 +1,12 @@
+Diagnostics / Advanced:
+  ping                                        Check connectivity to the wmux control pipe
+  capabilities                                List the app's protocol and supported methods as JSON
+  rpc <method> [json-params|-]                Call a raw v2 method
+  socket-status [--json]                      Effective control-pipe access mode (never connects)
+  debug-terminals                             Print debug terminal state
+  surface-health                              Print terminal surface health
+  refresh-surfaces                            Ask wmux to refresh terminal surfaces
+  sudo <command> [args...]                    Run one command elevated after approval in wmux
+  version                                     Print the CLI version (also --version, -v)
+  help [topic]                                Print this help or one topic
+  wmux <subcommand> [args]                    wmux-only commands (attention, notification, quick-terminal, layout, sync-input, session, action)

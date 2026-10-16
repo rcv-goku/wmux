@@ -1,0 +1,5 @@
+Usage: cmux help [topic]
+
+Print the top-level usage, or one task group.
+Topics: start, agents, navigate, inspect, customize, automation, browser,
+remote, diagnostics.

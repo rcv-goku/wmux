@@ -1,0 +1,540 @@
+/*
+ * Markdown panel. Layout and chrome use the --wmux-* tokens from ../_shared/;
+ * the document (.markdown-body) follows GitHub's reading layout on the pane
+ * background. Per-panel typography arrives as custom properties on
+ * #mdv-content: --mdv-zoom (font size / 15), --mdv-max-width, --mdv-font-family.
+ */
+
+:root {
+  --mdv-font-stack: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial,
+    sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  --mdv-toolbar-height: 36px;
+  --mdv-find-match: rgb(255 214 0 / 0.45);
+  --mdv-find-current: #ff9632;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Toolbar --------------------------------------------------------------- */
+
+.mdv-toolbar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--wmux-space-2);
+  min-height: var(--mdv-toolbar-height);
+  padding: var(--wmux-space-1) var(--wmux-space-2);
+  border-bottom: 1px solid var(--wmux-border);
+  background-color: var(--wmux-surface);
+}
+
+.mdv-toolbar-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wmux-space-1);
+}
+
+.mdv-status {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--wmux-fg-muted);
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mdv-status[data-kind="error"] {
+  color: var(--wmux-danger);
+}
+
+.mdv-status[data-kind="warning"] {
+  color: var(--wmux-warning);
+}
+
+/* Typography popover ------------------------------------------------------ */
+
+.mdv-popover {
+  position: absolute;
+  top: calc(var(--mdv-toolbar-height) + 4px);
+  right: var(--wmux-space-2);
+  z-index: 20;
+  display: grid;
+  gap: var(--wmux-space-2);
+  width: 300px;
+  padding: var(--wmux-space-3);
+  border: 1px solid var(--wmux-border-strong);
+  border-radius: var(--wmux-radius);
+  background-color: var(--wmux-surface-raised);
+  box-shadow: var(--wmux-shadow);
+}
+
+.mdv-field {
+  display: grid;
+  grid-template-columns: 1fr 140px;
+  align-items: center;
+  gap: var(--wmux-space-2);
+}
+
+.mdv-popover-actions {
+  display: grid;
+  gap: var(--wmux-space-1);
+  margin-top: var(--wmux-space-1);
+}
+
+/* Find bar -------------------------------------------------------------- */
+
+.mdv-find {
+  position: absolute;
+  top: calc(var(--mdv-toolbar-height) + 4px);
+  right: var(--wmux-space-4);
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  gap: var(--wmux-space-1);
+  padding: var(--wmux-space-1) var(--wmux-space-2);
+  border: 1px solid var(--wmux-border-strong);
+  border-radius: var(--wmux-radius);
+  background-color: var(--wmux-surface-raised);
+  box-shadow: var(--wmux-shadow);
+}
+
+.mdv-find input {
+  width: 220px;
+}
+
+.mdv-find-count {
+  min-width: 4.5em;
+  color: var(--wmux-fg-muted);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.mdv-find-count[data-empty="true"] {
+  color: var(--wmux-danger);
+}
+
+.mdv-icon-button {
+  min-width: 28px;
+  padding: 0 var(--wmux-space-1);
+}
+
+mark.mdv-find-match {
+  border-radius: 2px;
+  background-color: var(--mdv-find-match);
+  color: inherit;
+}
+
+mark.mdv-find-match.mdv-find-current {
+  background-color: var(--mdv-find-current);
+  color: #000;
+}
+
+/* Viewport and states ------------------------------------------------------ */
+
+.mdv-viewport {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  outline: none;
+}
+
+.mdv-editor {
+  display: block;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: var(--wmux-space-4);
+  border: 0;
+  border-radius: 0;
+  background-color: var(--wmux-bg);
+  color: var(--wmux-fg);
+  font-family: var(--wmux-font-mono);
+  font-size: var(--wmux-font-size);
+  line-height: 1.5;
+  tab-size: 4;
+  resize: none;
+}
+
+.mdv-editor:focus-visible {
+  outline: none;
+}
+
+.mdv-unavailable {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--wmux-space-2);
+  max-width: 560px;
+  margin: 12vh auto 0;
+  padding: var(--wmux-space-5);
+  text-align: center;
+}
+
+.mdv-unavailable-icon {
+  width: 48px;
+  height: 48px;
+}
+
+.mdv-unavailable-page,
+.mdv-unavailable-mark {
+  fill: none;
+  stroke: var(--wmux-fg-muted);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.mdv-unavailable-dot {
+  fill: var(--wmux-fg-muted);
+}
+
+.mdv-unavailable p {
+  color: var(--wmux-fg-muted);
+}
+
+.mdv-unavailable-path {
+  max-width: 100%;
+  padding: var(--wmux-space-1) var(--wmux-space-2);
+  overflow-wrap: anywhere;
+  border-radius: var(--wmux-radius-sm);
+  background-color: var(--wmux-surface);
+  font-family: var(--wmux-font-mono);
+  user-select: all;
+}
+
+/* Document --------------------------------------------------------------- */
+
+.markdown-body {
+  zoom: var(--mdv-zoom, 1);
+  box-sizing: border-box;
+  max-width: var(--mdv-max-width, 980px);
+  margin: 0 auto;
+  padding: 32px 32px 48px;
+  color: var(--wmux-fg);
+  font-family: var(--mdv-font-family, var(--mdv-font-stack));
+  font-size: 16px;
+  line-height: 1.5;
+  overflow-wrap: break-word;
+  user-select: text;
+}
+
+@media (max-width: 767px) {
+  .markdown-body {
+    padding: 16px;
+  }
+}
+
+.markdown-body > :first-child {
+  margin-top: 0 !important;
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
+  margin: 24px 0 16px;
+  font-weight: 600;
+  line-height: 1.25;
+  scroll-margin-top: 16px;
+}
+
+.markdown-body h1,
+.markdown-body h2 {
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--wmux-border);
+}
+
+.markdown-body h1 {
+  font-size: 2em;
+}
+
+.markdown-body h2 {
+  font-size: 1.5em;
+}
+
+.markdown-body h3 {
+  font-size: 1.25em;
+}
+
+.markdown-body h4 {
+  font-size: 1em;
+}
+
+.markdown-body h5 {
+  font-size: 0.875em;
+}
+
+.markdown-body h6 {
+  color: var(--wmux-fg-muted);
+  font-size: 0.85em;
+}
+
+.markdown-body p,
+.markdown-body blockquote,
+.markdown-body ul,
+.markdown-body ol,
+.markdown-body dl,
+.markdown-body table,
+.markdown-body pre,
+.markdown-body details,
+.markdown-body .mdv-code-block,
+.markdown-body .wmux-diagram {
+  margin-top: 0;
+  margin-bottom: 16px;
+}
+
+.markdown-body a {
+  color: var(--wmux-link);
+  text-decoration: none;
+}
+
+.markdown-body a:hover {
+  text-decoration: underline;
+}
+
+.markdown-body ul,
+.markdown-body ol {
+  padding-left: 2em;
+}
+
+.markdown-body li + li {
+  margin-top: 0.25em;
+}
+
+.markdown-body li > ul,
+.markdown-body li > ol {
+  margin-top: 0.25em;
+  margin-bottom: 0;
+}
+
+.markdown-body .contains-task-list {
+  padding-left: 1.5em;
+}
+
+.markdown-body .task-list-item {
+  list-style-type: none;
+}
+
+.markdown-body .task-list-item-checkbox {
+  margin: 0 0.35em 0.25em -1.4em;
+  vertical-align: middle;
+}
+
+.markdown-body blockquote {
+  margin-left: 0;
+  margin-right: 0;
+  padding: 0 1em;
+  border-left: 0.25em solid var(--wmux-border-strong);
+  color: var(--wmux-fg-muted);
+}
+
+.markdown-body hr {
+  height: 0.25em;
+  margin: 24px 0;
+  padding: 0;
+  border: 0;
+  background-color: var(--wmux-border);
+}
+
+.markdown-body table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow: auto;
+  border-collapse: collapse;
+  border-spacing: 0;
+}
+
+.markdown-body th,
+.markdown-body td {
+  padding: 6px 13px;
+  border: 1px solid var(--wmux-border-strong);
+}
+
+.markdown-body th {
+  font-weight: 600;
+}
+
+.markdown-body tr:nth-child(2n) {
+  background-color: var(--wmux-surface);
+}
+
+.markdown-body img {
+  max-width: 100%;
+  box-sizing: content-box;
+}
+
+.markdown-body code,
+.markdown-body kbd,
+.markdown-body pre {
+  font-family: var(--wmux-font-mono);
+}
+
+.markdown-body code {
+  padding: 0.2em 0.4em;
+  border-radius: var(--wmux-radius-sm);
+  background-color: var(--wmux-surface-raised);
+  font-size: 85%;
+  white-space: break-spaces;
+}
+
+.markdown-body pre {
+  padding: 16px;
+  overflow: auto;
+  border-radius: var(--wmux-radius);
+  background-color: var(--wmux-surface);
+  font-size: 85%;
+  line-height: 1.45;
+}
+
+.markdown-body pre code,
+.markdown-body pre code.hljs {
+  display: block;
+  padding: 0;
+  overflow: visible;
+  background: transparent;
+  font-size: 100%;
+  white-space: pre;
+}
+
+.markdown-body code[data-mdv-file-exists="true"] {
+  color: var(--wmux-link);
+  cursor: pointer;
+  text-decoration: underline dotted;
+}
+
+.markdown-body del {
+  color: var(--wmux-fg-muted);
+}
+
+.markdown-body details summary {
+  cursor: pointer;
+}
+
+/* Code blocks: copy button ------------------------------------------------- */
+
+.mdv-code-block {
+  position: relative;
+}
+
+.mdv-code-block > pre {
+  margin-bottom: 0;
+}
+
+.mdv-copy-code {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  min-height: 24px;
+  padding: 0 var(--wmux-space-2);
+  font-size: 12px;
+  opacity: 0;
+  transition: opacity var(--wmux-motion-duration) var(--wmux-motion-easing);
+}
+
+.mdv-code-block:hover .mdv-copy-code,
+.mdv-copy-code:focus-visible,
+.mdv-copy-code[data-label] {
+  opacity: 1;
+}
+
+/* Frontmatter, diagrams, remote images ---------------------------------- */
+
+.wmux-frontmatter {
+  padding: var(--wmux-space-2) var(--wmux-space-3);
+  border: 1px solid var(--wmux-border);
+  border-radius: var(--wmux-radius);
+  background-color: var(--wmux-surface);
+}
+
+.wmux-frontmatter[open] > summary {
+  margin-bottom: var(--wmux-space-2);
+}
+
+.wmux-frontmatter pre {
+  margin: 0;
+  background-color: transparent;
+}
+
+.wmux-diagram {
+  overflow: auto;
+  text-align: center;
+}
+
+.wmux-diagram-output svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.wmux-diagram[data-state="loading"] .wmux-diagram-output {
+  color: var(--wmux-fg-muted);
+}
+
+.wmux-diagram-error {
+  padding: var(--wmux-space-2) var(--wmux-space-3);
+  border: 1px solid var(--wmux-danger);
+  border-radius: var(--wmux-radius);
+  color: var(--wmux-danger);
+  font-family: var(--wmux-font-mono);
+  font-size: 85%;
+  text-align: left;
+  white-space: pre-wrap;
+}
+
+.wmux-remote-image {
+  display: inline-flex;
+  flex-direction: column;
+  gap: var(--wmux-space-1);
+  max-width: 100%;
+  margin: var(--wmux-space-1) 0;
+  padding: var(--wmux-space-2) var(--wmux-space-3);
+  border: 1px dashed var(--wmux-border-strong);
+  border-radius: var(--wmux-radius);
+  background-color: var(--wmux-surface);
+  font-size: 13px;
+  line-height: 1.4;
+  vertical-align: middle;
+}
+
+.wmux-remote-image-body {
+  color: var(--wmux-fg-muted);
+}
+
+.wmux-remote-image-url {
+  overflow-wrap: anywhere;
+}
+
+.wmux-remote-image-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wmux-space-1);
+}
+
+/* Modes ------------------------------------------------------------------- */
+
+html[data-mode="text"] .mdv-viewport {
+  overflow: hidden;
+}
+
+@media print {
+  .mdv-toolbar,
+  .mdv-find,
+  .mdv-popover,
+  .mdv-copy-code {
+    display: none !important;
+  }
+}

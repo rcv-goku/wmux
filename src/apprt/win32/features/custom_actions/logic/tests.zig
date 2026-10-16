@@ -2,4 +2,7 @@
 //! here and name tests "unit: custom_actions: <behavior>". Logic files use only std,
 //! wmux_proto and sibling logic files; they run in `zig build test-fast`.
 
-test {}
+test {
+    _ = @import("actions.zig");
+    _ = @import("trust.zig");
+}
