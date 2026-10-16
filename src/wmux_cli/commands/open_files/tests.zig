@@ -143,6 +143,51 @@ test "unit: cli-open: paths are normalized before they are checked and sent" {
     }
 }
 
+test "unit: cli-open: a relative path missing from the cwd resolves from the git root" {
+    var f: Fixture = undefined;
+    f.init();
+    defer f.deinit();
+    const h = &f.h;
+    const a = h.alloc();
+    // The repository root is the test root; the cwd is root/work.
+    h.addDir(harness.p(a, &.{ harness.root, ".git" }));
+    const in_root = harness.p(a, &.{ harness.root, "src", "main.zig" });
+    h.addFile(in_root, "x");
+    h.addDir(harness.p(a, &.{ harness.root, "docs" }));
+    const rel = harness.p(a, &.{ "src", "main.zig" });
+    try harness.expectOk(h.run(&.{ "cmux", "open", rel }));
+    try testing.expectEqualStrings(in_root, harness.param(h.last(), "paths").?.array.items[0].string);
+    // With a :line:col suffix, and for a directory (a new workspace).
+    try harness.expectOk(h.run(&.{ "cmux", "open", try std.fmt.allocPrint(a, "{s}:4:2", .{rel}) }));
+    try testing.expectEqualStrings(in_root, harness.param(h.last(), "paths").?.array.items[0].string);
+    try testing.expectEqual(@as(i64, 4), harness.param(h.last(), "positions").?.array.items[0].object.get("line").?.integer);
+    try harness.expectOk(h.run(&.{ "cmux", "open", "docs" }));
+    try testing.expectEqualStrings("workspace.create", h.last().method);
+    try testing.expectEqualStrings(harness.p(a, &.{ harness.root, "docs" }), harness.param(h.last(), "cwd").?.string);
+    // Missing in both places: the error names the cwd spelling, nothing opens.
+    const n = h.requestCount();
+    const missing = harness.p(a, &.{ "src", "nope.zig" });
+    try harness.expectFail(h.run(&.{ "cmux", "open", "a.md", missing }), 1, try std.fmt.allocPrint(a, "Path does not exist: {s}\n", .{f.path(missing)}));
+    try testing.expectEqual(n, h.requestCount());
+    // The cwd wins over the repository root.
+    const local = f.path(rel);
+    h.addFile(local, "y");
+    try harness.expectOk(h.run(&.{ "cmux", "open", rel }));
+    try testing.expectEqualStrings(local, harness.param(h.last(), "paths").?.array.items[0].string);
+}
+
+test "unit: cli-open: without a repository a missing relative path fails" {
+    var f: Fixture = undefined;
+    f.init();
+    defer f.deinit();
+    const h = &f.h;
+    const a = h.alloc();
+    // A file at the root, but no .git above the cwd: no fallback.
+    h.addFile(harness.p(a, &.{ harness.root, "top.md" }), "x");
+    try harness.expectFail(h.run(&.{ "cmux", "open", "top.md" }), 1, try std.fmt.allocPrint(a, "Path does not exist: {s}", .{f.path("top.md")}));
+    try testing.expectEqual(@as(usize, 0), h.requestCount());
+}
+
 test "unit: cli-comments: a '..' in --repo resolves before the repository walk" {
     var f: Fixture = undefined;
     f.init();

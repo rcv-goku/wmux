@@ -12,7 +12,9 @@ open in markdown preview tabs; other files open in file preview tabs. Multiple
 files open as tabs in the same target pane.
 
 Paths may start with ~, are relative to the current directory, and may end in
-:line or :line:col. A missing path fails before anything opens.
+:line or :line:col. A relative path that does not exist there is looked up
+from the root of the git repository containing the current directory. A
+missing path fails before anything opens.
 
 Files and web pages take focus only when run interactively; run by an agent
 or script they open in the background. --focus <true|false> and --no-focus

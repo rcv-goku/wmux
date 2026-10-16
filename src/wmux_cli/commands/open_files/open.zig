@@ -3,7 +3,8 @@
 //! workspaces (`workspace.create {cwd}`); `.html`/`.htm` files open as
 //! file:// URLs in browser splits without focus by default; other files are
 //! batched, consecutive files in one `file.open {paths}` so they open as tabs
-//! in the same pane. Every target is checked before the first request, so a
+//! in the same pane. Paths resolve from the cwd, then from the enclosing git
+//! root (`locate`). Every target is checked before the first request, so a
 //! missing path changes nothing. Focus: `--no-focus` wins over `--focus
 //! <true|false>`; otherwise only interactive runs take focus
 //! (focus_default.zig). Starts wmux when needed. (`cmux <path>` without a
@@ -87,6 +88,51 @@ pub fn fileUrl(arena: std.mem.Allocator, path: []const u8) ![]const u8 {
     return aw.written();
 }
 
+pub const Located = struct { path: []const u8, line: ?u32 = null, column: ?u32 = null };
+
+/// The git root of the cwd, looked up once: null until then, then the root
+/// or null when the cwd is not inside a repository.
+const RepoRoot = ??[]const u8;
+
+/// A path that names neither a root nor a drive: `src\a.zig`, `../x`, not
+/// `C:\x`, `\x`, `C:x`, `\\srv\x`, `/x` or `~/x`.
+fn isPlainRelative(p: []const u8) bool {
+    if (p.len == 0 or p[0] == '~' or p[0] == '/' or p[0] == '\\') return false;
+    if (p.len >= 2 and std.ascii.isAlphabetic(p[0]) and p[1] == ':') return false;
+    return !util.isAbsolute(p);
+}
+
+fn repoRootOf(ctx: *Ctx, cache: *RepoRoot) !?[]const u8 {
+    if (cache.*) |known| return known;
+    const cwd = ctx.platform.cwd(ctx.arena);
+    const root: ?[]const u8 = if (cwd) |c| try util.gitRoot(ctx, try std.fs.path.resolve(ctx.arena, &.{c})) else null;
+    cache.* = root;
+    return root;
+}
+
+/// The file or directory `raw` names (panels-open-cli): relative to the cwd
+/// (`~` expanded), then without a `:line[:col]` suffix; a plain relative
+/// path that exists in neither form is tried the same two ways from the
+/// root of the git repository that contains the cwd. Null when none exists.
+pub fn locate(ctx: *Ctx, raw: []const u8, repo_root: *RepoRoot) !?Located {
+    const abs = try util.resolvePath(ctx, raw);
+    if (ctx.platform.pathExists(abs)) return .{ .path = abs };
+    const pos = splitPosition(raw);
+    if (pos) |p| {
+        const stripped = try util.resolvePath(ctx, p.path);
+        if (ctx.platform.pathExists(stripped)) return .{ .path = stripped, .line = p.line, .column = p.column };
+    }
+    if (!isPlainRelative(raw)) return null;
+    const root = (try repoRootOf(ctx, repo_root)) orelse return null;
+    const in_root = try std.fs.path.resolve(ctx.arena, &.{ root, raw });
+    if (ctx.platform.pathExists(in_root)) return .{ .path = in_root };
+    if (pos) |p| {
+        const stripped = try std.fs.path.resolve(ctx.arena, &.{ root, p.path });
+        if (ctx.platform.pathExists(stripped)) return .{ .path = stripped, .line = p.line, .column = p.column };
+    }
+    return null;
+}
+
 fn run(ctx: *Ctx) !u8 {
     const flags = (try util.flagsOrFail(ctx, "open", usage, ctx.args(), &flag_specs)) orelse return output.exit.usage;
     var raw: std.ArrayList([]const u8) = .empty;
@@ -98,24 +144,16 @@ fn run(ctx: *Ctx) !u8 {
 
     // Resolve and check every target first.
     var items: std.ArrayList(Item) = .empty;
+    var repo_root: RepoRoot = null;
     for (raw.items) |r| {
         if (isWebUrl(r)) {
             try items.append(ctx.arena, .{ .kind = .url, .raw = r, .value = r });
             continue;
         }
-        var abs = try util.resolvePath(ctx, r);
-        var line: ?u32 = null;
-        var column: ?u32 = null;
-        if (!ctx.platform.pathExists(abs)) {
-            const pos = splitPosition(r) orelse return ctx.runtimeError("Path does not exist: {s}", .{abs});
-            const stripped = try util.resolvePath(ctx, pos.path);
-            if (!ctx.platform.pathExists(stripped)) return ctx.runtimeError("Path does not exist: {s}", .{abs});
-            abs = stripped;
-            line = pos.line;
-            column = pos.column;
-        }
-        const kind: Kind = if (util.fs.isDir(abs)) .workspace else if (isHtml(abs)) .html else .file;
-        try items.append(ctx.arena, .{ .kind = kind, .raw = r, .value = abs, .line = line, .column = column });
+        const found = (try locate(ctx, r, &repo_root)) orelse
+            return ctx.runtimeError("Path does not exist: {s}", .{try util.resolvePath(ctx, r)});
+        const kind: Kind = if (util.fs.isDir(found.path)) .workspace else if (isHtml(found.path)) .html else .file;
+        try items.append(ctx.arena, .{ .kind = kind, .raw = r, .value = found.path, .line = found.line, .column = found.column });
     }
 
     const default_focus = focus_default.defaultFocus(ctx.platform.isInteractive(), ctx.env, ctx.env_names);
