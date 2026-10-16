@@ -174,7 +174,7 @@ export function applyMove(items, from, to) {
 /**
  * Storage index for dropping the item `fromId` before (`after = false`) or
  * after the item `targetId`; null when the drop is not allowed (other
- * completion group, unknown ids) or changes nothing.
+ * completion group, unknown ids) or changes nothing the pane shows.
  */
 export function dropTarget(items, fromId, targetId, after) {
   const from = items.findIndex((it) => it.id === fromId);
@@ -184,7 +184,15 @@ export function dropTarget(items, fromId, targetId, after) {
   let dest = after ? target + 1 : target;
   if (dest > from) dest -= 1;
   dest = clampMove(items, from, dest);
-  return dest === from ? null : dest;
+  if (dest === from) return null;
+  // Completed items stay where they are in storage, so they can sit between
+  // two open ones. Dropping an item right next to its neighbour then picks a
+  // new storage index without changing the order the pane shows; skip it, as
+  // it would only renumber the items in `todo list`.
+  const shown = (list) => displayOrder(list).map((i) => list[i].id);
+  const before = shown(items);
+  const moved = shown(applyMove(items, from, dest));
+  return moved.every((id, i) => id === before[i]) ? null : dest;
 }
 
 /**

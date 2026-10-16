@@ -131,6 +131,30 @@ describe("unit: todo model", () => {
     assert.equal(m.dropTarget(items, "nope", "1", false), null);
   });
 
+  test("unit: todo: a drop that keeps the shown order is skipped when completed items sit between", () => {
+    // Storage 1(p) 2(c) 3(p): the pane shows 1, 3 | 2. Dropping 1 just before
+    // 3 (or 3 just after 1) shows the same order; moving would only renumber
+    // `todo list` (2 would become item 1).
+    const items = [it("1"), it("2", "completed"), it("3")];
+    assert.equal(m.dropTarget(items, "1", "3", false), null);
+    assert.equal(m.dropTarget(items, "3", "1", true), null);
+    // Real reorders across the completed item still go through.
+    assert.equal(m.dropTarget(items, "1", "3", true), 2);
+    assert.equal(m.dropTarget(items, "3", "1", false), 0);
+    // X(c) a(p) Y(c) b(p): a before b and b after a change nothing visible.
+    const mixed = [it("X", "completed"), it("a"), it("Y", "completed"), it("b")];
+    assert.equal(m.dropTarget(mixed, "a", "b", false), null);
+    assert.equal(m.dropTarget(mixed, "b", "a", true), null);
+    assert.equal(m.dropTarget(mixed, "Y", "X", true), null);
+    const dest = m.dropTarget(mixed, "b", "a", false);
+    assert.equal(dest, 1);
+    const moved = m.applyMove(mixed, 3, dest);
+    assert.deepEqual(
+      m.displayOrder(moved).map((i) => moved[i].id),
+      ["b", "a", "X", "Y"],
+    );
+  });
+
   test("unit: todo: Alt+arrow steps stop at the group boundary", () => {
     const items = [it("a"), it("b", "completed"), it("c")];
     assert.equal(m.stepTarget(items, "c", -1), 0);

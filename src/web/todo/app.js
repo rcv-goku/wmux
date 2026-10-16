@@ -198,6 +198,9 @@ export function createApp(options) {
     li.classList.toggle("is-in-progress", item.state === "in-progress");
     li.classList.toggle("is-highlighted", state.highlightId === item.id);
     li.setAttribute("aria-selected", state.highlightId === item.id ? "true" : "false");
+    // The row is what the keyboard moves over (aria-activedescendant); its
+    // checkbox is out of the Tab order, so the option itself carries the state.
+    li.setAttribute("aria-checked", done ? "true" : "false");
 
     const box = doc.createElement("input");
     box.type = "checkbox";
@@ -805,6 +808,21 @@ export function createApp(options) {
   }
 
   function onAddKey(e) {
+    // The add row stays armed (focused) after open and after each add, yet
+    // Up/Down still move the list highlight there, so "Down, then Ctrl+Enter"
+    // completes an item without leaving the field.
+    if (
+      (e.key === "ArrowDown" || e.key === "ArrowUp") &&
+      !e.isComposing &&
+      !e.ctrlKey &&
+      !e.altKey &&
+      !e.metaKey &&
+      !e.shiftKey
+    ) {
+      e.preventDefault();
+      moveHighlight(e.key === "ArrowDown" ? 1 : -1);
+      return;
+    }
     if (e.key !== "Enter" || e.isComposing || e.ctrlKey || e.altKey || e.metaKey) return;
     e.preventDefault();
     const value = ui.addInput.value;

@@ -257,6 +257,39 @@ describe("unit: todo pane interaction", () => {
     assert.equal(app.highlightId, rows().at(-1).dataset.id);
   });
 
+  test("unit: todo: Down in the armed add row, then Ctrl+Enter, completes the highlighted item", async () => {
+    await startApp({ items: [item("a"), item("b"), item("done", { state: "completed" })] });
+    const input = $("todo-add-input");
+    assert.equal(doc.activeElement, input, "the add row is armed after open");
+    input.value = "half typed";
+    // Shift+Down selects text, and a key inside an IME composition stays there.
+    key(window, input, { key: "ArrowDown", shiftKey: true });
+    key(window, input, { key: "ArrowDown", isComposing: true });
+    assert.equal(app.highlightId, null);
+    const down = key(window, input, { key: "ArrowDown" });
+    assert.equal(down.defaultPrevented, true);
+    assert.equal(app.highlightId, store.items[0].id);
+    assert.equal(doc.activeElement, input, "focus stays in the add row");
+    key(window, input, { key: "Enter", ctrlKey: true });
+    await settle();
+    assert.deepEqual(host.calls("workspace.todo.set_state")[0].params, {
+      workspace_id: WS,
+      item: store.items[0].id,
+      state: "completed",
+    });
+    assert.deepEqual(texts(), ["b", "a", "done"]);
+    assert.equal(doc.activeElement, input);
+    assert.equal(input.value, "half typed", "the draft in the add row is kept");
+    assert.equal(host.calls("workspace.todo.add").length, 0);
+    // The highlight followed "a" to the completed group; Up moves it back to "b".
+    key(window, input, { key: "ArrowUp" });
+    assert.equal(app.highlightId, store.items[1].id);
+    // Up with nothing highlighted starts from the bottom row.
+    await startApp({ items: [item("x"), item("y")] });
+    key(window, $("todo-add-input"), { key: "ArrowUp" });
+    assert.equal(app.highlightId, store.items[1].id);
+  });
+
   test("unit: todo: native command events toggle like the shortcut", async () => {
     await startApp({ items: [item("a")] });
     host.emit("panel.todo.command", { action: "toggleChecklistItemComplete" });
@@ -272,12 +305,16 @@ describe("unit: todo pane interaction", () => {
     await startApp({ items: [item("a", { state: "in-progress" })] });
     assert.ok(rows()[0].querySelector(".todo-badge-progress"));
     assert.equal(rows()[0].querySelector(".todo-check").indeterminate, true);
+    // The option (what the keyboard moves over) tells screen readers if it is done.
+    assert.equal(rows()[0].getAttribute("aria-checked"), "false");
     click(window, rows()[0].querySelector(".todo-check"));
     await settle();
     assert.equal(store.items[0].state, "completed");
+    assert.equal(rows()[0].getAttribute("aria-checked"), "true");
     click(window, rows()[0].querySelector(".todo-check"));
     await settle();
     assert.equal(store.items[0].state, "pending");
+    assert.equal(rows()[0].getAttribute("aria-checked"), "false");
   });
 
   test("unit: todo: focus stays on the list when a re-render removes the focused child", async () => {

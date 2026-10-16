@@ -41,7 +41,9 @@ No vendored libraries: the page has no HTML sinks (all text goes through
   -> `completed`.
 - Reorder: drag and drop or Alt+Up / Alt+Down (wmux addition for keyboard
   users) only within the item's completion group, clamped like
-  `Checklist.move`.
+  `Checklist.move`. A drop that leaves the shown order unchanged sends
+  nothing (with completed items between open ones in storage it would only
+  renumber `todo list`).
 
 ## Native contract
 
@@ -118,9 +120,11 @@ Payloads whose `workspace_id` names another workspace are ignored.
 - **Keyboard** (list focused, not editing): Up/Down move the highlight
   (clamped), Home/End jump, Return toggles (Return on a row's paperclip button
   opens its menu instead), F2 edits, Shift+F10 or the menu key opens the
-  context menu, Alt+Up/Down reorder. `toggleChecklistItemComplete`
+  context menu, Alt+Up/Down reorder. Up/Down in the add row move the
+  highlight too, and focus stays in the add row. `toggleChecklistItemComplete`
   (Ctrl+Enter) toggles the highlighted item, also from the add row. While
-  editing it commits first, then toggles the edited item.
+  editing it commits first, then toggles the edited item. Rows carry
+  `aria-checked` (completed or not) for screen readers.
 - **Mouse**: click selects, clicking the selected item starts editing, and
   clicking while editing focuses the editor. Return commits, Escape discards,
   and leaving the pane commits. Clicking another item commits the edit and
