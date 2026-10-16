@@ -10,7 +10,9 @@
 //!   call including retries.
 //! - Retries: `overloaded` (reconnect, any method) and `rate_limited`
 //!   (polling methods), honoring `data.retry_after_ms`; `timeout` only when
-//!   `data.retryable` is true.
+//!   `data.retryable` is true. An error reply with `"id": null` (sent before
+//!   the server read the request, e.g. an admission `overloaded`) answers the
+//!   pending request; any other id mismatch is an error.
 //! - `CMUX_SOCKET_CAPABILITY`/`WMUX_SOCKET_CAPABILITY` prefix every line
 //!   with `_cmux_capability_v1 <token> `.
 //! - Password mode: on `auth_required` the client sends `auth.login
@@ -246,6 +248,15 @@ pub const Client = struct {
         aw.writer.writeByte('\n') catch return error.OutOfMemory;
 
         conn.write(aw.written(), @max(1, self.remaining(deadline))) catch |err| {
+            // A server that refuses the connection at admission (ADR-3.3
+            // `overloaded`) may answer and close before the request goes
+            // out; what it wrote is still the reply.
+            if (err == error.Closed) {
+                switch (try self.readLine(arena, method, deadline)) {
+                    .line => |l| return self.decode(arena, &id, l),
+                    .failure => {},
+                }
+            }
             self.disconnect();
             return .{ .failure = .{
                 .kind = if (err == error.Timeout) .timeout else .closed,
@@ -261,6 +272,11 @@ pub const Client = struct {
             .line => |l| l,
             .failure => |f| return .{ .failure = f },
         };
+        return self.decode(arena, &id, line);
+    }
+
+    /// Classifies one reply line received for the request `id`.
+    fn decode(self: *Client, arena: Allocator, id: []const u8, line: []const u8) Allocator.Error!Outcome {
         if (envelope.isTextError(line)) return .{ .failure = .{ .kind = .text_error, .message = line } };
         const reply = envelope.parseReply(arena, line) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
@@ -269,10 +285,17 @@ pub const Client = struct {
                 .message = try std.fmt.allocPrint(arena, "invalid response from {s}: not a v2 JSON reply", .{self.opts.path}),
             } },
         };
-        if (!envelope.idMatches(&id, reply.id)) {
-            // A stray reply means the stream is out of step; start over next time.
-            self.disconnect();
-            return .{ .failure = .{ .kind = .mismatched_id, .message = errors.msg.mismatched_response_id } };
+        if (!envelope.idMatches(id, reply.id)) {
+            // Errors sent before the server read a request (admission
+            // `overloaded`, pre-dispatch rejections) carry `"id": null`. A
+            // connection serves one request at a time, so such an error
+            // answers this request. Anything else is a stray reply: the
+            // stream is out of step; start over next time.
+            const unattributed_error = !reply.ok and reply.id == .null;
+            if (!unattributed_error) {
+                self.disconnect();
+                return .{ .failure = .{ .kind = .mismatched_id, .message = errors.msg.mismatched_response_id } };
+            }
         }
         if (reply.ok) return .{ .ok = .{ .result = reply.result, .raw = line } };
         return .{ .rpc_error = .{ .err = reply.err.?, .raw = line } };
@@ -573,6 +596,97 @@ test "unit: cli-client: retries stop at the response deadline" {
     const out = try c.call(h.arena_state.allocator(), "system.ping", null, .{});
     try testing.expectEqualStrings("overloaded", out.rpc_error.err.code);
     try testing.expectEqual(@as(u64, 0), h.fp.slept_ms);
+}
+
+const admission_overloaded =
+    \\{"id":null,"ok":false,"error":{"code":"overloaded","message":"Server overloaded","data":{"retryable":true,"retry_after_ms":120,"reason":"preauthorization_saturated"}}}
+;
+
+test "unit: cli-client: an admission rejection sent before the request is read is retried" {
+    var h: Harness = undefined;
+    try h.init();
+    defer h.deinit();
+    // The server answers `overloaded` with a null id and closes before the
+    // request goes out, so the client's write fails on a closed pipe.
+    h.server.reject_connections = 1;
+    h.server.reject_line = admission_overloaded;
+    var c = h.client(.{ .path = "" });
+    defer c.deinit();
+    const out = try c.call(h.arena_state.allocator(), "system.ping", null, .{});
+    try testing.expect(out.ok.result.object.get("pong").?.bool);
+    try testing.expectEqual(@as(usize, 2), h.server.connections);
+    try testing.expectEqual(@as(u64, 120), h.fp.slept_ms);
+    // Only the second connection delivered a request.
+    try testing.expectEqual(@as(usize, 1), h.server.requests.items.len);
+}
+
+test "unit: cli-client: an admission rejection that never clears ends at the deadline" {
+    var h: Harness = undefined;
+    try h.init();
+    defer h.deinit();
+    h.server.reject_connections = std.math.maxInt(usize);
+    h.server.reject_line = admission_overloaded;
+    var c = h.client(.{ .path = "", .response_timeout_ms = 1000 });
+    defer c.deinit();
+    const out = try c.call(h.arena_state.allocator(), "system.ping", null, .{});
+    try testing.expectEqualStrings("overloaded", out.rpc_error.err.code);
+    try testing.expectEqualStrings("preauthorization_saturated", out.rpc_error.err.data.?.object.get("reason").?.string);
+    try testing.expect(h.fp.slept_ms < 1000);
+    try testing.expectEqual(@as(usize, 0), h.server.requests.items.len);
+}
+
+test "unit: cli-client: a pipe closed before the request with nothing to read is a send failure" {
+    var h: Harness = undefined;
+    try h.init();
+    defer h.deinit();
+    h.server.reject_connections = 1;
+    var c = h.client(.{ .path = "" });
+    defer c.deinit();
+    const out = try c.call(h.arena_state.allocator(), "system.ping", null, .{});
+    try testing.expectEqual(Failure.Kind.closed, out.failure.kind);
+    try testing.expectEqualStrings("cannot send system.ping to \\\\.\\pipe\\wmux-test-0123abcd-s1: connection closed", out.failure.message);
+}
+
+fn nullIdErrorHandler(_: *fake.Server, _: fake.Request) fake.Action {
+    return .{ .raw = "{\"id\":null,\"ok\":false,\"error\":{\"code\":\"parse_error\",\"message\":\"Invalid JSON\"}}" };
+}
+
+fn absentIdErrorHandler(_: *fake.Server, _: fake.Request) fake.Action {
+    return .{ .raw = "{\"ok\":false,\"error\":{\"code\":\"invalid_request\",\"message\":\"Expected JSON object\"}}" };
+}
+
+fn nullIdOkHandler(_: *fake.Server, _: fake.Request) fake.Action {
+    return .{ .raw = "{\"id\":null,\"ok\":true,\"result\":{\"pong\":true}}" };
+}
+
+fn otherIdErrorHandler(_: *fake.Server, _: fake.Request) fake.Action {
+    return .{ .raw = "{\"id\":\"00000000-0000-4000-8000-000000000000\",\"ok\":false,\"error\":{\"code\":\"not_found\",\"message\":\"m\"}}" };
+}
+
+test "unit: cli-client: only an error without an id may answer the pending request" {
+    const cases = [_]struct { fake.Handler, ?[]const u8 }{
+        .{ nullIdErrorHandler, "parse_error" },
+        .{ absentIdErrorHandler, "invalid_request" },
+        .{ nullIdOkHandler, null },
+        .{ otherIdErrorHandler, null },
+    };
+    for (cases) |cs| {
+        var h: Harness = undefined;
+        try h.init();
+        defer h.deinit();
+        h.server.handler = cs[0];
+        var c = h.client(.{ .path = "" });
+        defer c.deinit();
+        const out = try c.call(h.arena_state.allocator(), "system.ping", null, .{});
+        if (cs[1]) |code| {
+            try testing.expectEqualStrings(code, out.rpc_error.err.code);
+            // The connection stays usable after an unattributed error.
+            try testing.expect(c.conn != null);
+        } else {
+            try testing.expectEqual(Failure.Kind.mismatched_id, out.failure.kind);
+            try testing.expect(c.conn == null);
+        }
+    }
 }
 
 test "unit: cli-client: rate_limited retries only polling methods" {

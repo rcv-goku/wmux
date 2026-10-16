@@ -52,18 +52,31 @@ pub const Server = struct {
     requests: std.ArrayList(Request) = .empty,
     clock: ?*i64 = null,
     connections: usize = 0,
+    /// The next `reject_connections` connections are refused at admission
+    /// (ADR-3.3): `reject_line`, when not empty, is queued and the pipe is
+    /// closed before any request is read, so the client's write fails.
+    reject_connections: usize = 0,
+    reject_line: []const u8 = "",
 
     pub fn init(a: Allocator) Server {
         return .{ .a = a };
     }
 
-    fn reset(self: *Server) void {
+    fn reset(self: *Server) Allocator.Error!void {
         self.inbox.clearRetainingCapacity();
         self.outbox.clearRetainingCapacity();
         self.out_pos = 0;
         self.closed = false;
         self.stalled = false;
         self.connections += 1;
+        if (self.reject_connections > 0) {
+            self.reject_connections -= 1;
+            if (self.reject_line.len > 0) {
+                try self.outbox.appendSlice(self.a, self.reject_line);
+                try self.outbox.append(self.a, '\n');
+            }
+            self.closed = true;
+        }
     }
 
     pub fn transport(self: *Server) platform_mod.Transport {
@@ -270,7 +283,7 @@ pub const Platform = struct {
         for (self.failures.items) |f| if (same(f.path, path)) return f.err;
         for (self.servers.items) |e| {
             if (same(e.path, path) and self.clock >= e.available_at) {
-                e.server.reset();
+                e.server.reset() catch return error.OutOfMemory;
                 return e.server.transport();
             }
         }

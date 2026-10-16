@@ -495,6 +495,23 @@ test "unit: cli-roundtrip: ping prints PONG and --json the result" {
     try testing.expectEqualStrings(j1.out, j2.out);
 }
 
+test "unit: cli-roundtrip: ping survives an admission rejection of the discovered connection" {
+    var h: Harness = undefined;
+    var server: fake.Server = undefined;
+    try liveHarness(&h, &server);
+    defer h.deinit();
+    // Discovery's probe connection is refused at admission (null id, pipe
+    // closed before the request); the client retries on a new connection.
+    server.reject_connections = 1;
+    server.reject_line = "{\"id\":null,\"ok\":false,\"error\":{\"code\":\"overloaded\",\"message\":\"Server overloaded\",\"data\":{\"retryable\":true,\"retry_after_ms\":50,\"reason\":\"pool_saturated\"}}}";
+    const r = h.run(&.{ "cmux", "ping" });
+    try testing.expectEqual(@as(u8, 0), r.code);
+    try testing.expectEqualStrings("PONG\n", r.out);
+    try testing.expectEqualStrings("", r.err);
+    try testing.expectEqual(@as(usize, 2), server.connections);
+    try testing.expectEqual(@as(u64, 50), h.fp.slept_ms);
+}
+
 test "unit: cli-roundtrip: capability prefix comes from the environment" {
     var h: Harness = undefined;
     var server: fake.Server = undefined;
