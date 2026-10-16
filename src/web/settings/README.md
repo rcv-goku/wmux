@@ -130,6 +130,8 @@ panel-only.
   title and keywords (`scrollback` finds the Terminal rows). Results are
   grouped by section with `<mark>` highlights; the nav shows match counts and
   dims sections without matches. Ctrl+F focuses the field, Escape clears it.
+  A nav click, a result's section link or `wmux.settings.navigate` ends the
+  search and shows the section.
 - **Shortcuts.** Click a binding to record one stroke. Escape, a click or
   focus move outside the button, leaving the window or a re-render (deep
   link, schema change) cancels; a recorder never keeps capturing keys for a

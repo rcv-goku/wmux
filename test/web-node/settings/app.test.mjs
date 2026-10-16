@@ -57,6 +57,23 @@ describe("unit: persistence-settings-window: navigation", () => {
     assert.equal(sectionShown(), "globalHotkey");
   });
 
+  test("unit: persistence-settings-window: a deep link while searching shows the section", async () => {
+    const { app } = await startSettings();
+    edit($("#set-search"), "scroll");
+    assert.ok($(".set-search-results"));
+    host.emit("wmux.settings.navigate", { target: "shortcuts" });
+    assert.equal(sectionShown(), "keyboardShortcuts");
+    assert.equal(navCurrent(), "keyboardShortcuts");
+    assert.equal($(".set-search-results"), null);
+    assert.equal($("#set-search").value, "");
+    assert.equal(app.state.query, "");
+    // An unknown target keeps the search (nothing to show instead).
+    edit($("#set-search"), "scroll");
+    host.emit("wmux.settings.navigate", { target: "account" });
+    assert.ok($(".set-search-results"));
+    assert.equal(app.state.query, "scroll");
+  });
+
   test("unit: persistence-settings-window: arrow keys move through the nav", async () => {
     await startSettings();
     const items = $$(".set-nav-item");

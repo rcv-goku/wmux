@@ -441,13 +441,7 @@ export function createApp(options) {
       if (tokens.length && count > 0) button.append(el(doc, "span", { class: "set-nav-count", text: String(count) }));
       if (tokens.length === 0 && id === state.section) button.setAttribute("aria-current", "page");
       button.classList.toggle("set-nav-dim", !hit);
-      button.addEventListener("click", () => {
-        if (state.query) {
-          state.query = "";
-          els.search.value = "";
-        }
-        navigate(id);
-      });
+      button.addEventListener("click", () => navigate(id));
       els.navList.append(el(doc, "li", null, [button]));
     }
   }
@@ -604,8 +598,6 @@ export function createApp(options) {
       const link = el(doc, "button", { type: "button", class: "wmux-link set-result-section" });
       appendHighlighted(doc, link, sectionTitle(id), tokens);
       link.addEventListener("click", () => {
-        state.query = "";
-        els.search.value = "";
         navigate(id);
         // The link is gone after the re-render: continue at the section heading.
         const title = doc.getElementById("set-section-title");
@@ -640,7 +632,11 @@ export function createApp(options) {
     }
   }
 
-  /** Show a section (raw id or CLI alias). Returns the section id shown. */
+  /**
+   * Show a section (raw id or CLI alias). Returns the section id shown. A
+   * search in progress ends: a nav click, a result link or a deep link
+   * (`wmux settings <target>`) always lands on the section itself.
+   */
   function navigate(target) {
     const id = resolveTarget(target) || (sectionList().includes(target) ? target : null);
     if (!id) {
@@ -650,6 +646,10 @@ export function createApp(options) {
       return state.section;
     }
     state.section = id;
+    if (state.query) {
+      state.query = "";
+      els.search.value = "";
+    }
     shortcuts.stopRecording();
     render();
     if (els.main && typeof els.main.scrollTo === "function") els.main.scrollTo(0, 0);
