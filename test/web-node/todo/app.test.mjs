@@ -2,7 +2,9 @@
 // mock host that implements workspace.todo.* like the native checklist.
 import { test, describe, afterEach, after } from "node:test";
 import assert from "node:assert/strict";
-import { setupPage, hostError, settle, key, click, mouse, cspOf } from "./harness.mjs";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { setupPage, hostError, settle, key, click, mouse, cspOf, web } from "./harness.mjs";
 
 const page = await setupPage("todo");
 const { window, doc, host, importWeb, pristineBody } = page;
@@ -179,6 +181,16 @@ describe("unit: todo pane basics", () => {
     await settle();
     assert.equal(host.calls("panel.todo.open_status").length, 1);
     assert.equal(host.calls("panel.todo.open_status")[0].params.workspace_id, WS);
+  });
+
+  test("unit: todo: the focused list shows a focus ring while nothing is highlighted", () => {
+    // jsdom computes neither :focus-visible nor :has(), so this pins the rule;
+    // the ring itself was checked in headless Edge (the WebView2 engine).
+    const css = readFileSync(path.join(web, "todo/todo.css"), "utf8");
+    const start = css.indexOf(".todo-list:focus-visible:not(:has(.todo-item.is-highlighted)) {");
+    assert.ok(start >= 0, "todo.css rings the list itself before a row is highlighted");
+    const body = css.slice(start, css.indexOf("}", start));
+    assert.match(body, /outline:\s*var\(--wmux-focus-ring-width\) solid var\(--wmux-focus-ring\)/);
   });
 
   test("unit: todo: item text is rendered as text, never as markup", async () => {

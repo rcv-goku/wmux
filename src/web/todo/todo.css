@@ -119,6 +119,12 @@ body {
   outline-offset: calc(-1 * var(--wmux-focus-ring-width));
 }
 
+/* Tabbing into the list before anything is highlighted: ring the list itself. */
+.todo-list:focus-visible:not(:has(.todo-item.is-highlighted)) {
+  outline: var(--wmux-focus-ring-width) solid var(--wmux-focus-ring);
+  outline-offset: calc(-1 * var(--wmux-focus-ring-width));
+}
+
 .todo-item.is-completed .todo-text {
   color: var(--wmux-fg-muted);
   text-decoration: line-through;
