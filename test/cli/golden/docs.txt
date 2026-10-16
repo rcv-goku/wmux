@@ -1,0 +1,12 @@
+Usage: cmux docs [settings|shortcuts|api|browser|capture|agents|workflows|dock|managed-policies]
+
+Topics:
+  settings          Settings in wmux.json, its schema and the config files
+  shortcuts         Keyboard shortcuts, presets and rebinding
+  api               The v2 control-pipe protocol and the CLI contract
+  browser           Built-in browser panes and browser automation
+  capture           Screenshot or record a cmux window
+  agents            Agent hooks, sessions, resume and team launchers
+  workflows         Saved layouts and workflow examples
+  dock              Custom right-sidebar terminal controls
+  managed-policies  Group Policy settings under HKLM/HKCU\Software\Policies\wmux

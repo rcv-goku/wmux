@@ -1,0 +1,8 @@
+Usage: cmux socket-status [--json]
+
+Print the effective control-pipe access mode and where it comes from
+(settings files, environment overrides, managed policy) without connecting.
+Works when the app is not running or the listener is off.
+
+--json adds the configured mode, policy details and whether the control pipe
+currently exists. live_enforcement is always "not_observed".

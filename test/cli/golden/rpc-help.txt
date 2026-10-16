@@ -1,0 +1,14 @@
+Usage: cmux rpc <method> [json-params]
+
+Call a raw v2 method with an optional JSON object for params. Pass - to read
+the params from stdin, which keeps secrets out of argv. Without params, {} is
+sent.
+
+The result prints as JSON, untouched unless --id-format is given. Errors
+print <code>: <message> and exit 1. The global --window is added as
+window_id for surface.read_selection when the params lack one.
+
+Examples:
+  cmux rpc system.ping
+  cmux rpc surface.list '{"workspace_id":"workspace:1"}'
+  echo {"workspace_id":"workspace:1"} | cmux rpc surface.list -

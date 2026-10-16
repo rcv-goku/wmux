@@ -1,0 +1,25 @@
+Customize:
+  set-status <key> <text> [--icon <name>] [--color <hex>]
+                                              Set a sidebar status pill
+  clear-status <key>                          Remove a sidebar status pill
+  list-status                                 List sidebar status pills
+  set-progress <0..1> [--label <text>]        Set sidebar progress
+  clear-progress                              Clear sidebar progress
+  log [--level <level>] <message>             Append a sidebar log entry
+  clear-log                                   Clear sidebar log entries
+  list-log                                    List sidebar log entries
+  sidebar-state                               Dump sidebar metadata
+  pr <url|number|clear> [--workspace <id|ref|index>]
+                                              Attach or clear a pull-request link
+  right-sidebar <command> [flags]             Control the right sidebar
+  config <doctor|check|validate|path|docs|reload|get|set|unset|toggle|cycle|preset>
+                                              Validate, read or change wmux.json (mostly offline)
+  reload-config                               Ask wmux to reload its configuration
+  themes [list|set <name>|clear]              List, set or clear Ghostty themes
+  settings [open [target]|path|docs|<target>]
+                                              Open Settings or print config paths
+  shortcuts                                   Open Settings at Keyboard Shortcuts
+  import [terminal] [--dry-run] [--path <file>] [--yes] [--json]
+                                              Import another terminal's appearance
+  canvas <info|mode|set-frame|align|reveal|overview|zoom|join|break|select-tab|set-viewport|new-pane>
+                                              Canvas layout commands

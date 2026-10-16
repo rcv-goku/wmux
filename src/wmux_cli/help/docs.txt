@@ -1,0 +1,4 @@
+Usage: cmux docs [settings|shortcuts|api|browser|capture|agents|workflows|dock|managed-policies]
+
+Print documentation pointers, config file locations and useful commands for
+a topic. Without a topic, list the topics. Works without the app.

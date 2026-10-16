@@ -1,0 +1,7 @@
+Usage: cmux ping
+
+Check connectivity to the cmux socket server.
+
+Prints PONG when the app answers system.ping. When no app is reachable it
+prints the discovery or connection error and exits 1. --json prints the raw
+result instead.

@@ -1,0 +1,10 @@
+Automation:
+  events [options]                            Stream events as newline-delimited JSON
+  layout <save|list|get|open|delete> [args]   Saved workspace layouts
+  todo <add|list|check|uncheck|start|edit|rm|clear|set|open> [args]
+                                              Per-workspace checklist
+  feed tui [--opentui|--legacy]               Feed TUI and history (also: feed clear)
+  vault <sessions|search|checkpoints|checkpoint|fork> [options]
+                                              Agent session index
+  automation <list|show|test|enable|disable|logs|reload> [args]
+                                              Config-backed event rules

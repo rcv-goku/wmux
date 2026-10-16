@@ -1,0 +1,13 @@
+Inspect:
+  identify                                    Print server identity and caller context
+  tree [--all] [--json]                       Print the window, workspace, pane and surface tree
+  top [--json]                                Process and resource usage per object
+  memory [--json]                             App memory versus terminal child memory
+  diff [<patch>|-] [--source ...] [--json]    Open a diff viewer panel
+  comments list [--repo <path>] [--all] [--json]
+                                              List saved diff review comments
+  review list [--repo <path>] [--json]        Read local review receipts (show, findings)
+  current [--limit <1...200>] [--json]        Print current-work facts
+  find-window <text>                          Find a window by title or content
+  shot [flags]                                Screenshot a wmux window (alias: screenshot)
+  record [start] [flags]                      Record a wmux window (stop, status, note, list)
