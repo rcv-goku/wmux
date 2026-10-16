@@ -279,13 +279,39 @@ test "unit: cli-notify: focus-intent commands grant the foreground only to inter
     defer h.deinit();
     h.fp.interactive = true;
     _ = h.run(&.{ "cmux", "jump-to-unread" });
-    try testing.expectEqualStrings("{\"foreground_grant\":true}", params(&h));
+    try testing.expectEqualStrings("{\"focus\":true,\"foreground_grant\":true}", params(&h));
     try testing.expectEqual(@as(usize, 1), h.fp.foreground_grants.items.len);
     try testing.expectEqual(@as(u32, 4242), h.fp.foreground_grants.items[0]);
     h.setEnv("CLAUDECODE", "1");
     _ = h.run(&.{ "cmux", "jump-to-unread" });
     try testing.expectEqualStrings("{}", params(&h));
     try testing.expectEqual(@as(usize, 1), h.fp.foreground_grants.items.len);
+}
+
+test "unit: cli-notify: focus-intent commands grant the foreground through an explicit pipe" {
+    // Inside wmux terminals CMUX_SOCKET_PATH names the pipe, so discovery
+    // does not open it; the grant must still reach the server.
+    var h: Harness = undefined;
+    try h.init(notifyHandler);
+    defer h.deinit();
+    h.fp.interactive = true;
+    const pipe = h.control();
+    try kit.expectResult(h.run(&.{ "cmux", "--socket", pipe, "open-notification", "--id", nid }), 0, "OK workspace:1 surface:2\n", "");
+    try testing.expectEqualStrings("{\"id\":\"" ++ nid ++ "\",\"focus\":true,\"foreground_grant\":true}", params(&h));
+    try testing.expectEqualSlices(u32, &.{4242}, h.fp.foreground_grants.items);
+    // One connection carries the grant and the request.
+    try testing.expectEqual(@as(usize, 1), h.fp.connects);
+    h.setEnv("CMUX_SOCKET_PATH", pipe);
+    _ = h.run(&.{ "cmux", "jump-to-last-prompt" });
+    try testing.expectEqualStrings("{\"focus\":true,\"foreground_grant\":true}", params(&h));
+    _ = h.run(&.{ "cmux", "jump-to-unread" });
+    try testing.expectEqualStrings("{\"focus\":true,\"foreground_grant\":true}", params(&h));
+    try testing.expectEqual(@as(usize, 3), h.fp.foreground_grants.items.len);
+    try testing.expectEqual(@as(usize, 3), h.fp.connects);
+    // A pipe that cannot be opened is reported by the request, once.
+    const r = h.run(&.{ "cmux", "--socket", "wmux-missing", "jump-to-unread" });
+    try kit.expectResult(r, 1, "", "cannot connect to \\\\.\\pipe\\wmux-missing: no such pipe (is wmux running?)\n");
+    try testing.expectEqual(@as(usize, 3), h.fp.foreground_grants.items.len);
 }
 
 test "unit: cli-notify: an interactive focus command reports a missing app once" {
