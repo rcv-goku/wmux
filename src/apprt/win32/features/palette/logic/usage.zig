@@ -467,6 +467,22 @@ test "unit: palette: usage parse caps huge files" {
     try testing.expect(s.get("cmd.549") != null);
 }
 
+fn loadRecordSave(gpa: Allocator, text: []const u8) !void {
+    var s = try Store.parse(gpa, text, t0);
+    defer s.deinit(gpa);
+    try s.record(gpa, "palette.new", t0);
+    try s.record(gpa, "a", t0);
+    try testing.expectEqual(@as(usize, 2), try s.prune(gpa, t0, 2));
+    gpa.free(try s.serialize(gpa));
+}
+
+test "unit: palette: usage frees everything when an allocation fails" {
+    try testing.checkAllAllocationFailures(testing.allocator, loadRecordSave, .{
+        \\{"version":1,"commands":{"a":{"useCount":3,"lastUsedAt":1760000000000},
+        \\"b":{"useCount":1,"lastUsedAt":1},"c":{"useCount":2,"lastUsedAt":1759999999999}}}
+    });
+}
+
 test "unit: palette: usage remove forgets an id" {
     const gpa = testing.allocator;
     var s: Store = .empty;

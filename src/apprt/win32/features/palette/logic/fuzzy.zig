@@ -685,3 +685,95 @@ test "unit: palette: fuzzy ranges convert to utf-16 units" {
     defer gpa.free(empty);
     try testing.expectEqual(@as(usize, 0), empty.len);
 }
+
+test "unit: palette: fuzzy utf-16 ranges round down inside a sequence" {
+    const gpa = testing.allocator;
+    // bytes: a=0, é=1..3, \xff=3, 🚀=4..8; units: a=0, é=1, U+FFFD=2, 🚀=3..5
+    const text = "a\u{e9}\xff\u{1F680}";
+    const out = try rangesToUtf16(gpa, text, &.{
+        .{ .start = 2, .end = 3 }, // starts inside é
+        .{ .start = 3, .end = 4 }, // the invalid byte is one unit
+        .{ .start = 5, .end = 99 }, // starts inside 🚀, ends past the text
+    });
+    defer gpa.free(out);
+    try testing.expectEqualSlices(Range, &.{
+        .{ .start = 1, .end = 2 },
+        .{ .start = 2, .end = 3 },
+        .{ .start = 3, .end = 5 },
+    }, out);
+}
+
+/// Score of the alignment `pos` of `needle` under the rules in the module
+/// comment, recomputed from scratch.
+fn alignmentScore(m: *const Matcher, needle: []const u21, pos: []const u32) i32 {
+    var s: i32 = 0;
+    var chunk: i32 = 0;
+    for (pos, needle, 0..) |p, cp, i| {
+        const b: i32 = m.hay_bonus.items[p];
+        const base = score_match + (if (m.hay_orig.items[p] == cp) bonus_case else 0);
+        if (i == 0) {
+            s += base + b * first_char_multiplier + (if (p == 0) bonus_prefix else 0);
+            chunk = b;
+        } else if (p == pos[i - 1] + 1) {
+            s += base + @max(b, chunk, bonus_consecutive);
+            if (b >= bonus_boundary) chunk = b;
+        } else {
+            const skipped: i32 = @intCast(p - pos[i - 1] - 1);
+            s += penalty_gap_start + penalty_gap_extension * (skipped - 1) + base + b;
+            chunk = b;
+        }
+    }
+    return s;
+}
+
+test "unit: palette: fuzzy reports the score of the alignment it highlights" {
+    // Randomized with a fixed seed over case, boundaries and digits: a token
+    // matches exactly when it is a case-folded subsequence, the positions
+    // ascend and fold-equal the token, and the score is that of the positions.
+    const gpa = testing.allocator;
+    var prng = std.Random.DefaultPrng.init(0x9A1E77E);
+    const rnd = prng.random();
+    const hay_alphabet = "aAbBcC -_/1";
+    const tok_alphabet = "aAbBcC1";
+    var m = Matcher.init(gpa);
+    defer m.deinit();
+    for (0..3000) |_| {
+        var hay_buf: [16]u8 = undefined;
+        const hay = hay_buf[0 .. 1 + rnd.uintLessThan(usize, hay_buf.len)];
+        for (hay) |*c| c.* = hay_alphabet[rnd.uintLessThan(usize, hay_alphabet.len)];
+        var tok_buf: [5]u8 = undefined;
+        const tok = tok_buf[0 .. 1 + rnd.uintLessThan(usize, tok_buf.len)];
+        for (tok) |*c| c.* = tok_alphabet[rnd.uintLessThan(usize, tok_alphabet.len)];
+
+        try m.setHaystack(hay);
+        const got = try m.matchToken(tok, null);
+        var needle: [5]u21 = undefined;
+        var subsequence = true;
+        var j: usize = 0;
+        for (tok, 0..) |c, i| {
+            needle[i] = c;
+            while (j < hay.len and foldCase(hay[j]) != foldCase(c)) j += 1;
+            if (j == hay.len) subsequence = false else j += 1;
+        }
+        try testing.expectEqual(subsequence, got != null);
+        const s = got orelse continue;
+        const pos = m.positions.items;
+        try testing.expectEqual(tok.len, pos.len);
+        for (pos, tok, 0..) |p, c, i| {
+            if (i > 0) try testing.expect(p > pos[i - 1]);
+            try testing.expectEqual(foldCase(c), m.hay_fold.items[p]);
+        }
+        try testing.expectEqual(s, alignmentScore(&m, needle[0..tok.len], pos));
+    }
+}
+
+fn matchAndConvert(gpa: Allocator, query: []const u8, text: []const u8) !void {
+    var m = (try match(gpa, query, text)) orelse return error.TestUnexpectedResult;
+    defer m.deinit(gpa);
+    gpa.free(try rangesToUtf16(gpa, text, m.ranges));
+}
+
+test "unit: palette: fuzzy frees everything when an allocation fails" {
+    // Exact, typo and emoji tokens.
+    try testing.checkAllAllocationFailures(testing.allocator, matchAndConvert, .{ "slpit rght \u{1F680}", "Split Right \u{1F680} now" });
+}

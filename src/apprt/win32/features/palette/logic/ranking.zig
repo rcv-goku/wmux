@@ -413,6 +413,39 @@ test "unit: palette: ranking highlight ranges per field" {
     try testing.expectEqualStrings("api", sub[res.subtitle_ranges[0].start..res.subtitle_ranges[0].end]);
 }
 
+test "unit: palette: ranking typo matches highlight the corrected token" {
+    const items = [_]Item{.{ .id = "x", .title = "Split Right", .subtitle = "Terminal" }};
+    var r = try rank(testing.allocator, &items, "slpit termnial", .{});
+    defer r.deinit();
+    try testing.expectEqual(@as(usize, 1), r.results.len);
+    try testing.expect(r.results[0].typo);
+    try testing.expectEqualSlices(Range, &.{.{ .start = 0, .end = 5 }}, r.results[0].title_ranges);
+    try testing.expectEqualSlices(Range, &.{.{ .start = 0, .end = 8 }}, r.results[0].subtitle_ranges);
+}
+
+fn rankAndFree(gpa: Allocator, items: []const Item, query: []const u8, store: *const usage.Store) !void {
+    var r = try rank(gpa, items, query, .{ .usage = store, .now_ms = 1_760_000_000_000, .limit = 2 });
+    r.deinit();
+    gpa.free(try componentKeywords(gpa, "C:\\src\\api/docs"));
+}
+
+test "unit: palette: ranking frees everything when an allocation fails" {
+    const gpa = testing.allocator;
+    var store: usage.Store = .empty;
+    defer store.deinit(gpa);
+    try store.record(gpa, "b", 1_760_000_000_000);
+    const kw = [_][]const u8{ "C:\\src\\api", "feature/login-flow" };
+    const items = [_]Item{
+        .{ .id = "a", .title = "Split Right", .subtitle = "Terminal \u{2022} api", .keywords = &kw },
+        .{ .id = "b", .title = "Split Down", .kind = .surface },
+        .{ .id = "c", .title = "api", .kind = .workspace, .keywords = &kw },
+    };
+    // Empty query, exact + typo + subtitle tokens, keyword-only match, no match.
+    for ([_][]const u8{ "", "slpit api", "login", "qqqq" }) |q| {
+        try testing.checkAllAllocationFailures(gpa, rankAndFree, .{ &items, q, &store });
+    }
+}
+
 test "unit: palette: ranking ties are stable and deterministic" {
     const items = [_]Item{
         .{ .id = "1", .title = "Duplicate" },
