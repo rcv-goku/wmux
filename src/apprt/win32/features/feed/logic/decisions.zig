@@ -86,10 +86,11 @@ pub const Register = struct {
 pub const RegisterResult = union(enum) {
     /// New request (or a re-push of a waiting one). `parked` tells whether
     /// the waiter was parked; when false, reply now with no decision.
-    /// `replaced` is an earlier waiter of the same request id that the
-    /// caller must now answer with no decision.
+    /// `replaced` is an earlier, different waiter of the same request id
+    /// that the caller must now answer with no decision.
     registered: struct { parked: bool, deadline_ms: ?i64, replaced: ?Waiter = null },
     /// Re-push of an answered request: reply with this decision at once.
+    /// Borrows from the table until the next `pruneSettled`.
     already_resolved: model.Resolution,
     /// Re-push of a timed-out or expired request: reply with no decision.
     already_closed: State,
@@ -99,6 +100,7 @@ pub const ResolveResult = union(enum) {
     /// First resolution. Wake `waiter` (if any) with the decision.
     delivered: struct { item_id: Uuid, waiter: ?Waiter },
     /// Already resolved: nothing to wake. `same` when the decision repeats.
+    /// `previous` borrows from the table until the next `pruneSettled`.
     duplicate: struct { item_id: Uuid, same: bool, previous: model.Resolution },
     /// Timed out or expired first; the hook is gone.
     closed: struct { item_id: Uuid, state: State },
@@ -107,7 +109,9 @@ pub const ResolveResult = union(enum) {
 
 /// A request closed without a decision: answer `waiter` (if any) with `{}`
 /// and set the item status to `state.itemStatus()`. `request_id` borrows
-/// from the table and stays valid until the next `pruneSettled`.
+/// from the table and stays valid until the next `pruneSettled`. The
+/// functions that report them append to a caller list with `Decisions.gpa`,
+/// so that list must use the same allocator.
 pub const Closed = struct {
     request_id: []const u8,
     item_id: Uuid,
@@ -165,7 +169,10 @@ pub const Decisions = struct {
                 // Windows builds use LLVM, Debug included.
                 var replaced: ?Waiter = null;
                 if (park) {
-                    replaced = p.waiter;
+                    // The waiter already parked here re-pushing is the same
+                    // hook: it gets a new deadline, not a no-decision reply
+                    // now plus a second reply later (G5).
+                    if (p.waiter != r.waiter) replaced = p.waiter;
                     p.waiter = r.waiter;
                     p.deadline_ms = deadline;
                 }
@@ -222,7 +229,8 @@ pub const Decisions = struct {
         p.waiter = null;
     }
 
-    /// Times out every waiting request whose deadline is at or before `now_ms`.
+    /// Times out every waiting request whose deadline is at or before
+    /// `now_ms`. `out` grows with `self.gpa`.
     pub fn timeoutDue(self: *Decisions, now_ms: i64, out: *std.ArrayList(Closed)) Allocator.Error!void {
         var it = self.map.valueIterator();
         while (it.next()) |pp| {
@@ -246,7 +254,8 @@ pub const Decisions = struct {
         return best;
     }
 
-    /// The agent process `pid` exited: expire its waiting requests.
+    /// The agent process `pid` exited: expire its waiting requests. `out`
+    /// grows with `self.gpa`.
     pub fn expirePid(self: *Decisions, pid: u32, now_ms: i64, out: *std.ArrayList(Closed)) Allocator.Error!void {
         var it = self.map.valueIterator();
         while (it.next()) |pp| {
@@ -259,6 +268,7 @@ pub const Decisions = struct {
     /// session): earlier waiting requests were decided outside wmux. Requests
     /// created at or after `event_at_ms`, and `keep_request_id`, are kept.
     /// A null `session_id` matches nothing (no context to prove anything).
+    /// `out` grows with `self.gpa`.
     pub fn retireContext(self: *Decisions, source: []const u8, session_id: ?[]const u8, event_at_ms: i64, keep_request_id: ?[]const u8, out: *std.ArrayList(Closed)) Allocator.Error!void {
         const sid = session_id orelse return;
         var it = self.map.valueIterator();

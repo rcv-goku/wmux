@@ -56,6 +56,20 @@ test "unit: feed: adding an existing id replaces it in place" {
     try testing.expectEqual(model.Status.resolved, s.get(idN(1)).?.status);
 }
 
+test "unit: feed: re-adding the stored item itself after an in-place update is a no-op" {
+    var s = store.Store.init(gpa, 10);
+    defer s.deinit();
+    _ = try s.add(try mkPerm(1));
+    _ = try s.add(try mkPerm(2));
+    const it = s.get(idN(1)).?;
+    try it.resolve(.{ .permission = .once }, 5);
+    try testing.expectEqual(@as(usize, 0), try s.add(it));
+    try testing.expectEqual(@as(usize, 2), s.len());
+    try testing.expect(s.get(idN(1)).? == it);
+    try testing.expect(s.items()[0] == it);
+    try testing.expectEqual(model.Status.resolved, s.items()[0].status);
+}
+
 test "unit: feed: findByRequestId returns the newest match" {
     var s = store.Store.init(gpa, 10);
     defer s.deinit();

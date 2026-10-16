@@ -51,6 +51,17 @@ test "unit: feed: permission and exit plan modes parse cmux names" {
     try testing.expectEqualStrings("feed.permission.reply requires mode \u{2208} once|always|all|bypass|deny", model.PermissionMode.invalid_message);
 }
 
+test "unit: feed: decision mode wire names round-trip" {
+    inline for (std.meta.fields(model.PermissionMode)) |f| {
+        const m: model.PermissionMode = @enumFromInt(f.value);
+        try testing.expectEqual(m, model.PermissionMode.parse(m.wire()).?);
+    }
+    inline for (std.meta.fields(model.ExitPlanMode)) |f| {
+        const m: model.ExitPlanMode = @enumFromInt(f.value);
+        try testing.expectEqual(m, model.ExitPlanMode.parse(m.wire()).?);
+    }
+}
+
 test "unit: feed: classify maps hook events and tools to kinds" {
     const C = struct { ev: []const u8, tool: ?[]const u8, kind: model.Kind };
     const cases = [_]C{
@@ -397,6 +408,40 @@ test "unit: feed: parseReply validates each reply method" {
     try testing.expectEqual(@as(usize, 0), q0.resolution.question.selections.len);
     try testing.expectError(error.InvalidSelections, model.parseReply(a, .question, try P.v(a, "{\"request_id\":\"r\",\"selections\":[1]}")));
     try testing.expectError(error.InvalidSelections, model.parseReply(a, .question, try P.v(a, "{\"request_id\":\"r\",\"selections\":\"a\"}")));
+}
+
+test "unit: feed: parseReply frees its selections on error with a non-arena allocator" {
+    const bad = try std.json.parseFromSlice(std.json.Value, gpa, "{\"request_id\":\"r\",\"selections\":[\"a\",1]}", .{});
+    defer bad.deinit();
+    try testing.expectError(error.InvalidSelections, model.parseReply(gpa, .question, bad.value));
+    const good = try std.json.parseFromSlice(std.json.Value, gpa, "{\"request_id\":\"r\",\"selections\":[\"a\",\"b\"]}", .{});
+    defer good.deinit();
+    const r = try model.parseReply(gpa, .question, good.value);
+    defer gpa.free(r.resolution.question.selections);
+    try testing.expectEqualStrings("b", r.resolution.question.selections[1]);
+}
+
+test "unit: feed: bannerText survives allocation failure at every point" {
+    inline for (.{
+        "{\"hook_event_name\":\"PermissionRequest\",\"tool_name\":\"Bash\"}",
+        "{\"hook_event_name\":\"PermissionRequest\"}",
+        "{\"hook_event_name\":\"PermissionRequest\",\"tool_name\":\"ExitPlanMode\"}",
+        "{\"hook_event_name\":\"PermissionRequest\",\"tool_name\":\"AskUserQuestion\"}",
+    }) |json| {
+        const it = try itemFrom(json, opts());
+        defer it.destroy();
+        var i: usize = 0;
+        while (true) : (i += 1) {
+            var fa = testing.FailingAllocator.init(gpa, .{ .fail_index = i });
+            const b = (model.bannerText(fa.allocator(), it) catch |e| {
+                try testing.expectEqual(error.OutOfMemory, e);
+                continue;
+            }).?;
+            fa.allocator().free(b.title);
+            fa.allocator().free(b.body);
+            break;
+        }
+    }
 }
 
 test "unit: feed: source display names and telemetry-only sources" {

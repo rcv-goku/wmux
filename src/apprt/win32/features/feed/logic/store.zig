@@ -79,11 +79,13 @@ pub const Store = struct {
     /// Takes ownership of `item` (also on error). An item with the same id
     /// replaces the old one in place (keeps its position); otherwise it is
     /// appended and the oldest items beyond `capacity` are destroyed.
-    /// Returns the number of evicted items.
+    /// Re-adding the stored item itself (after updating it in place) is a
+    /// no-op. Returns the number of evicted items.
     pub fn add(self: *Store, item: *Item) Allocator.Error!usize {
         errdefer item.destroy();
         if (self.by_id.getPtr(item.id.b)) |slot| {
             const old = slot.*;
+            if (old == item) return 0;
             for (self.list.items) |*p| if (p.* == old) {
                 p.* = item;
                 break;
@@ -118,7 +120,10 @@ pub const Store = struct {
         self.by_id.clearRetainingCapacity();
     }
 
-    /// Loads JSONL history (collapsed by id, newest `capacity` kept).
+    /// Loads JSONL history (collapsed by id, newest `capacity` kept). Items
+    /// still `pending` belong to hooks of an earlier run that can no longer
+    /// be answered: the caller should `close(.expired, now)` them and append
+    /// their rows.
     pub fn load(self: *Store, bytes: []const u8) Allocator.Error!LoadStats {
         var c = try collapse(self.gpa, bytes);
         var stats = c.stats;

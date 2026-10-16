@@ -26,7 +26,7 @@ test "unit: feed: wait_timeout_seconds accepts numbers in 0..120" {
 }
 
 test "unit: feed: wait_timeout_seconds rejects out of range and non-numeric" {
-    const bad = [_]Value{ .{ .integer = -1 }, .{ .integer = 121 }, .{ .float = 120.001 }, .{ .float = -0.5 }, .{ .float = std.math.nan(f64) }, .{ .float = std.math.inf(f64) }, .{ .string = "5" }, .{ .bool = true }, .{ .number_string = "1e400" }, .{ .integer = std.math.maxInt(i64) } };
+    const bad = [_]Value{ .{ .integer = -1 }, .{ .integer = 121 }, .{ .float = 120.001 }, .{ .float = -0.5 }, .{ .float = std.math.nan(f64) }, .{ .float = std.math.inf(f64) }, .{ .string = "5" }, .{ .bool = true }, .{ .number_string = "1e400" }, .{ .number_string = "nan" }, .{ .number_string = "inf" }, .{ .number_string = "12x" }, .{ .number_string = "-1" }, .{ .integer = std.math.maxInt(i64) }, .{ .integer = std.math.minInt(i64) }, .{ .array = .init(testing.allocator) } };
     for (bad) |v| try testing.expectError(error.InvalidWaitTimeout, parseWaitTimeoutMs(v));
     try testing.expectEqualStrings("feed.push wait_timeout_seconds must be between 0 and 120", wait_timeout_message);
 }
@@ -127,6 +127,31 @@ test "unit: feed: re-push of a waiting request replaces the waiter" {
     try testing.expectEqual(@as(?Waiter, 2), res.delivered.waiter);
 }
 
+test "unit: feed: re-push from the parked waiter itself only extends its deadline" {
+    var d = Decisions.init(testing.allocator);
+    defer d.deinit();
+    _ = try d.register(.{ .request_id = "r", .item_id = t_id, .now_ms = 0, .timeout_ms = 1000, .waiter = 5 });
+    const r = try d.register(.{ .request_id = "r", .item_id = t_id, .now_ms = 400, .timeout_ms = 1000, .waiter = 5 });
+    // Answering a "replaced" waiter 5 and later waking it again would reply twice (G5).
+    try testing.expectEqual(@as(?Waiter, null), r.registered.replaced);
+    try testing.expect(r.registered.parked);
+    try testing.expectEqual(@as(?i64, 1400), r.registered.deadline_ms);
+    const res = try d.resolve("r", .{ .permission = .once }, 500);
+    try testing.expectEqual(@as(?Waiter, 5), res.delivered.waiter);
+}
+
+test "unit: feed: non-parking re-push leaves the parked waiter alone" {
+    var d = Decisions.init(testing.allocator);
+    defer d.deinit();
+    _ = try d.register(.{ .request_id = "r", .item_id = t_id, .now_ms = 0, .timeout_ms = 1000, .waiter = 1 });
+    const r = try d.register(.{ .request_id = "r", .item_id = t_id, .now_ms = 10, .timeout_ms = 0, .waiter = 2 });
+    try testing.expect(!r.registered.parked);
+    try testing.expectEqual(@as(?Waiter, null), r.registered.replaced);
+    try testing.expectEqual(@as(?i64, 1000), r.registered.deadline_ms);
+    const res = try d.resolve("r", .{ .permission = .once }, 20);
+    try testing.expectEqual(@as(?Waiter, 1), res.delivered.waiter);
+}
+
 test "unit: feed: re-push after resolution returns the decision at once" {
     var d = Decisions.init(testing.allocator);
     defer d.deinit();
@@ -176,6 +201,25 @@ test "unit: feed: later hook event from the same session retires older requests"
     try testing.expectEqual(State.waiting, d.get("new").?.state);
     try testing.expectEqual(State.waiting, d.get("other").?.state);
     try testing.expectEqual(State.waiting, d.get("cursor").?.state);
+}
+
+test "unit: feed: retireContext spares the request named by keep_request_id" {
+    var d = Decisions.init(testing.allocator);
+    defer d.deinit();
+    _ = try d.register(.{ .request_id = "old", .item_id = t_id, .source = "claude", .session_id = "s", .now_ms = 0, .timeout_ms = 1000, .waiter = 1 });
+    _ = try d.register(.{ .request_id = "self", .item_id = t_id, .source = "claude", .session_id = "s", .now_ms = 10, .timeout_ms = 1000, .waiter = 2 });
+    var out: std.ArrayList(Closed) = .empty;
+    defer out.deinit(testing.allocator);
+    // Both are older than the event; only "self" is spared.
+    try d.retireContext("claude", "s", 50, "self", &out);
+    try testing.expectEqual(@as(usize, 1), out.items.len);
+    try testing.expectEqualStrings("old", out.items[0].request_id);
+    try testing.expectEqual(@as(?i64, 50), d.get("old").?.settled_at_ms);
+    try testing.expectEqual(State.waiting, d.get("self").?.state);
+    // Retiring again reports nothing new (the waiter is handed out once).
+    out.clearRetainingCapacity();
+    try d.retireContext("claude", "s", 60, "self", &out);
+    try testing.expectEqual(@as(usize, 0), out.items.len);
 }
 
 test "unit: feed: detached waiter is never woken but request stays answerable" {

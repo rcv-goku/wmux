@@ -43,10 +43,12 @@ pub const ParamError = error{ InvalidParams, OutOfMemory };
 /// Message for the last `parseListParams` failure.
 pub const ParamDiag = struct { message: []const u8 = "" };
 
-/// Parses `feed.list` params. `kinds` storage is allocated in `a`; strings
-/// borrow from `params`.
+/// Parses `feed.list` params. `kinds` storage is allocated in `a` (free it
+/// with `a` unless `a` is an arena; nothing stays allocated on error);
+/// strings borrow from `params`.
 pub fn parseListParams(a: Allocator, params: ?Value, diag: *ParamDiag) ParamError!Filter {
     var f: Filter = .{};
+    errdefer a.free(f.kinds);
     const p = params orelse return f;
     const obj = switch (p) {
         .null => return f,
@@ -68,11 +70,11 @@ pub fn parseListParams(a: Allocator, params: ?Value, diag: *ParamDiag) ParamErro
         },
         .array => |arr| {
             const ks = try a.alloc(model.Kind, arr.items.len);
+            f.kinds = ks;
             for (arr.items, ks) |e, *k| k.* = switch (e) {
                 .string => |s| model.Kind.parse(s) orelse return fail(diag, "unknown feed item kind"),
                 else => return fail(diag, "kind must be a string or an array of strings"),
             };
-            f.kinds = ks;
         },
         else => return fail(diag, "kind must be a string or an array of strings"),
     };

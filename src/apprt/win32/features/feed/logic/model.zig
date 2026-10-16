@@ -545,17 +545,23 @@ pub fn classify(hook_event_name: []const u8, tool_name: ?[]const u8) Kind {
 /// Native-banner text for a pending decision (title, body).
 pub const Banner = struct { title: []const u8, body: []const u8 };
 
+/// Both strings are allocated in `a` and owned by the caller.
 pub fn bannerText(a: Allocator, item: *const Item) Allocator.Error!?Banner {
     const name = sourceDisplayName(item.source);
-    return switch (item.kind) {
-        .permission_request => .{
-            .title = try std.fmt.allocPrint(a, "{s} permission", .{name}),
-            .body = if (item.tool_name) |t| try std.fmt.allocPrint(a, "{s} needs approval", .{t}) else try a.dupe(u8, "Decision needed"),
-        },
-        .exit_plan => .{ .title = try std.fmt.allocPrint(a, "{s} plan ready", .{name}), .body = try a.dupe(u8, "Review and approve the plan") },
-        .question => .{ .title = try std.fmt.allocPrint(a, "{s} question", .{name}), .body = try a.dupe(u8, "Agent is asking a question") },
-        else => null,
+    const title = switch (item.kind) {
+        .permission_request => try std.fmt.allocPrint(a, "{s} permission", .{name}),
+        .exit_plan => try std.fmt.allocPrint(a, "{s} plan ready", .{name}),
+        .question => try std.fmt.allocPrint(a, "{s} question", .{name}),
+        else => return null,
     };
+    errdefer a.free(title);
+    const body = switch (item.kind) {
+        .permission_request => if (item.tool_name) |t| try std.fmt.allocPrint(a, "{s} needs approval", .{t}) else try a.dupe(u8, "Decision needed"),
+        .exit_plan => try a.dupe(u8, "Review and approve the plan"),
+        .question => try a.dupe(u8, "Agent is asking a question"),
+        else => unreachable,
+    };
+    return .{ .title = title, .body = body };
 }
 
 // ---------------------------------------------------------------------------
@@ -854,7 +860,9 @@ fn parseTodos(a: Allocator, input: ?std.json.ObjectMap) Allocator.Error![]const 
 
 /// Parses a `feed.permission.reply` / `feed.exit_plan.reply` /
 /// `feed.question.reply` params object into a resolution. Strings in the
-/// result borrow from `params`. Errors carry cmux's message via `replyErrorMessage`.
+/// result borrow from `params`; the question `selections` slice is allocated
+/// in `a` (nothing is left allocated on error). Errors carry cmux's message
+/// via `replyErrorMessage`.
 pub const ReplyError = error{ MissingRequestId, InvalidPermissionMode, InvalidExitPlanMode, InvalidSelections, OutOfMemory };
 
 pub const Reply = struct { request_id: []const u8, resolution: Resolution };
@@ -881,6 +889,7 @@ pub fn parseReply(a: Allocator, method: ReplyMethod, params: Value) ReplyError!R
         .question => {
             const arr = getArr(obj, "selections") orelse return error.InvalidSelections;
             const out = try a.alloc([]const u8, arr.len);
+            errdefer a.free(out);
             for (arr, out) |v, *o| o.* = switch (v) {
                 .string => |s| s,
                 else => return error.InvalidSelections,

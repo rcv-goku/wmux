@@ -182,6 +182,41 @@ test "unit: feed: parseListParams rejects malformed params with a message" {
     }
 }
 
+test "unit: feed: parseListParams frees kinds on error with a non-arena allocator" {
+    const bad = [_][]const u8{
+        "{\"kind\":[\"stop\",3]}",
+        "{\"kind\":[\"stop\",\"bogus\"]}",
+        "{\"kind\":[\"stop\"],\"source\":1}",
+        "{\"kind\":\"stop\",\"limit\":0}",
+    };
+    for (bad) |json| {
+        const parsed = try std.json.parseFromSlice(std.json.Value, gpa, json, .{});
+        defer parsed.deinit();
+        var diag: query.ParamDiag = .{};
+        try testing.expectError(error.InvalidParams, query.parseListParams(gpa, parsed.value, &diag));
+    }
+    const parsed = try std.json.parseFromSlice(std.json.Value, gpa, "{\"kind\":[\"stop\",\"todos\"]}", .{});
+    defer parsed.deinit();
+    var diag: query.ParamDiag = .{};
+    const f = try query.parseListParams(gpa, parsed.value, &diag);
+    defer gpa.free(f.kinds);
+    try testing.expectEqualSlices(model.Kind, &.{ .stop, .todos }, f.kinds);
+}
+
+test "unit: feed: limit equal to the match count reports no more" {
+    var s = store.Store.init(gpa, 100);
+    defer s.deinit();
+    try fixture(&s);
+    const page = try query.select(gpa, s.items(), .{ .limit = 6 });
+    defer page.deinit(gpa);
+    try testing.expectEqual(@as(usize, 6), page.items.len);
+    try testing.expect(!page.has_more);
+    const pending = try query.select(gpa, s.items(), .{ .pending_only = true, .limit = 1 });
+    defer pending.deinit(gpa);
+    try testing.expectEqual(@as(usize, 1), pending.items.len);
+    try testing.expect(pending.has_more);
+}
+
 test "unit: feed: actionable partitions pending and resolved decisions" {
     var s = store.Store.init(gpa, 100);
     defer s.deinit();
