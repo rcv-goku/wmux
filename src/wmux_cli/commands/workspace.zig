@@ -593,6 +593,34 @@ test "unit: cli-workspace: a blank workspace handle means the caller's workspace
     try testkit.expectUsage(&h, &.{ "reorder-workspace", "--before", " " }, "Workspace handle is blank");
 }
 
+test "unit: cli-workspace: workspace env --mask hides values whatever the result shape" {
+    var h: testkit.Harness = undefined;
+    try h.init();
+    defer h.deinit();
+    h.ok("workspace.env", "{\"workspace_ref\":\"workspace:2\",\"env\":[{\"name\":\"TOKEN\",\"value\":\"s3cret\"},\"RAW=x9\"],\"workspace_env\":{\"K\":\"v1\",\"N\":7,\"Z\":null}}");
+    const js = try testkit.expectOk(&h, &.{ "workspace", "env", "--mask", "--json" });
+    for ([_][]const u8{ "s3cret", "TOKEN", "x9", "v1", "7" }) |secret| {
+        if (std.mem.indexOf(u8, js, secret) != null) {
+            std.debug.print("\nleaked {s} in:\n{s}\n", .{ secret, js });
+            return error.TestUnexpectedResult;
+        }
+    }
+    try testing.expect(std.mem.indexOf(u8, js, "\"K\": \"***\"") != null);
+    try testing.expect(std.mem.indexOf(u8, js, "\"Z\": null") != null);
+    try testing.expect(std.mem.indexOf(u8, js, "\"workspace_ref\": \"workspace:2\"") != null);
+    // Without --mask nothing is rewritten.
+    const plain = try testkit.expectOk(&h, &.{ "workspace", "env", "--json" });
+    try testing.expect(std.mem.indexOf(u8, plain, "s3cret") != null);
+
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const v = try std.json.parseFromSliceLeaky(std.json.Value, a, "{\"A\":\"1\",\"B\":{\"c\":[true,2.5,\"d\"]},\"E\":null}", .{});
+    const masked = try std.json.Stringify.valueAlloc(a, try create.maskValues(a, v), .{});
+    try testing.expectEqualStrings("{\"A\":\"***\",\"B\":{\"c\":[\"***\",\"***\",\"***\"]},\"E\":null}", masked);
+    try testing.expectEqualStrings("\"***\"", try std.json.Stringify.valueAlloc(a, try create.maskValues(a, .{ .string = "" }), .{}));
+}
+
 test "unit: cli-workspace: next, previous and last window" {
     var h: testkit.Harness = undefined;
     try h.init();
