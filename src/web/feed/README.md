@@ -128,8 +128,12 @@ decision: <message>". Either way the list reloads.
 - **Todos.** "Tasks" with "<n> open, <n> in progress, <n> done" (zero parts
   omitted, empty = "0 open") and a "Show tasks" / "Collapse" toggle.
 - **Answering.** The card shows "Sending…", then the resolved badge at once;
-  native's resolution event (reload) confirms it. Typed text, selections and
-  the focused field (with its caret) survive live re-renders.
+  native's resolution event (reload) confirms it. Typed text, selections,
+  the focused field (with its caret) and the scroll position of plans and
+  text boxes survive live re-renders. Every render rebuilds the cards, so
+  while a primary pointer button is held renders wait for its release (at
+  most 2 s): a busy feed must not replace the button under a click, which
+  the browser would then drop.
 - **Banners.** A pending decision that arrives after the panel loaded gets a
   banner above the list with the native toast wording ("<Agent> permission"
   / "<tool> needs approval" or "Decision needed", "<Agent> plan ready" /

@@ -43,6 +43,8 @@ const STATE_DEBOUNCE_MS = 400;
 const STATUS_MS = 3000;
 const TIME_REFRESH_MS = 30000;
 const MAX_BANNERS = 3;
+/** Longest a pointer press holds back renders (a release the page never sees). */
+const PRESS_MAX_MS = 2000;
 /** Error codes that mean the request is gone (answered elsewhere, expired). */
 const GONE_CODES = new Set(["not_found", "conflict", "expired", "gone", "already_resolved"]);
 
@@ -94,6 +96,10 @@ export function createApp(options) {
     stateTimer: null,
     statusTimer: null,
     timeTimer: null,
+    /** A primary pointer button is down; renders wait for its release. */
+    pressed: false,
+    renderDeferred: false,
+    pressTimer: null,
   };
   const cards = createCards({ document: doc, t, now, renderMarkdown: options.renderMarkdown });
   const cleanups = [];
@@ -274,6 +280,33 @@ export function createApp(options) {
     }
   }
 
+  /** Inner scroll boxes of a card: the plan (field "") and the text boxes. */
+  const SCROLLERS = ".feed-plan, textarea[data-field]";
+
+  /**
+   * Scroll offsets of the inner scroll boxes. Every render rebuilds the cards,
+   * so without this a long plan jumps back to its top on each live update.
+   */
+  function captureScroll() {
+    const saved = [];
+    for (const node of els.list.querySelectorAll(SCROLLERS)) {
+      if (!node.scrollTop && !node.scrollLeft) continue;
+      const card = node.closest(".feed-card");
+      if (card) saved.push({ id: card.dataset.id, field: node.dataset.field || "", top: node.scrollTop, left: node.scrollLeft });
+    }
+    return saved;
+  }
+
+  function restoreScroll(saved) {
+    for (const s of saved) {
+      const card = cardFor(s.id);
+      const node = card && Array.from(card.querySelectorAll(SCROLLERS)).find((n) => (n.dataset.field || "") === s.field);
+      if (!node) continue;
+      node.scrollTop = s.top;
+      node.scrollLeft = s.left;
+    }
+  }
+
   function visibleItems(items) {
     if (state.filter === "activity") return { main: items, resolved: [] };
     const p = partition(items);
@@ -282,6 +315,7 @@ export function createApp(options) {
 
   function renderList(items) {
     const snap = captureFocus();
+    const scrolls = captureScroll();
     const view = visibleItems(items);
     const nodes = view.main.map((it) => cards.buildCard(it, uiFor(it.id)));
     if (view.resolved.length) {
@@ -295,6 +329,7 @@ export function createApp(options) {
     if (!ids.includes(state.focusedId)) state.focusedId = ids[0] || null;
     for (const card of els.list.querySelectorAll(".feed-card")) card.tabIndex = card.dataset.id === state.focusedId ? 0 : -1;
     restoreFocus(snap);
+    restoreScroll(scrolls);
 
     const empty = view.main.length === 0 && view.resolved.length === 0;
     els.empty.hidden = !empty || !state.loaded;
@@ -313,11 +348,39 @@ export function createApp(options) {
   }
 
   function render() {
+    // A render rebuilds the cards, banners and chips. Between pointerdown and
+    // pointerup it would replace the pressed button, and the browser drops a
+    // click whose mousedown target left the document. Busy feeds update
+    // several times a second, so renders wait for the release.
+    if (state.pressed) {
+      state.renderDeferred = true;
+      return;
+    }
     const items = effectiveItems();
     renderTabs(items);
     renderBanners(items);
     renderWorkstreams(items);
     renderList(items);
+  }
+
+  function onPointerDown(e) {
+    if (typeof e.button === "number" && e.button !== 0) return;
+    state.pressed = true;
+    if (state.pressTimer) win.clearTimeout(state.pressTimer);
+    state.pressTimer = win.setTimeout(releasePress, PRESS_MAX_MS);
+  }
+
+  function releasePress() {
+    if (state.pressTimer) win.clearTimeout(state.pressTimer);
+    state.pressTimer = null;
+    if (!state.pressed) return;
+    state.pressed = false;
+    if (!state.renderDeferred) return;
+    state.renderDeferred = false;
+    // Runs after the click that this pointerup produces.
+    win.setTimeout(() => {
+      if (!state.destroyed) render();
+    }, 0);
   }
 
   /* ----------------------------------------------------------------- data */
@@ -349,6 +412,10 @@ export function createApp(options) {
     }
     const ids = new Set(state.items.map((it) => it.id));
     for (const id of state.ui.keys()) if (!ids.has(id)) state.ui.delete(id);
+    // Ids that left the window never return in a newer page (items keep their
+    // place in the store), so the long-lived panel does not keep them.
+    for (const id of state.knownIds) if (!ids.has(id)) state.knownIds.delete(id);
+    for (const id of state.localResolved.keys()) if (!ids.has(id)) state.localResolved.delete(id);
     state.loaded = true;
     render();
   }
@@ -751,6 +818,10 @@ export function createApp(options) {
       listen(tab, "keydown", onTabKeydown);
     }
     listen(els.loadOlder, "click", () => loadOlder());
+    listen(doc, "pointerdown", onPointerDown, true);
+    listen(win, "pointerup", releasePress, true);
+    listen(win, "pointercancel", releasePress, true);
+    listen(win, "blur", releasePress);
     cleanups.push(bridge.on("cmux.event", onFrame));
     cleanups.push(bridge.on("panel.feed.item", upsert));
     cleanups.push(bridge.on("panel.feed.snapshot", (p) => applyPage(p)));
@@ -790,7 +861,7 @@ export function createApp(options) {
 
   function destroy() {
     state.destroyed = true;
-    for (const timer of [state.reloadTimer, state.stateTimer, state.statusTimer]) if (timer) win.clearTimeout(timer);
+    for (const timer of [state.reloadTimer, state.stateTimer, state.statusTimer, state.pressTimer]) if (timer) win.clearTimeout(timer);
     if (state.timeTimer) win.clearInterval(state.timeTimer);
     while (cleanups.length) {
       try {

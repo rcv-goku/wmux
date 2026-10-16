@@ -524,6 +524,87 @@ describe("unit: feed app", () => {
     assert.equal(again.selectionStart, 4);
   });
 
+  test("unit: feed: live re-renders keep the scroll position of a plan and of a text box", async () => {
+    const h = await startApp({ items: [plan(1)] });
+    const box = cards()[0].querySelector(".feed-plan");
+    box.scrollTop = 120;
+    h.setItems([...h.items, item(2, "message")]);
+    host.emit("cmux.event", { name: "feed.item.received" });
+    await sleep(60);
+    await settle();
+    const again = cardById(uuid(1)).querySelector(".feed-plan");
+    assert.notEqual(again, box, "the card was rebuilt");
+    assert.equal(again.scrollTop, 120, "the plan being read does not jump to its top");
+
+    click(window, btn(cardById(uuid(1)), "revise"));
+    const area = cardById(uuid(1)).querySelector('[data-field="feedback"]');
+    type(area, "line\n".repeat(40));
+    area.scrollTop = 30;
+    app.render();
+    assert.equal(cardById(uuid(1)).querySelector('[data-field="feedback"]').scrollTop, 30);
+    assert.equal(cardById(uuid(1)).querySelector(".feed-plan").scrollTop, 120);
+  });
+
+  test("unit: feed: renders wait while a pointer is pressed, so the pressed button keeps its click", async () => {
+    const press = (type, target) => target.dispatchEvent(new window.MouseEvent(type, { bubbles: true, cancelable: true, button: 0 }));
+    const h = await startApp();
+    const allow = btn(cards()[0], "permission", '[data-mode="once"]');
+    press("pointerdown", allow);
+    h.setItems([permission(0.5, { tool_name: "Write" }), ...h.items]);
+    host.emit("cmux.event", { name: "feed.item.received" });
+    await sleep(60);
+    await settle();
+    assert.equal(app.state.items.length, 4, "the data is current");
+    assert.equal(cards().length, 1, "the list is not rebuilt while the button is held");
+    assert.equal(allow.isConnected, true, "the pressed button stays in the document");
+    press("pointerup", allow);
+    click(window, allow);
+    await settle();
+    assert.deepEqual(host.calls("feed.permission.reply").map((m) => m.params), [{ request_id: "req-1", mode: "once" }]);
+    assert.equal(cards().length, 2, "the held-back render ran after the release");
+    assert.equal(cardById(uuid(1)).dataset.status, "resolved");
+
+    cards()[0].dispatchEvent(new window.MouseEvent("pointerdown", { bubbles: true, button: 2 }));
+    assert.equal(app.state.pressed, false, "a secondary button does not hold renders back");
+  });
+
+  test("unit: feed: a press whose release the page never sees does not freeze the list", async () => {
+    const h = await startApp();
+    const update = async (n) => {
+      h.setItems([permission(n), ...h.items]);
+      host.emit("cmux.event", { name: "feed.item.received" });
+      await sleep(60);
+      await settle();
+    };
+    cards()[0].dispatchEvent(new window.MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 }));
+    await update(0.5);
+    assert.equal(cards().length, 1);
+    window.dispatchEvent(new window.Event("blur"));
+    await settle();
+    assert.equal(cards().length, 2, "losing focus releases the press");
+
+    cards()[0].dispatchEvent(new window.MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 }));
+    await update(0.2);
+    assert.equal(cards().length, 2);
+    await sleep(2100);
+    await settle();
+    assert.equal(cards().length, 3, "renders resume after at most 2 s");
+    assert.equal(app.state.pressed, false);
+  });
+
+  test("unit: feed: ids that leave the newest page are forgotten", async () => {
+    const h = await startApp();
+    assert.equal(app.state.knownIds.size, 3);
+    await app.replyPermission(uuid(1), "once");
+    assert.equal(app.state.localResolved.size, 1);
+    h.setItems([item(10, "message")]);
+    host.emit("cmux.event", { name: "feed.item.received" });
+    await sleep(60);
+    await settle();
+    assert.deepEqual(Array.from(app.state.knownIds), [uuid(10)], "the long-lived panel does not keep every id it ever saw");
+    assert.equal(app.state.localResolved.size, 0);
+  });
+
   test("unit: feed: an option keeps focus in its own question when labels repeat", async () => {
     const yesNo = (q) => ({ question: q, header: "", multi_select: false, options: [{ label: "Yes", description: "" }, { label: "No", description: "" }] });
     await startApp({ items: [question(1, [yesNo("Tests?"), yesNo("Docs?")])] });
