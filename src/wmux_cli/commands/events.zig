@@ -163,6 +163,7 @@ const Stream = struct {
     last_seq: ?u64 = null,
     events: u64 = 0,
     deadline: ?i64,
+    /// `auth.login` was sent on the current connection.
     auth_tried: bool = false,
 
     fn deinit(self: *Stream) void {
@@ -189,6 +190,9 @@ const Stream = struct {
         if (self.c.conn) |t| t.close();
         self.c.conn = null;
         self.buf.clearRetainingCapacity();
+        // Authentication belongs to a connection (as in `Client`): the next
+        // connection answers `auth_required` again and logs in again.
+        self.auth_tried = false;
     }
 
     fn readLine(self: *Stream) !Read {

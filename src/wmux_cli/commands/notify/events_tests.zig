@@ -25,16 +25,22 @@ const Script = struct {
     /// Answer the first subscription with `auth_required`.
     need_auth: bool = false,
     authed: bool = false,
+    /// Authentication lasts for one connection only, as on the real server.
+    per_connection_auth: bool = false,
+    /// The connection that logged in last.
+    authed_conn: usize = 0,
 };
 
 fn streamHandler(server: *fake.Server, req: fake.Request) fake.Action {
     const sc: *Script = @ptrCast(@alignCast(server.user.?));
     if (std.mem.eql(u8, req.method, "auth.login")) {
         sc.authed = true;
+        sc.authed_conn = server.connections;
         return .{ .ok = "{\"authenticated\":true}" };
     }
     if (!std.mem.eql(u8, req.method, "events.stream")) return .{ .err = "{\"code\":\"method_not_found\",\"message\":\"Unknown method\"}" };
-    if (sc.need_auth and !sc.authed) return .{ .err = "{\"code\":\"auth_required\",\"message\":\"Authentication required\"}" };
+    const authed = if (sc.per_connection_auth) sc.authed_conn == server.connections else sc.authed;
+    if (sc.need_auth and !authed) return .{ .err = "{\"code\":\"auth_required\",\"message\":\"Authentication required\"}" };
     const i = server.connections - 1;
     const batch = if (i < sc.batches.len) sc.batches[i] else "";
     server.outbox.appendSlice(server.a, batch) catch unreachable;
@@ -158,6 +164,24 @@ test "unit: cli-events: password mode logs in on the stream connection" {
     try harness(&h2, &sc2);
     defer h2.deinit();
     try kit.expectResult(h2.run(&.{ "cmux", "events" }), 1, "", "auth_required: Authentication required\n");
+}
+
+test "unit: cli-events: password mode logs in again after a reconnect" {
+    var sc: Script = .{
+        .batches = &.{ comptime lines(&.{ ack, ev("1", "a") }), comptime lines(&.{ ack, ev("2", "b") }) },
+        .need_auth = true,
+        .per_connection_auth = true,
+    };
+    var h: Harness = undefined;
+    try harness(&h, &sc);
+    defer h.deinit();
+    h.setEnv("CMUX_SOCKET_PASSWORD", "pw");
+    const r = h.run(&.{ "cmux", "events", "--reconnect", "--limit", "2", "--no-ack" });
+    try kit.expectResult(r, 0, comptime lines(&.{ ev("1", "a"), ev("2", "b") }) ++ "\n", "");
+    // Each connection: a refused subscription, a login, the subscription.
+    try testing.expectEqual(@as(usize, 2), h.server.countMethod("auth.login"));
+    try testing.expectEqual(@as(usize, 4), h.server.countMethod("events.stream"));
+    try testing.expectEqualStrings("{\"after_seq\":1,\"include_heartbeats\":true}", h.last().params_json);
 }
 
 var cursor_buf: [64]u8 = undefined;
