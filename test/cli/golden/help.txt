@@ -29,7 +29,7 @@ Start & Resume:
                                               Restore the saved session (starts wmux if needed)
   sessions [list] [options]                   List saved agent sessions (works offline)
   session restore [--list] [--session <id>]...
-                                              Recover stopped Claude sessions
+                                              Reopen Claude sessions that ended unexpectedly
   markdown open <path>                        Open a Markdown file in a live viewer
   guide | cmux --skill [--json]               Print the agent guide (works offline)
   docs [topic]                                Print documentation pointers for a topic
@@ -39,7 +39,7 @@ Agents:
   send [--surface <id|ref|index>] [--paste] [--force] [--] <text>
                                               Type text into a terminal surface
   send-key [--surface <id|ref|index>] [--force] <key>
-                                              Send one key to a terminal surface
+                                              Press a single key in a terminal
   send-panel [--panel <id|ref|index>] [--force] <text>
                                               Type text into a panel
   send-key-panel [--panel <id|ref|index>] [--force] <key>
@@ -62,7 +62,7 @@ Agents:
   dismiss-notification [<id>|--all-read]      Remove notifications
   mark-notification-read [<id>|--all]         Mark notifications read
   open-notification <id>                      Focus a notification's surface and mark it read
-  jump-to-unread                              Focus the latest unread notification
+  jump-to-unread                              Jump to the newest unread notification
   jump-to-last-prompt                         Focus the surface of the last agent prompt
   clear-notifications [--workspace <id|ref|index>] [--surface <id|ref|index>]
                                               Clear queued notifications
@@ -87,7 +87,7 @@ Agents:
   agent-hibernation <on|off> [--json]         Enable or disable Agent Hibernation
   claude-teams [claude-args...]               Launch Claude Code with agent-team panes
   codex-teams [codex-args...]                 Launch Codex with subagent panes
-  omo [opencode-args...]                      Launch OpenCode with oh-my-openagent
+  omo [opencode-args...]                      Run OpenCode through oh-my-openagent
   omx [omx-args...]                           Launch Oh My Codex with pane integration
   omc [omc-args...]                           Launch Oh My Claude Code with pane integration
   wait-for [-S|--signal] <name> [--timeout <seconds>]
@@ -124,9 +124,9 @@ Navigate & Arrange:
   reorder-surface --surface <id|ref|index> --index <n>
                                               Reorder a surface in its pane
   split-off --surface <id|ref|index> <left|right|up|down>
-                                              Move a surface into a new split
+                                              Split a surface off into its own pane
   drag-surface-to-split --surface <id|ref|index> <left|right|up|down>
-                                              Move a surface into a split direction
+                                              Drag a surface to a pane edge to split
   tab-action --action <name> [--surface <id|ref|index>]
                                               Run a tab context-menu action
   rename-tab [--surface <id|ref|index>] <title>
@@ -155,7 +155,7 @@ Navigate & Arrange:
   display-message                             tmux-compatible message (compatibility)
 
 Inspect:
-  identify                                    Print server identity and caller context
+  identify                                    Show the connected app and the caller's workspace and surface
   tree [--all] [--json]                       Print the window, workspace, pane and surface tree
   top [--json]                                Process and resource usage per object
   memory [--json]                             App memory versus terminal child memory
@@ -240,7 +240,7 @@ Remote:
                                               Mosh workspace attached to a remote tmux session
   ssh-tmux <destination> [list|ls [--json] | attach <session>] [--port <n>] [--identity <path>] [--name <title>] [--no-focus]
                                               Mirror remote tmux sessions
-  ssh-session-list [--json]                   List persisted SSH PTY sessions
+  ssh-session-list [--json]                   List saved SSH terminal sessions
   ssh-session-attach --session-id <id>        Reattach to a persisted SSH PTY session
   ssh-session-cleanup [--json]                Close persisted SSH PTY sessions
   remote-daemon-status                        Print remote daemon version and cache status
@@ -252,7 +252,7 @@ Remote:
 
 Diagnostics / Advanced:
   ping                                        Check connectivity to the wmux control pipe
-  capabilities                                Print server capabilities as JSON
+  capabilities                                List the app's protocol and supported methods as JSON
   rpc <method> [json-params|-]                Call a raw v2 method
   socket-status [--json]                      Effective control-pipe access mode (never connects)
   debug-terminals                             Print debug terminal state

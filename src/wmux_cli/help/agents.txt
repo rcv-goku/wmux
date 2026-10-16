@@ -2,7 +2,7 @@ Agents:
   send [--surface <id|ref|index>] [--paste] [--force] [--] <text>
                                               Type text into a terminal surface
   send-key [--surface <id|ref|index>] [--force] <key>
-                                              Send one key to a terminal surface
+                                              Press a single key in a terminal
   send-panel [--panel <id|ref|index>] [--force] <text>
                                               Type text into a panel
   send-key-panel [--panel <id|ref|index>] [--force] <key>
@@ -25,7 +25,7 @@ Agents:
   dismiss-notification [<id>|--all-read]      Remove notifications
   mark-notification-read [<id>|--all]         Mark notifications read
   open-notification <id>                      Focus a notification's surface and mark it read
-  jump-to-unread                              Focus the latest unread notification
+  jump-to-unread                              Jump to the newest unread notification
   jump-to-last-prompt                         Focus the surface of the last agent prompt
   clear-notifications [--workspace <id|ref|index>] [--surface <id|ref|index>]
                                               Clear queued notifications
@@ -50,7 +50,7 @@ Agents:
   agent-hibernation <on|off> [--json]         Enable or disable Agent Hibernation
   claude-teams [claude-args...]               Launch Claude Code with agent-team panes
   codex-teams [codex-args...]                 Launch Codex with subagent panes
-  omo [opencode-args...]                      Launch OpenCode with oh-my-openagent
+  omo [opencode-args...]                      Run OpenCode through oh-my-openagent
   omx [omx-args...]                           Launch Oh My Codex with pane integration
   omc [omc-args...]                           Launch Oh My Claude Code with pane integration
   wait-for [-S|--signal] <name> [--timeout <seconds>]

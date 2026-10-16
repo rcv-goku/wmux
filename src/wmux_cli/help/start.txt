@@ -24,7 +24,7 @@ Start & Resume:
                                               Restore the saved session (starts wmux if needed)
   sessions [list] [options]                   List saved agent sessions (works offline)
   session restore [--list] [--session <id>]...
-                                              Recover stopped Claude sessions
+                                              Reopen Claude sessions that ended unexpectedly
   markdown open <path>                        Open a Markdown file in a live viewer
   guide | cmux --skill [--json]               Print the agent guide (works offline)
   docs [topic]                                Print documentation pointers for a topic

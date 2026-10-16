@@ -1,5 +1,5 @@
 Inspect:
-  identify                                    Print server identity and caller context
+  identify                                    Show the connected app and the caller's workspace and surface
   tree [--all] [--json]                       Print the window, workspace, pane and surface tree
   top [--json]                                Process and resource usage per object
   memory [--json]                             App memory versus terminal child memory

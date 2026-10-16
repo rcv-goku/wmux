@@ -1,4 +1,4 @@
 Usage: cmux capabilities
 
-Print the server capabilities as JSON: protocol, version, the pipe path, the
-access mode and the sorted list of supported v2 methods.
+Print what the connected app supports, as JSON: protocol, version, the pipe
+path, the access mode and the sorted list of supported v2 methods.

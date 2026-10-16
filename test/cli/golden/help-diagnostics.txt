@@ -1,6 +1,6 @@
 Diagnostics / Advanced:
   ping                                        Check connectivity to the wmux control pipe
-  capabilities                                Print server capabilities as JSON
+  capabilities                                List the app's protocol and supported methods as JSON
   rpc <method> [json-params|-]                Call a raw v2 method
   socket-status [--json]                      Effective control-pipe access mode (never connects)
   debug-terminals                             Print debug terminal state

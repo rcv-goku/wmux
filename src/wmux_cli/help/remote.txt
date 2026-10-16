@@ -6,7 +6,7 @@ Remote:
                                               Mosh workspace attached to a remote tmux session
   ssh-tmux <destination> [list|ls [--json] | attach <session>] [--port <n>] [--identity <path>] [--name <title>] [--no-focus]
                                               Mirror remote tmux sessions
-  ssh-session-list [--json]                   List persisted SSH PTY sessions
+  ssh-session-list [--json]                   List saved SSH terminal sessions
   ssh-session-attach --session-id <id>        Reattach to a persisted SSH PTY session
   ssh-session-cleanup [--json]                Close persisted SSH PTY sessions
   remote-daemon-status                        Print remote daemon version and cache status

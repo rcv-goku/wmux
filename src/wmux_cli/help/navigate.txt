@@ -29,9 +29,9 @@ Navigate & Arrange:
   reorder-surface --surface <id|ref|index> --index <n>
                                               Reorder a surface in its pane
   split-off --surface <id|ref|index> <left|right|up|down>
-                                              Move a surface into a new split
+                                              Split a surface off into its own pane
   drag-surface-to-split --surface <id|ref|index> <left|right|up|down>
-                                              Move a surface into a split direction
+                                              Drag a surface to a pane edge to split
   tab-action --action <name> [--surface <id|ref|index>]
                                               Run a tab context-menu action
   rename-tab [--surface <id|ref|index>] <title>
