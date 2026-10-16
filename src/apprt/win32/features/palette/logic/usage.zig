@@ -9,9 +9,11 @@
 //! ```
 //!
 //! `lastUsedAt` is Unix time in milliseconds. Entries are written sorted by id
-//! so the file is byte-stable. Loading is lenient: unknown keys are ignored,
-//! malformed entries are skipped, and only a file that is not a JSON object
-//! (or has an unsupported `version`) is rejected so the caller can start over.
+//! so the file is byte-stable. Loading is lenient: a UTF-8 byte order mark and
+//! unknown keys are ignored, malformed entries are skipped, and only a file
+//! that is not a JSON object (or has an unsupported `version`) is rejected so
+//! the caller can start over. Ids must be valid UTF-8: the JSON reader rejects
+//! anything else, so `record` refuses such ids to keep the file loadable.
 //!
 //! Frecency = log2(1 + useCount) × 0.5^(age / half_life). It decays smoothly,
 //! so old habits fade without rewriting the file; `prune` drops entries whose
@@ -93,10 +95,13 @@ pub const Store = struct {
         return boost(e, now_ms, query_empty);
     }
 
-    /// Records one use of `id` at `now_ms`. Over-long and empty ids are
-    /// ignored. `lastUsedAt` never moves backwards.
+    /// Records one use of `id` at `now_ms`. Empty, over-long and non-UTF-8
+    /// ids are ignored. `lastUsedAt` never moves backwards.
     pub fn record(self: *Store, gpa: Allocator, id: []const u8, now_ms: i64) Allocator.Error!void {
         if (id.len == 0 or id.len > max_id_bytes) return;
+        // serialize writes the bytes as they are and parse rejects invalid
+        // UTF-8, so one such id would make the whole file unreadable.
+        if (!std.unicode.utf8ValidateSlice(id)) return;
         const gop = try self.map.getOrPut(gpa, id);
         if (!gop.found_existing) {
             gop.key_ptr.* = gpa.dupe(u8, id) catch |err| {
@@ -154,7 +159,11 @@ pub const Store = struct {
     /// Over-long ids and invalid entries are skipped; at most `max_entries`
     /// survive (most frecent at `now_ms`).
     pub fn parse(gpa: Allocator, bytes: []const u8, now_ms: i64) LoadError!Store {
-        var parsed = std.json.parseFromSlice(std.json.Value, gpa, bytes, .{ .duplicate_field_behavior = .use_first }) catch |err| switch (err) {
+        // Editors and Windows PowerShell 5.1 (`Set-Content -Encoding UTF8`)
+        // may add a BOM; the other wmux JSON loaders skip it too.
+        const utf8_bom = "\xEF\xBB\xBF";
+        const body = if (std.mem.startsWith(u8, bytes, utf8_bom)) bytes[utf8_bom.len..] else bytes;
+        var parsed = std.json.parseFromSlice(std.json.Value, gpa, body, .{ .duplicate_field_behavior = .use_first }) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => return error.InvalidFormat,
         };
@@ -281,6 +290,34 @@ test "unit: palette: usage ignores empty and over-long ids" {
     try s.record(gpa, long, t0);
     try s.record(gpa, long[0..max_id_bytes], t0);
     try testing.expectEqual(@as(usize, 1), s.count());
+}
+
+test "unit: palette: usage ignores non-utf-8 ids so the file stays loadable" {
+    const gpa = testing.allocator;
+    var s: Store = .empty;
+    defer s.deinit(gpa);
+    try s.record(gpa, "palette.newWorkspace", t0);
+    try s.record(gpa, "bad\xffid", t0);
+    try s.record(gpa, "cut\xe2\x82", t0);
+    try s.record(gpa, "surrogate\xed\xa0\x80", t0);
+    try s.record(gpa, "palette.d\u{e9}j\u{e0} \u{1F680}", t0);
+    try testing.expectEqual(@as(usize, 2), s.count());
+    const bytes = try s.serialize(gpa);
+    defer gpa.free(bytes);
+    var back = try Store.parse(gpa, bytes, t0);
+    defer back.deinit(gpa);
+    try testing.expectEqual(@as(usize, 2), back.count());
+    try testing.expect(back.get("palette.d\u{e9}j\u{e0} \u{1F680}") != null);
+}
+
+test "unit: palette: usage parse skips a utf-8 byte order mark" {
+    const gpa = testing.allocator;
+    var s = try Store.parse(gpa, "\xEF\xBB\xBF{\"version\":1,\"commands\":{\"a\":{\"useCount\":2,\"lastUsedAt\":5}}}", 0);
+    defer s.deinit(gpa);
+    try testing.expectEqual(Entry{ .use_count = 2, .last_used_at = 5 }, s.get("a").?);
+    // Only a leading BOM is skipped; a BOM alone is still not a JSON object.
+    try testing.expectError(error.InvalidFormat, Store.parse(gpa, "\xEF\xBB\xBF", 0));
+    try testing.expectError(error.InvalidFormat, Store.parse(gpa, " \xEF\xBB\xBF{}", 0));
 }
 
 test "unit: palette: usage frecency decays with age and grows with count" {
