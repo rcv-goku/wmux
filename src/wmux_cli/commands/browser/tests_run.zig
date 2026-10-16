@@ -249,6 +249,26 @@ test "unit: browser-cli: identify adds the browser url and title" {
     try h.expectRequest("browser.url.get", "{\"surface_id\":\"S2-UUID\"}");
 }
 
+test "unit: browser-cli: identify prints browser.surface in the --id-format" {
+    var h: Harness = undefined;
+    try live(&h);
+    defer h.deinit();
+    // The focused browser: addressed by UUID, printed as a ref by default.
+    const focused = h.run(&.{ "cmux", "browser", "identify", "--json" });
+    try testing.expectEqual(@as(u8, 0), focused.code);
+    try h.expectRequest("browser.url.get", "{\"surface_id\":\"S2-UUID\"}");
+    try expectContains(focused.out, "\"surface\": \"surface:2\"");
+    try testing.expect(!contains(focused.out, "S2-UUID"));
+    const uuids = h.run(&.{ "cmux", "browser", "identify", "--json", "--id-format", "uuids" });
+    try expectContains(uuids.out, "\"surface\": \"S2-UUID\"");
+    try testing.expect(!contains(uuids.out, "\"surface\": \"surface:2\""));
+    // A typed UUID or index prints as the app's ref once the app names it.
+    const typed = h.run(&.{ "cmux", "browser", "identify", "--surface", "1", "--json" });
+    try testing.expectEqual(@as(u8, 0), typed.code);
+    try h.expectRequest("browser.url.get", "{\"surface_id\":\"1\"}");
+    try expectContains(typed.out, "\"surface\": \"surface:2\"");
+}
+
 test "unit: browser-cli: set-input-files checks files on the client" {
     var h: Harness = undefined;
     try live(&h);
