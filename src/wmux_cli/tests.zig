@@ -764,6 +764,19 @@ test "unit: cli-dispatch: Ghostty-native actions relay to wmux.exe without WMUX_
     try testing.expectEqual(@as(u8, 1), h.run(&.{ "cmux", "+ssh", "host" }).code);
 }
 
+test "unit: cli-dispatch: a CLI copy outside INSTALL\\cli never relays to itself" {
+    var h: Harness = undefined;
+    h.init();
+    defer h.deinit();
+    // A byte copy renamed wmux.exe outside cli\ would compute itself as the GUI.
+    const self_exe = try proto.paths.join(h.alloc(), proto.paths.Style.native, &.{ "C:", "tools", "wmux.exe" });
+    h.fp.self_exe = self_exe;
+    const r = h.run(&.{ self_exe, "+list-fonts" });
+    try testing.expectEqual(@as(u8, 1), r.code);
+    try expectContains(r.err, "is not inside INSTALL\\cli");
+    try testing.expectEqual(@as(usize, 0), h.fp.ran.items.len);
+}
+
 test "unit: cli-dispatch: unknown legacy verbs and subcommands are usage errors" {
     var h: Harness = undefined;
     h.init();

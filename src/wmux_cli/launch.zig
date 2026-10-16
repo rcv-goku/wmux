@@ -4,9 +4,9 @@
 //! arguments, `WMUX_ARGV0` removed from its environment) and wait for the
 //! pipe, re-resolving with backoff. The wait is 30 s;
 //! `WMUX_APP_STARTUP_WAIT_TIMEOUT_SECONDS`/`CMUX_APP_STARTUP_WAIT_TIMEOUT_SECONDS`
-//! can shorten it, never lengthen it. A candidate owned by another user or
-//! denied by its DACL is a permanent conflict and fails at once. Other
-//! socket commands fail fast with the discovery error.
+//! can shorten it, never lengthen it. The expected control pipe owned by
+//! another user or denied by its DACL is a permanent conflict and fails at
+//! once. Other socket commands fail fast with the discovery error.
 //!
 //! `cmux <path>` sends `app.launch {intent:"open", argv, cwd, paths}` over
 //! the launch pipe (`<control>-launch`), which needs no control-socket
@@ -40,10 +40,16 @@ pub fn startupWaitMs(env: Env) u32 {
     return default_wait_ms;
 }
 
-/// `INSTALL\wmux.exe` for a CLI at `INSTALL\cli\cmux.exe`.
+/// `INSTALL\wmux.exe` for a CLI at `INSTALL\cli\cmux.exe`; null when the CLI
+/// does not live in a `cli` directory. A copy elsewhere (for example one
+/// renamed to `wmux.exe`) would otherwise start or relay to itself.
 pub fn guiExePath(arena: Allocator, cli_exe: []const u8) Allocator.Error!?[]const u8 {
     const style = paths.Style.native;
-    const install = paths.installFromCliExe(style, cli_exe) orelse return null;
+    const dir = paths.dirname(style, cli_exe) orelse return null;
+    const dir_name = paths.basename(style, dir);
+    const in_cli = if (style == .windows) std.ascii.eqlIgnoreCase(dir_name, paths.dirs.cli) else std.mem.eql(u8, dir_name, paths.dirs.cli);
+    if (!in_cli) return null;
+    const install = paths.dirname(style, dir) orelse return null;
     return try paths.join(arena, style, &.{ install, paths.files.gui_exe });
 }
 
@@ -78,11 +84,18 @@ pub fn ensureControl(ctx: *command.Ctx, in: discovery.Inputs) !discovery.Outcome
     };
     const wait = startupWaitMs(ctx.env);
     const deadline = platform.nowMs() + wait;
+    // Only the pipe the new instance will claim can be a permanent conflict;
+    // other candidates (another user's legacy pipe, other sessions) must not
+    // cut the wait short.
+    const expected = try discovery.defaultPath(arena, in);
     var backoff = first_backoff_ms;
     while (true) {
         const o = try discovery.resolve(arena, platform, in);
         switch (o) {
-            .none => |tried| for (tried) |t| if (isPermanent(t.err)) return o,
+            .none => |tried| for (tried) |t| {
+                if (!isPermanent(t.err)) continue;
+                if (expected) |e| if (discovery.samePipe(t.path, e)) return o;
+            },
             else => return o,
         }
         const now = platform.nowMs();
@@ -218,6 +231,26 @@ test "unit: cli-launch: gui path sits next to the cli directory" {
     const cli = try paths.join(a, style, &.{ "C:", "Programs", "wmux", "cli", "cmux.exe" });
     const want = try paths.join(a, style, &.{ "C:", "Programs", "wmux", "wmux.exe" });
     try testing.expectEqualStrings(want, (try guiExePath(a, cli)).?);
+    const com = try paths.join(a, style, &.{ "C:", "Programs", "wmux", "cli", "wmux.com" });
+    try testing.expectEqualStrings(want, (try guiExePath(a, com)).?);
+}
+
+test "unit: cli-launch: a CLI outside a cli directory has no gui to start" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const style = paths.Style.native;
+    // A copy renamed to wmux.exe would otherwise relay to itself forever.
+    for ([_][]const []const u8{
+        &.{ "C:", "tools", "wmux.exe" },
+        &.{ "C:", "tools", "cmux.exe" },
+        &.{ "C:", "shims", "agents", "claude.exe" },
+        &.{ "C:", "clients", "cmux.exe" },
+    }) |parts| {
+        try testing.expectEqual(@as(?[]const u8, null), try guiExePath(a, try paths.join(a, style, parts)));
+    }
+    try testing.expectEqual(@as(?[]const u8, null), try guiExePath(a, "cmux.exe"));
+    try testing.expectEqual(@as(?[]const u8, null), try guiExePath(a, ""));
 }
 
 test "unit: cli-launch: params json and absolute paths" {
@@ -327,6 +360,30 @@ test "unit: cli-launch: a foreign-owned pipe is a permanent conflict" {
     const o = try ensureControl(&t.ctx, in);
     try testing.expect(o == .none);
     try testing.expectEqual(@as(u64, 0), t.fp.slept_ms);
+}
+
+test "unit: cli-launch: unrelated refused pipes do not cut the startup wait short" {
+    const pairs: []const Env.Pair = &.{};
+    var t: TestCtx = undefined;
+    t.init(&pairs);
+    defer t.deinit();
+    const a = t.arena_state.allocator();
+    t.fp.self_exe = selfExe(a);
+    // Another user's legacy pipe (machine-global namespace) denies access,
+    // and an instance in another logon session fails the owner check.
+    try t.fp.enumerated.append(a, "wmux-ipc-4711");
+    try t.fp.addFailure("\\\\.\\pipe\\wmux-ipc-4711", error.AccessDenied);
+    const own = pipe_name.sidHash8(t.fp.sid.?);
+    const other_session = try pipe_name.controlName(a, "nightly", &own, 2);
+    try t.fp.enumerated.append(a, pipe_name.bareName(other_session));
+    try t.fp.addFailure(other_session, error.ForeignOwner);
+    var server = fake.Server.init(a);
+    try t.fp.addOnSpawn(t.controlPath(), &server, 700);
+    const in = try t.ctx.discoveryInputs();
+    const o = try ensureControl(&t.ctx, in);
+    try testing.expect(o == .live);
+    o.live.transport.close();
+    try testing.expect(t.fp.slept_ms >= 700);
 }
 
 test "unit: cli-launch: spawn failure and unknown install are reported" {
