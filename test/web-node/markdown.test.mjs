@@ -6,7 +6,9 @@
 // WMUX_WEB_TEST_DEPS at that directory (the one containing node_modules/):
 //
 //   npm install --prefix /tmp/wmux-web-test-deps --ignore-scripts jsdom@26
-//   WMUX_WEB_TEST_DEPS=/tmp/wmux-web-test-deps node --test test/web-node/
+//   WMUX_WEB_TEST_DEPS=/tmp/wmux-web-test-deps node --test 'test/web-node/*.test.mjs'
+//
+// (Node 22's --test takes files or globs, not a bare directory.)
 //
 import { test, describe, beforeEach, afterEach, after } from "node:test";
 import assert from "node:assert/strict";
@@ -751,6 +753,33 @@ describe("unit: markdown diagrams", () => {
     const root = renderToDiv("```mermaid\ngraph TD; A-->B\n```").div;
     await diagrams.render(root);
     assert.equal(root.querySelector(".wmux-diagram-error").textContent, "Mermaid error: Failed to load mermaid");
+  });
+
+  test("unit: markdown: an oversized diagram is not handed to mermaid", async () => {
+    let renders = 0;
+    const diagrams = createDiagrams({
+      document: doc,
+      purify,
+      loadMermaid: async () => ({
+        initialize() {},
+        async render() {
+          renders += 1;
+          return { svg: "<svg></svg>" };
+        },
+      }),
+    });
+    const huge = "graph TD;\n" + "A-->B;\n".repeat(8000);
+    const root = renderToDiv("```mermaid\n" + huge + "```").div;
+    doc.body.append(root); // detached blocks (stale renders) are skipped
+    try {
+      assert.equal(await diagrams.render(root), 1);
+      assert.equal(renders, 0);
+      assert.equal(root.querySelector(".wmux-mermaid").getAttribute("data-state"), "error");
+      assert.equal(root.querySelector(".wmux-diagram-error").textContent, "Mermaid error: the diagram source is too large");
+    } finally {
+      root.remove();
+      diagrams.dispose();
+    }
   });
 
   test("unit: markdown: a mermaid that fails to initialize shows the error box", async () => {

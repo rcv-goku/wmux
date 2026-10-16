@@ -14,6 +14,7 @@ export const STRINGS = Object.freeze({
   "markdown.showPreview": "Show Preview",
   "markdown.revert": "Revert",
   "markdown.save": "Save",
+  "markdown.editor.label": "Markdown source",
   "markdown.find": "Find",
   "markdown.copyMarkdown": "Copy as Markdown",
   "markdown.copyHtml": "Copy as HTML",
@@ -58,6 +59,7 @@ export const STRINGS = Object.freeze({
   "markdown.image.loadFailed": "Could not load the image: {message}",
 
   "markdown.diagram.error": "{library} error: {message}",
+  "markdown.diagram.tooLarge": "the diagram source is too large",
   "markdown.diagram.loading": "Rendering diagram…",
 
   "markdown.link.openFile": "Open {path}",

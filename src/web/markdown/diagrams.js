@@ -170,7 +170,7 @@ export function createDiagrams(deps) {
     if (!source || !output) return;
     const text = source.textContent || "";
     if (text.length > MAX_DIAGRAM_SOURCE) {
-      output.replaceChildren(errorBox("Mermaid", "diagram source is too large"));
+      output.replaceChildren(errorBox("Mermaid", t("markdown.diagram.tooLarge")));
       block.setAttribute("data-state", "error");
       return;
     }
