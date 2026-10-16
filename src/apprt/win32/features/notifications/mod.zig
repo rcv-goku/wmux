@@ -5,6 +5,14 @@ pub const id = "notifications";
 pub const action_handlers = @import("actions.zig").handlers;
 pub const legacy_commands = @import("legacy.zig").commands;
 
+/// A click on a desktop-notification balloon jumps to its surface.
+pub const app_hooks = [_]hooks.AppHook{
+    .{ .msg = hooks.WM_APP_TRAY, .handler = &api.onTrayCallback },
+};
+
+const api = @import("api.zig");
+const hooks = @import("../../app/hooks.zig");
+
 test {
     _ = @import("logic/tests.zig");
 }

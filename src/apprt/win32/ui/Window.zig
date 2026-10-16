@@ -29,6 +29,8 @@ const WindowState = @import("placement_state.zig");
 const SplitTree = @import("../../../datastruct/split_tree.zig").SplitTree;
 const app_foreground = @import("../app/foreground.zig");
 const app_paths = @import("../app/paths.zig");
+const contrib = @import("contrib.zig");
+const hooks = @import("../app/hooks.zig");
 const w32 = @import("../platform/win32.zig");
 
 // The files W0-A2 split out of this one (see the W0 aliases below).
@@ -816,6 +818,10 @@ pub fn windowWndProc(
         else => {},
     };
 
+    // Feature window hooks (ui/contrib.zig, ADR-1.6) see the message
+    // first; the first non-null result answers it.
+    if (hooks.dispatchWindow(contrib.window_hooks, window, msg, wparam, lparam)) |result| return result;
+
     switch (msg) {
         w32.WM_GETOBJECT => {
             // Opt out of MSAA accessibility for OBJID_CLIENT on the
@@ -1205,6 +1211,7 @@ test {
     _ = ids;
     _ = model_registry;
     _ = chrome;
+    _ = contrib;
     _ = menus;
     _ = @import("backend_picker.zig");
     _ = @import("tabbar/menu.zig");

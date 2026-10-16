@@ -7,13 +7,16 @@
 //! - `sidebar_gear`, `default_shell`: settings/menu.zig
 //! - `new_button` (the backend picker): ui/backend_picker.zig
 //! - `terminal`: Surface.zig
+//! - any site: the `menu_items` a feature declares in its mod.zig
+//!
+//! ui/contrib.zig aggregates every source (the layers above, then the
+//! features in manifest order).
 //!
 //! A command id is 1 + the item's index in the per-invocation table (no
 //! reserved id ranges). The targets an item acts on (workspace, pane, tab,
-//! surface) are captured in a `Context` before the modal TrackPopupMenuEx
-//! loop and re-resolved by address after it; an item whose target vanished
-//! meanwhile does nothing. W0-A3 captures them as handles/UUIDs instead and
-//! replaces the contributor list with ui/contrib.zig.
+//! surface) are captured in a `Context` by UUID before the modal
+//! TrackPopupMenuEx loop and re-resolved through the handle registry after
+//! it; an item whose target vanished meanwhile does nothing.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -28,9 +31,8 @@ const internal_os = @import("../../../os/main.zig");
 const w32 = @import("../platform/win32.zig");
 
 const backend_picker = @import("backend_picker.zig");
-const settings_menu = @import("../settings/menu.zig");
-const sidebar_menu = @import("sidebar/menu.zig");
-const tabbar_menu = @import("tabbar/menu.zig");
+const contrib = @import("contrib.zig");
+const ids = @import("../model/ids.zig");
 
 const log = std.log.scoped(.win32);
 
@@ -55,7 +57,7 @@ pub const MenuSite = enum {
 };
 
 /// What a menu acts on, captured when the menu opens and re-resolved
-/// after its modal loop (see `resolve`).
+/// after its modal loop (see `capture` and `resolve`).
 pub const Context = struct {
     app: *App,
     window: *Window,
@@ -72,6 +74,16 @@ pub const Context = struct {
     /// The WSL distributions the pickers list, enumerated when the menu
     /// opened and owned by the caller for the menu's lifetime.
     distros: []const internal_os.wsl.Distro = &.{},
+    /// The targets' UUIDs, recorded by `capture` before the modal loop.
+    target_ids: TargetIds = .{},
+
+    pub const TargetIds = struct {
+        window: ids.Uuid = ids.Uuid.nil,
+        workspace: ?ids.Uuid = null,
+        pane: ?ids.Uuid = null,
+        /// The tab of `tab`, or of `surface` (whose identity is its tab).
+        tab: ?ids.Uuid = null,
+    };
 
     /// The index of `tab` in `pane`, if both are set and still linked.
     pub fn tabIndex(self: *const Context) ?usize {
@@ -80,26 +92,40 @@ pub const Context = struct {
         return pane.indexOf(tab);
     }
 
-    /// Re-resolve the captured targets after the modal menu loop, which
-    /// dispatched arbitrary messages: the window may be gone or closing,
-    /// and tabs, panes and workspaces may have closed or moved. Every
-    /// pointer is checked by address before it is dereferenced; a target
-    /// that moved is re-located (the tab's pane and workspace follow it).
-    /// False when any captured target no longer exists.
+    /// Record the UUIDs of the targets (ADR-1.6), before the modal loop.
+    pub fn capture(self: *Context) void {
+        self.target_ids = .{ .window = self.window.handle.uuid };
+        if (self.workspace) |ws| self.target_ids.workspace = ws.handle.uuid;
+        if (self.pane) |p| self.target_ids.pane = p.handle.uuid;
+        const tab: ?*Tab = if (self.surface) |s| s.tab else self.tab;
+        if (tab) |t| self.target_ids.tab = t.handle.uuid;
+    }
+
+    /// Re-resolve the targets after the modal menu loop, which dispatched
+    /// arbitrary messages: the window may be gone or closing, and tabs,
+    /// panes and workspaces may have closed or moved. Every target is found
+    /// again by the UUID `capture` recorded, through the handle registry,
+    /// so a freed object whose address was reused is never mistaken for
+    /// it; a tab that moved is re-located (its pane and workspace follow
+    /// it). False when any target no longer exists.
     pub fn resolve(self: *Context) bool {
-        if (!windowAlive(self.app, self.window)) return false;
-        const w = self.window;
-        if (w.closing) return false;
-        if (self.surface) |s| {
-            const loc = w.findLocOfSurface(s) orelse return false;
-            if (!s.core_surface_ready) return false;
-            self.workspace = loc.ws;
-            self.pane = loc.pane;
-            self.tab = loc.pane.tabs.items[loc.index];
-        } else if (self.tab) |t| {
+        const reg = &self.app.handles;
+        const w = reg.get(Window, .window, self.target_ids.window) orelse return false;
+        if (w != self.window or w.closing) return false;
+        if (self.target_ids.tab) |tab_id| {
+            const t = reg.get(Tab, .surface, tab_id) orelse return false;
             const loc = w.findLoc(t) orelse return false;
+            if (self.surface != null) {
+                const s = t.surface() orelse return false;
+                if (!s.core_surface_ready) return false;
+                self.surface = s;
+            }
             self.workspace = loc.ws;
             self.pane = loc.pane;
+            self.tab = t;
+        } else {
+            if (self.target_ids.workspace) |id| self.workspace = reg.get(Workspace, .workspace, id) orelse return false;
+            if (self.target_ids.pane) |id| self.pane = reg.get(Pane, .pane, id) orelse return false;
         }
         if (self.workspace) |ws| {
             if (w.workspaceIndex(ws) >= w.workspaces.items.len) return false;
@@ -110,18 +136,6 @@ pub const Context = struct {
         return true;
     }
 };
-
-/// Whether `w` is still one of the app's windows (checked by address,
-/// without dereferencing it).
-fn windowAlive(app: *App, w: *Window) bool {
-    for (app.windows.items) |x| {
-        if (x == w) return true;
-    }
-    if (app.quick_terminal) |qt| {
-        if (qt.window == w) return true;
-    }
-    return false;
-}
 
 pub const Callback = *const fn (ctx: *Context, arg: usize) void;
 pub const Predicate = *const fn (ctx: *const Context) bool;
@@ -270,33 +284,16 @@ pub const MenuBuilder = struct {
     }
 };
 
-/// The layers contributing menu items: each declares `menu_items` and may
-/// declare `menuEntries(*MenuBuilder)` for dynamic entries.
-const contributors = .{
-    tabbar_menu,
-    sidebar_menu,
-    settings_menu,
-    backend_picker,
-    Surface,
-};
-
-/// Collect the contributions of `sources` for the builder's site.
-pub fn collectFrom(b: *MenuBuilder, comptime sources: anytype) Allocator.Error!void {
-    inline for (sources) |source| {
-        if (@hasDecl(source, "menu_items")) try b.addItems(&source.menu_items);
-        if (@hasDecl(source, "menuEntries")) try source.menuEntries(b);
-    }
-}
-
 /// Show the `site` menu for `ctx` at `screen`, owned by `owner`, and run
 /// the chosen item once its targets re-resolve.
 pub fn show(site: MenuSite, ctx: *Context, owner: w32.HWND, screen: w32.POINT) void {
     var b = MenuBuilder.init(ctx.app.core_app.alloc, site, ctx);
     defer b.deinit();
-    collectFrom(&b, contributors) catch |err| {
+    contrib.collectMenu(&b) catch |err| {
         log.err("failed to build the {s} menu: {}", .{ @tagName(site), err });
         return;
     };
+    ctx.capture();
     const chosen = b.track(owner, screen) orelse return;
     if (!ctx.resolve()) return;
     chosen.callback(ctx, chosen.arg);

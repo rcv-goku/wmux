@@ -14,6 +14,7 @@
 const std = @import("std");
 
 const App = @import("../App.zig");
+const contrib = @import("../ui/contrib.zig");
 const hooks = @import("hooks.zig");
 const w32 = @import("../platform/win32.zig");
 
@@ -112,6 +113,6 @@ fn wndProc(
     else
         msg;
 
-    if (hooks.dispatchApp(&hooks.app_hooks, app, hook_msg, wparam, lparam)) |result| return result;
+    if (hooks.dispatchApp(contrib.app_hooks, app, hook_msg, wparam, lparam)) |result| return result;
     return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
 }

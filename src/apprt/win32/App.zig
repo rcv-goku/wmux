@@ -23,6 +23,7 @@ const app_modal = @import("app/modal.zig");
 const app_tasks = @import("app/tasks.zig");
 const app_timers = @import("app/timers.zig");
 const broadcast_window = @import("app/broadcast_window.zig");
+const contrib = @import("ui/contrib.zig");
 const hooks = @import("app/hooks.zig");
 const message_loop = @import("app/message_loop.zig");
 const perform_action = @import("app/perform_action.zig");
@@ -1086,7 +1087,7 @@ fn msgWndProc(
     // callback hooks.WM_APP_TRAY: a click on the update notification
     // opens the GitHub releases page, a click on a desktop notification
     // jumps to the surface that produced it).
-    if (hooks.dispatchApp(&hooks.app_hooks, app, msg, wparam, lparam)) |result| return result;
+    if (hooks.dispatchApp(contrib.app_hooks, app, msg, wparam, lparam)) |result| return result;
 
     return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
 }

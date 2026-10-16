@@ -5,22 +5,19 @@
 //! not handled: the WndProc carries on with its own handling or
 //! DefWindowProc).
 //!
-//! W0-A1 provides the hook types, the dispatch helpers and a TEMPORARY
-//! app-hook list. W0-A3 replaces `app_hooks` with the `ui/contrib.zig`
-//! registry aggregating `app_hooks`/`window_hooks` from every
-//! `features/<id>/mod.zig`, and ui/Window.zig starts dispatching
-//! `window_hooks`.
+//! Features declare `window_hooks` and `app_hooks` tables in their
+//! `features/<id>/mod.zig`; ui/contrib.zig aggregates them in manifest
+//! order. ui/Window.zig dispatches `contrib.window_hooks`; App.msgWndProc
+//! and the broadcast window dispatch `contrib.app_hooks`.
 
 const std = @import("std");
 
 const App = @import("../App.zig");
 const Window = @import("../ui/Window.zig");
-const notifications = @import("../features/notifications/api.zig");
-const updater = @import("../features/updater/legacy_check.zig");
 const w32 = @import("../platform/win32.zig");
 
-/// A top-level window message hook (dispatched by ui/Window.zig from
-/// W0-A2/A3 on).
+/// A top-level window message hook (dispatched by ui/Window.zig before
+/// its own message handling).
 pub const WindowHook = struct {
     msg: u32,
     handler: *const fn (*Window, usize, isize) ?isize,
@@ -45,13 +42,6 @@ pub const WM_APP_TRAY: u32 = w32.WM_APP + 3;
 /// a comptime `msg`.
 pub const WM_TASKBAR_CREATED: u32 = w32.WM_APP + 0x3FFE;
 pub const WM_TASKBAR_BUTTON_CREATED: u32 = w32.WM_APP + 0x3FFF;
-
-/// TEMPORARY aggregation of the app hooks (W0-A1); W0-A3 replaces it with
-/// the ui/contrib.zig registry. Order is dispatch order.
-pub const app_hooks = [_]AppHook{
-    .{ .msg = WM_APP_TRAY, .handler = &updater.onTrayCallback },
-    .{ .msg = WM_APP_TRAY, .handler = &notifications.onTrayCallback },
-};
 
 /// Run the hooks registered for `msg`; the first non-null result wins.
 pub fn dispatchApp(
