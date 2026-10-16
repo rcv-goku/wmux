@@ -224,7 +224,10 @@ pub const C = struct {
     }
 
     /// `~` expanded and made absolute against the working directory. A path
-    /// the user gives as absolute is kept as typed.
+    /// the user gives as absolute is kept as typed. A Windows drive-relative
+    /// path (`D:shot.png`) is resolved only when it names the working
+    /// directory's drive; another drive's working directory is unknown here,
+    /// so that path is kept as typed rather than glued onto ours.
     pub fn absPath(c: *C, path: []const u8) Error![]const u8 {
         var p = path;
         if (c.in.home) |h| {
@@ -233,6 +236,10 @@ pub const C = struct {
         }
         if (isAbsolute(c.in.style, p)) return p;
         const cwd = c.in.cwd orelse return p;
+        if (c.in.style == .windows and hasDrive(p)) {
+            if (!hasDrive(cwd) or std.ascii.toLower(cwd[0]) != std.ascii.toLower(p[0])) return p;
+            return c.joinPath(&.{ cwd, p[2..] });
+        }
         return c.joinPath(&.{ cwd, p });
     }
 
@@ -254,8 +261,13 @@ pub fn isAbsolute(style: paths.Style, p: []const u8) bool {
     return switch (style) {
         .posix => p.len > 0 and p[0] == '/',
         .windows => (p.len > 0 and (p[0] == '\\' or p[0] == '/')) or
-            (p.len >= 3 and std.ascii.isAlphabetic(p[0]) and p[1] == ':' and (p[2] == '\\' or p[2] == '/')),
+            (p.len >= 3 and hasDrive(p) and (p[2] == '\\' or p[2] == '/')),
     };
+}
+
+/// `X:` drive prefix (Windows).
+fn hasDrive(p: []const u8) bool {
+    return p.len >= 2 and std.ascii.isAlphabetic(p[0]) and p[1] == ':';
 }
 
 /// A call on the required surface (see `C.base`).

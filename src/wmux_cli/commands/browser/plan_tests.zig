@@ -237,6 +237,15 @@ test "unit: browser-cli: windows paths are absolutized with the windows style" {
     try t.expectCall(&.{ "surface:1", "state", "load", "~/sub/s.json" }, "browser.state.load", "{\"surface_id\":\"surface:1\",\"path\":\"C:\\\\Users\\\\u\\\\sub\\\\s.json\"}");
     const s = try t.call(&.{ "surface:1", "screenshot", "--out", "shots/p.png" });
     try testing.expectEqualStrings("C:\\work\\shots\\p.png", s.out_path.?);
+    // Drive-relative paths: the working directory's drive resolves against
+    // it; another drive's working directory is unknown, so it stays as typed.
+    try testing.expectEqualStrings("C:\\work\\shot.png", (try t.call(&.{ "surface:1", "screenshot", "--out", "c:shot.png" })).out_path.?);
+    try testing.expectEqualStrings("C:\\work\\a\\b.png", (try t.call(&.{ "surface:1", "screenshot", "--out", "C:a/b.png" })).out_path.?);
+    try testing.expectEqualStrings("D:shot.png", (try t.call(&.{ "surface:1", "screenshot", "--out", "D:shot.png" })).out_path.?);
+    try t.expectCall(&.{ "surface:1", "download", "--path", "E:r.csv" }, "browser.download.wait", "{\"surface_id\":\"surface:1\",\"path\":\"E:r.csv\"}");
+    t.base.cwd = "\\\\server\\share\\dir";
+    try testing.expectEqualStrings("C:x.png", (try t.call(&.{ "surface:1", "screenshot", "--out", "C:x.png" })).out_path.?);
+    try testing.expectEqualStrings("\\\\server\\share\\dir\\x.png", (try t.call(&.{ "surface:1", "screenshot", "--out", "x.png" })).out_path.?);
     try testing.expect(plan_mod.isAbsolute(.windows, "\\\\server\\share"));
     try testing.expect(!plan_mod.isAbsolute(.windows, "C:rel"));
     try testing.expect(!plan_mod.isAbsolute(.posix, "C:\\x"));
