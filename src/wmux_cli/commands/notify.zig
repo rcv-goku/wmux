@@ -158,9 +158,14 @@ fn runNotify(ctx: *Ctx) !u8 {
 
 fn notifyClear(ctx: *Ctx, t: common.Target) !u8 {
     var p = Params.init(ctx.arena);
-    if (t.surface != null) {
-        if (t.workspace == null and t.window == null) return ctx.usageError("{s}", .{clear_surface_context_message});
-        try t.put(&p);
+    if (t.surface) |sf| {
+        if (t.workspace == null and t.window == null) {
+            // Same resolution as create: --workspace, else --window, else
+            // the caller's workspace is the surface's context.
+            const ws = common.envWorkspace(ctx) orelse return ctx.usageError("{s}", .{clear_surface_context_message});
+            try p.str("workspace_id", ws);
+            try p.str("surface_id", sf);
+        } else try t.put(&p);
     } else if (t.workspace != null or t.window != null) {
         try t.put(&p);
     } else {

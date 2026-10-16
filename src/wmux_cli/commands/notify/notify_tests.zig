@@ -147,6 +147,10 @@ test "unit: cli-notify: notify --clear scopes and ignores --desktop" {
     try testing.expectEqualStrings("{\"workspace_id\":\"workspace:2\"}", params(&h));
     _ = h.run(&.{ "cmux", "notify", "--clear", "--window", "window:1", "--surface", "surface:3" });
     try testing.expectEqualStrings("{\"window_id\":\"window:1\",\"surface_id\":\"surface:3\"}", params(&h));
+    // Same resolution as create: the caller's workspace is context for a
+    // surface (without it the strict-validation test expects the error).
+    try kit.expectResult(h.run(&.{ "cmux", "notify", "--clear", "--surface", "surface:3" }), 0, "OK\n", "");
+    try testing.expectEqualStrings("{\"workspace_id\":\"" ++ ws_uuid ++ "\",\"surface_id\":\"surface:3\"}", params(&h));
     const j = h.run(&.{ "cmux", "notify", "--clear", "--json" });
     try testing.expectEqualStrings("{}\n", j.out);
 }
