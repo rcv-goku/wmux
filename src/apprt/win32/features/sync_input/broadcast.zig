@@ -1,5 +1,5 @@
 //! Synchronized input: replay a key or char event from the focused surface
-//! to every other tab of its PaneContainer while the active tab's sync
+//! to every other tab of its Pane while the active tab's sync
 //! flag is on. Called from App.surfaceWndProc.
 //!
 //! Moved verbatim from App.zig in W0-A1 (ARCHITECTURE.md ADR-1.8).
@@ -8,7 +8,7 @@ const input = @import("../../../../input.zig");
 const Surface = @import("../../Surface.zig");
 
 /// Broadcast a key event (WM_KEYDOWN/WM_KEYUP) from the focused surface
-/// to all other tabs in the same PaneContainer when synchronized input is
+/// to all other tabs in the same Pane when synchronized input is
 /// active. Skipped when the surface is already receiving a broadcast (the
 /// sync_broadcast guard prevents infinite loops).
 pub fn broadcastKeyEvent(source: *Surface, wparam: usize, lparam: isize, action: input.Action) void {

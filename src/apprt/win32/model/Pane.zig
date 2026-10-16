@@ -1,17 +1,18 @@
-//! A PaneContainer is a per-pane tab container that lives as a leaf in
-//! the workspace-level SplitTree. It owns a set of tabs (each a single
-//! Tab) and implements the SplitTree view protocol (ref/unref/eql —
+//! A Pane is a leaf of the workspace split tree (a cmux "pane"): a tab
+//! container with its own tab bar. It owns a set of tabs (each a Tab)
+//! and implements the SplitTree view protocol (ref/unref/eql —
 //! see the doc comment in src/datastruct/split_tree.zig). Splits create
-//! new PaneContainers; tabs live within a single PaneContainer.
-const PaneContainer = @This();
+//! new Panes; tabs live within a single Pane. Formerly `PaneContainer`
+//! (renamed in W0-A2, ARCHITECTURE.md ADR-1.8).
+const Pane = @This();
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const Tab = @import("model/Tab.zig");
-const Window = @import("Window.zig");
-const log_ring = @import("features/status/log_ring.zig");
-const w32 = @import("platform/win32.zig");
+const Tab = @import("Tab.zig");
+const Window = @import("../Window.zig");
+const log_ring = @import("../features/status/log_ring.zig");
+const w32 = @import("../platform/win32.zig");
 
 const MAX_TABS = Window.MAX_TABS;
 const MAX_STATUS_BYTES = Window.MAX_STATUS_BYTES;
@@ -28,7 +29,7 @@ tab_count: usize = 0,
 active_tab: usize = 0,
 
 /// Each tab is a single Tab (terminal or browser). No per-tab split
-/// tree — in the new model, splits are between PaneContainers.
+/// tree — in the new model, splits are between Panes.
 tabs: [MAX_TABS]*Tab = undefined,
 
 /// UTF-16 title buffers for each tab (for painting the tab bar).
@@ -99,9 +100,9 @@ hovered_dropdown: bool = false,
 // Construction / destruction
 // -------------------------------------------------------------------------
 
-/// Heap-allocate a PaneContainer with default-initialized fields.
-pub fn create(alloc: Allocator) Allocator.Error!*PaneContainer {
-    const pc = try alloc.create(PaneContainer);
+/// Heap-allocate a Pane with default-initialized fields.
+pub fn create(alloc: Allocator) Allocator.Error!*Pane {
+    const pc = try alloc.create(Pane);
     pc.* = .{};
     return pc;
 }
@@ -111,14 +112,14 @@ pub fn create(alloc: Allocator) Allocator.Error!*PaneContainer {
 // -------------------------------------------------------------------------
 
 /// Increment reference count, return self.
-pub fn ref(self: *PaneContainer, alloc: Allocator) Allocator.Error!*PaneContainer {
+pub fn ref(self: *Pane, alloc: Allocator) Allocator.Error!*Pane {
     _ = alloc;
     self.ref_count += 1;
     return self;
 }
 
 /// Decrement reference count. At zero, unref all owned tabs and free.
-pub fn unref(self: *PaneContainer, alloc: Allocator) void {
+pub fn unref(self: *Pane, alloc: Allocator) void {
     self.ref_count -= 1;
     if (self.ref_count == 0) {
         for (self.tabs[0..self.tab_count]) |tab| {
@@ -129,7 +130,7 @@ pub fn unref(self: *PaneContainer, alloc: Allocator) void {
 }
 
 /// Identity comparison.
-pub fn eql(self: *const PaneContainer, other: *const PaneContainer) bool {
+pub fn eql(self: *const Pane, other: *const Pane) bool {
     return self == other;
 }
 
@@ -138,13 +139,13 @@ pub fn eql(self: *const PaneContainer, other: *const PaneContainer) bool {
 // -------------------------------------------------------------------------
 
 /// The active tab's content HWND, or null if empty.
-pub fn activeTabHwnd(self: *const PaneContainer) ?w32.HWND {
+pub fn activeTabHwnd(self: *const Pane) ?w32.HWND {
     if (self.tab_count == 0) return null;
     return self.tabs[self.active_tab].hwnd();
 }
 
 /// The active Tab, or null if empty.
-pub fn activeTab(self: *PaneContainer) ?*Tab {
+pub fn activeTab(self: *Pane) ?*Tab {
     if (self.tab_count == 0) return null;
     return self.tabs[self.active_tab];
 }
@@ -152,7 +153,7 @@ pub fn activeTab(self: *PaneContainer) ?*Tab {
 /// The parallel per-tab arrays as a tuple of array pointers, compatible
 /// with the tabArraysInsertGap/tabArraysRemove/tabArraysSwap helpers
 /// in Window.zig.
-pub fn tabArrays(self: *PaneContainer) struct {
+pub fn tabArrays(self: *Pane) struct {
     *[MAX_TABS]*Tab,
     *[MAX_TABS][256]u16,
     *[MAX_TABS]u16,
@@ -179,7 +180,7 @@ pub fn tabArrays(self: *PaneContainer) struct {
 }
 
 /// The worst status across this container's tabs: exited > bell > normal.
-pub fn aggregateStatus(self: *const PaneContainer) TabStatus {
+pub fn aggregateStatus(self: *const Pane) TabStatus {
     var worst: TabStatus = .normal;
     for (self.tab_status[0..self.tab_count]) |s| {
         switch (s) {
@@ -192,7 +193,7 @@ pub fn aggregateStatus(self: *const PaneContainer) TabStatus {
 }
 
 /// Whether any tab in this container is flagged for attention.
-pub fn hasAttention(self: *const PaneContainer) bool {
+pub fn hasAttention(self: *const Pane) bool {
     for (self.tab_attention[0..self.tab_count]) |f| {
         if (f) return true;
     }
@@ -200,7 +201,7 @@ pub fn hasAttention(self: *const PaneContainer) bool {
 }
 
 /// Give keyboard focus to the active tab's content.
-pub fn focus(self: *const PaneContainer) void {
+pub fn focus(self: *const Pane) void {
     if (self.tab_count > 0) self.tabs[self.active_tab].focus();
 }
 
@@ -220,7 +221,7 @@ pub fn tabBarHeight(scale: f32) i32 {
 /// `is_focused` controls visual treatment: focused gets brighter text and
 /// an accent underline on the active tab; unfocused is dimmed.
 pub fn paintTabBar(
-    self: *PaneContainer,
+    self: *Pane,
     hdc: w32.HDC,
     rect: w32.RECT,
     scale: f32,
@@ -548,16 +549,16 @@ pub fn paintTabBar(
 
 const testing = std.testing;
 
-test "unit: PaneContainer create returns default state" {
-    const pc = try PaneContainer.create(testing.allocator);
+test "unit: Pane create returns default state" {
+    const pc = try Pane.create(testing.allocator);
     defer testing.allocator.destroy(pc);
     try testing.expectEqual(@as(u32, 0), pc.ref_count);
     try testing.expectEqual(@as(usize, 0), pc.tab_count);
     try testing.expectEqual(@as(usize, 0), pc.active_tab);
 }
 
-test "unit: PaneContainer ref counts up and returns self" {
-    var pc: PaneContainer = .{};
+test "unit: Pane ref counts up and returns self" {
+    var pc: Pane = .{};
     try testing.expectEqual(@as(u32, 0), pc.ref_count);
     const p = try pc.ref(testing.allocator);
     try testing.expectEqual(&pc, p);
@@ -566,15 +567,15 @@ test "unit: PaneContainer ref counts up and returns self" {
     try testing.expectEqual(@as(u32, 2), pc.ref_count);
 }
 
-test "unit: PaneContainer eql is identity" {
-    var a: PaneContainer = .{};
-    var b: PaneContainer = .{};
+test "unit: Pane eql is identity" {
+    var a: Pane = .{};
+    var b: Pane = .{};
     try testing.expect(a.eql(&a));
     try testing.expect(!a.eql(&b));
 }
 
-test "unit: PaneContainer aggregateStatus returns worst" {
-    var pc: PaneContainer = .{};
+test "unit: Pane aggregateStatus returns worst" {
+    var pc: Pane = .{};
     pc.tab_count = 3;
     pc.tab_status[0] = .normal;
     pc.tab_status[1] = .normal;
@@ -588,13 +589,13 @@ test "unit: PaneContainer aggregateStatus returns worst" {
     try testing.expectEqual(TabStatus.exited, pc.aggregateStatus());
 }
 
-test "unit: PaneContainer aggregateStatus empty is normal" {
-    var pc: PaneContainer = .{};
+test "unit: Pane aggregateStatus empty is normal" {
+    var pc: Pane = .{};
     try testing.expectEqual(TabStatus.normal, pc.aggregateStatus());
 }
 
-test "unit: PaneContainer hasAttention" {
-    var pc: PaneContainer = .{};
+test "unit: Pane hasAttention" {
+    var pc: Pane = .{};
     pc.tab_count = 2;
     try testing.expect(!pc.hasAttention());
 
@@ -602,16 +603,16 @@ test "unit: PaneContainer hasAttention" {
     try testing.expect(pc.hasAttention());
 }
 
-test "unit: PaneContainer activePane null when empty" {
-    var pc: PaneContainer = .{};
+test "unit: Pane activePane null when empty" {
+    var pc: Pane = .{};
     try testing.expectEqual(@as(?*Tab, null), pc.activeTab());
     try testing.expectEqual(@as(?w32.HWND, null), pc.activeTabHwnd());
 }
 
-test "unit: PaneContainer activePane returns active tab" {
+test "unit: Pane activePane returns active tab" {
     var pane_a: Tab = .{ .content = .{ .terminal = undefined } };
     var pane_b: Tab = .{ .content = .{ .terminal = undefined } };
-    var pc: PaneContainer = .{};
+    var pc: Pane = .{};
     pc.tabs[0] = &pane_a;
     pc.tabs[1] = &pane_b;
     pc.tab_count = 2;
@@ -622,8 +623,8 @@ test "unit: PaneContainer activePane returns active tab" {
     try testing.expectEqual(&pane_b, pc.activeTab().?);
 }
 
-test "unit: PaneContainer focus is noop when empty" {
-    var pc: PaneContainer = .{};
+test "unit: Pane focus is noop when empty" {
+    var pc: Pane = .{};
     pc.focus();
 }
 
@@ -632,14 +633,14 @@ const test_hdc: w32.HDC = @ptrFromInt(1);
 const test_config = .{ .background = .{ .r = @as(u8, 30), .g = @as(u8, 30), .b = @as(u8, 30) } };
 
 test "unit: tabBarHeight returns scaled height" {
-    try testing.expectEqual(@as(i32, 32), PaneContainer.tabBarHeight(1.0));
-    try testing.expectEqual(@as(i32, 64), PaneContainer.tabBarHeight(2.0));
-    try testing.expectEqual(@as(i32, 48), PaneContainer.tabBarHeight(1.5));
-    try testing.expectEqual(@as(i32, 0), PaneContainer.tabBarHeight(0.0));
+    try testing.expectEqual(@as(i32, 32), Pane.tabBarHeight(1.0));
+    try testing.expectEqual(@as(i32, 64), Pane.tabBarHeight(2.0));
+    try testing.expectEqual(@as(i32, 48), Pane.tabBarHeight(1.5));
+    try testing.expectEqual(@as(i32, 0), Pane.tabBarHeight(0.0));
 }
 
 test "unit: paintTabBar returns 0 for single tab not force visible" {
-    var pc: PaneContainer = .{};
+    var pc: Pane = .{};
     pc.tab_count = 1;
     const h = pc.paintTabBar(test_hdc, .{ .left = 0, .top = 0, .right = 800, .bottom = 600 }, 1.0, test_config, true, null, null, null, false, false, false);
     try testing.expectEqual(@as(i32, 0), h);
@@ -647,36 +648,36 @@ test "unit: paintTabBar returns 0 for single tab not force visible" {
 }
 
 test "unit: paintTabBar returns 0 for empty container" {
-    var pc: PaneContainer = .{};
+    var pc: Pane = .{};
     const h = pc.paintTabBar(test_hdc, .{ .left = 0, .top = 0, .right = 800, .bottom = 600 }, 1.0, test_config, true, null, null, null, false, false, false);
     try testing.expectEqual(@as(i32, 0), h);
     try testing.expectEqual(@as(usize, 0), pc.tab_rect_count);
 }
 
 test "unit: paintTabBar returns 0 for zero scale" {
-    var pc: PaneContainer = .{};
+    var pc: Pane = .{};
     pc.tab_count = 3;
     const h = pc.paintTabBar(test_hdc, .{ .left = 0, .top = 0, .right = 800, .bottom = 600 }, 0.0, test_config, true, null, null, null, false, false, false);
     try testing.expectEqual(@as(i32, 0), h);
 }
 
 test "unit: paintTabBar returns 0 for zero-width rect" {
-    var pc: PaneContainer = .{};
+    var pc: Pane = .{};
     pc.tab_count = 3;
     const h = pc.paintTabBar(test_hdc, .{ .left = 100, .top = 0, .right = 100, .bottom = 600 }, 1.0, test_config, true, null, null, null, false, false, false);
     try testing.expectEqual(@as(i32, 0), h);
 }
 
-test "unit: PaneContainer default hover state is cleared" {
-    const pc: PaneContainer = .{};
+test "unit: Pane default hover state is cleared" {
+    const pc: Pane = .{};
     try testing.expectEqual(@as(?usize, null), pc.hovered_tab_idx);
     try testing.expectEqual(@as(?usize, null), pc.hovered_close_idx);
     try testing.expect(!pc.hovered_new_tab);
     try testing.expect(!pc.hovered_dropdown);
 }
 
-test "unit: PaneContainer default hit-test rects are zeroed" {
-    const pc: PaneContainer = .{};
+test "unit: Pane default hit-test rects are zeroed" {
+    const pc: Pane = .{};
     try testing.expectEqual(@as(usize, 0), pc.tab_rect_count);
     try testing.expectEqual(@as(i32, 0), pc.new_tab_btn_rect.left);
     try testing.expectEqual(@as(i32, 0), pc.new_tab_btn_rect.right);
@@ -686,8 +687,8 @@ test "unit: PaneContainer default hit-test rects are zeroed" {
     try testing.expectEqual(@as(i32, 0), pc.layout_rect.right);
 }
 
-test "unit: PaneContainer hover state is independently settable" {
-    var pc: PaneContainer = .{};
+test "unit: Pane hover state is independently settable" {
+    var pc: Pane = .{};
     pc.hovered_tab_idx = 2;
     pc.hovered_close_idx = 1;
     pc.hovered_new_tab = true;
@@ -710,16 +711,16 @@ test "unit: PaneContainer hover state is independently settable" {
     try testing.expect(!pc.hovered_dropdown);
 }
 
-test "unit: PaneContainer layout_rect stores assigned position" {
+test "unit: Pane layout_rect stores assigned position" {
     // Simulate layoutSplits assigning rects to containers in a side-by-side split.
-    var left: PaneContainer = .{};
+    var left: Pane = .{};
     left.layout_rect = .{ .left = 0, .top = 0, .right = 400, .bottom = 300 };
     try testing.expectEqual(@as(i32, 0), left.layout_rect.left);
     try testing.expectEqual(@as(i32, 0), left.layout_rect.top);
     try testing.expectEqual(@as(i32, 400), left.layout_rect.right);
     try testing.expectEqual(@as(i32, 300), left.layout_rect.bottom);
 
-    var right: PaneContainer = .{};
+    var right: Pane = .{};
     right.layout_rect = .{ .left = 400, .top = 0, .right = 800, .bottom = 300 };
     try testing.expectEqual(@as(i32, 400), right.layout_rect.left);
     try testing.expectEqual(@as(i32, 800), right.layout_rect.right);
@@ -728,8 +729,8 @@ test "unit: PaneContainer layout_rect stores assigned position" {
     try testing.expect(left.layout_rect.right <= right.layout_rect.left);
 }
 
-test "unit: PaneContainer tab bar visibility rule" {
-    var pc: PaneContainer = .{};
+test "unit: Pane tab bar visibility rule" {
+    var pc: Pane = .{};
 
     // 0 tabs: no bar (both forced and unforced)
     pc.tab_count = 0;

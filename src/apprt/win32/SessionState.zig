@@ -1,6 +1,6 @@
 //! Persisted session layout for the Win32 runtime (tmux-resurrect style).
 //!
-//! Saves the entire workspace/PaneContainer/tab layout with working
+//! Saves the entire workspace/Pane/tab layout with working
 //! directories to `%LOCALAPPDATA%\ghostty\session-state.json` so it can
 //! be restored on restart.
 //!
@@ -22,7 +22,7 @@ const Allocator = std.mem.Allocator;
 
 const App = @import("App.zig");
 const Tab = @import("model/Tab.zig");
-const PaneContainer = @import("PaneContainer.zig");
+const Pane = @import("model/Pane.zig");
 const Surface = @import("Surface.zig");
 const Window = @import("Window.zig");
 const SplitTree = @import("../../datastruct/split_tree.zig").SplitTree;
@@ -50,7 +50,7 @@ pub const TabData = struct {
     cwd: ?[]const u8 = null,
 };
 
-/// A serializable PaneContainer snapshot.
+/// A serializable Pane snapshot.
 pub const PaneContainerData = struct {
     tabs: []TabData = &.{},
     active_tab: usize = 0,
@@ -89,8 +89,8 @@ pub const SessionData = struct {
 
 // ── Save ────────────────────────────────────────────────────────────
 
-/// Build a PaneContainerData from a live PaneContainer.
-fn containerDataFrom(a: Allocator, container: *PaneContainer) !PaneContainerData {
+/// Build a PaneContainerData from a live Pane.
+fn containerDataFrom(a: Allocator, container: *Pane) !PaneContainerData {
     const tab_count = container.tab_count;
     const tabs = try a.alloc(TabData, tab_count);
 
@@ -128,8 +128,8 @@ fn containerDataFrom(a: Allocator, container: *PaneContainer) !PaneContainerData
 /// Recursively serialize a SplitTree node into a SplitNodeData.
 fn serializeNode(
     a: Allocator,
-    tree: SplitTree(PaneContainer),
-    handle: SplitTree(PaneContainer).Node.Handle,
+    tree: SplitTree(Pane),
+    handle: SplitTree(Pane).Node.Handle,
 ) !SplitNodeData {
     switch (tree.nodes[handle.idx()]) {
         .leaf => |container| {
@@ -223,8 +223,8 @@ pub fn save(alloc: Allocator, window: *Window) !void {
 /// Restore a session from disk into the app. Creates workspaces and tabs
 /// to match the saved layout.
 ///
-/// Supports both v2 (split_tree of PaneContainers) and v1 (flat tabs[])
-/// formats — v1 files are migrated to one PaneContainer per workspace.
+/// Supports both v2 (split_tree of Panes) and v1 (flat tabs[])
+/// formats — v1 files are migrated to one Pane per workspace.
 pub fn restore(alloc: Allocator, app: *App) !void {
     var arena = std.heap.ArenaAllocator.init(alloc);
     defer arena.deinit();
@@ -291,7 +291,7 @@ pub fn restore(alloc: Allocator, app: *App) !void {
 }
 
 /// Restore a v2 workspace: parse the split_tree and recursively rebuild
-/// the PaneContainer hierarchy with tabs. Builds the SplitTree bottom-up
+/// the Pane hierarchy with tabs. Builds the SplitTree bottom-up
 /// to faithfully reconstruct the exact tree topology that was saved.
 fn restoreV2Workspace(
     alloc: Allocator,
@@ -330,7 +330,7 @@ fn restoreV2Workspace(
 }
 
 /// Recursively build a SplitTree from a JSON node. For leaf nodes,
-/// creates a PaneContainer with tabs and returns a single-leaf tree.
+/// creates a Pane with tabs and returns a single-leaf tree.
 /// For split nodes, recursively builds left and right subtrees and
 /// combines them via SplitTree.split to preserve the exact topology.
 fn buildSplitTree(
@@ -339,7 +339,7 @@ fn buildSplitTree(
     ws: *Window.Workspace,
     is_bg: bool,
     node_obj: std.json.ObjectMap,
-) ?SplitTree(PaneContainer) {
+) ?SplitTree(Pane) {
     const node_type = jsonString(node_obj.get("node_type")) orelse return null;
 
     if (std.mem.eql(u8, node_type, "leaf")) {
@@ -357,7 +357,7 @@ fn buildLeafTree(
     ws: *Window.Workspace,
     is_bg: bool,
     node_obj: std.json.ObjectMap,
-) ?SplitTree(PaneContainer) {
+) ?SplitTree(Pane) {
     const container_val = node_obj.get("container") orelse return null;
     const container_obj = switch (container_val) {
         .object => |o| o,
@@ -371,8 +371,8 @@ fn buildLeafTree(
     };
     if (tabs_arr.items.len == 0) return null;
 
-    // Create a PaneContainer and populate its tabs.
-    const container = PaneContainer.create(alloc) catch return null;
+    // Create a Pane and populate its tabs.
+    const container = Pane.create(alloc) catch return null;
 
     for (tabs_arr.items, 0..) |tab_val, ti| {
         if (ti >= 64) break; // MAX_TABS
@@ -435,7 +435,7 @@ fn buildLeafTree(
     const active_tab = jsonUsize(container_obj.get("active_tab")) orelse 0;
     container.active_tab = @min(active_tab, container.tab_count - 1);
 
-    return SplitTree(PaneContainer).init(alloc, container) catch null;
+    return SplitTree(Pane).init(alloc, container) catch null;
 }
 
 /// Build a SplitTree from a split JSON node by recursively building
@@ -446,7 +446,7 @@ fn buildSplitNode(
     ws: *Window.Workspace,
     is_bg: bool,
     node_obj: std.json.ObjectMap,
-) ?SplitTree(PaneContainer) {
+) ?SplitTree(Pane) {
     const left_val = node_obj.get("left") orelse return null;
     const left_obj = switch (left_val) {
         .object => |o| o,
@@ -466,7 +466,7 @@ fn buildSplitNode(
     defer right_tree.deinit();
 
     const dir_str = jsonString(node_obj.get("direction")) orelse "horizontal";
-    const direction: SplitTree(PaneContainer).Split.Direction = if (std.mem.eql(u8, dir_str, "vertical"))
+    const direction: SplitTree(Pane).Split.Direction = if (std.mem.eql(u8, dir_str, "vertical"))
         .down
     else
         .right;
@@ -483,7 +483,7 @@ fn buildSplitNode(
     return combined;
 }
 
-/// Restore a v1 workspace: flat tabs array, one PaneContainer for all.
+/// Restore a v1 workspace: flat tabs array, one Pane for all.
 fn restoreV1Workspace(
     alloc: Allocator,
     window: *Window,
@@ -631,8 +631,8 @@ test "SessionState: focusedContainerIndex returns 0 when focused is null" {
 
 test "SessionState: focusedContainerIndex finds correct leaf in single-node tree" {
     const alloc = testing.allocator;
-    var pc: PaneContainer = .{};
-    const tree = try SplitTree(PaneContainer).init(alloc, &pc);
+    var pc: Pane = .{};
+    const tree = try SplitTree(Pane).init(alloc, &pc);
     defer {
         var t = tree;
         t.deinit();
@@ -645,7 +645,7 @@ test "SessionState: focusedContainerIndex finds correct leaf in single-node tree
 
 test "SessionState: containerDataFrom produces correct tab count and active index" {
     const alloc = testing.allocator;
-    var pc: PaneContainer = .{};
+    var pc: Pane = .{};
     pc.tab_count = 0;
     pc.active_tab = 0;
 
@@ -657,9 +657,9 @@ test "SessionState: containerDataFrom produces correct tab count and active inde
 
 test "SessionState: serializeNode round-trips a single-leaf tree" {
     const alloc = testing.allocator;
-    var pc: PaneContainer = .{};
+    var pc: Pane = .{};
     pc.tab_count = 0;
-    const tree = try SplitTree(PaneContainer).init(alloc, &pc);
+    const tree = try SplitTree(Pane).init(alloc, &pc);
     defer {
         var t = tree;
         t.deinit();

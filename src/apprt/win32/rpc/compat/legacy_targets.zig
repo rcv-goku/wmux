@@ -11,7 +11,7 @@ const std = @import("std");
 
 const App = @import("../../App.zig");
 const Tab = @import("../../model/Tab.zig");
-const PaneContainer = @import("../../PaneContainer.zig");
+const Pane = @import("../../model/Pane.zig");
 const Surface = @import("../../Surface.zig");
 const Window = @import("../../Window.zig");
 const w32 = @import("../../platform/win32.zig");
@@ -112,7 +112,7 @@ pub const IpcTabTarget = struct {
     window: *Window,
     ws: *Window.Workspace,
     ws_idx: usize,
-    container: *PaneContainer,
+    container: *Pane,
     tab_idx: usize,
 };
 
@@ -132,7 +132,7 @@ pub fn ipcResolveTab(self: *App, req: *ipc.Request) IpcError!IpcTabTarget {
 pub const SurfaceLoc = struct {
     window: *Window,
     ws_idx: usize,
-    container: *PaneContainer,
+    container: *Pane,
     tab_idx: usize,
     surface: *Surface,
 };

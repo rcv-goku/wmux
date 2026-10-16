@@ -24,7 +24,7 @@ pub const commands = [_]LegacyCommand{
 
 /// sync-input {action:"toggle"|"on"|"off", [workspace], [tab], [pane]} →
 /// toggle or set synchronized input for the addressed tab. Defaults to
-/// active workspace and focused PaneContainer's active tab.
+/// active workspace and focused Pane's active tab.
 fn ipcSyncInput(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const action_str = ipcArgString(req, "action") orelse "toggle";

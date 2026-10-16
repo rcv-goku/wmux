@@ -6,7 +6,7 @@
 
 const std = @import("std");
 const w32 = @import("platform/win32.zig");
-const PaneContainer = @import("PaneContainer.zig");
+const Pane = @import("model/Pane.zig");
 const Window = @import("Window.zig");
 const testing = std.testing;
 
@@ -1931,7 +1931,7 @@ test "sidebar formatMetaLineUtf8: branch, ports, and status joined with separato
     var ws = metaTestWorkspace();
     ws.setGitBranch("main");
     ws.setPorts(&.{ 3000, 8080 });
-    var pc: PaneContainer = .{};
+    var pc: Pane = .{};
     pc.tab_count = 1;
     ws.focused_container = &pc;
     ws.setTabStatusText(0, "running tests");
@@ -1970,7 +1970,7 @@ test "sidebar formatMetaLineUtf8: truncates without overflowing the buffer" {
     var ws = metaTestWorkspace();
     ws.setGitBranch("a-very-long-branch-name-that-keeps-going");
     ws.setPorts(&.{ 3000, 3001, 3002, 3003 });
-    var pc: PaneContainer = .{};
+    var pc: Pane = .{};
     pc.tab_count = 1;
     ws.focused_container = &pc;
     ws.setTabStatusText(0, "a long status message that should be dropped");

@@ -121,7 +121,7 @@ fn buildMetaJob(self: *App, w: *Window, ws_idx: usize, want_pr: bool) ?ws_meta.J
     const alloc = self.core_app.alloc;
     const ws = &w.workspaces[ws_idx];
 
-    // Collect ConPTY child PIDs from all PaneContainers (terminals only).
+    // Collect ConPTY child PIDs from all Panes (terminals only).
     var pids: std.ArrayList(u32) = .empty;
     errdefer pids.deinit(alloc);
     {

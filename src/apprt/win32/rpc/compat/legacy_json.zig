@@ -38,7 +38,7 @@ pub const Command = enum {
     fill,
 
     // Workspace / tab / keystroke scripting.  Tab commands operate on
-    // the focused PaneContainer (split-tree leaf) of the addressed
+    // the focused Pane (split-tree leaf) of the addressed
     // workspace; an optional "pane" arg overrides with a container index.
     @"workspace-list",
     @"workspace-new",
@@ -59,11 +59,11 @@ pub const Command = enum {
     // run synchronously on the GUI thread and reply directly, like the
     // workspace/tab verbs (they touch the live model). Indices follow the
     // same defaulting as send/notify (absent workspace/tab/pane => active).
-    // All accept an optional "pane" arg to address a specific PaneContainer
+    // All accept an optional "pane" arg to address a specific Pane
     // by split-tree leaf index instead of the focused container.
     //
     // surface-list {[workspace]} -> JSON of every tab in every
-    //   PaneContainer of the addressed workspace:
+    //   Pane of the addressed workspace:
     //   [{pane, tab, id, type:"terminal"|"browser", focused, title}].
     // surface-focus {surface | (workspace,pane,[tab])} -> focus a surface
     //   by its stable id, or by workspace/pane(container)/tab index.
@@ -106,7 +106,7 @@ pub const Command = enum {
     @"select-layout",
     // Toggle synchronized input for a tab. Args: {action:"toggle"|"on"|
     // "off", [workspace], [tab], [pane]}. Defaults to the active tab in
-    // the focused PaneContainer.
+    // the focused Pane.
     @"sync-input",
     // Pane movement: break a pane out of its split into a new tab, or
     // move it to an adjacent/specific tab.

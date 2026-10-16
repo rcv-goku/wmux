@@ -2,7 +2,7 @@
 //! tab-new, tab-select, tab-close, surface-list, surface-focus, new-split,
 //! swap-split, break-pane, move-pane (`wmux +tab|+surface|+split ...`).
 //!
-//! Tab commands operate on the focused PaneContainer (split-tree leaf) of
+//! Tab commands operate on the focused Pane (split-tree leaf) of
 //! the addressed workspace; an optional "pane" arg overrides with a
 //! container index. Indices are window-local to the IPC target window.
 //! The Window mutators act on the *active* workspace, so handlers that
@@ -15,7 +15,7 @@ const std = @import("std");
 
 const apprt = @import("../../../../apprt.zig");
 const App = @import("../../App.zig");
-const PaneContainer = @import("../../PaneContainer.zig");
+const Pane = @import("../../model/Pane.zig");
 const SplitTree = @import("../../../../datastruct/split_tree.zig").SplitTree;
 const ipc = @import("../../rpc/compat/legacy_json.zig");
 const LegacyCommand = @import("../../rpc/compat/legacy_table.zig").LegacyCommand;
@@ -50,7 +50,7 @@ pub const commands = [_]LegacyCommand{
 };
 
 /// tab-list {[workspace], [pane]} → [{index, title, active}] for the
-/// focused PaneContainer (or the one at `pane` index) of the addressed
+/// focused Pane (or the one at `pane` index) of the addressed
 /// (or active) workspace.
 fn ipcTabList(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
@@ -81,7 +81,7 @@ fn ipcTabList(self: *App, req: *ipc.Request) anyerror!void {
 }
 
 /// tab-new {[workspace], [command], [pane]} → add a tab to the focused
-/// PaneContainer (or the one at `pane` index) of the addressed (or
+/// Pane (or the one at `pane` index) of the addressed (or
 /// active) workspace and reply with its index. With `command` the tab
 /// runs that shell (split on spaces); without it the tab inherits the
 /// active pane's backend (matching the "+" new-tab UX). The Window tab
@@ -101,11 +101,11 @@ fn ipcTabNew(self: *App, req: *ipc.Request) anyerror!void {
     // and the "create != focus" policy.
     //
     // The returned index is the new tab's index WITHIN THE TARGET
-    // PaneContainer, the same index `+tab list --workspace <ws>` shows and
+    // Pane, the same index `+tab list --workspace <ws>` shows and
     // `+tab close --workspace <ws>` accepts.
     const focus = ipcArgBool(req, "focus") orelse false;
 
-    // --pane targets a specific PaneContainer by index. The tab creation
+    // --pane targets a specific Pane by index. The tab creation
     // functions read the workspace's focused container, so redirect it.
     if (ipcArgU32(req, "pane")) |p| {
         const ws = &window.workspaces[ws_idx];
@@ -147,7 +147,7 @@ fn ipcTabNew(self: *App, req: *ipc.Request) anyerror!void {
 }
 
 /// tab-select {index, [workspace], [pane]} → make tab `index` active in
-/// the focused PaneContainer (or the one at `pane` index) of the
+/// the focused Pane (or the one at `pane` index) of the
 /// addressed (or active) workspace. selectTabIndex acts on the active
 /// workspace, so a non-active target is selected first.
 fn ipcTabSelect(self: *App, req: *ipc.Request) anyerror!void {
@@ -169,7 +169,7 @@ fn ipcTabSelect(self: *App, req: *ipc.Request) anyerror!void {
 }
 
 /// tab-close {index, [workspace], [pane]} → close tab `index` in the
-/// focused PaneContainer (or the one at `pane` index) of the addressed
+/// focused Pane (or the one at `pane` index) of the addressed
 /// (or active) workspace.
 fn ipcTabClose(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
@@ -187,7 +187,7 @@ fn ipcTabClose(self: *App, req: *ipc.Request) anyerror!void {
 }
 
 /// surface-list {[workspace]} → [{pane, tab, id, type, focused, title}]
-/// for every tab in every PaneContainer (split tree leaf) of the
+/// for every tab in every Pane (split tree leaf) of the
 /// addressed (or active) workspace.
 fn ipcSurfaceList(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
@@ -273,7 +273,7 @@ fn ipcSurfaceFocus(self: *App, req: *ipc.Request) anyerror!void {
 }
 
 /// new-split {dir:"right"|"down"|"left"|"up", [workspace],[tab],[pane],[command]}
-/// → split the focused PaneContainer (or the one at `pane` index) of the
+/// → split the focused Pane (or the one at `pane` index) of the
 /// addressed (or active) workspace and reply with the new pane's surface
 /// id. With `command`, the split runs that shell (split on whitespace);
 /// without it, it inherits the source pane's backend (matching the UI
@@ -282,7 +282,7 @@ fn ipcNewSplit(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const dir_str = ipcArgString(req, "dir") orelse
         ipcArgString(req, "direction") orelse return IpcError.MissingDirection;
-    const direction: SplitTree(PaneContainer).Split.Direction = if (std.mem.eql(u8, dir_str, "right"))
+    const direction: SplitTree(Pane).Split.Direction = if (std.mem.eql(u8, dir_str, "right"))
         .right
     else if (std.mem.eql(u8, dir_str, "down"))
         .down
@@ -302,7 +302,7 @@ fn ipcNewSplit(self: *App, req: *ipc.Request) anyerror!void {
     }
 
     // Programmatic split defaults to NON-FOCUS: the split is created in the
-    // target workspace's focused PaneContainer but the active workspace/tab
+    // target workspace's focused Pane but the active workspace/tab
     // and OS foreground are NOT changed (a background pane). `--focus`
     // (focus:true) selects the target workspace and focuses the new pane,
     // the interactive split UX. Matches the "create != focus" policy.

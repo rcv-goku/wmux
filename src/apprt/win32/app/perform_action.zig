@@ -13,7 +13,7 @@ const std = @import("std");
 
 const apprt = @import("../../../apprt.zig");
 const App = @import("../App.zig");
-const PaneContainer = @import("../PaneContainer.zig");
+const Pane = @import("../model/Pane.zig");
 const QuickTerminal = @import("../features/quick_terminal/QuickTerminal.zig");
 const SessionState = @import("../SessionState.zig");
 const SplitTree = @import("../../../datastruct/split_tree.zig").SplitTree;
@@ -567,7 +567,7 @@ fn newSplit(target: apprt.Target, value: apprt.Action.Value(.new_split)) void {
     switch (target) {
         .app => {},
         .surface => |core_surface| {
-            const dir: SplitTree(PaneContainer).Split.Direction = switch (value) {
+            const dir: SplitTree(Pane).Split.Direction = switch (value) {
                 .left => .left,
                 .right => .right,
                 .up => .up,
