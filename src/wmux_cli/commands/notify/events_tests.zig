@@ -284,6 +284,21 @@ test "unit: cli-events: --timeout fails on the monotonic clock" {
     try kit.expectResult(r, 1, "", "cmux: " ++ events.timeout_message ++ "\n");
 }
 
+test "unit: cli-events: a read that wakes before the --timeout deadline still reports the timeout" {
+    // Windows wait timeouts can expire up to a clock tick early, so the
+    // monotonic clock may still show a few milliseconds left. A read cut
+    // short by --timeout is the deadline, not 60 s of silence.
+    var sc: Script = .{ .batches = &.{ack}, .close = false };
+    var h: Harness = undefined;
+    try harness(&h, &sc);
+    defer h.deinit();
+    // Reads time out without moving the fake clock.
+    h.server.clock = null;
+    try kit.expectResult(fresh(&h, &.{ "cmux", "events", "--timeout", "2.5", "--limit", "1" }), 1, ack ++ "\n", "cmux: " ++ events.timeout_message ++ "\n");
+    try kit.expectResult(fresh(&h, &.{ "cmux", "events", "--reconnect", "--no-ack", "--timeout", "2.5" }), 1, "", "cmux: " ++ events.timeout_message ++ "\n");
+    try testing.expectEqual(@as(usize, 1), h.server.connections);
+}
+
 test "unit: cli-events: event frames need a numeric seq" {
     var sc: Script = .{ .batches = &.{comptime lines(&.{ ack, "{\"type\":\"event\",\"name\":\"a\",\"seq\":\"7\"}" })} };
     var h: Harness = undefined;

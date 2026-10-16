@@ -217,14 +217,21 @@ const Stream = struct {
             scanned = self.buf.items.len;
             if (self.buf.items.len > max_frame_bytes) return .too_large;
             var wait: u32 = idle_timeout_ms;
+            // A wait cut short by --timeout ends at the deadline even when
+            // the OS wakes up a clock tick early and a few milliseconds
+            // still seem to be left.
+            var until_deadline = false;
             if (self.remaining()) |r| {
                 if (r == 0) return .deadline;
-                wait = @intCast(@min(r, wait));
+                if (r <= wait) {
+                    wait = @intCast(r);
+                    until_deadline = true;
+                }
             }
             try self.buf.ensureUnusedCapacity(std.heap.page_allocator, 64 * 1024);
             const spare = self.buf.unusedCapacitySlice();
             const n = conn.read(spare, wait) catch |err| switch (err) {
-                error.Timeout => return if (self.remaining() == @as(?u64, 0)) .deadline else .idle,
+                error.Timeout => return if (until_deadline or self.remaining() == @as(?u64, 0)) .deadline else .idle,
                 error.Unexpected => return .io,
             };
             if (n == 0) return .closed;
