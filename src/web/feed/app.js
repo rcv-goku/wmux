@@ -45,8 +45,12 @@ const TIME_REFRESH_MS = 30000;
 const MAX_BANNERS = 3;
 /** Longest a pointer press holds back renders (a release the page never sees). */
 const PRESS_MAX_MS = 2000;
-/** Error codes that mean the request is gone (answered elsewhere, expired). */
-const GONE_CODES = new Set(["not_found", "conflict", "expired", "gone", "already_resolved"]);
+/**
+ * v2 error codes (ADR-3.5, wmux_proto/errors.zig) that mean the request is
+ * gone: unknown request id, or no longer pending (answered elsewhere, timed
+ * out, expired).
+ */
+const GONE_CODES = new Set(["not_found", "invalid_state", "stale_state"]);
 
 /**
  * @param {{

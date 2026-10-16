@@ -80,9 +80,11 @@ status, active_form}]`, `todo_summary`, `is_error`, `options` (selectable
 modes, or the question option labels), `resolution {mode?, feedback?,
 selections?, text?, badge}`, `resolved_at`. Unknown kinds are skipped.
 
-Reply errors: `not_found`, `conflict`, `expired`, `gone` or `already_resolved`
-show "This request was already resolved."; others "Could not send the
-decision: <message>". Either way the list reloads.
+Reply errors use the v2 codes of ADR-3.5 (`wmux_proto/errors.zig`):
+`not_found` (unknown request id) and `invalid_state` or `stale_state` (the
+request is no longer pending: answered elsewhere, timed out or expired) show
+"This request was already resolved."; others "Could not send the decision:
+<message>". Either way the list reloads.
 
 ### Events pushed by native
 

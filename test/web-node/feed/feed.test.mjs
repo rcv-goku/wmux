@@ -377,9 +377,15 @@ describe("unit: feed app", () => {
   });
 
   test("unit: feed: answering a request resolved elsewhere says so", async () => {
-    await startApp({ handlers: { "feed.permission.reply": () => { throw hostError("not_found", "unknown request"); } } });
+    // ADR-3.5 codes only: an unknown request id, or one no longer pending.
+    for (const code of ["not_found", "invalid_state", "stale_state"]) {
+      await startApp({ handlers: { "feed.permission.reply": () => { throw hostError(code, "request is not pending"); } } });
+      await app.replyPermission(uuid(1), "deny");
+      assert.equal(cardById(uuid(1)).querySelector(".feed-card-error").textContent, "This request was already resolved.", code);
+    }
+    await startApp({ handlers: { "feed.permission.reply": () => { throw hostError("busy", "try again"); } } });
     await app.replyPermission(uuid(1), "deny");
-    assert.equal(cardById(uuid(1)).querySelector(".feed-card-error").textContent, "This request was already resolved.");
+    assert.equal(cardById(uuid(1)).querySelector(".feed-card-error").textContent, "Could not send the decision: try again");
   });
 
   test("unit: feed: All Activity lists every kind with labels, todos and tool results", async () => {
