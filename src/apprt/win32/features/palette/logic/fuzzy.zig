@@ -241,8 +241,10 @@ pub const Matcher = struct {
     /// Single-edit match of one token: tries every variant with one code point
     /// deleted (covers an extra or a mistyped character) and every adjacent
     /// transposition. A variant only counts when its first match sits on a
-    /// word start and its matched span is at most three times its length.
-    /// Returns the best variant score minus `penalty_typo`.
+    /// word start (any boundary from the module comment, camelCase humps and
+    /// letter→digit transitions included) and its matched span is at most
+    /// three times its length. Returns the best variant score minus
+    /// `penalty_typo`.
     pub fn matchTokenTypo(self: *Matcher, token: []const u8, ranges: ?*std.ArrayList(Range)) Allocator.Error!?i32 {
         if (!try self.setNeedle(token)) return null;
         const n = self.ndl_orig.items.len;
@@ -255,7 +257,8 @@ pub const Matcher = struct {
             try self.buildVariant(v);
             const s = try self.run(self.var_orig.items, self.var_fold.items) orelse continue;
             const pos = self.positions.items;
-            if (self.hay_bonus.items[pos[0]] < bonus_boundary) continue;
+            // bonus_camel is the smallest word-start bonus; mid-word is 0.
+            if (self.hay_bonus.items[pos[0]] < bonus_camel) continue;
             if (pos[pos.len - 1] - pos[0] + 1 > 3 * pos.len) continue;
             if (best == null or s > best.?) {
                 best = s;
@@ -595,6 +598,27 @@ test "unit: palette: fuzzy typo variants must start on a word and stay compact" 
     // Scattered over a long haystack: span too wide.
     try m.setHaystack("a........................b........................c");
     try testing.expect(try m.matchTokenTypo("abxc", null) == null);
+}
+
+test "unit: palette: fuzzy typo variants may start on a camelCase hump" {
+    // File names and branches are often camelCase (switcher keywords).
+    const gpa = testing.allocator;
+    var m = Matcher.init(gpa);
+    defer m.deinit();
+    var ranges: std.ArrayList(Range) = .empty;
+    defer ranges.deinit(gpa);
+    try m.setHaystack("commandPalette");
+    try testing.expect(try m.matchToken("plaette", null) == null);
+    try testing.expect(try m.matchTokenTypo("plaette", &ranges) != null);
+    try expectRanges("commandPalette", ranges.items, &.{"Palette"});
+    ranges.clearRetainingCapacity();
+    try m.setHaystack("loginFlow");
+    try testing.expect(try m.matchToken("flwo", null) == null);
+    try testing.expect(try m.matchTokenTypo("flwo", &ranges) != null);
+    try expectRanges("loginFlow", ranges.items, &.{"Flow"});
+    // A mid-word start still does not count.
+    try m.setHaystack("loginflow");
+    try testing.expect(try m.matchTokenTypo("flwo", null) == null);
 }
 
 test "unit: palette: fuzzy unicode, emoji and case folding" {
