@@ -268,7 +268,8 @@ pub fn runBridge(gpa: Allocator, home: []const u8, name: []const u8, session_ttl
 pub const StopResult = enum { not_running, stopped, killed };
 
 /// `serve --persistent-stop`: SIGTERM the slot server (it closes its
-/// sessions), SIGKILL after `wait_ms`. A stale pid file is never signalled.
+/// sessions), SIGKILL after `wait_ms`. A stale pid file is never signalled,
+/// and neither is a successor that a reconnecting bridge started meanwhile.
 pub fn stopSlot(gpa: Allocator, home: []const u8, name: []const u8, wait_ms: i64) !StopResult {
     var slot = try Slot.init(gpa, home, name);
     defer slot.deinit(gpa);
@@ -277,11 +278,24 @@ pub fn stopSlot(gpa: Allocator, home: []const u8, name: []const u8, wait_ms: i64
     _ = std.c.kill(pid, posix.SIG.TERM);
     const deadline = std.time.milliTimestamp() + wait_ms;
     while (std.time.milliTimestamp() < deadline) {
-        if (!lockHeld(slot.lock)) return .stopped;
+        if (!stillOwns(&slot, pid)) return .stopped;
         std.Thread.sleep(20 * std.time.ns_per_ms);
     }
+    // Only while the pid file still names the server we signalled: never a
+    // successor, and never a pid that already exited (it may be reused).
+    if (!lockHeld(slot.lock) or readPid(slot.pid) != pid) return .stopped;
     _ = std.c.kill(pid, posix.SIG.KILL);
     return .killed;
+}
+
+/// True while the server `pid` may still own the slot: the lock is held and
+/// the pid file does not name another server. The old server deletes the
+/// file before it drops the lock, and a successor writes its own pid after
+/// taking it, so a missing file means "in between": keep waiting.
+fn stillOwns(slot: *const Slot, pid: posix.pid_t) bool {
+    if (!lockHeld(slot.lock)) return false;
+    const current = readPid(slot.pid) orelse return true;
+    return current == pid;
 }
 
 pub fn readPid(path: []const u8) ?posix.pid_t {
@@ -419,4 +433,31 @@ test "unit: remote-daemon: slot sockets are only reached through a private direc
     try ensurePrivateDir(dir);
     try checkPrivateDir(dir);
     posix.close(try connect(sock));
+}
+
+test "unit: remote-daemon: stop waits only for the server it signalled" {
+    const gpa = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const home = try tmp.dir.realpathAlloc(gpa, ".");
+    defer gpa.free(home);
+    var slot = try Slot.init(gpa, home, "stop");
+    defer slot.deinit(gpa);
+    try ensurePrivateDir(slot.dir);
+    try testing.expect(!stillOwns(&slot, 4242));
+
+    // A server holds the lock and the pid file names it.
+    const lock = try std.fs.cwd().createFile(slot.lock, .{ .truncate = false, .mode = 0o600 });
+    try posix.flock(lock.handle, posix.LOCK.EX | posix.LOCK.NB);
+    try std.fs.cwd().writeFile(.{ .sub_path = slot.pid, .data = "4242\n" });
+    try testing.expect(stillOwns(&slot, 4242));
+    // Between the old server's exit and its successor's pid file: wait on.
+    try std.fs.cwd().deleteFile(slot.pid);
+    try testing.expect(stillOwns(&slot, 4242));
+    // A successor (a reconnecting bridge started it) owns the slot now:
+    // the signalled server is gone and must not be waited for or killed.
+    try std.fs.cwd().writeFile(.{ .sub_path = slot.pid, .data = "4343\n" });
+    try testing.expect(!stillOwns(&slot, 4242));
+    lock.close();
+    try testing.expect(!stillOwns(&slot, 4343));
 }
