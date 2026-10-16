@@ -1009,9 +1009,21 @@ test "unit: agents: copilot errorOccurred ends the turn only when unrecoverable"
     defer rec.p.deinit();
     try testing.expectEqual(Event.notification, rec.n.?.event);
     try testing.expect(!rec.n.?.failure);
+    // The agent keeps working: informational, never needs-input.
+    try testing.expect(rec.n.?.informational);
+    try testing.expect(rec.n.?.input_kind == null);
+    try testing.expect(normalize.storeLifecycle(rec.n.?, false) == null);
     var unk = try normalizeFixture(.copilot, "errorOccurred", "{\"error\":{\"message\":\"?\"}}");
     defer unk.p.deinit();
     try testing.expectEqual(Event.notification, unk.n.?.event);
+    try testing.expect(unk.n.?.informational);
+    try testing.expect(normalize.storeLifecycle(unk.n.?, false) == null);
+    // Named by the payload, with a cue word in a top-level message.
+    var cue = try normalizeFixture(.copilot, "x-unknown", "{\"hook_event_name\":\"errorOccurred\",\"message\":\"Retry?\"}");
+    defer cue.p.deinit();
+    try testing.expectEqual(Event.notification, cue.n.?.event);
+    try testing.expect(cue.n.?.informational);
+    try testing.expect(cue.n.?.input_kind == null);
     var fatal = try normalizeFixture(.copilot, "errorOccurred", "{\"error\":{\"message\":\"boom\"},\"recoverable\":false}");
     defer fatal.p.deinit();
     try testing.expectEqual(Event.stop, fatal.n.?.event);

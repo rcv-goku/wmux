@@ -447,10 +447,13 @@ pub fn normalize(agent: Agent, arg: []const u8, p: *const Payload) ?Normalized {
     } else return null;
 
     // Copilot `errorOccurred` also fires for errors the agent recovers
-    // from; only an unrecoverable one ends the turn.
+    // from; only an unrecoverable one ends the turn. The others are
+    // informational: the agent keeps working, nothing waits on the user.
+    var recoverable_error = false;
     if (Event.parseSubcommand(arg) == null) if (native) |nv| {
         if (canonicalEql(nv, "erroroccurred") and mapped.event == .stop and p.recoverable != false) {
             mapped = .{ .event = .notification };
+            recoverable_error = true;
         }
     };
 
@@ -491,9 +494,11 @@ pub fn normalize(agent: Agent, arg: []const u8, p: *const Payload) ?Normalized {
             if (eqlOpt(p.tool_name, "ExitPlanMode")) n.input_kind = .plan;
         },
         .notification => {
-            // Factory sends Notification(idle_prompt) instead of Stop when
-            // the user cancels a turn.
-            if (agent == .factory and eqlOpt(p.notification_type, "idle_prompt")) {
+            if (recoverable_error) {
+                n.informational = true;
+            } else if (agent == .factory and eqlOpt(p.notification_type, "idle_prompt")) {
+                // Factory sends Notification(idle_prompt) instead of Stop
+                // when the user cancels a turn.
                 n.event = .stop;
             } else if (notificationKind(agent, p)) |k| {
                 n.input_kind = k;
