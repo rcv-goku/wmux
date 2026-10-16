@@ -1,0 +1,26 @@
+Usage: cmux notify [--title <text>] [--subtitle <text>] [--body <text>] [--reply] [--desktop <true|false>] [--clear] [--workspace <id|ref|index>] [--surface <id|ref|index>] [--window <id|ref|index>] [--json] [--id-format refs|uuids|both]
+
+Post a notification to the calling pane (or the given workspace/surface) and
+print its id as `OK notification:<uuid>`. Prints a plain `OK` when the app
+recorded nothing (muted workspace, policy, asynchronous hooks).
+
+Options:
+  --title <text>              Title (default: Notification)
+  --subtitle <text>           Subtitle (default: empty)
+  --body <text>               Body (default: empty)
+  --reply                     Offer a Reply box on the desktop notification
+  --desktop <true|false>      false records the entry without a desktop banner
+  --clear                     Clear the caller's (or target's) notifications instead
+  --workspace <id|ref|index>  Target workspace (legacy alias: --tab)
+  --surface <id|ref|index>    Target surface (legacy alias: --panel); a ref or
+                              index resolves inside --workspace, --window or
+                              CMUX_WORKSPACE_ID
+  --window <id|ref|index>     Target the window's current workspace
+
+Every argument is an option; values may be given as `--opt value` or
+`--opt=value`. `--` may only be the last argument.
+
+Examples:
+  cmux notify --title Done --body 'All tests passed'
+  cmux notify --title=Build --desktop false
+  cmux notify --clear

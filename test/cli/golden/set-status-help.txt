@@ -1,0 +1,17 @@
+Usage: cmux set-status <key> <value> [--icon <name>] [--color <#hex>] [--priority <n>] [--url <http(s)-url>] [--format plain|markdown] [--work running|subagents|waiting] [--workspace <id|ref|index>] [--window <id|ref|index>]
+
+Set a keyed sidebar status pill on a workspace (default: the caller's
+workspace, CMUX_WORKSPACE_ID). The last write per key wins; entries sort by
+priority, highest first (default 0). Prints `OK`.
+
+Options:
+  --icon <name>               Icon shown before the text
+  --color <#hex>              Text color (#4C8DFF draws as the accent color)
+  --priority <n>              Integer sort priority
+  --url <http(s)-url>         Open this URL on click (alias: --link)
+  --format plain|markdown     markdown makes links clickable
+  --work running|subagents|waiting
+                              Agent work state of the entry
+
+Example:
+  cmux set-status build compiling --icon hammer --color '#ff9500' --priority 80

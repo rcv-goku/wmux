@@ -1,0 +1,6 @@
+Usage: cmux list-notifications [--json]
+
+List queued notifications, newest first, one per line:
+  <index>:<id>|<workspace_id>|<surface_id|none>|<read|unread>|<title>|<subtitle>|<body>|<created_at>|<tab_title>
+Prints `No notifications` when the list is empty. --json prints an array of
+{id, workspace_id, surface_id, is_read, title, subtitle, body, created_at, tab_title}.

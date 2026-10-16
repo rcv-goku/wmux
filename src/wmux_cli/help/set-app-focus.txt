@@ -1,0 +1,4 @@
+Usage: cmux set-app-focus <active|inactive|clear>
+
+Override the app-focused state used by notification focus suppression (for
+tests); `clear` removes the override. Prints `OK`.

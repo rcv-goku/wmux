@@ -1,0 +1,5 @@
+Usage: cmux jump-to-last-prompt [--json]
+
+Focus the surface where you last submitted a prompt to a coding agent,
+switching workspace and window as needed. Prints `OK <workspace> <surface>`,
+or `No agent prompt to jump to` (exit 0; --json shows "opened": false).

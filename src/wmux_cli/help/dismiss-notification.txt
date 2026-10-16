@@ -1,0 +1,4 @@
+Usage: cmux dismiss-notification (--id <uuid|notification:<uuid>> | --all-read) [--json]
+
+Remove one notification (withdrawing its desktop banner and pane ring), or
+every notification that is already read with --all-read. Prints `OK`.

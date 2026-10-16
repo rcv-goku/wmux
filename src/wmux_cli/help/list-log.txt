@@ -1,0 +1,5 @@
+Usage: cmux list-log [--limit <n>] [--workspace <id|ref|index>] [--window <id|ref|index>]
+
+Print the last <n> sidebar log entries (all with 0 or without --limit),
+oldest first, as `[source] [level] message`. Prints `No log entries` when the
+log is empty.

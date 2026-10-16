@@ -1,0 +1,5 @@
+Usage: cmux list-status [--workspace <id|ref|index>] [--window <id|ref|index>]
+
+List a workspace's sidebar status pills, one per line:
+  key=value[ icon=..][ color=..][ url=..][ priority=N][ format=markdown][ work=..]
+Prints `No status entries` when there are none.
