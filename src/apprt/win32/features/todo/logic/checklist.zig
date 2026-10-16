@@ -682,7 +682,8 @@ test "unit: todo: move in interleaved storage keeps the other group's order" {
     const gpa = testing.allocator;
     var c: Checklist = .{};
     defer c.deinit(gpa);
-    // storage: X(c) a(p) Y(c) b(p); pending spans 1..3, completed 0..2.
+    // storage: X(c) a(p) Y(c) b(>); in-progress counts as unchecked, so the
+    // unchecked items span 1..3 and the completed ones 0..2.
     _ = try c.add(gpa, "X", .{ .state = .completed });
     _ = try c.add(gpa, "a", .{});
     _ = try c.add(gpa, "Y", .{ .state = .completed });

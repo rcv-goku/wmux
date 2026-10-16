@@ -542,7 +542,7 @@ test "unit: workspace_status: cycle and set on a hidden workspace show it again"
     try testing.expectEqual(Lane.working, s.cycle(.todo));
     try testing.expect(!s.hidden);
     try testing.expect(s.showsGlyph(true, .todo));
-    // none keeps the pin; auto after none clears both.
+    // none keeps the pin and is idempotent; auto then clears both.
     s.set(.none, .todo);
     try testing.expectEqual(Lane.working, s.effective(.todo));
     s.set(.none, .todo);
