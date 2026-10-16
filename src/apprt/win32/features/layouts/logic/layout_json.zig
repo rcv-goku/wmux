@@ -28,6 +28,10 @@ pub const split_default: f64 = 0.5;
 /// two JSON levels, so this stays below jsonc's default depth of 128.
 pub const max_node_depth: u32 = 32;
 
+/// cmux meaning: `horizontal` puts the children side by side (children[0]
+/// on the left, a vertical divider), `vertical` stacks them (children[0] on
+/// top). This is the opposite of Vim's ":split" naming. `split` is the
+/// first child's share of the width or height.
 pub const Direction = enum { horizontal, vertical };
 pub const SurfaceType = enum { terminal, browser };
 
