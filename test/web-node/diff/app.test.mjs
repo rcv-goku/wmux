@@ -873,6 +873,27 @@ describe("unit: diff app comments", () => {
     assert.equal(host.calls("viewedFiles.set").length, 0);
   });
 
+  test("unit: diff: comment changes re-render only files with comment UI", async () => {
+    await startApp({ comments: [SAVED] });
+    app.setPrefs({ contextLines: 0 });
+    const md = section("docs/new.md");
+    click($(".dv-gap-button", md));
+    assert.equal($(".dv-gap-button", md), null, "context expanded in docs/new.md");
+    const mdTable = $("table", md);
+    const appSec = section("src/app.js");
+    click($('td.dv-code.dv-add[data-line="2"] .dv-add-comment', appSec));
+    typeInto($(".dv-composer textarea", appSec), "second");
+    click($('.dv-composer [data-action="submit-comment"]', appSec));
+    await settle();
+    assert.equal($$(".dv-comment-row .dv-comment", section("src/app.js")).length, 2);
+    assert.equal($("table", md), mdTable, "docs/new.md was not rebuilt");
+    assert.equal($(".dv-gap-button", md), null, "its expanded context stays open");
+    host.emit("panel.diff.comments_changed", { comments: [] });
+    await settle();
+    assert.equal($$(".dv-comment").length, 0, "removed comments leave the file they were in");
+    assert.equal($("table", md), mdTable);
+  });
+
   test("unit: diff: repeated clicks save, delete and send only once", async () => {
     const waiting = [];
     const later = (value) => new Promise((resolve) => waiting.push(() => resolve(value)));

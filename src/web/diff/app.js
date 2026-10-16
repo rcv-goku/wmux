@@ -1096,9 +1096,27 @@ export function createApp(options) {
     }
   }
 
+  /**
+   * Re-render after the comment set changed: only the bodies that show
+   * comment UI now (comment rows, the composer) or must show it after
+   * re-anchoring. Other files keep their DOM, so context the user expanded
+   * there stays open and a save does not re-highlight the whole diff.
+   */
   function commentsChanged() {
+    const affected = new Set();
+    for (const row of ui.files.querySelectorAll(".dv-comment-row")) {
+      const file = sectionFile(row);
+      if (file) affected.add(file.index);
+    }
     reanchorComments();
-    for (const file of state.files) renderBody(file);
+    for (const a of state.anchors.values()) {
+      if (a.file && (a.status === "anchored" || a.status === "moved")) affected.add(a.file.index);
+    }
+    if (state.composer) affected.add(state.composer.fileIndex);
+    for (const index of affected) {
+      const file = fileByIndex(index);
+      if (file) renderBody(file);
+    }
     renderCommentList();
     updateToolbar();
   }
