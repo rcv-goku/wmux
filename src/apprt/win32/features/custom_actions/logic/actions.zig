@@ -23,7 +23,8 @@ const shell_quote = proto.shell_quote;
 
 const Allocator = std.mem.Allocator;
 
-/// Where an action or command was declared.
+/// Where an action or command was declared. Ordered from most to least
+/// trusted (`lessTrusted` relies on it).
 pub const Source = enum {
     builtin,
     /// The global cmux.json/wmux.json or one of its packs.
@@ -1346,9 +1347,26 @@ pub const Plan = struct {
     title: []const u8,
     /// Ask before running.
     confirm: bool,
+    /// The least trusted layer that supplied what runs (`effectiveSource`);
+    /// pass this, not the action's own source, to `trust.decide`.
     source: Source,
     run: RunPlan,
 };
+
+fn lessTrusted(a: Source, b: Source) Source {
+    return if (@intFromEnum(a) >= @intFromEnum(b)) a else b;
+}
+
+/// The source that decides whether running `a` needs trust. A
+/// workspaceCommand action runs a `commands` entry looked up by name, and a
+/// project file can replace a global entry of that name: the action is then
+/// only as trusted as the project command it would run.
+pub fn effectiveSource(reg: *const Registry, a: *const Action) Source {
+    return switch (a.body) {
+        .workspaceCommand => |name| if (reg.findCommand(name)) |c| lessTrusted(a.source, c.source) else a.source,
+        else => a.source,
+    };
+}
 
 pub const PlanError = error{ OutOfMemory, UnknownAction, UnknownCommand, Unrepresentable };
 
@@ -1394,7 +1412,7 @@ pub fn planAction(arena: Allocator, reg: *const Registry, a: *const Action, opts
         .setting => |s| .{ .setting = .{ .path = s.path, .op = s.op } },
         .settingPreset => |p| .{ .preset = p },
     };
-    return .{ .id = a.id, .title = reg.titleOf(a.id), .confirm = a.confirm, .source = a.source, .run = run };
+    return .{ .id = a.id, .title = reg.titleOf(a.id), .confirm = a.confirm, .source = effectiveSource(reg, a), .run = run };
 }
 
 /// A legacy command: shell text is typed into the focused terminal; a

