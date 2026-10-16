@@ -392,9 +392,17 @@ describe("unit: markdown render", () => {
         "[md js](javascript:alert(1)) [data](data:text/html;base64,PHNjcmlwdD4=)",
         '<img src="x.png" srcset="https://evil.example/a.png 2x">',
         '<span data-mdv-path="evil.md" data-mdv-file-exists="true">forged</span>',
+        '<div class="mdv-popover keep">fake popover</div><span class="mdv-copy-code">c</span>',
+        '<span class="wmux-remote-image wmux-card">r</span><p class="wmux-diagram-error">e</p>',
       ].join("\n\n"),
     );
     assert.equal(div.querySelector("[data-mdv-path], [data-mdv-file-exists]"), null, "app markers cannot be forged");
+    // Panel-owned classes (chrome, copy buttons, placeholders, errors) are stripped from documents.
+    assert.equal(div.querySelector('[class*="mdv-"], .wmux-remote-image, .wmux-diagram-error'), null);
+    assert.ok(div.querySelector("div.keep"), "other classes stay");
+    assert.ok(div.querySelector("span.wmux-card"));
+    const errorLike = Array.from(div.querySelectorAll("p")).find((p) => p.textContent === "e");
+    assert.equal(errorLike.hasAttribute("class"), false, "an emptied class attribute is removed");
     const html = div.innerHTML;
     assert.doesNotMatch(html, /<script|onerror|onclick|<form|<iframe|<object|<embed|<meta|<style|style=/i);
     assert.equal(div.querySelector('[href^="javascript" i], [src^="javascript" i]'), null);

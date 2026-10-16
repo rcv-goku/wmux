@@ -49,6 +49,10 @@ const FORBID_TAGS = [
   "noscript",
 ];
 const FORBID_ATTR = ["style", "srcset", "formaction", "ping", "autofocus", "target", "background"];
+// Classes the panel creates after sanitizing: its chrome (some of it absolutely
+// positioned), code-block buttons, find marks, remote image placeholders and
+// diagram errors. Documents cannot use them to imitate or overlay panel UI.
+const RESERVED_CLASS_RE = /^(?:mdv-|wmux-remote-image|wmux-diagram-error)/;
 // Any scheme except script and data URLs (data: images are allowed separately
 // by DOMPurify's DATA_URI_TAGS). Routing decides what a click does.
 const ALLOWED_URI_REGEXP = /^(?!(?:javascript|vbscript|data):)/i;
@@ -286,10 +290,17 @@ export function createRenderer(libs) {
   function enhance(root, opts, imageRequests) {
     const approved = opts.approvedImages || new Set();
 
-    // data-mdv-* attributes are the app's own markers; documents cannot set them.
+    // data-mdv-* attributes and the reserved classes are the app's own;
+    // documents cannot set them.
     for (const el of Array.from(root.querySelectorAll("*"))) {
       for (const name of el.getAttributeNames()) {
         if (name.startsWith("data-mdv-")) el.removeAttribute(name);
+      }
+      if (el.classList && el.classList.length) {
+        for (const cls of Array.from(el.classList)) {
+          if (RESERVED_CLASS_RE.test(cls)) el.classList.remove(cls);
+        }
+        if (el.classList.length === 0) el.removeAttribute("class");
       }
     }
 

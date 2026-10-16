@@ -102,8 +102,11 @@ the state stays below the 64 KiB cap), find: "<needle>"}`. Native can report
   `script`, `style`, forms and form controls, frames, `object`/`embed`,
   `meta`/`base`/`link` and `template` are removed, as are `style`, `srcset`,
   `target`, `ping` attributes and `javascript:`/`vbscript:`/`data:` link
-  targets (`data:image/*` images stay). Table alignment becomes the `align`
-  attribute. Headings get GitHub slugs (`Setup`, `Setup` -> `setup`,
+  targets (`data:image/*` images stay). The panel's own markers are stripped
+  from documents: `data-mdv-*` attributes and the classes it creates after
+  sanitizing (`mdv-*`, `wmux-remote-image*`, `wmux-diagram-error`), so a
+  document cannot borrow the positioned chrome styles to imitate panel UI.
+  Table alignment becomes the `align` attribute. Headings get GitHub slugs (`Setup`, `Setup` -> `setup`,
   `setup-1`). Leading YAML frontmatter becomes a collapsed "Show frontmatter"
   disclosure with highlighted YAML.
 - **Diagrams.** ```` ```mermaid ```` blocks keep the source in a hidden
