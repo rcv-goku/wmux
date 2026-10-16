@@ -24,6 +24,10 @@ Options:
   --group <id|ref>              Add it to a workspace group
   --group-placement <where>     afterCurrent, top (default) or end
   --group-reference <workspace> Reference workspace for afterCurrent
+  --worktree <branch>           wmux: open the workspace in a git worktree
+                                for <branch>
+  --repo <path>                 wmux: repository for --worktree (default: the
+                                current directory)
   --json                        Print the result as JSON
 
 Workspace environment variables reach every shell in the workspace, are

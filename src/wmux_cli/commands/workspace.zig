@@ -410,7 +410,34 @@ test "unit: cli-workspace: new-workspace usage errors" {
     try testkit.expectUsage(&h, &.{ "new-workspace", "--env", "NOEQUALS" }, "--env expects KEY=VALUE");
     try testkit.expectUsage(&h, &.{ "new-workspace", "--env", "=secret" }, "--env expects KEY=VALUE");
     try testkit.expectUsage(&h, &.{ "new-workspace", "extra" }, "unexpected argument 'extra'");
-    try testkit.expectUsage(&h, &.{ "workspace", "create", "--worktree" }, "unknown option '--worktree'");
+    try testkit.expectUsage(&h, &.{ "workspace", "create", "--bogus" }, "unknown option '--bogus'");
+}
+
+test "unit: cli-workspace: --worktree and --repo kept from +workspace new" {
+    var h: testkit.Harness = undefined;
+    try h.init();
+    defer h.deinit();
+    h.ok("workspace.create", "{\"workspace_ref\":\"workspace:2\"}");
+    // Without a working directory there is no repository to default to.
+    const no_cwd = h.run(&.{ "new-workspace", "--worktree", "feat/x" });
+    try testing.expectEqual(@as(u8, 1), no_cwd.code);
+    try testing.expectEqualStrings("cmux: cannot determine the current directory for --worktree; pass --repo <path>\n", no_cwd.err);
+    try testing.expectEqual(@as(usize, 0), h.requestCount());
+    // The repository defaults to the CLI's directory, never the app's.
+    h.fp.cwd_path = "C:\\src\\repo";
+    _ = try testkit.expectOk(&h, &.{ "new-workspace", "--worktree", "feat/x" });
+    try h.expectLast("workspace.create", "{\"worktree\":\"feat/x\",\"repo\":\"C:\\\\src\\\\repo\",\"focus\":false}");
+    _ = try testkit.expectOk(&h, &.{ "workspace", "create", "--name", "Fix", "--worktree=fix-\u{65e5}", "--repo", "D:\\app" });
+    try h.expectLast("workspace.create", "{\"title\":\"Fix\",\"worktree\":\"fix-\u{65e5}\",\"repo\":\"D:\\\\app\",\"focus\":false}");
+    _ = try testkit.expectOk(&h, &.{ "new-workspace", "--worktree", "b", "--repo", "." });
+    try h.expectLast("workspace.create", "{\"worktree\":\"b\",\"repo\":\"C:\\\\src\\\\repo\",\"focus\":false}");
+    // The legacy form reaches new-workspace with its flags intact.
+    _ = try testkit.expectOk(&h, &.{ "+workspace", "new", "--worktree", "b", "--repo", "D:\\app" });
+    try h.expectLast("workspace.create", "{\"worktree\":\"b\",\"repo\":\"D:\\\\app\",\"focus\":false}");
+    try testkit.expectUsage(&h, &.{ "new-workspace", "--repo", "D:\\app" }, "--repo requires --worktree");
+    try testkit.expectUsage(&h, &.{ "new-workspace", "--worktree", " " }, "--worktree requires a non-empty branch");
+    try testkit.expectUsage(&h, &.{ "new-workspace", "--worktree" }, "--worktree requires a value");
+    try testkit.expectUsage(&h, &.{ "new-workspace", "--worktree", "b", "--repo=" }, "--repo requires a non-empty value");
 }
 
 test "unit: cli-workspace: relative --cwd resolves against the CLI's directory" {

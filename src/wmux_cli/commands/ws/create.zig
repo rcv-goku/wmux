@@ -7,7 +7,10 @@
 //! `--command` text plus one `\r`; blank text is dropped; `--layout` wins),
 //! `layout` (a JSON object/array, else a layout name string),
 //! `workspace_env`, `window_id`, `focus` (always sent; default false),
-//! `group_id`, `group_placement`, `group_reference_workspace_id`.
+//! `group_id`, `group_placement`, `group_reference_workspace_id`, and the
+//! wmux params `worktree` (branch) and `repo` (resolved like `cwd`;
+//! defaults to the CLI's working directory) kept from `+workspace new`
+//! (ADR-4.11, Appendix B.4).
 
 const std = @import("std");
 const proto = @import("wmux_proto");
@@ -34,6 +37,9 @@ pub const create_defs = [_]Def{
     .{ .name = "--group" },
     .{ .name = "--group-placement" },
     .{ .name = "--group-reference" },
+    // wmux extensions kept from `+workspace new` (ADR-4.11).
+    .{ .name = "--worktree" },
+    .{ .name = "--repo" },
 };
 
 pub const placements = [_][]const u8{ "afterCurrent", "top", "end" };
@@ -92,6 +98,18 @@ pub fn run(ctx: *Ctx, args: []const []const u8, u: []const u8) !u8 {
         if (v.len == 0) return common.usage(ctx, u, "--cwd requires a non-empty value", .{});
         try p.str("cwd", try resolvePath(ctx, v));
     }
+    // The app runs `git worktree` in the repository, which defaults to this
+    // CLI's directory (the app's own directory is never the caller's).
+    if (o.get("--worktree")) |branch| {
+        if (std.mem.trim(u8, branch, " \t\r\n").len == 0) return common.usage(ctx, u, "--worktree requires a non-empty branch", .{});
+        try p.str("worktree", branch);
+        const repo = if (o.get("--repo")) |r| blk: {
+            if (r.len == 0) return common.usage(ctx, u, "--repo requires a non-empty value", .{});
+            break :blk try resolvePath(ctx, r);
+        } else ctx.platform.cwd(ctx.arena) orelse
+            return ctx.runtimeError("cannot determine the current directory for --worktree; pass --repo <path>", .{});
+        try p.str("repo", repo);
+    } else if (o.has("--repo")) return common.usage(ctx, u, "--repo requires --worktree", .{});
     if (o.get("--layout")) |v| {
         const t = std.mem.trim(u8, v, " \t\r\n");
         if (t.len == 0) return common.usage(ctx, u, "--layout requires a non-empty value", .{});
