@@ -1,5 +1,6 @@
 //! Moving tabs between panes and within a pane (ARCHITECTURE.md ADR-1.8
-//! W0-A2 step 2). Moved out of Window.zig in W0-A2.
+//! W0-A2 step 2). Moved out of Window.zig in W0-A2. Breaking a tab out
+//! emits `pane.broken`, an in-pane move `surface.reordered` (ADR-3.10).
 
 const std = @import("std");
 
@@ -8,6 +9,7 @@ const Pane = @import("../Pane.zig");
 const SplitTree = @import("../../../../datastruct/split_tree.zig").SplitTree;
 const Tab = @import("../Tab.zig");
 const Window = @import("../../ui/Window.zig");
+const emit = @import("lifecycle_events.zig");
 const model_registry = @import("../registry.zig");
 const ops_surface = @import("surface.zig");
 
@@ -81,6 +83,7 @@ pub fn breakPane(self: *Window, tab: *Tab) void {
     } else {
         self.invalidateSidebar();
     }
+    emit.paneCreated(self, ws, new_container, "pane.broken", src_container, "right", "break_pane");
 }
 
 /// Put `tab` back at `index` of `src` after a failed break and free the
@@ -126,4 +129,5 @@ pub fn movePaneToTab(self: *Window, tab: *Tab, target_enum: apprt.action.MovePan
         self.invalidateTabBar();
     }
     self.invalidateSidebar();
+    if (container.indexOf(tab) != src_tab) emit.surfaceReordered(self, loc.ws, container, tab);
 }

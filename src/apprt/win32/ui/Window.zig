@@ -414,7 +414,7 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
     // addTab(). Every init site (App.run, new_window, QuickTerminal.init)
     // flows through here before its first addTab().
     try ops_window.initWindowModel(self);
-    errdefer ops_window.freeWindowModel(self);
+    errdefer ops_window.freeWindowModel(self, false);
 
     const style: u32 = if (options.is_quick_terminal) w32.WS_POPUP else w32.WS_OVERLAPPEDWINDOW | w32.WS_CLIPCHILDREN;
     const ex_style: u32 = if (options.is_quick_terminal) w32.WS_EX_TOOLWINDOW else 0;
@@ -555,6 +555,9 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
     sidebar.attach(self);
     right_sidebar.attach(self);
 
+    // window.created, workspace.created (model/events.zig).
+    ops_window.windowCreated(self);
+
     // Don't show the window yet — addTab() will show the child
     // surface which triggers ShowWindow on the parent as needed.
     // Showing the parent before the terminal is ready can cause
@@ -598,7 +601,7 @@ pub fn deinit(self: *Window) void {
     // The (already emptied) workspace objects go last.
     self.leaveSizeMove();
     self.detachSidebars();
-    ops_window.freeWindowModel(self);
+    ops_window.freeWindowModel(self, true);
 }
 
 /// The currently active workspace. Always valid on a live window: init
@@ -719,7 +722,7 @@ fn onDestroy(self: *Window) void {
     // Surfaces were cleaned up by close(); free the workspace objects.
     self.leaveSizeMove();
     self.detachSidebars();
-    ops_window.freeWindowModel(self);
+    ops_window.freeWindowModel(self, true);
 
     // Quick terminal windows are managed by QuickTerminal, not the windows list.
     if (self.is_quick_terminal) {
@@ -1207,6 +1210,7 @@ test {
     _ = @import("../model/Title.zig");
     _ = @import("../model/TabContent.zig");
     _ = @import("../model/Group.zig");
+    _ = @import("../model/events.zig");
     _ = ids;
     _ = model_registry;
     _ = chrome;
