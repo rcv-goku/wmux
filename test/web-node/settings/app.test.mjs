@@ -53,8 +53,36 @@ describe("unit: persistence-settings-window: navigation", () => {
     assert.equal(sectionShown(), "globalHotkey");
     assert.equal(app.navigate("account"), "globalHotkey");
     assert.equal($("#set-status").textContent, "“account” is not available on Windows.");
+    assert.equal(app.navigate("termnal"), "globalHotkey");
+    assert.equal($("#set-status").textContent, "Unknown settings section “termnal”.");
     host.emit("wmux.settings.navigate", { target: 42 });
     assert.equal(sectionShown(), "globalHotkey");
+  });
+
+  test("unit: persistence-settings-window: a bad target falls back to the saved section; a stale saved one is quiet", async () => {
+    await startSettings({ init: { params: { target: "devices" }, state: { section: "browser" } } });
+    assert.equal(sectionShown(), "browser");
+    assert.equal($("#set-status").textContent, "“devices” is not available on Windows.");
+    await startSettings({ init: { params: { target: "  " }, state: { section: "sleepyMode" } } });
+    assert.equal(sectionShown(), "app");
+    assert.equal($("#set-status").textContent, "");
+  });
+
+  test("unit: persistence-settings-window: a deep link while searching shows the section", async () => {
+    const { app } = await startSettings();
+    edit($("#set-search"), "scroll");
+    assert.ok($(".set-search-results"));
+    host.emit("wmux.settings.navigate", { target: "shortcuts" });
+    assert.equal(sectionShown(), "keyboardShortcuts");
+    assert.equal(navCurrent(), "keyboardShortcuts");
+    assert.equal($(".set-search-results"), null);
+    assert.equal($("#set-search").value, "");
+    assert.equal(app.state.query, "");
+    // An unknown target keeps the search (nothing to show instead).
+    edit($("#set-search"), "scroll");
+    host.emit("wmux.settings.navigate", { target: "account" });
+    assert.ok($(".set-search-results"));
+    assert.equal(app.state.query, "scroll");
   });
 
   test("unit: persistence-settings-window: arrow keys move through the nav", async () => {
@@ -398,6 +426,25 @@ describe("unit: persistence-settings-window: typed controls", () => {
     assert.equal(store.wmux["sidebar.selectionColor"], null);
   });
 
+  test("unit: persistence-settings-window: multi-part controls are groups named by the row title", async () => {
+    const { app } = await startSettings();
+    const groupName = (p, cls) => {
+      const wrap = rowEl(p).querySelector(cls);
+      assert.equal(wrap.getAttribute("role"), "group", p);
+      return doc.getElementById(wrap.getAttribute("aria-labelledby")).textContent;
+    };
+    app.navigate("app");
+    assert.equal(groupName("activePaneBorderColor", ".set-color"), "Active pane border");
+    const text = rowEl("activePaneBorderColor").querySelector(".set-color-text");
+    assert.equal(rowEl("activePaneBorderColor").querySelector("label").htmlFor, text.id, "the text field has the label");
+    app.navigate("globalHotkey");
+    assert.equal(groupName("wmux.quickTerminal.hotkey", ".set-strokes"), "Quick terminal hotkey");
+    app.navigate("automation");
+    assert.equal(groupName("notifications.hooks", ".set-kv"), "Notification hooks");
+    // Single-element controls are labelled directly, without a wrapper name.
+    assert.equal(rowEl("automation.socketControlMode").querySelector("select").hasAttribute("aria-labelledby"), false);
+  });
+
   test("unit: persistence-settings-window: key-value editor adds, edits, removes and rejects duplicates", async () => {
     const { app, store } = await startSettings({
       store: createStore({ wmux: { "notifications.hooks": { a: "1", b: true } } }),
@@ -542,6 +589,34 @@ describe("unit: persistence-settings-reset-all: Reset All", () => {
     assert.equal($("#set-status").textContent, "Settings were reset to their defaults.");
     assert.equal(app.state.effective.get("terminal.scrollSpeed").source, "default");
     assert.equal(app.state.effective.get("sidebar.showPorts").source, "cmux.json");
+  });
+
+  test("unit: persistence-settings-reset-all: the confirmation is modal", async () => {
+    const { app } = await startSettings();
+    app.navigate("reset");
+    const opener = $("#set-reset-all");
+    opener.focus();
+    opener.click();
+    assert.equal($(".set-layout").hasAttribute("inert"), true, "the page behind the dialog is inert");
+    assert.equal(doc.activeElement, $("#set-confirm-cancel"));
+    // Page shortcuts are off while it is open: Ctrl+F does not reach the search behind it.
+    const ctrlF = keydown({ key: "f", ctrlKey: true });
+    assert.equal(doc.activeElement, $("#set-confirm-cancel"));
+    assert.equal(ctrlF.defaultPrevented, false);
+    // Focus on <body> (a click on the backdrop): Tab goes back in, Escape closes.
+    doc.activeElement.blur();
+    assert.equal(doc.activeElement, doc.body);
+    keydown({ key: "Tab" }, doc.body);
+    assert.equal(doc.activeElement, $("#set-confirm-cancel"));
+    doc.activeElement.blur();
+    keydown({ key: "Escape" }, doc.body);
+    await flush();
+    assert.equal($("#set-confirm").hidden, true);
+    assert.equal($(".set-layout").hasAttribute("inert"), false);
+    assert.equal(doc.activeElement, opener, "focus returns to the button that opened it");
+    assert.equal(host.calls("wmux.settings.reset_all").length, 0);
+    keydown({ key: "f", ctrlKey: true });
+    assert.equal(doc.activeElement, $("#set-search"), "Ctrl+F works again once it is closed");
   });
 
   test("unit: persistence-settings-reset-all: falls back to per-key unset when reset_all is missing", async () => {

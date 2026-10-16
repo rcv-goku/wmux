@@ -144,7 +144,9 @@ function textControl(doc, field, id, onCommit, onError) {
 }
 
 function colorControl(doc, field, id, onCommit, onError) {
-  const wrap = el(doc, "div", { class: "set-color" });
+  // A named group (the row title, via aria-labelledby) gives the swatch and
+  // Clear buttons their setting's context; a plain div cannot carry a name.
+  const wrap = el(doc, "div", { class: "set-color", role: "group" });
   const swatch = el(doc, "input", {
     type: "color",
     class: "set-color-swatch",
@@ -312,7 +314,7 @@ function kvControl(doc, field, id, onCommit, onError) {
 }
 
 function strokesControl(doc, field, id, onCommit, onError, keys) {
-  const wrap = el(doc, "div", { class: "set-strokes" });
+  const wrap = el(doc, "div", { class: "set-strokes", role: "group" });
   const input = el(doc, "input", {
     id,
     type: "text",

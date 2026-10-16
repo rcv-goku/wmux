@@ -23,8 +23,8 @@ import {
   queryTokens,
   validateValue,
 } from "./schema.js";
-import { SECTIONS, findSection, resolveTarget, sectionTitle } from "./sections.js";
-import { createShortcutsView } from "./shortcuts-view.js";
+import { SECTIONS, findSection, isOmittedTarget, resolveTarget, sectionTitle } from "./sections.js";
+import { VIEW_PATHS as SHORTCUT_VIEW_PATHS, createShortcutsView } from "./shortcuts-view.js";
 import { t } from "./strings.js";
 import { createThemesView } from "./themes-view.js";
 
@@ -71,6 +71,7 @@ export function createApp(options) {
   const keys = opts.keys || installKeys();
   const $ = (id) => doc.getElementById(id);
   const els = {
+    layout: doc.querySelector(".set-layout"),
     navList: $("set-nav-list"),
     search: $("set-search"),
     main: $("set-main"),
@@ -118,13 +119,18 @@ export function createApp(options) {
       : null;
   }
 
-  /** In-page confirmation dialog; resolves true for OK. */
+  /**
+   * In-page confirmation dialog; resolves true for OK. It is modal: the page
+   * behind it is inert (no focus, clicks or screen-reader browsing) until it
+   * closes.
+   */
   function confirm(body, okLabel) {
     if (confirmResolve) confirmResolve(false);
-    confirmOpener = doc.activeElement;
+    else confirmOpener = doc.activeElement;
     els.confirmBody.textContent = body;
     els.confirmOk.textContent = okLabel || "OK";
     els.confirm.hidden = false;
+    if (els.layout) els.layout.setAttribute("inert", "");
     els.confirmCancel.focus();
     return new Promise((resolve) => {
       confirmResolve = resolve;
@@ -136,6 +142,7 @@ export function createApp(options) {
     const resolve = confirmResolve;
     confirmResolve = null;
     els.confirm.hidden = true;
+    if (els.layout) els.layout.removeAttribute("inert");
     if (confirmOpener && typeof confirmOpener.focus === "function" && confirmOpener.isConnected) confirmOpener.focus();
     confirmOpener = null;
     resolve(result);
@@ -295,10 +302,11 @@ export function createApp(options) {
       if (entry) {
         state.effective.set(path, entry);
         updatePath(path);
+        shortcuts.onSettingsChanged([path]);
         return;
       }
     }
-    await refreshEffective();
+    await refreshEffective([path]);
   }
 
   async function commit(row, value) {
@@ -362,7 +370,12 @@ export function createApp(options) {
     if (result && typeof result.docs_url === "string") state.docsUrl = result.docs_url;
   }
 
-  async function refreshEffective() {
+  /**
+   * Refetch every effective value and refresh the rows. `changed` lists the
+   * key paths that changed (null when unknown, e.g. after Reset All); the
+   * shortcut list is refetched when they may touch `shortcuts.*`.
+   */
+  async function refreshEffective(changed) {
     try {
       const result = await call("wmux.settings.get_effective", {});
       state.effective = normalizeEffective(result);
@@ -372,7 +385,7 @@ export function createApp(options) {
       return false;
     }
     for (const path of rows.keys()) updatePath(path);
-    shortcuts.onSettingsChanged();
+    shortcuts.onSettingsChanged(Array.isArray(changed) ? changed : null);
     return true;
   }
 
@@ -441,13 +454,7 @@ export function createApp(options) {
       if (tokens.length && count > 0) button.append(el(doc, "span", { class: "set-nav-count", text: String(count) }));
       if (tokens.length === 0 && id === state.section) button.setAttribute("aria-current", "page");
       button.classList.toggle("set-nav-dim", !hit);
-      button.addEventListener("click", () => {
-        if (state.query) {
-          state.query = "";
-          els.search.value = "";
-        }
-        navigate(id);
-      });
+      button.addEventListener("click", () => navigate(id));
       els.navList.append(el(doc, "li", null, [button]));
     }
   }
@@ -559,7 +566,7 @@ export function createApp(options) {
     title.id = "set-section-title";
     title.tabIndex = -1; // focus target after a search-result link
     container.append(title);
-    const fields = fieldsIn(id);
+    const fields = fieldsIn(id).filter((f) => id !== "keyboardShortcuts" || !SHORTCUT_VIEW_PATHS.includes(f.path));
     if (id === "themes") container.append(themes.render());
     if (id === "keyboardShortcuts") container.append(shortcuts.render());
     if (id === "settingsJSON") renderSettingsJson(container);
@@ -604,8 +611,6 @@ export function createApp(options) {
       const link = el(doc, "button", { type: "button", class: "wmux-link set-result-section" });
       appendHighlighted(doc, link, sectionTitle(id), tokens);
       link.addEventListener("click", () => {
-        state.query = "";
-        els.search.value = "";
         navigate(id);
         // The link is gone after the re-render: continue at the section heading.
         const title = doc.getElementById("set-section-title");
@@ -640,16 +645,33 @@ export function createApp(options) {
     }
   }
 
-  /** Show a section (raw id or CLI alias). Returns the section id shown. */
+  /** Section id for a CLI alias, a raw id or a schema-only section; null otherwise. */
+  function resolveSection(target) {
+    return resolveTarget(target) || (typeof target === "string" && sectionList().includes(target) ? target : null);
+  }
+
+  /** Status text for a target that names no section. */
+  function targetMessage(target) {
+    return t(isOmittedTarget(target) ? "settings.unavailableTarget" : "settings.unknownTarget", { target });
+  }
+
+  /**
+   * Show a section (raw id or CLI alias). Returns the section id shown. A
+   * search in progress ends: a nav click, a result link or a deep link
+   * (`wmux settings <target>`) always lands on the section itself.
+   */
   function navigate(target) {
-    const id = resolveTarget(target) || (sectionList().includes(target) ? target : null);
+    const id = resolveSection(target);
     if (!id) {
-      if (typeof target === "string" && target.trim())
-        setStatus(t("settings.unavailableTarget", { target: target.trim() }));
+      if (typeof target === "string" && target.trim()) setStatus(targetMessage(target.trim()));
       if (state.loaded && !els.content.querySelector(".set-section")) render();
       return state.section;
     }
     state.section = id;
+    if (state.query) {
+      state.query = "";
+      els.search.value = "";
+    }
     shortcuts.stopRecording();
     render();
     if (els.main && typeof els.main.scrollTo === "function") els.main.scrollTo(0, 0);
@@ -689,6 +711,21 @@ export function createApp(options) {
       items[next].focus();
     });
     const onKey = (e) => {
+      if (!els.confirm.hidden) {
+        // Modal: no page shortcuts (Ctrl+F would move focus behind the
+        // dialog). Keys from outside it (focus fell to <body> after a click
+        // on the backdrop) still close it or move focus back into it.
+        if (!els.confirm.contains(e.target)) {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            closeConfirm(false);
+          } else if (e.key === "Tab") {
+            e.preventDefault();
+            els.confirmCancel.focus();
+          }
+        }
+        return;
+      }
       if (e.defaultPrevented || shortcuts.isRecording()) return;
       if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === "f" || e.key === "F")) {
         e.preventDefault();
@@ -706,12 +743,15 @@ export function createApp(options) {
       if (payload && typeof payload.target === "string") navigate(payload.target);
     });
     on("wmux.settings.changed", (payload) => {
+      // changed_keys is the events_catalog payload; values an optional extension.
+      const changed = payload && Array.isArray(payload.changed_keys) ? payload.changed_keys : null;
       if (payload && payload.values) {
-        for (const [path, entry] of normalizeEffective(payload)) state.effective.set(path, entry);
+        const entries = normalizeEffective(payload);
+        for (const [path, entry] of entries) state.effective.set(path, entry);
         for (const path of rows.keys()) updatePath(path);
-        shortcuts.onSettingsChanged();
+        shortcuts.onSettingsChanged(changed || Array.from(entries.keys()));
       } else {
-        refreshEffective();
+        refreshEffective(changed);
       }
     });
     on("wmux.settings.schema_changed", () => {
@@ -747,11 +787,13 @@ export function createApp(options) {
       bridge.panel.setTitle(t("settings.title")).catch(() => {});
     const params = (ctx && ctx.params) || {};
     const saved = ctx && ctx.state && typeof ctx.state.section === "string" ? ctx.state.section : null;
-    const target = typeof params.target === "string" && params.target ? params.target : saved;
+    const requested = typeof params.target === "string" && params.target.trim() ? params.target.trim() : null;
     if (!(await load())) return false;
-    const initial = resolveTarget(target) || (target && sectionList().includes(target) ? target : null);
+    // An explicit target wins; a bad one is reported and the restored section
+    // is used instead. A saved section that no longer exists is dropped quietly.
+    const initial = (requested && resolveSection(requested)) || resolveSection(saved);
     if (initial) state.section = initial;
-    else if (target) setStatus(t("settings.unavailableTarget", { target }));
+    if (requested && !resolveSection(requested)) setStatus(targetMessage(requested));
     if (typeof params.query === "string" && params.query) state.query = params.query.slice(0, 256);
     els.search.value = state.query;
     render();

@@ -118,6 +118,20 @@ describe("unit: persistence-settings-keyboard-shortcuts-section: list", () => {
     assert.equal($(".set-sc-chords .set-subheading").textContent, "Shortcut Chords");
   });
 
+  test("unit: persistence-settings-keyboard-shortcuts-section: a Pane Resize Step spec in this section shows once", async () => {
+    const sc = shortcutHandlers();
+    const store = createStore();
+    store.schema.properties.app.properties.paneResizeStepPixels["x-wmux-section"] = "keyboardShortcuts";
+    const { app } = await startSettings({ store, handlers: sc.handlers, init: { params: { target: "shortcuts" } } });
+    await flush();
+    const rows = () => $$('.set-row[data-path="app.paneResizeStepPixels"]');
+    assert.equal(rows().length, 1);
+    assert.ok(rows()[0].closest(".set-sc-pane-resize"), "the row sits at the top of the shortcuts page");
+    assert.ok(rowEl("shortcuts.showModifierHoldHints"), "other rows of the section still render");
+    app.setQuery("resize step");
+    assert.equal(rows().length, 1, "search shows it once as well");
+  });
+
   test("unit: core-shortcuts-settings-ui: search filters and reports no match", async () => {
     await open();
     const search = $("#set-sc-search");
@@ -218,6 +232,23 @@ describe("unit: core-shortcuts-settings-ui: recorder", () => {
     assert.deepEqual(sc.wmux.diffViewerScrollDown, ["n"]);
   });
 
+  test("unit: core-shortcuts-settings-ui: a key in a numbered family is a conflict and is not saved", async () => {
+    const { sc } = await open();
+    // Select Workspace 1…9 is ctrl+alt+1, so it owns Ctrl+Alt+1 through Ctrl+Alt+9.
+    await recordFor("newSurface", { key: "5", code: "Digit5", keyCode: 53, ctrlKey: true, altKey: true });
+    assert.deepEqual(errorsOf("newSurface"), ["This shortcut conflicts with Select Workspace 1…9 (Ctrl+Alt+5)"]);
+    assert.equal(host.calls("wmux.shortcuts.validate").length, 0, "blocked before the native check");
+    assert.equal(sc.wmux.newSurface, undefined);
+    // Find by keys lists the family's owner too.
+    $("#set-sc-detect").click();
+    keydown({ key: "8", code: "Digit8", keyCode: 56, ctrlKey: true, altKey: true }, doc.body);
+    await flush();
+    assert.deepEqual(
+      $$(".set-sc-row").map((r) => r.dataset.action),
+      ["selectWorkspaceByNumber"],
+    );
+  });
+
   test("unit: core-shortcuts-settings-ui: Escape cancels; modifier-only presses are ignored", async () => {
     await open();
     row("newSurface").querySelector(".set-sc-keys").click();
@@ -272,8 +303,36 @@ describe("unit: core-shortcuts-settings-ui: recorder", () => {
     assert.equal(restore.getAttribute("aria-label"), "Restore previous shortcut for Split Right");
     restore.click();
     await flush();
-    assert.deepEqual(sc.wmux.splitRight, ["ctrl+shift+d"]);
+    // A default comes back by dropping the override, not by pinning its keys in wmux.json.
+    assert.equal(sc.wmux.splitRight, undefined);
+    assert.deepEqual(
+      host.calls("wmux.settings.unset").map((m) => m.params.path),
+      ["shortcuts.bindings.splitRight"],
+    );
     assert.deepEqual(keysOf("splitRight"), ["Ctrl+Shift+D"]);
+    assert.equal(row("splitRight").querySelector(".set-sc-restore"), null);
+    assert.ok(row("splitRight").querySelector(".set-sc-unbind"));
+  });
+
+  test("unit: core-shortcuts-settings-ui: restore writes a custom shortcut back but never creates a conflict", async () => {
+    const { sc } = await open({ wmux: { splitRight: ["ctrl+shift+alt+d"] } });
+    row("splitRight").querySelector(".set-sc-unbind").click();
+    await flush();
+    row("splitRight").querySelector(".set-sc-restore").click();
+    await flush();
+    assert.deepEqual(sc.wmux.splitRight, ["ctrl+shift+alt+d"]);
+    // Unbind again and give the keys to another action: Restore must not take them back.
+    row("splitRight").querySelector(".set-sc-unbind").click();
+    await flush();
+    await recordFor("newSurface", { key: "D", code: "KeyD", keyCode: 68, ctrlKey: true, shiftKey: true, altKey: true });
+    assert.deepEqual(sc.wmux.newSurface, ["ctrl+shift+alt+d"]);
+    const sets = host.calls("wmux.shortcuts.set").length;
+    row("splitRight").querySelector(".set-sc-restore").click();
+    await flush();
+    assert.deepEqual(errorsOf("splitRight"), ["This shortcut conflicts with New Surface (Ctrl+Shift+Alt+D)"]);
+    assert.equal(host.calls("wmux.shortcuts.set").length, sets);
+    assert.deepEqual(sc.wmux.splitRight, []);
+    assert.ok(row("splitRight").querySelector(".set-sc-restore"), "Restore stays available");
   });
 
   test("unit: core-shortcuts-settings-ui: keyboard focus stays on the row through record, unbind and restore", async () => {
@@ -414,6 +473,70 @@ describe("unit: persistence-settings-keyboard-shortcuts-section: resets and pres
       ["Could not apply the preset: Unknown preset"],
     );
     assert.equal(await app.shortcuts.applyPreset("missing"), false);
+  });
+
+  test("unit: persistence-settings-reset-all: Reset All refetches the shortcut list", async () => {
+    const { app, sc, store } = await open({ wmux: { splitRight: ["ctrl+shift+alt+d"] } });
+    assert.deepEqual(keysOf("splitRight"), ["Ctrl+Shift+Alt+D"]);
+    host.handlers.set("wmux.settings.reset_all", () => {
+      store.wmux = {};
+      sc.wmux = {}; // shortcuts.bindings lives in wmux.json too
+      return {};
+    });
+    app.navigate("reset");
+    $("#set-reset-all").click();
+    $("#set-confirm-ok").click();
+    await flush();
+    app.navigate("shortcuts");
+    await flush();
+    assert.deepEqual(keysOf("splitRight"), ["Ctrl+Shift+D"]);
+    assert.equal(row("splitRight").querySelector(".set-sc-reset"), null);
+  });
+
+  test("unit: core-shortcuts-settings-ui: settings changes that touch shortcuts refetch the list", async () => {
+    const { sc } = await open();
+    const lists = () => host.calls("wmux.shortcuts.list").length;
+    const before = lists();
+    host.emit("wmux.settings.changed", { changed_keys: ["terminal.scrollSpeed"] });
+    await flush();
+    assert.equal(lists(), before, "unrelated keys leave the list alone");
+    sc.wmux.splitRight = ["ctrl+shift+alt+d"]; // wmux.json edited by hand
+    host.emit("wmux.settings.changed", { changed_keys: ["shortcuts.bindings.splitRight"] });
+    await flush();
+    assert.equal(lists(), before + 1);
+    assert.deepEqual(keysOf("splitRight"), ["Ctrl+Shift+Alt+D"]);
+    host.emit("wmux.settings.changed", {
+      values: { "shortcuts.showModifierHoldHints": { value: false, source: "wmux.json" } },
+    });
+    await flush();
+    assert.equal(lists(), before + 2, "the keys of `values` count when changed_keys is absent");
+    // Saving a generic shortcuts.* row on this page refetches too.
+    rowEl("shortcuts.showModifierHoldHints").querySelector("input").click();
+    await flush();
+    assert.equal(lists(), before + 3);
+  });
+
+  test("unit: core-shortcuts-settings-ui: a reload asked for during a fetch fetches again", async () => {
+    const { app, sc } = await open();
+    let release = null;
+    const inner = host.handlers.get("wmux.shortcuts.list");
+    host.handlers.set("wmux.shortcuts.list", () => {
+      const reply = inner(); // the state when native read it
+      return new Promise((resolve) => {
+        release = () => resolve(reply);
+      });
+    });
+    const first = app.shortcuts.reload();
+    await flush(1);
+    sc.wmux.newSurface = ["ctrl+shift+alt+t"]; // written after that read
+    const second = app.shortcuts.reload();
+    assert.equal(second, first, "joins the running fetch");
+    release();
+    await flush(2);
+    release();
+    await first;
+    assert.equal(host.calls("wmux.shortcuts.list").length >= 3, true);
+    assert.deepEqual(keysOf("newSurface"), ["Ctrl+Shift+Alt+T"], "the follow-up fetch wins");
   });
 
   test("unit: core-shortcuts-settings-ui: find shortcut by keys", async () => {

@@ -239,16 +239,45 @@ export function bindingsCollide(a, b) {
   return sa.length !== sb.length && sa[0] === sb[0];
 }
 
-/** Other actions whose bindings collide with `binding` in an overlapping context. */
+/**
+ * The canonical bindings a key stands for. A numbered action's key whose
+ * last stroke is a digit covers that digit's whole 1–9 family
+ * ("ctrl+shift+1" is ctrl+shift+1…9, "ctrl+b 1" is ctrl+b 1…9), as the
+ * KeyRouter and keymap_presets.zig expand it (ADR-8.3); any other key
+ * stands for itself.
+ */
+export function expandNumbered(binding, numbered) {
+  if (!numbered) return [binding];
+  const strokes = binding.split(" ");
+  const last = strokes[strokes.length - 1];
+  const plus = last.lastIndexOf("+");
+  if (!/^[0-9]$/.test(last.slice(plus + 1))) return [binding];
+  const head = strokes.slice(0, -1);
+  const mods = last.slice(0, plus + 1);
+  const out = [];
+  for (let d = 1; d <= 9; d += 1) out.push([...head, `${mods}${d}`].join(" "));
+  return out;
+}
+
+/**
+ * Other actions whose bindings collide with `binding` in an overlapping
+ * context. `keys` of each conflict is the colliding binding (for a numbered
+ * family, the member that collides, e.g. "ctrl+shift+5").
+ */
 export function findConflicts(actions, id, binding, when) {
   const canonical = canonicalBinding(binding);
   if (!canonical) return [];
   const self = actions.find((a) => a.id === id);
   const clause = when !== undefined ? when : self ? self.when : null;
+  const mine = expandNumbered(canonical, Boolean(self && self.numbered));
   const out = [];
   for (const a of actions) {
     if (a.id === id || !a.available) continue;
-    const hit = a.keys.find((k) => bindingsCollide(k, canonical));
+    let hit = null;
+    for (const k of a.keys) {
+      hit = expandNumbered(k, a.numbered).find((x) => mine.some((y) => bindingsCollide(x, y))) || null;
+      if (hit) break;
+    }
     if (hit && contextsOverlap(clause, a.when)) out.push({ id: a.id, title: a.title, keys: hit });
   }
   return out;
@@ -320,11 +349,13 @@ export function filterActions(actions, query) {
   });
 }
 
-/** Actions with a binding equal to (or starting with) the detected stroke. */
+/** Actions with a binding equal to (or starting with) the detected stroke; numbered families count. */
 export function actionsUsingStroke(actions, stroke) {
   const canonical = canonicalBinding(stroke);
   if (!canonical) return [];
-  return actions.filter((a) => a.keys.some((k) => k === canonical || k.split(" ")[0] === canonical));
+  return actions.filter((a) =>
+    a.keys.some((k) => expandNumbered(k, a.numbered).some((x) => x === canonical || x.split(" ")[0] === canonical)),
+  );
 }
 
 /** True when the action's bindings differ from its defaults. */

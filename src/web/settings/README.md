@@ -54,8 +54,11 @@ beyond what these replies contain.
 | `params.query` | optional: open with this search query |
 | `state.section` | last section (from `panel.state_changed`) when restored |
 
-Unknown or Windows-omitted targets (`account`, `devices`, `networking`, ...)
-keep the current section and show "“x” is not available on Windows."
+A target that names no section keeps the current section (for `params.target`:
+the restored `state.section`, else the first section) and says why:
+Windows-omitted targets (`account`, `devices`, `networking`, ...) show
+"“x” is not available on Windows.", anything else "Unknown settings section
+“x”." A restored `state.section` that no longer exists is ignored quietly.
 
 ### Methods called by the page
 
@@ -64,8 +67,8 @@ keep the current section and show "“x” is not available on Windows."
 | `wmux.settings.schema` | `{}` -> `{schema, docs_url?}` or the schema itself | the generated JSON Schema (`docs/wmux/schema/wmux.schema.json` shape) with the `x-wmux-*` hints of `schema_dump.zig`. Root `$schema`, `schemaVersion` and `packs` are not rows |
 | `wmux.settings.get_effective` | `{}` -> `{values: {"<path>": {value, source, locked?, error?}}, files?: {wmux, cmux}}` | `source` as in `config get --json`: `default`, `ghostty`, `cmux.json`, `wmux.json`, `project`, `policy`. `locked: true` (or `source: "policy"`) makes the row read-only. `error` is shown on the row (e.g. a type error that fell back to a lower layer). A list `[{path, value, source, ...}]` is accepted too |
 | `wmux.settings.set` | `{path, value}` -> `{value, source, locked?}` | writes `wmux.json` through the lossless editor. Errors use the ADR-3.5 codes (no new ones), for example `invalid_params` for a bad value or `permission_denied` for a policy-locked key; the page shows their `message` on the row. Without `source` in the reply the page refetches `get_effective` |
-| `wmux.settings.unset` | `{path}` -> `{value, source, ...}` | per-key Reset: removes the key from `wmux.json`; the reply is the next lower layer. Also used with `shortcuts.bindings.<id>` for per-action shortcut reset and by the Reset Default Shortcuts fallback. Everything after `shortcuts.bindings.` is one key, the action id, and ids may contain dots (`wmux.selectLayout.tiled`): native removes the segments `["shortcuts", "bindings", <id>]` (`json_edit.removePath`) and must not split that path on every `.` |
-| `wmux.settings.reset_all` | `{}` -> `{}` | Reset All Settings: remove every setting the Settings window can write from `wmux.json` (keep `$schema`, `packs` and unknown keys); `cmux.json`, project and policy values stay. If native answers `method_not_found`/`not_supported`, the page unsets each `wmux.json` row instead |
+| `wmux.settings.unset` | `{path}` -> `{value, source, ...}` | per-key Reset: removes the key from `wmux.json`; the reply is the next lower layer. Also used with `shortcuts.bindings.<id>` for per-action shortcut reset, Restore of an unbound default binding and the Reset Default Shortcuts fallback. Everything after `shortcuts.bindings.` is one key, the action id, and ids may contain dots (`wmux.selectLayout.tiled`): native removes the segments `["shortcuts", "bindings", <id>]` (`json_edit.removePath`) and must not split that path on every `.` |
+| `wmux.settings.reset_all` | `{}` -> `{}` | Reset All Settings: remove every setting the Settings window can write from `wmux.json` (keep `$schema`, `packs` and unknown keys); `cmux.json`, project and policy values stay. If native answers `method_not_found`/`not_supported`, the page unsets each `wmux.json` row instead. Afterwards (also after a failure) the page refetches `get_effective` and `wmux.shortcuts.list` |
 | `wmux.settings.open_file` | `{file: "wmux" \| "cmux"}` -> `{}` | open the file in the default editor (creates `wmux.json` if missing) |
 | `wmux.settings.open_docs` | `{topic: "settings" \| "shortcut-chords"}` -> `{}` | open the docs; on `method_not_found`, `not_supported` or `forbidden` the page falls back to `panel.open_external {url: docs_url}` when the schema reply carried one |
 | `wmux.shortcuts.list` | `{}` -> `{actions: [...], presets?: [...], preset?}` | action: `{id, title, category, keys, default_keys, when?, when_label?, source, locked?, numbered?, bare_ok?, availability?}`. `keys` is an array of bindings; a binding is a stroke string, a chord string `"ctrl+b c"` or a nested chord array `["ctrl+b", "c"]` (ADR-8.3 Windows grammar). `source` as above. `category` is an `actions_catalog.zig` category; `viewer` (or `bare_ok`) allows bare keys. presets: `{name, title, description?, warning?}` from `keymap_presets.zig` (`cmux` is the default keymap); the page has a built-in fallback list |
@@ -89,7 +92,7 @@ panel-only.
 | Event | Payload | Effect |
 |---|---|---|
 | `wmux.settings.navigate` | `{target}` | `wmux settings <target>` while the window is open: show that section |
-| `wmux.settings.changed` | `{changed_keys?: ["<path>"], values?}` | after a reload (file watcher, CLI `config set`). `changed_keys` is the catalog payload; `values` (same shape as `get_effective`) is an optional extension for this panel. The page merges `values` when present, else refetches `get_effective` |
+| `wmux.settings.changed` | `{changed_keys?: ["<path>"], values?}` | after a reload (file watcher, CLI `config set`). `changed_keys` is the catalog payload; `values` (same shape as `get_effective`) is an optional extension for this panel. The page merges `values` when present, else refetches `get_effective`. When the changed keys (`changed_keys`, else the keys of `values`) include a `shortcuts.*` path, or are not given at all, it also refetches `wmux.shortcuts.list` (once loaded), so a hand edit of `shortcuts.bindings` shows without `shortcuts_changed` |
 | `wmux.settings.schema_changed` | `{}` | refetch the schema and re-render |
 | `wmux.settings.shortcuts_changed` | `{}` | refetch `wmux.shortcuts.list` |
 | `wmux.settings.themes_changed` | `{}` | refetch `wmux.settings.list_themes` |
@@ -130,6 +133,8 @@ panel-only.
   title and keywords (`scrollback` finds the Terminal rows). Results are
   grouped by section with `<mark>` highlights; the nav shows match counts and
   dims sections without matches. Ctrl+F focuses the field, Escape clears it.
+  A nav click, a result's section link or `wmux.settings.navigate` ends the
+  search and shows the section.
 - **Shortcuts.** Click a binding to record one stroke. Escape, a click or
   focus move outside the button, leaving the window or a re-render (deep
   link, schema change) cancels; a recorder never keeps capturing keys for a
@@ -141,8 +146,15 @@ panel-only.
   Win and Alt+Tab / Ctrl+Esc / Ctrl+Shift+Esc / Ctrl+Alt+Delete / Alt+Esc are
   "reserved by Windows"; Alt+Space, Alt+F4, Ctrl+Alt+Tab and F1 warn;
   numbered actions need 1-9 and store digit 1; conflicts with an action in an
-  overlapping context (or a chord prefix) block saving. Chords are edited in
-  wmux.json ("Shortcut Chords" help). Unbind (X) turns into Restore.
+  overlapping context (or a chord prefix) block saving, where a numbered
+  action's key counts for its whole 1-9 family (`ctrl+shift+1` also holds
+  Ctrl+Shift+5; find by keys lists it too). Chords are edited in
+  wmux.json ("Shortcut Chords" help). Unbind (X) turns into Restore, which
+  brings back what was there: a default binding by removing the override
+  (`wmux.settings.unset`), a custom one by writing it again. Like a
+  recording, it is refused when another action took those keys meanwhile. The
+  Pane Resize Step row (`app.paneResizeStepPixels`) heads the page whatever
+  section its spec names, and is not repeated among the section's rows.
 - **Themes.** Picking a theme replaces the light or dark half by its scheme
   (a single theme is used for both until the other scheme is picked). Revert
   restores the value from when the gallery was loaded.

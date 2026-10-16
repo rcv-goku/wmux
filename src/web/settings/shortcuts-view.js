@@ -15,6 +15,7 @@ import {
   displayBinding,
   displayStroke,
   filterActions,
+  findConflicts,
   isCustomized,
   keyList,
   normalizeShortcutList,
@@ -24,6 +25,13 @@ import { t } from "./strings.js";
 
 const UNSUPPORTED = new Set(["method_not_found", "not_supported"]);
 const PANE_RESIZE_PATH = "app.paneResizeStepPixels";
+
+/**
+ * Settings rows this page renders itself (Pane Resize Step at the top). The
+ * Keyboard Shortcuts section leaves them out of its generic rows, so a spec
+ * placed in that section does not show twice.
+ */
+export const VIEW_PATHS = Object.freeze([PANE_RESIZE_PATH]);
 
 function message(err) {
   return err && typeof err.message === "string" && err.message ? err.message : String(err);
@@ -72,6 +80,7 @@ export function createShortcutsView(ctx) {
   const model = {
     loaded: false,
     loading: null,
+    stale: false, // a reload was asked for while one was running
     error: "",
     actions: [],
     presets: [],
@@ -91,18 +100,31 @@ export function createShortcutsView(ctx) {
     return a ? a.title : String(id);
   };
 
-  async function load() {
-    if (model.loading) return model.loading;
+  /**
+   * Fetch `wmux.shortcuts.list` and repaint. A call while a fetch is running
+   * fetches once more after it (that reply may predate the change that asked
+   * for the reload); the returned promise settles after the last fetch.
+   */
+  function load() {
+    if (model.loading) {
+      model.stale = true;
+      return model.loading;
+    }
     model.loading = (async () => {
       try {
-        const data = normalizeShortcutList(await call("wmux.shortcuts.list", {}));
-        model.actions = data.actions;
-        model.presets = data.presets;
-        model.preset = data.preset;
-        model.loaded = true;
-        model.error = "";
-      } catch (err) {
-        model.error = message(err);
+        do {
+          model.stale = false;
+          try {
+            const data = normalizeShortcutList(await call("wmux.shortcuts.list", {}));
+            model.actions = data.actions;
+            model.presets = data.presets;
+            model.preset = data.preset;
+            model.loaded = true;
+            model.error = "";
+          } catch (err) {
+            model.error = message(err);
+          }
+        } while (model.stale);
       } finally {
         model.loading = null;
       }
@@ -265,25 +287,46 @@ export function createShortcutsView(ctx) {
   }
 
   async function unbind(action) {
-    if (action.keys.length) model.previous.set(action.id, action.keys.slice());
+    if (action.keys.length) model.previous.set(action.id, { keys: action.keys.slice(), source: action.source });
     return save(action, [], []);
   }
 
+  /**
+   * Restore what Unbind removed. A default binding comes back by dropping the
+   * override (wmux.json does not pin the default's keys, so the row keeps
+   * following the catalog); a custom one is written again. Like recording,
+   * restoring is refused when another action took those keys meanwhile.
+   */
   async function restore(action) {
     const prev = model.previous.get(action.id);
     if (!prev) return false;
-    const ok = await save(action, prev, []);
+    const keys = prev.source === "default" ? action.defaultKeys : prev.keys;
+    const errors = [];
+    for (const k of keys) {
+      for (const c of findConflicts(model.actions, action.id, k)) {
+        const text = t("settings.shortcuts.conflict", { action: c.title, keys: displayBinding(c.keys) });
+        if (!errors.includes(text)) errors.push(text);
+      }
+    }
+    if (errors.length > 0) {
+      model.messages.set(action.id, { errors, warnings: [] });
+      paintList();
+      return false;
+    }
+    const ok = prev.source === "default" ? await resetAction(action) : await save(action, prev.keys, []);
     if (ok) model.previous.delete(action.id);
     paintList();
     return ok;
   }
 
   async function resetAction(action) {
+    let ok = false;
     try {
       await call("wmux.settings.unset", { path: `shortcuts.bindings.${action.id}` });
       replaceAction({ ...action, keys: action.defaultKeys.slice(), source: "default", managed: null });
       model.previous.delete(action.id);
       model.messages.delete(action.id);
+      ok = true;
     } catch (err) {
       model.messages.set(action.id, {
         errors: [t("settings.shortcuts.saveFailed", { message: message(err) })],
@@ -292,6 +335,7 @@ export function createShortcutsView(ctx) {
     }
     paintList();
     await load();
+    return ok;
   }
 
   async function resetDefaults() {
@@ -612,6 +656,20 @@ export function createShortcutsView(ctx) {
     startDetect,
     stopRecording,
     isRecording: () => recording !== null,
-    onSettingsChanged() {},
+    /**
+     * Settings changed outside this page (a file reload, Reset All, a generic
+     * `shortcuts.*` row). `changed` lists the key paths, or is null when
+     * unknown. Refetches the list once it was loaded and the change may touch
+     * `shortcuts.*` (bindings, when-clauses); a first visit loads it anyway.
+     */
+    onSettingsChanged(changed) {
+      if (!model.loaded && !model.loading) return;
+      if (Array.isArray(changed) && !changed.some(touchesShortcuts)) return;
+      load();
+    },
   };
+}
+
+function touchesShortcuts(path) {
+  return typeof path === "string" && (path === "shortcuts" || path.startsWith("shortcuts."));
 }

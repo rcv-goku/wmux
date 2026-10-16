@@ -17,6 +17,7 @@ export const STRINGS = Object.freeze({
   "settings.retry": "Retry",
   "settings.emptySection": "This section has no settings yet.",
   "settings.unavailableTarget": "“{target}” is not available on Windows.",
+  "settings.unknownTarget": "Unknown settings section “{target}”.",
 
   "settings.section.app": "App",
   "settings.section.themes": "Themes",
