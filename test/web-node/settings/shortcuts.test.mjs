@@ -118,6 +118,20 @@ describe("unit: persistence-settings-keyboard-shortcuts-section: list", () => {
     assert.equal($(".set-sc-chords .set-subheading").textContent, "Shortcut Chords");
   });
 
+  test("unit: persistence-settings-keyboard-shortcuts-section: a Pane Resize Step spec in this section shows once", async () => {
+    const sc = shortcutHandlers();
+    const store = createStore();
+    store.schema.properties.app.properties.paneResizeStepPixels["x-wmux-section"] = "keyboardShortcuts";
+    const { app } = await startSettings({ store, handlers: sc.handlers, init: { params: { target: "shortcuts" } } });
+    await flush();
+    const rows = () => $$('.set-row[data-path="app.paneResizeStepPixels"]');
+    assert.equal(rows().length, 1);
+    assert.ok(rows()[0].closest(".set-sc-pane-resize"), "the row sits at the top of the shortcuts page");
+    assert.ok(rowEl("shortcuts.showModifierHoldHints"), "other rows of the section still render");
+    app.setQuery("resize step");
+    assert.equal(rows().length, 1, "search shows it once as well");
+  });
+
   test("unit: core-shortcuts-settings-ui: search filters and reports no match", async () => {
     await open();
     const search = $("#set-sc-search");

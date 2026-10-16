@@ -147,7 +147,9 @@ panel-only.
   "reserved by Windows"; Alt+Space, Alt+F4, Ctrl+Alt+Tab and F1 warn;
   numbered actions need 1-9 and store digit 1; conflicts with an action in an
   overlapping context (or a chord prefix) block saving. Chords are edited in
-  wmux.json ("Shortcut Chords" help). Unbind (X) turns into Restore.
+  wmux.json ("Shortcut Chords" help). Unbind (X) turns into Restore. The
+  Pane Resize Step row (`app.paneResizeStepPixels`) heads the page whatever
+  section its spec names, and is not repeated among the section's rows.
 - **Themes.** Picking a theme replaces the light or dark half by its scheme
   (a single theme is used for both until the other scheme is picked). Revert
   restores the value from when the gallery was loaded.

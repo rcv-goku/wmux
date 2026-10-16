@@ -25,6 +25,13 @@ import { t } from "./strings.js";
 const UNSUPPORTED = new Set(["method_not_found", "not_supported"]);
 const PANE_RESIZE_PATH = "app.paneResizeStepPixels";
 
+/**
+ * Settings rows this page renders itself (Pane Resize Step at the top). The
+ * Keyboard Shortcuts section leaves them out of its generic rows, so a spec
+ * placed in that section does not show twice.
+ */
+export const VIEW_PATHS = Object.freeze([PANE_RESIZE_PATH]);
+
 function message(err) {
   return err && typeof err.message === "string" && err.message ? err.message : String(err);
 }

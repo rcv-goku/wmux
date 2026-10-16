@@ -24,7 +24,7 @@ import {
   validateValue,
 } from "./schema.js";
 import { SECTIONS, findSection, isOmittedTarget, resolveTarget, sectionTitle } from "./sections.js";
-import { createShortcutsView } from "./shortcuts-view.js";
+import { VIEW_PATHS as SHORTCUT_VIEW_PATHS, createShortcutsView } from "./shortcuts-view.js";
 import { t } from "./strings.js";
 import { createThemesView } from "./themes-view.js";
 
@@ -560,7 +560,7 @@ export function createApp(options) {
     title.id = "set-section-title";
     title.tabIndex = -1; // focus target after a search-result link
     container.append(title);
-    const fields = fieldsIn(id);
+    const fields = fieldsIn(id).filter((f) => id !== "keyboardShortcuts" || !SHORTCUT_VIEW_PATHS.includes(f.path));
     if (id === "themes") container.append(themes.render());
     if (id === "keyboardShortcuts") container.append(shortcuts.render());
     if (id === "settingsJSON") renderSettingsJson(container);
