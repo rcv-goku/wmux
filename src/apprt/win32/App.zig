@@ -1096,30 +1096,6 @@ fn msgWndProc(
 // ---------------------------------------------------------------------------
 
 test {
-    // Pull in the tests of modules App owns but only references by
-    // specific decls (so their `test` blocks would otherwise not be
-    // collected by the unit-test root). Mirrors Window.zig's
-    // `_ = WindowState`.
-    _ = @import("features/meta/probes.zig");
-    _ = agent_session;
-    // The ipc.zig split (W0-A1): keep every moved test collected.
-    _ = ipc;
-    _ = legacy_pipe;
-    _ = @import("rpc/registry.zig");
-    _ = @import("rpc/types.zig");
-    _ = @import("features/workspaces/worktree.zig");
-    _ = @import("features/status/log_ring.zig");
-    _ = @import("features/notifications/legacy_ring.zig");
-    // Unreferenced until W1-7 replaces it; imported here so the file at
-    // least keeps parsing (an unimported file is never compiled).
-    _ = @import("features/session/legacy_scrollback.zig");
-    _ = config_files;
-    _ = app_tasks;
-    _ = app_timers;
-    _ = hooks;
-    _ = @import("app/runtime_env.zig");
-    _ = @import("app/paths.zig");
-    _ = app_clipboard;
-    _ = app_foreground;
-    _ = app_modal;
+    // Every unit test of the win32 apprt (ARCHITECTURE.md ADR-12.1).
+    _ = @import("test_index.zig");
 }
