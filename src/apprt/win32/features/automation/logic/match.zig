@@ -369,9 +369,12 @@ fn checkDepth(text: []const u8, max: u32) EventError!void {
 
 /// Parses a synthetic event: `{"name", "category"?, "source"?, "payload"?,
 /// "automation_origin"?, ...ids}`. Bounded to `rules.max_bytes` and
-/// `rules.max_depth`. Everything lives in `arena`.
-pub fn parseEventJson(arena: Allocator, text: []const u8) EventError!Event {
-    if (text.len > rules.max_bytes) return error.TooLarge;
+/// `rules.max_depth`. A leading UTF-8 byte order mark is skipped, as the
+/// rules loader does (Notepad and PowerShell 5.1 write one into `@file`
+/// events). Everything lives in `arena`.
+pub fn parseEventJson(arena: Allocator, text_in: []const u8) EventError!Event {
+    if (text_in.len > rules.max_bytes) return error.TooLarge;
+    const text = if (std.mem.startsWith(u8, text_in, jsonc.utf8_bom)) text_in[jsonc.utf8_bom.len..] else text_in;
     try checkDepth(text, rules.max_depth);
     const v = std.json.parseFromSliceLeaky(Value, arena, text, .{ .duplicate_field_behavior = .use_last }) catch |e| switch (e) {
         error.OutOfMemory => return error.OutOfMemory,
@@ -708,6 +711,12 @@ test "unit: automation: match parses test events and rejects malformed ones" {
     try testing.expectEqualStrings("wmux.ünï", u.name);
     try testing.expect(u.payload == null);
     try testing.expect(u.categoryName() == null);
+
+    // Windows files: a UTF-8 byte order mark and CRLF line breaks are fine; only one BOM is skipped.
+    const bom = try parseEventJson(arena, "\xEF\xBB\xBF{\r\n  \"name\": \"workspace.created\"\r\n}\r\n");
+    try testing.expectEqualStrings("workspace.created", bom.name);
+    try testing.expectError(error.InvalidJson, parseEventJson(arena, "\xEF\xBB\xBF"));
+    try testing.expectError(error.InvalidJson, parseEventJson(arena, "\xEF\xBB\xBF\xEF\xBB\xBF{\"name\":\"x\"}"));
 }
 
 test "unit: automation: match dry-run test result does not touch rate limits" {
