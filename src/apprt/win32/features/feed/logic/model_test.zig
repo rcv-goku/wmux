@@ -386,6 +386,17 @@ test "unit: feed: resolution badges and equality" {
     try testing.expectEqualStrings("manual", (model.Resolution{ .exit_plan = .{ .mode = .manual } }).badge());
 }
 
+test "unit: feed: long free-text answers survive resolution intact" {
+    const it = try itemFrom("{\"hook_event_name\":\"PermissionRequest\",\"tool_name\":\"AskUserQuestion\",\"tool_input\":{\"question\":\"Why?\"}}", opts());
+    defer it.destroy();
+    const long = try gpa.alloc(u8, 5000);
+    defer gpa.free(long);
+    @memset(long, 'x');
+    const sels = [_][]const u8{long};
+    try it.resolve(.{ .question = .{ .selections = &sels } }, 1);
+    try testing.expectEqual(@as(usize, 5000), it.resolution.?.question.selections[0].len);
+}
+
 test "unit: feed: clone is a deep copy" {
     const it = try itemFrom(
         \\{"hook_event_name":"PermissionRequest","tool_name":"AskUserQuestion","session_id":"s",

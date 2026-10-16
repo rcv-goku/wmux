@@ -254,14 +254,15 @@ pub const Resolution = union(enum) {
         };
     }
 
-    /// Deep copy into `a`.
+    /// Deep copy into `a`. Selections use the free-text cap: an "Other…"
+    /// answer is user text, not an option label.
     pub fn dupe(r: Resolution, a: Allocator) Allocator.Error!Resolution {
         return switch (r) {
             .permission => r,
             .exit_plan => |p| .{ .exit_plan = .{ .mode = p.mode, .feedback = if (p.feedback) |f| try utf8.dupeTruncated(a, f, caps.text) else null } },
             .question => |q| blk: {
                 const out = try a.alloc([]const u8, q.selections.len);
-                for (q.selections, out) |s, *o| o.* = try utf8.dupeTruncated(a, s, caps.short);
+                for (q.selections, out) |s, *o| o.* = try utf8.dupeTruncated(a, s, caps.text);
                 break :blk .{ .question = .{ .selections = out } };
             },
             .reply => |t| .{ .reply = try utf8.dupeTruncated(a, t, caps.text) },
