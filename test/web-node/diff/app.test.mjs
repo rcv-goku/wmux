@@ -813,6 +813,55 @@ describe("unit: diff app comments", () => {
     assert.equal(e.defaultPrevented, false, "v keeps typing instead of toggling Viewed");
     assert.equal(host.calls("viewedFiles.set").length, 0);
   });
+
+  test("unit: diff: repeated clicks save, delete and send only once", async () => {
+    const waiting = [];
+    const later = (value) => new Promise((resolve) => waiting.push(() => resolve(value)));
+    const release = async () => {
+      while (waiting.length) waiting.shift()();
+      await settle();
+    };
+    await startApp({
+      comments: [SAVED],
+      handlers: {
+        "comments.save": ({ comment }) => later({ comment }),
+        "comments.delete": () => later({}),
+        "panel.diff.send_comments": ({ ids }) => later({ consumed: ids }),
+      },
+    });
+    click($('td.dv-code.dv-add[data-line="2"] .dv-add-comment', section("src/app.js")));
+    typeInto($(".dv-composer textarea"), "once");
+    const submit = $('.dv-composer [data-action="submit-comment"]');
+    click(submit);
+    await settle();
+    assert.equal(submit.disabled, true, "disabled while saving");
+    key($(".dv-composer textarea"), { key: "Enter", code: "Enter", keyCode: 13, ctrlKey: true });
+    app.submitComment();
+    await settle();
+    assert.equal(host.calls("comments.save").length, 1);
+    await release();
+    assert.equal(app.state.comments.size, 2);
+    assert.equal($(".dv-composer"), null);
+
+    const del = $('.dv-comment-row [data-comment="c-1"] [data-action="delete-comment"]', section("src/app.js"));
+    click(del);
+    click(del);
+    await settle();
+    assert.equal(host.calls("comments.delete").length, 1);
+    await release();
+    assert.equal(app.state.comments.has("c-1"), false);
+    assert.equal($("#dv-status").textContent, "", "no error from a second delete");
+
+    click($("#dv-send"));
+    await settle();
+    assert.equal($("#dv-send").disabled, true, "disabled while sending");
+    app.sendToAgent();
+    await settle();
+    assert.equal(host.calls("panel.diff.send_comments").length, 1);
+    await release();
+    assert.equal($("#dv-status").textContent, "Sent 1 comment to the agent");
+    assert.equal($("#dv-send").disabled, true);
+  });
 });
 
 describe("unit: diff app session", () => {

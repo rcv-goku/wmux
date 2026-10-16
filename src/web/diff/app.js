@@ -17,6 +17,7 @@ import {
   anchorComment,
   buildComment,
   compareComments,
+  newCommentId,
   normalizeComment,
   pendingComments,
 } from "./comments.js";
@@ -117,8 +118,10 @@ export function createApp(options) {
     hunkCache: new Map(),
     comments: new Map(), // id -> record
     anchors: new Map(), // id -> anchor
-    composer: null, // {fileIndex, side, start, end, editingId, draft}
+    composer: null, // {fileIndex, filePath, side, start, end, editingId, newId, draft, saving}
     selection: null, // {fileIndex, side, start, end}
+    deleting: new Set(), // comment ids with a comments.delete in flight
+    sending: false, // panel.diff.send_comments in flight
     find: { open: false, query: "", matches: [], index: -1, capped: false },
     fileSearch: { open: false, results: [], active: 0 },
     loadSeq: 0,
@@ -383,7 +386,7 @@ export function createApp(options) {
     ui.contextLines.disabled = !!p.expandUnchanged;
     const pending = pendingComments(Array.from(state.comments.values())).length;
     ui.commentsToggle.textContent = state.comments.size ? t("diff.commentsCount", { count: state.comments.size }) : t("diff.comments");
-    ui.send.disabled = pending === 0;
+    ui.send.disabled = pending === 0 || state.sending;
   }
 
   function applyPrefClasses() {
@@ -1156,7 +1159,7 @@ export function createApp(options) {
     actions.className = "dv-composer-actions";
     const submit = button(c.editingId ? t("diff.save") : t("diff.comment"), "submit-comment");
     submit.classList.add("wmux-primary");
-    submit.disabled = !area.value.trim();
+    submit.disabled = !!c.saving || !area.value.trim();
     actions.append(button(t("diff.cancel"), "cancel-comment"), submit);
     box.append(label, area, actions);
     return box;
@@ -1214,8 +1217,11 @@ export function createApp(options) {
       start: Math.min(start, end),
       end: Math.max(start, end),
       editingId: editing ? editing.id : null,
+      // Fixed per composer, so a repeated submit saves the same record.
+      newId: editing ? null : newCommentId(),
       draft: editing ? editing.message : "",
       focus: true,
+      saving: false,
     };
     state.selection = null;
     if (prev && prev !== file) renderBody(prev);
@@ -1231,36 +1237,63 @@ export function createApp(options) {
     return true;
   }
 
+  /** Enable the composer's submit button only for a non-empty draft that is not being saved. */
+  function updateComposerSubmit() {
+    const cmp = state.composer;
+    const box = ui.files.querySelector(".dv-composer");
+    if (!box) return;
+    const area = box.querySelector(".dv-composer-input");
+    const submit = box.querySelector('[data-action="submit-comment"]');
+    if (submit) submit.disabled = !cmp || !!cmp.saving || !(area ? area.value : "").trim();
+  }
+
   async function submitComment() {
     const cmp = state.composer;
-    if (!cmp) return;
+    if (!cmp || cmp.saving) return;
     const area = ui.files.querySelector(".dv-composer-input");
     const message = (area ? area.value : cmp.draft || "").trim();
     if (!message) return;
     const file = fileByIndex(cmp.fileIndex);
     const existing = cmp.editingId ? state.comments.get(cmp.editingId) : null;
-    const rec = buildComment({ file, side: cmp.side, startLine: cmp.start, endLine: cmp.end, message, existing, now: now() });
+    const rec = buildComment({
+      file,
+      side: cmp.side,
+      startLine: cmp.start,
+      endLine: cmp.end,
+      message,
+      existing,
+      id: cmp.editingId || cmp.newId,
+      now: now(),
+    });
     cmp.draft = message;
+    cmp.saving = true;
+    updateComposerSubmit();
     try {
       const result = await call("comments.save", { comment: rec });
       const saved = normalizeComment(result && result.comment ? result.comment : rec) || rec;
       state.comments.set(saved.id, saved);
     } catch (err) {
+      cmp.saving = false;
+      updateComposerSubmit();
       setStatus(t("diff.saveFailed", { message: errorMessage(err) }), "error", true);
       return;
     }
     setStatus("");
-    state.composer = null;
+    // The user may have opened another composer while this one was saving.
+    if (state.composer === cmp) state.composer = null;
     commentsChanged();
   }
 
   async function deleteComment(id) {
-    if (!state.comments.has(id)) return;
+    if (!state.comments.has(id) || state.deleting.has(id)) return;
+    state.deleting.add(id);
     try {
       await call("comments.delete", { id });
     } catch (err) {
       setStatus(t("diff.deleteFailed", { message: errorMessage(err) }), "error", true);
       return;
+    } finally {
+      state.deleting.delete(id);
     }
     state.comments.delete(id);
     if (state.composer && state.composer.editingId === id) state.composer = null;
@@ -1276,14 +1309,21 @@ export function createApp(options) {
   }
 
   async function sendToAgent() {
+    // One delivery at a time: a second click must not paste the comments twice.
+    if (state.sending) return;
     const pending = pendingComments(Array.from(state.comments.values())).sort(compareComments);
     if (!pending.length) return;
+    state.sending = true;
+    updateToolbar();
     let result;
     try {
       result = await call("panel.diff.send_comments", { ids: pending.map((c) => c.id) });
     } catch (err) {
       setStatus(t("diff.sendFailed", { message: errorMessage(err) }), "error", true);
       return;
+    } finally {
+      state.sending = false;
+      updateToolbar();
     }
     const consumed = result && Array.isArray(result.consumed) ? result.consumed : null;
     const stamp = now().toISOString();
@@ -1586,8 +1626,7 @@ export function createApp(options) {
   function onComposerInput(e) {
     if (!e.target.classList.contains("dv-composer-input") || !state.composer) return;
     state.composer.draft = e.target.value;
-    const submit = e.target.parentNode.querySelector('[data-action="submit-comment"]');
-    if (submit) submit.disabled = !e.target.value.trim();
+    updateComposerSubmit();
   }
 
   function onComposerKey(e) {
