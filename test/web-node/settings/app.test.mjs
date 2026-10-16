@@ -426,6 +426,25 @@ describe("unit: persistence-settings-window: typed controls", () => {
     assert.equal(store.wmux["sidebar.selectionColor"], null);
   });
 
+  test("unit: persistence-settings-window: multi-part controls are groups named by the row title", async () => {
+    const { app } = await startSettings();
+    const groupName = (p, cls) => {
+      const wrap = rowEl(p).querySelector(cls);
+      assert.equal(wrap.getAttribute("role"), "group", p);
+      return doc.getElementById(wrap.getAttribute("aria-labelledby")).textContent;
+    };
+    app.navigate("app");
+    assert.equal(groupName("activePaneBorderColor", ".set-color"), "Active pane border");
+    const text = rowEl("activePaneBorderColor").querySelector(".set-color-text");
+    assert.equal(rowEl("activePaneBorderColor").querySelector("label").htmlFor, text.id, "the text field has the label");
+    app.navigate("globalHotkey");
+    assert.equal(groupName("wmux.quickTerminal.hotkey", ".set-strokes"), "Quick terminal hotkey");
+    app.navigate("automation");
+    assert.equal(groupName("notifications.hooks", ".set-kv"), "Notification hooks");
+    // Single-element controls are labelled directly, without a wrapper name.
+    assert.equal(rowEl("automation.socketControlMode").querySelector("select").hasAttribute("aria-labelledby"), false);
+  });
+
   test("unit: persistence-settings-window: key-value editor adds, edits, removes and rejects duplicates", async () => {
     const { app, store } = await startSettings({
       store: createStore({ wmux: { "notifications.hooks": { a: "1", b: true } } }),
