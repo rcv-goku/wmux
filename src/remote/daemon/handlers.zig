@@ -28,7 +28,9 @@ pub fn handleLine(srv: *Server, c: *Conn, line: []const u8) void {
         error.OutOfMemory => return srv.sendError(c, null, .internal_error, "out of memory"),
     };
     const m = rpc.Method.parse(req.method) orelse {
-        const msg = std.fmt.allocPrint(a, "unknown method: {s}", .{req.method}) catch "unknown method";
+        // The name is client input of any length (G6: cap echoed text).
+        const name = @import("wmux_proto").utf8.truncateUtf8(req.method, msgs.max_name_len);
+        const msg = std.fmt.allocPrint(a, "unknown method: {s}", .{name}) catch "unknown method";
         return srv.sendError(c, req.id, .method_not_found, msg);
     };
     if (!c.hello_done and m != .hello) return srv.sendError(c, req.id, .hello_required, "hello is required before other methods");

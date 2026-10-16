@@ -107,6 +107,11 @@ test "unit: remote-daemon: unknown methods, malformed lines and stubs" {
     try testing.expectEqual(@as(i64, 5), unk.id.?.int);
     try testing.expectEqualStrings("method_not_found", unk.code.?);
     try testing.expectEqualStrings("unknown method: nope.nope", unk.message.?);
+    // The echoed name is capped at 128 bytes, on a UTF-8 boundary.
+    try c.writeAll("{\"id\":6,\"method\":\"" ++ "x" ** 127 ++ "é" ++ "y" ** 5000 ++ "\"}\n");
+    const long = try c.nextReply(timeout);
+    try testing.expectEqualStrings("method_not_found", long.code.?);
+    try testing.expectEqualStrings("unknown method: " ++ "x" ** 127, long.message.?);
     for ([_]rpc.Method{ .proxy_open, .proxy_close, .proxy_write, .proxy_stream_subscribe, .relay_accept }) |m| {
         const s = try c.request(m, .{}, timeout);
         try testing.expectEqualStrings("not_supported", s.code.?);
