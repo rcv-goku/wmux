@@ -661,8 +661,10 @@ export function createApp(options) {
     const maxY = Math.max(0, (view ? view.innerHeight : 0) - (ui.menu.offsetHeight || 100));
     ui.menu.style.setProperty("left", `${Math.max(0, Math.min(x, maxX))}px`);
     ui.menu.style.setProperty("top", `${Math.max(0, Math.min(y, maxY))}px`);
+    // With every item disabled (window rows) the menu itself takes focus, so
+    // its Escape handling still runs instead of leaving it open over the rows.
     const first = ui.menu.querySelector(".tm-menu-item:not(:disabled)");
-    if (first) first.focus();
+    (first || ui.menu).focus();
   }
 
   function closeMenu() {

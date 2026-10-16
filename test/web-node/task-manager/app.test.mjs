@@ -476,15 +476,18 @@ describe("unit: task manager actions", () => {
       window_id: IDS.win1,
       workspace_id: IDS.wsWeb,
     });
-    // Windows offer nothing but stay keyboard reachable; Escape closes.
+    // Windows offer nothing: every item is disabled, so the menu itself takes
+    // focus and Escape (sent where focus is, as a real key would be) closes it.
     mouse(
       window,
       treeRow((r) => r.kind === "window"),
       "contextmenu",
     );
-    assert.equal(item("workspace").disabled, true);
-    key(window, menu, { key: "Escape" });
+    assert.ok(Array.from(menu.querySelectorAll(".tm-menu-item")).every((b) => b.disabled));
+    assert.equal(doc.activeElement, menu);
+    key(window, doc.activeElement, { key: "Escape" });
     assert.equal(menu.hidden, true);
+    assert.equal(doc.activeElement.dataset.kind, "window", "focus is back on the row");
   });
 
   test("unit: task-manager: Kill Process confirms, kills gracefully and refreshes", async () => {
