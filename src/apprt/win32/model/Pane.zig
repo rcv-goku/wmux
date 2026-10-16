@@ -351,7 +351,7 @@ test "unit: model: pane hover state is independently settable" {
     try testing.expect(pane.hovered_new_tab);
     try testing.expect(pane.hovered_dropdown);
 
-    // Clear hover state (as clearAllContainerHover would).
+    // Clear hover state (as the tab bar's mouse-leave handler does).
     pane.hovered_tab_idx = null;
     pane.hovered_close_idx = null;
     pane.hovered_new_tab = false;

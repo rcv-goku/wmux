@@ -32,19 +32,6 @@ pub fn hitTestSplitTabBar(self: *Window, x: i32, y: i32) ?*Pane {
     return null;
 }
 
-/// Clear per-container hover state on all Pane leaves.
-pub fn clearAllContainerHover(self: *Window) void {
-    const ws = self.activeWorkspace();
-    var it = ws.tree.iterator();
-    while (it.next()) |entry| {
-        const c = entry.view;
-        c.hovered_tab_idx = null;
-        c.hovered_close_idx = null;
-        c.hovered_new_tab = false;
-        c.hovered_dropdown = false;
-    }
-}
-
 /// Select tab `i` of the focused pane and arm a potential drag reorder.
 fn selectAndArmDrag(self: *Window, i: usize, x: i16) void {
     self.selectTabIndex(i);
