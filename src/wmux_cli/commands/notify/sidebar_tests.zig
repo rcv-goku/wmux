@@ -170,6 +170,25 @@ test "unit: cli-sidebar: sidebar-state dump" {
     try testing.expectEqualStrings("{}\n", j.out);
 }
 
+test "unit: cli-sidebar: sidebar-state skips malformed ports" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const cases = [_]struct { []const u8, []const u8 }{
+        .{ "[3000,{},null,5173,{\"x\":1}]", "ports=3000,5173\n" },
+        .{ "[{},3000]", "ports=3000\n" },
+        .{ "[3000,true]", "ports=3000\n" },
+        .{ "[\"8080\",80.0,443]", "ports=8080,80,443\n" },
+        .{ "[null,[]]", "ports=none\n" },
+    };
+    for (cases) |c| {
+        const r = try std.json.parseFromSliceLeaky(std.json.Value, a, try std.fmt.allocPrint(a, "{{\"ports\":{s}}}", .{c[0]}), .{});
+        var aw: std.Io.Writer.Allocating = .init(a);
+        try sidebar.writeSidebarState(&aw.writer, r);
+        try kit.expectContains(aw.written(), c[1]);
+    }
+}
+
 const Script = struct {
     var calls: [8][]const u8 = undefined;
     var n: usize = 0;

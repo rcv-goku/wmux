@@ -289,6 +289,15 @@ fn writeKey(w: *std.Io.Writer, key: []const u8, v: ?[]const u8, fallback: []cons
     try w.writeByte('\n');
 }
 
+/// The values `writeNumber` prints.
+fn isNumber(v: std.json.Value) bool {
+    return switch (v) {
+        .integer, .string, .number_string => true,
+        .float => |f| std.math.isFinite(f),
+        else => false,
+    };
+}
+
 fn writeNumber(w: *std.Io.Writer, v: std.json.Value) std.Io.Writer.Error!bool {
     switch (v) {
         .integer => |n| try w.print("{d}", .{n}),
@@ -338,8 +347,10 @@ pub fn writeSidebarState(w: *std.Io.Writer, r: std.json.Value) std.Io.Writer.Err
     const ports = common.arrayField(r, "ports") orelse &.{};
     var n_ports: usize = 0;
     for (ports) |port| {
+        if (!isNumber(port)) continue;
         if (n_ports > 0) try w.writeByte(',');
-        if (try writeNumber(w, port)) n_ports += 1;
+        _ = try writeNumber(w, port);
+        n_ports += 1;
     }
     try w.writeAll(if (n_ports == 0) "none\n" else "\n");
 
