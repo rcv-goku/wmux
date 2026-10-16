@@ -32,9 +32,19 @@ the event bus and moves the legacy per-tab state into feature ext state.
   collects it for the full suite).
 
 Dependency rule (ADR-1.2): may import `platform/`, `features/ext.zig` and
-`wmux_proto`; never `rpc/` or feature internals. ADR-2.3 fields are the
-exception: `Workspace.window` points at `ui/Window.zig` and `TabContent`
-at the terminal `Surface.zig` and `web/BrowserPane.zig`.
+`wmux_proto`; not `ui/`, `rpc/`, `web/` or feature internals. The
+exceptions at the end of W0-A2:
+
+- the ADR-2.3 fields: `Workspace.window` points at `ui/Window.zig`, the
+  split tree is `src/datastruct/split_tree.zig`, and `TabContent` holds
+  the terminal `Surface.zig` or a `web/BrowserPane.zig`;
+- `ops/*.zig` still take the `*Window` they act on and drive its chrome
+  (layout, focus, invalidation, overlays) through `ui/Window.zig`;
+  `ops/surface.zig` also shows the window through `app/foreground.zig`,
+  and it and `ops/pane.zig` create browser tabs (`web/BrowserPane.zig`);
+- `Tab.zig` keeps the legacy per-tab log ring of
+  `features/status/log_ring.zig` until W0-A3 moves the legacy per-tab
+  state into feature ext state.
 
 Pane index: `Workspace.paneAt` (the legacy IPC `pane` index and the v2
 session file) counts panes in split-tree node order, which is not the
