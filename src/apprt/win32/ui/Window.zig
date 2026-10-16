@@ -1231,6 +1231,7 @@ test {
     // Not std-only (it builds real model objects), so not in the logic
     // index: the full suite collects it here.
     _ = @import("../model/logic/fake.zig");
+    _ = @import("../model/ops/group.zig");
     _ = ops_move;
     _ = ops_pane;
     _ = ops_surface;
