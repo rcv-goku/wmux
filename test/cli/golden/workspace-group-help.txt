@@ -1,0 +1,28 @@
+Usage: cmux workspace-group <list|create|rename|ungroup|delete|collapse|expand|pin|unpin|add|remove|set-anchor|set-color|set-icon|move|focus|new-workspace> [args]
+
+Sidebar workspace groups (also "cmux workspace group <subcommand>"). A
+<group> is a UUID or a ref like workspace_group:2.
+
+Subcommands:
+  list [--window <id|ref|index>]
+  create [--name <name>] [--cwd <path>] [--from <id>,<id>...]
+         [--idempotency-key <key> | --external-id <id>]
+      Prints "OK <group>". Without --from the group holds only its anchor.
+      Repeating a key in the same window returns the same group.
+  rename <group> --name <new>
+  ungroup <group> [--remove-generated-anchor]
+  delete <group> [--close-workspaces] [--remove-generated-anchor]
+      Without --close-workspaces this ungroups like "ungroup"; with it every
+      member workspace is closed
+  collapse <group> | expand <group> | pin <group> | unpin <group>
+  add --group <group> --workspace <id|ref|index>
+  remove --workspace <id|ref|index>
+  set-anchor --group <group> --workspace <id|ref|index>
+  set-color <group> [--hex #RRGGBB]      (empty clears)
+  set-icon <group> [--symbol <name>]     (empty clears)
+  move <group> (--to-index <n> | --before <group> | --after <group>)
+  focus <group>
+  new-workspace <group> [--placement afterCurrent|top|end]
+
+Options:
+  --json        Print the result as JSON

@@ -1,0 +1,29 @@
+Usage: cmux workspace <list|create|env|close|rename|select|status|reconnect|disconnect|group> [args]
+
+Workspace commands. Handles are UUIDs, refs like workspace:2, or indexes.
+Without a handle, commands act on the caller's workspace ($CMUX_WORKSPACE_ID),
+then the selected one.
+
+Subcommands:
+  list [--window <id|ref|index>]
+      One line per workspace: "* workspace:2  <title>  [ssh:connected]  [selected]"
+  create [new-workspace flags]
+      Same flags as "cmux new-workspace"; prints "OK <workspace>"
+  env [<id|ref|index> | --workspace <id|ref|index>] [--mask]
+      The workspace's environment variables as KEY=VALUE lines; --mask hides
+      the values
+  close <id|ref|index> [--window <id|ref|index>] [--force]
+  rename [<id|ref|index>] --title <title>
+  select <id|ref|index> [--window <id|ref|index>]
+  status [set <todo|working|needs-attention|review|done|auto|none> | cycle]
+         [--workspace <id|ref|index>] [--window <id|ref|index>]
+      Prints the effective status, "inferred: <lane>" and the override line;
+      "set auto" clears the pinned lane, "set none" hides the status
+  reconnect [<id|ref|index>] [--workspace <id|ref|index>]
+  disconnect [<id|ref|index>] [--workspace <id|ref|index>]
+      Reconnect or stop a remote (SSH) workspace's connection
+  group <subcommand> [args]
+      Same as "cmux workspace-group <subcommand>"
+
+Options:
+  --json        Print the result as JSON

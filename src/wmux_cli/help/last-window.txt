@@ -1,0 +1,8 @@
+Usage: cmux last-window [--window <id|ref|index>]
+
+Select the previously selected workspace. Prints "OK".
+tmux-compatible name: a tmux window is a workspace here.
+
+Options:
+  --window <id|ref|index>   Window to act in (default: the active window)
+  --json                    Print the result as JSON

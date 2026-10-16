@@ -1,0 +1,3 @@
+  workspace:1  api
+* workspace:2  build été 🚀  [ssh:connected]  [selected]
+  workspace:5    [mosh:reconnecting]

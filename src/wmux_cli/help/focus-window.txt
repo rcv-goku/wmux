@@ -1,0 +1,9 @@
+Usage: cmux focus-window --window <id|ref|index>
+
+Bring a window to the front and make it the active window for later
+commands. Prints "OK".
+
+Options:
+  --window <id|ref|index>   Window to focus (required; the global --window
+                            before the command also works)
+  --json                    Print the result as JSON
