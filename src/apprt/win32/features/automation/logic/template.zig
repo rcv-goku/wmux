@@ -133,7 +133,7 @@ test "unit: automation: template substitutes event and payload values" {
     , .{});
     const vars: Vars = .{ .name = "agent.needs_input", .category = "agent", .source = "agents.store", .payload = &v.object };
     const cases = [_][2][]const u8{
-        .{ "Review {{payload.session_id}}", "Review s-1" },
+        .{ "Session {{payload.session_id}} paused", "Session s-1 paused" },
         .{ "{{event.name}}/{{ event.category }}/{{event.source}}", "agent.needs_input/agent/agents.store" },
         .{ "{{payload.n}} {{payload.ok}} [{{payload.none}}] [{{payload.missing}}]", "42 true [] []" },
         .{ "{{payload.obj}}", "{\"a\":[1,\"x\"]}" },
@@ -174,7 +174,7 @@ test "unit: automation: template output is capped on a code point boundary" {
 
 test "unit: automation: template check reports placeholders render keeps literal" {
     try testing.expect(check("") == null);
-    try testing.expect(check("Review {{payload.session_id}} {{ event.name }}") == null);
+    try testing.expect(check("Session {{payload.session_id}} {{ event.name }}") == null);
     try testing.expectEqual(@as(usize, 2), check("a {{payload}}").?.offset);
     try testing.expect(check("{{event.name") != null);
     try testing.expect(check("{{workspace.title}}") != null);

@@ -1,15 +1,16 @@
 //! Automation origin and cycle prevention (cli-automation-origin-loop-guard).
 //!
-//! Events emitted while an automation action runs carry an
-//! `automation_origin` object `{rule_id, chain, depth}`. `chain` lists the
-//! rule ids that led to the event, oldest first; `depth` is its length. A rule
-//! already in the chain is skipped, which stops direct self-triggering and
-//! multi-rule cycles, and a chain at `max_chain` skips every rule.
+//! An event caused by an automation action is tagged with an
+//! `automation_origin` object `{rule_id, chain, depth}`: `chain` holds the ids
+//! of the rules that produced it, oldest first, and `depth` its length. A rule
+//! whose id is in that chain does not fire for the event, so neither a rule
+//! that triggers itself nor a ring of rules can loop; once the chain holds
+//! `max_chain` ids, no rule fires at all.
 //!
-//! The origin crosses process boundaries through the environment of `run`
-//! actions (`CMUX_AUTOMATION_RULE_ID`, `CMUX_AUTOMATION_CHAIN`) and the
-//! top-level `automation_origin` of every v2 request the CLI sends while
-//! `CMUX_AUTOMATION_RULE_ID` is set.
+//! `run` actions hand the origin to their child process in
+//! `CMUX_AUTOMATION_RULE_ID` and `CMUX_AUTOMATION_CHAIN`. While those are set,
+//! the CLI attaches the same origin (top-level `automation_origin`) to each
+//! v2 request it makes, so a script that calls `cmux` keeps the chain.
 
 const std = @import("std");
 

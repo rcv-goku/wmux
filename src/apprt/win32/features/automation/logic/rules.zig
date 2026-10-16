@@ -174,7 +174,7 @@ pub const Notify = struct {
     subtitle: ?[]const u8 = null,
     body: ?[]const u8 = null,
     message: ?[]const u8 = null,
-    /// Default to the event target when null.
+    /// Null targets the event's own workspace / surface.
     workspace_id: ?[]const u8 = null,
     surface_id: ?[]const u8 = null,
 };
@@ -951,29 +951,25 @@ pub fn writeSummary(r: *const Rule, jw: *std.json.Stringify) std.Io.Writer.Error
 
 const testing = std.testing;
 
+/// A rule that uses every field (an original fixture; clean room G1).
 const example =
     \\{
     \\  "version": 1,
     \\  "rules": [
     \\    {
-    \\      "id": "surface-needs-input",
-    \\      "when": { "event": "agent.needs_input" },
+    \\      "id": "triage-waiting",
+    \\      "enabled": true,
+    \\      "when": { "event": "agent.needs_input", "category": "agent" },
     \\      "where": {
-    \\        "workspace.tag": "dispatch",
-    \\        "surface.kind": "terminal"
+    \\        "workspace.tag": "triage",
+    \\        "surface.kind": { "in": ["terminal", "browser"] }
     \\      },
-    \\      "rate_limit": { "interval_seconds": 30, "maximum": 1 },
+    \\      "rate_limit": { "interval_seconds": 45, "maximum": 2 },
     \\      "then": [
-    \\        {
-    \\          "action": "notify",
-    \\          "title": "Agent needs input",
-    \\          "body": "Review {{payload.session_id}}"
-    \\        },
-    \\        {
-    \\          "action": "rpc",
-    \\          "method": "workspace.reorder",
-    \\          "params": { "index": 1 }
-    \\        }
+    \\        { "action": "notify", "title": "Waiting on you", "body": "Session {{payload.session_id}} paused" },
+    \\        { "action": "rpc", "method": "workspace.rename", "params": { "title": "needs you" } },
+    \\        { "action": "run", "command": "echo %CMUX_AUTOMATION_RULE_ID%", "timeout_seconds": 10 },
+    \\        { "action": "webhook", "url": "https://hooks.example/triage", "headers": { "X-Source": "wmux" } }
     \\      ]
     \\    }
     \\  ]
@@ -989,26 +985,31 @@ fn expectIssue(cfg: *const Config, sev: Severity, path: []const u8, needle: []co
     return error.TestExpectedIssue;
 }
 
-test "unit: automation: rules parse the documented example" {
+test "unit: automation: rules parse a rule that uses every field" {
     var cfg = try parse(testing.allocator, example);
     defer cfg.deinit();
     try testing.expectEqual(@as(usize, 0), cfg.issues.len);
     try testing.expectEqual(@as(usize, 1), cfg.rules.len);
-    const r = cfg.find("surface-needs-input").?;
+    const r = cfg.find("triage-waiting").?;
     try testing.expect(r.enabled);
     try testing.expectEqual(Pattern.Kind.exact, r.when.event.?.kind);
-    try testing.expect(r.when.category == null);
+    try testing.expectEqualStrings("agent", r.when.category.?.stem);
     try testing.expectEqual(@as(usize, 2), r.where.len);
     try testing.expectEqual(Alias.workspace_tag, r.where[0].alias.?);
     try testing.expectEqual(Alias.surface_kind, r.where[1].alias.?);
-    try testing.expectEqualStrings("dispatch", r.where[0].cond.ops[0].equals.string);
-    try testing.expectEqual(@as(u64, 30_000), r.rate_limit.interval_ms);
-    try testing.expectEqual(@as(u32, 1), r.rate_limit.maximum);
-    try testing.expectEqual(@as(usize, 2), r.then.len);
-    try testing.expectEqualStrings("Review {{payload.session_id}}", r.then[0].notify.body.?);
-    try testing.expectEqualStrings("workspace.reorder", r.then[1].rpc.method);
+    try testing.expectEqualStrings("triage", r.where[0].cond.ops[0].equals.string);
+    try testing.expectEqualStrings("browser", r.where[1].cond.ops[0].in[1].string);
+    try testing.expectEqual(@as(u64, 45_000), r.rate_limit.interval_ms);
+    try testing.expectEqual(@as(u32, 2), r.rate_limit.maximum);
+    try testing.expectEqual(@as(usize, 4), r.then.len);
+    try testing.expectEqualStrings("Session {{payload.session_id}} paused", r.then[0].notify.body.?);
+    try testing.expectEqualStrings("workspace.rename", r.then[1].rpc.method);
     try testing.expect(!r.then[1].rpc.allow_focus);
-    try testing.expectEqualStrings("1", r.then[1].rpc.params.?.get("index").?.data.number);
+    try testing.expectEqualStrings("needs you", r.then[1].rpc.params.?.get("title").?.data.string);
+    try testing.expectEqualStrings("echo %CMUX_AUTOMATION_RULE_ID%", r.then[2].run.command);
+    try testing.expectEqual(@as(u64, 10_000), r.then[2].run.timeout_ms);
+    try testing.expectEqualStrings("https://hooks.example/triage", r.then[3].webhook.url);
+    try testing.expectEqualStrings("X-Source", r.then[3].webhook.headers[0].name);
     try testing.expectEqual(@as(u32, 4), r.pos.line);
     try testing.expect(cfg.find("other") == null);
 }
@@ -1324,11 +1325,12 @@ test "unit: automation: rules config outlives the source buffer" {
     defer cfg.deinit();
     @memset(buf, 'x');
     gpa.free(buf);
-    try testing.expectEqualStrings("surface-needs-input", cfg.rules[0].id);
-    try testing.expectEqualStrings("Agent needs input", cfg.rules[0].then[0].notify.title.?);
+    try testing.expectEqualStrings("triage-waiting", cfg.rules[0].id);
+    try testing.expectEqualStrings("Waiting on you", cfg.rules[0].then[0].notify.title.?);
+    try testing.expectEqualStrings("triage", cfg.rules[0].where[0].cond.ops[0].equals.string);
     const lims = try cfg.limits(gpa);
     defer gpa.free(lims);
-    try testing.expectEqual(@as(u64, 30_000), lims[0].limit.interval_ms);
+    try testing.expectEqual(@as(u64, 45_000), lims[0].limit.interval_ms);
 }
 
 test "unit: automation: rules enable and disable edit the file losslessly" {

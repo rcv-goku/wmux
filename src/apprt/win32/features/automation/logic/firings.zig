@@ -1,9 +1,9 @@
 //! Firing records and the concurrency cap (cli-automations-config,
 //! cli-automation-cli `logs`).
 //!
-//! The engine keeps the most recent `capacity` (256) firing records in
-//! memory, oldest evicted first, and caps concurrent firings at
-//! `max_concurrent`. A firing that would exceed the cap is recorded as
+//! `Log` is a ring of the last `capacity` (256) firing records; a new record
+//! evicts the oldest. At most `max_concurrent` firings run at once, and a
+//! firing that would exceed that is recorded as
 //! `dropped_busy` and does not run. Records own their strings; messages are
 //! capped on a code-point boundary (G6). `automation logs [--limit <n>]`
 //! returns the newest `n` records (default `default_logs_limit`) oldest
@@ -173,7 +173,7 @@ pub const Log = struct {
 
 const testing = std.testing;
 
-test "unit: automation: firing log keeps the most recent 256 records" {
+test "unit: automation: firing log ring evicts the oldest record past 256" {
     const gpa = testing.allocator;
     var log: Log = .{};
     defer log.deinit(gpa);

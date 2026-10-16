@@ -113,7 +113,7 @@ fn boundaryStep(s: []const u8, i: usize) usize {
 const testing = std.testing;
 
 test "unit: automation: case folding is locale independent" {
-    try testing.expect(eql("Dispatch", "dISPATCH"));
+    try testing.expect(eql("Triage", "tRIAGE"));
     try testing.expect(eql("", ""));
     try testing.expect(!eql("a", ""));
     try testing.expect(!eql("ab", "a"));
@@ -143,7 +143,7 @@ test "unit: automation: case-insensitive prefix, suffix and contains" {
     try testing.expect(!endsWith("", "a"));
     try testing.expect(endsWith("Grüße", "SSE") == false);
     try testing.expect(endsWith("café", "É"));
-    try testing.expect(contains("Agent Needs INPUT now", "needs input"));
+    try testing.expect(contains("Build FAILED on main", "failed on"));
     try testing.expect(contains("ÉCOLE", "col"));
     try testing.expect(contains("", ""));
     try testing.expect(!contains("", "a"));

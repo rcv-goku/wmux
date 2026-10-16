@@ -5,9 +5,9 @@
 //!   or credential-like query parameters) must use HTTPS.
 //! - Header names must be HTTP tokens and values must not contain CR, LF or
 //!   NUL (no header injection).
-//! - Redirects are followed manually: a redirect to a cleartext (`http://`)
-//!   target is rejected, and credential headers are dropped before a
-//!   redirect crosses to another origin.
+//! - Redirects are followed by hand: a `Location` that leads to plain
+//!   `http://` is refused, and credential headers are not sent on to a
+//!   target whose scheme, host or port differs from the current one.
 
 const std = @import("std");
 const redact = @import("redact.zig");

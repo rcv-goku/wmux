@@ -21,7 +21,7 @@ pub const Limit = struct {
     }
 };
 
-/// Default limit when `rate_limit` is omitted: one firing per second.
+/// Limit of a rule without `rate_limit`: one firing per second.
 pub const default_interval_ms: u64 = 1000;
 pub const default_maximum: u32 = 1;
 pub const default: Limit = .{};

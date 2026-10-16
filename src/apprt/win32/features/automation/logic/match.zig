@@ -491,16 +491,16 @@ const Fixture = struct {
     }
 };
 
-test "unit: automation: match the documented example rule" {
+test "unit: automation: match a rule on workspace tag and surface kind" {
     var f = try Fixture.init(rules_example);
     defer f.deinit();
-    const id = "surface-needs-input";
+    const id = "triage-waiting";
     try testing.expectEqual(Outcome.matched, try f.outcome(id,
-        \\{"name":"agent.needs_input","payload":{"workspace_tags":["dispatch","x"],"surface_kind":"terminal","session_id":"s1"}}
+        \\{"name":"agent.needs_input","payload":{"workspace_tags":["triage","x"],"surface_kind":"terminal","session_id":"s1"}}
     ));
     // Tag matching ignores case; wrong tag, missing tags and wrong kind fail at their predicate.
     try testing.expectEqual(Outcome.matched, try f.outcome(id,
-        \\{"name":"agent.needs_input","payload":{"workspace.tag":"DISPATCH","surface.kind":"Terminal"}}
+        \\{"name":"agent.needs_input","payload":{"workspace.tag":"TRIAGE","surface.kind":"Terminal"}}
     ));
     const ev = try f.event(
         \\{"name":"agent.needs_input","payload":{"workspace_tags":["other"],"surface_kind":"terminal"}}
@@ -512,15 +512,16 @@ test "unit: automation: match the documented example rule" {
         \\{"name":"agent.needs_input"}
     ));
     try testing.expectEqual(Outcome.event_mismatch, try f.outcome(id,
-        \\{"name":"agent.message.read","payload":{"workspace_tags":["dispatch"],"surface_kind":"terminal"}}
+        \\{"name":"agent.message.read","payload":{"workspace_tags":["triage"],"surface_kind":"terminal"}}
     ));
 }
 
+/// An original fixture (clean room G1).
 const rules_example =
-    \\{"version":1,"rules":[{"id":"surface-needs-input","when":{"event":"agent.needs_input"},
-    \\ "where":{"workspace.tag":"dispatch","surface.kind":"terminal"},
-    \\ "rate_limit":{"interval_seconds":30,"maximum":1},
-    \\ "then":[{"action":"notify","title":"Agent needs input","body":"Review {{payload.session_id}}"}]}]}
+    \\{"version":1,"rules":[{"id":"triage-waiting","when":{"event":"agent.needs_input"},
+    \\ "where":{"workspace.tag":"triage","surface.kind":"terminal"},
+    \\ "rate_limit":{"interval_seconds":45,"maximum":1},
+    \\ "then":[{"action":"notify","title":"Waiting on you","body":"Session {{payload.session_id}} paused"}]}]}
 ;
 
 test "unit: automation: match workspace.created rule fires per event and respects enabled" {
@@ -614,13 +615,13 @@ test "unit: automation: match where operators" {
 test "unit: automation: match engine context overrides payload aliases" {
     var f = try Fixture.init(
         \\{"version":1,"rules":[{"id":"r","when":{"event":"*"},"then":[],
-        \\ "where":{"workspace.tag":"dispatch","surface.kind":"terminal","agent":"claude","title":"T","workspace.title":"W"}}]}
+        \\ "where":{"workspace.tag":"triage","surface.kind":"terminal","agent":"claude","title":"T","workspace.title":"W"}}]}
     );
     defer f.deinit();
     var ev = try f.event("{\"name\":\"agent.needs_input\",\"payload\":{\"tags\":[\"nope\"]}}");
     const r = f.cfg.find("r").?;
     try testing.expectEqual(Outcome.where_mismatch, evaluate(r, &ev).outcome);
-    const tags = [_][]const u8{ "x", "Dispatch" };
+    const tags = [_][]const u8{ "x", "Triage" };
     ev.context = .{ .workspace_tags = &tags, .surface_kind = "TERMINAL", .agent = "claude", .title = "t", .workspace_title = "w" };
     try testing.expectEqual(Outcome.matched, evaluate(r, &ev).outcome);
     ev.context.workspace_tags = &.{};
@@ -702,9 +703,9 @@ test "unit: automation: match dry-run test result does not touch rate limits" {
     var f = try Fixture.init(rules_example);
     defer f.deinit();
     const gpa = testing.allocator;
-    const r = f.cfg.find("surface-needs-input").?;
+    const r = f.cfg.find("triage-waiting").?;
     const ev = try f.event(
-        \\{"name":"agent.needs_input","payload":{"workspace_tags":["dispatch"],"surface_kind":"terminal","api_key":"k"}}
+        \\{"name":"agent.needs_input","payload":{"workspace_tags":["triage"],"surface_kind":"terminal","api_key":"k"}}
     );
     var lim: ratelimit.Limiter = .init(r.rate_limit);
     defer lim.deinit(gpa);
@@ -718,7 +719,7 @@ test "unit: automation: match dry-run test result does not touch rate limits" {
     var jw: std.json.Stringify = .{ .writer = &aw.writer };
     try writeTestResult(gpa, r, &ev, e, lim.wouldAllow(0), &jw);
     try testing.expectEqualStrings(
-        \\{"id":"surface-needs-input","matched":true,"outcome":"matched","enabled":true,"rate_limited":false,"dispatched":false,"actions":["notify"],"event":{"name":"agent.needs_input","payload":{"workspace_tags":["dispatch"],"surface_kind":"terminal","api_key":"[REDACTED]"}}}
+        \\{"id":"triage-waiting","matched":true,"outcome":"matched","enabled":true,"rate_limited":false,"dispatched":false,"actions":["notify"],"event":{"name":"agent.needs_input","payload":{"workspace_tags":["triage"],"surface_kind":"terminal","api_key":"[REDACTED]"}}}
     , aw.written());
 
     // After a real firing the dry run reports rate_limited, still without changing state.
