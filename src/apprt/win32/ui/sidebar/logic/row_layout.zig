@@ -232,6 +232,11 @@ pub const Show = enum(u8) {
     not_hover,
     /// Only while the shortcut modifier is held (hint pill).
     modifier_hold,
+    /// Like `hover`, but hidden while the shortcut modifier is held: the
+    /// close button of a row whose hint pill is drawn over it, so a click
+    /// on the visible hint (e.g. a Ctrl/Shift multi-select click) never
+    /// closes the workspace.
+    hover_no_modifier,
 
     pub fn visible(self: Show, hovered: bool, modifier_held: bool) bool {
         return switch (self) {
@@ -239,6 +244,7 @@ pub const Show = enum(u8) {
             .hover => hovered,
             .not_hover => !hovered,
             .modifier_hold => modifier_held,
+            .hover_no_modifier => hovered and !modifier_held,
         };
     }
 };
@@ -520,7 +526,10 @@ fn layoutWorkspace(cx: *Ctx, w: *const model.WorkspaceRow) Allocator.Error!f32 {
         reserve = right - sr.left;
     }
     if (t.trailing.close) {
-        try cx.add(.{ .kind = .close, .rect = Rect.xywh(right - r.close, cy - r.close / 2, r.close, r.close), .action = .close, .show = .hover });
+        // The hint pill below overlays the trailing area without reserving
+        // width; while it shows, the close button under it is hidden.
+        const show: Show = if (t.hint != null) .hover_no_modifier else .hover;
+        try cx.add(.{ .kind = .close, .rect = Rect.xywh(right - r.close, cy - r.close / 2, r.close, r.close), .action = .close, .show = show });
         reserve = @max(reserve, r.close);
     }
     if (t.hint) |hint| {

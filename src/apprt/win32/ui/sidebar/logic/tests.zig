@@ -101,7 +101,7 @@ const golden_100 =
     \\  pin [50.00 8.00 64.00 22.00]
     \\  mute [69.00 8.00 83.00 22.00]
     \\  glyph [88.00 8.00 102.00 22.00]
-    \\  close [214.00 7.00 230.00 23.00] close show=hover
+    \\  close [214.00 7.00 230.00 23.00] close show=hover_no_modifier
     \\  hint [191.00 7.00 230.00 23.00] show=modifier_hold
     \\  title [107.00 7.00 209.00 23.00]
     \\row 1 group_header top=30.00 h=27.00
@@ -150,7 +150,7 @@ const golden_125 =
     \\  pin [50.40 8.00 64.00 22.40]
     \\  mute [68.80 8.00 83.20 22.40]
     \\  glyph [88.00 8.00 102.40 22.40]
-    \\  close [214.40 7.20 230.40 23.20] close show=hover
+    \\  close [214.40 7.20 230.40 23.20] close show=hover_no_modifier
     \\  hint [190.40 7.20 230.40 23.20] show=modifier_hold
     \\  title [107.20 7.20 208.80 23.20]
     \\row 1 group_header top=30.40 h=27.20
@@ -199,7 +199,7 @@ const golden_150 =
     \\  pin [50.00 8.00 64.00 22.00]
     \\  mute [69.33 8.00 83.33 22.00]
     \\  glyph [88.00 8.00 102.00 22.00]
-    \\  close [214.00 7.33 230.00 23.33] close show=hover
+    \\  close [214.00 7.33 230.00 23.33] close show=hover_no_modifier
     \\  hint [190.67 7.33 230.00 23.33] show=modifier_hold
     \\  title [107.33 7.33 209.33 22.67]
     \\row 1 group_header top=30.00 h=27.33
@@ -248,7 +248,7 @@ const golden_200 =
     \\  pin [50.00 8.00 64.00 22.00]
     \\  mute [69.00 8.00 83.00 22.00]
     \\  glyph [88.00 8.00 102.00 22.00]
-    \\  close [214.00 7.00 230.00 23.00] close show=hover
+    \\  close [214.00 7.00 230.00 23.00] close show=hover_no_modifier
     \\  hint [191.00 7.00 230.00 23.00] show=modifier_hold
     \\  title [107.00 7.00 209.00 23.00]
     \\row 1 group_header top=30.00 h=27.00
@@ -414,7 +414,8 @@ test "unit: sidebar: trailing badge hides on hover and close shows in the same s
     const badge = findKind(g, .badge).?;
     const close = findKind(g, .close).?;
     try testing.expectEqual(layout.Show.not_hover, badge.show);
-    try testing.expectEqual(layout.Show.hover, close.show);
+    // Row 0 has a shortcut hint, which covers the close button while shown.
+    try testing.expectEqual(layout.Show.hover_no_modifier, close.show);
     try testing.expectEqual(@as(u16, 1), badge.sub);
     try testing.expectEqualStrings("3", layout.elementText(&r.rows[0], badge).plain);
     // Both end at the right padding; the title stops before them.
@@ -428,6 +429,33 @@ test "unit: sidebar: trailing badge hides on hover and close shows in the same s
     try testing.expectEqual(layout.Action.close, hover.action);
     const tip_at = vlist.elementAt(r.lay.rows, p, .{}).?;
     try testing.expectEqual(layout.ElementKind.badge, g.elements[tip_at.element].kind);
+}
+
+test "unit: sidebar: a visible shortcut hint covers the close button" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const r = try layoutFixture(a, 1.0, .{}, 240);
+    // Row 0 carries the hint "Ctrl+1", drawn over the trailing area.
+    const g = r.lay.rows[0];
+    const close = findKind(g, .close).?;
+    const hint = findKind(g, .hint).?;
+    try testing.expect(hint.rect.contains(close.rect.center()));
+    const p = g.absRect(close).center();
+    try testing.expectEqual(layout.Action.close, vlist.hitTest(r.lay.rows, 240, p, .{ .hovered_row = 0 }).?.action);
+    // Modifier held (hints shown, e.g. a Ctrl+Shift multi-select click):
+    // a click on the visible hint never closes the workspace.
+    const held: vlist.PointerState = .{ .hovered_row = 0, .modifier_held = true };
+    try testing.expectEqual(layout.Action.select, vlist.hitTest(r.lay.rows, 240, p, held).?.action);
+    try testing.expect(!close.show.visible(true, true));
+    try testing.expectEqual(layout.ElementKind.hint, g.elements[vlist.elementAt(r.lay.rows, p, held).?.element].kind);
+    // Rows without a hint keep their close button while the modifier is held.
+    const g2 = r.lay.rows[2];
+    try testing.expect(findKind(g2, .hint) == null);
+    const close2 = findKind(g2, .close).?;
+    try testing.expectEqual(layout.Show.hover, close2.show);
+    const p2 = g2.absRect(close2).center();
+    try testing.expectEqual(layout.Action.close, vlist.hitTest(r.lay.rows, 240, p2, .{ .hovered_row = 2, .modifier_held = true }).?.action);
 }
 
 test "unit: sidebar: links, chips, toggles and group headers hit-test to actions" {
