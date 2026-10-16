@@ -424,6 +424,75 @@ test "unit: remote-daemon: a slow streaming client throttles the PTY instead of 
     try testing.expect((try c.request(.ping, .{}, timeout)).ok);
 }
 
+/// One server thread with two pipe-pair clients (`serve --stdio` loop).
+const PairHarness = struct {
+    srv: Server,
+    thread: std.Thread,
+    a: Client,
+    b: Client,
+
+    fn start(gpa: std.mem.Allocator, cfg: Config) !*PairHarness {
+        const h = try gpa.create(PairHarness);
+        errdefer gpa.destroy(h);
+        h.srv = .init(gpa, cfg);
+        inline for (.{ "a", "b" }) |name| {
+            const to_srv = try posix.pipe2(.{ .CLOEXEC = true });
+            const from_srv = try posix.pipe2(.{ .CLOEXEC = true });
+            @field(h, name) = .init(gpa, from_srv[0], to_srv[1], true);
+            _ = try h.srv.addConn(to_srv[0], from_srv[1], true);
+        }
+        h.thread = try std.Thread.spawn(.{}, runThread, .{&h.srv});
+        return h;
+    }
+
+    fn runThread(srv: *Server) void {
+        srv.run() catch {};
+    }
+
+    fn stop(h: *PairHarness) void {
+        const gpa = h.srv.gpa;
+        for ([_]*Client{ &h.a, &h.b }) |c| {
+            posix.close(c.wfd);
+            c.wfd = c.rfd;
+        }
+        h.thread.join();
+        h.srv.deinit();
+        h.a.deinit();
+        h.b.deinit();
+        gpa.destroy(h);
+    }
+};
+
+test "unit: remote-daemon: a client that stops reading is dropped after the stall timeout" {
+    var cfg = homeCfg("/tmp");
+    cfg.pty_high_water = 64 * 1024;
+    cfg.stall_timeout_ms = 500;
+    const h = try PairHarness.start(testing.allocator, cfg);
+    defer h.stop();
+    _ = try h.a.hello(true, timeout);
+    _ = try h.b.hello(true, timeout);
+    const sid = try openSh(&h.a, null, 80, 24);
+    _ = try ptyAttach(&h.a, sid, 80, 24);
+    const b = try ptyAttach(&h.b, sid, 80, 24);
+    // Steady output; `a` never reads again (a half-open bridge). Its queue
+    // passes the high water and holds the session back until it is dropped.
+    try typeLine(&h.b, sid, "while :; do head -c 30000 /dev/zero | tr '\\000' y; echo t-$((3+4)); done\n");
+    var seen: usize = 0;
+    var from: usize = 0;
+    const deadline = std.time.milliTimestamp() + 20_000;
+    while (seen < 200) {
+        const data = h.b.channelData(b.channel);
+        seen += std.mem.count(u8, data[from..], "t-7");
+        from = data.len -| 2;
+        try h.b.pump(deadline);
+    }
+    // `a` was disconnected: after the queued bytes it reads end of stream.
+    while (true) h.a.pump(std.time.milliTimestamp() + timeout) catch |e| {
+        try testing.expectEqual(error.EndOfStream, e);
+        break;
+    };
+}
+
 const persistent = @import("persistent.zig");
 
 /// A persistent slot server on a Unix socket under a temporary home.

@@ -34,6 +34,11 @@ pub const Config = struct {
     /// unsent output, the session's PTY is not read, so a fast producer
     /// blocks on its terminal instead of the client hitting `max_outbound`.
     pty_high_water: usize = default_pty_high_water,
+    /// A client with `pty_high_water` or more unsent bytes that has not
+    /// taken a single byte for this long is dropped (0 disables): it holds
+    /// its sessions back, and it is most likely gone (a half-open bridge
+    /// can linger until TCP keepalive, hours). Only its attachments end.
+    stall_timeout_ms: i64 = 30_000,
     /// Stop when the last client leaves (`serve --stdio`).
     exit_when_no_clients: bool = true,
     /// Polled each tick; set from a signal handler to stop the loop.
@@ -80,6 +85,8 @@ pub const Conn = struct {
     /// Remove at the end of the tick.
     dead: bool = false,
     next_channel: u32 = 1,
+    /// Last time the output queue was empty or a write took bytes.
+    drained_ms: i64,
 
     pub fn pendingOut(self: *const Conn) usize {
         return self.out.items.len - self.out_off;
@@ -134,7 +141,14 @@ pub const Server = struct {
         if (out_fd != in_fd) pty.setNonblock(out_fd);
         const c = try self.gpa.create(Conn);
         errdefer self.gpa.destroy(c);
-        c.* = .{ .id = self.next_conn_id, .in_fd = in_fd, .out_fd = out_fd, .owns_fds = owns_fds, .decoder = .init(.{}) };
+        c.* = .{
+            .id = self.next_conn_id,
+            .in_fd = in_fd,
+            .out_fd = out_fd,
+            .owns_fds = owns_fds,
+            .decoder = .init(.{}),
+            .drained_ms = std.time.milliTimestamp(),
+        };
         try self.conns.append(self.gpa, c);
         self.next_conn_id += 1;
         return c;
@@ -232,11 +246,22 @@ pub const Server = struct {
                 },
             }
         }
+        const now = std.time.milliTimestamp();
         for (self.conns.items) |c| {
             if (!c.dead and c.pendingOut() > 0) self.flushConn(c);
+            if (c.pendingOut() == 0) c.drained_ms = now else self.checkStall(c, now);
             if (c.closing and c.pendingOut() == 0) c.dead = true;
         }
         self.sweep();
+    }
+
+    /// Drops a client that holds sessions back (see `outputBlocked`) but
+    /// has not taken a byte for `stall_timeout_ms`; its sessions resume.
+    fn checkStall(self: *Server, c: *Conn, now: i64) void {
+        if (c.dead or self.cfg.stall_timeout_ms <= 0 or c.pendingOut() < self.cfg.pty_high_water) return;
+        if (now - c.drained_ms < self.cfg.stall_timeout_ms) return;
+        log.info("client {d} took no output for {d} ms; disconnecting", .{ c.id, now - c.drained_ms });
+        c.dead = true;
     }
 
     fn acceptOne(self: *Server) void {
@@ -308,6 +333,7 @@ pub const Server = struct {
                 },
             };
             c.out_off += n;
+            if (n > 0) c.drained_ms = std.time.milliTimestamp();
         }
         if (c.out_off == c.out.items.len) {
             c.out.clearRetainingCapacity();
