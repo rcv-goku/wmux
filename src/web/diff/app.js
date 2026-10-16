@@ -273,10 +273,27 @@ export function createApp(options) {
     return (h) => pins.get(h) || null;
   }
 
+  /**
+   * Before rebuilding DOM that holds the comment composer, remember whether
+   * its textarea has focus and where the caret is, so placeComments can put
+   * both back. Without this a native refresh or a store change while the user
+   * types moves focus to the page, where bare keys are diff shortcuts.
+   */
+  function keepComposerFocus(container) {
+    const cmp = state.composer;
+    const active = doc.activeElement;
+    if (!cmp || !active || !active.classList || !active.classList.contains("dv-composer-input")) return;
+    if (!container.contains(active)) return;
+    cmp.draft = active.value;
+    cmp.focus = true;
+    cmp.caret = [active.selectionStart, active.selectionEnd];
+  }
+
   function renderBody(file) {
     const v = state.views.get(file.index);
     if (!v) return;
     const holder = v.section.querySelector(".dv-file-body");
+    keepComposerFocus(holder);
     holder.textContent = "";
     v.body = null;
     if (!isExpanded(file)) return;
@@ -301,6 +318,7 @@ export function createApp(options) {
   }
 
   function renderFiles() {
+    keepComposerFocus(ui.files);
     ui.files.textContent = "";
     state.views.clear();
     state.hunkCache.clear();
@@ -1177,7 +1195,11 @@ export function createApp(options) {
     const area = v.section.querySelector(".dv-composer-input");
     if (area && cmp && cmp.focus) {
       cmp.focus = false;
-      area.focus();
+      const caret = cmp.caret;
+      cmp.caret = null;
+      // Giving focus back must not scroll: the user may have scrolled away.
+      area.focus(caret ? { preventScroll: true } : undefined);
+      if (caret && typeof area.setSelectionRange === "function") area.setSelectionRange(caret[0], caret[1]);
     }
   }
 

@@ -790,6 +790,29 @@ describe("unit: diff app comments", () => {
     assert.equal(a.status, "moved");
     assert.equal(a.startLine, 4);
   });
+
+  test("unit: diff: the composer keeps focus and caret when native re-renders", async () => {
+    const { store } = await startApp();
+    click($('td.dv-code.dv-add[data-line="2"] .dv-add-comment', section("src/app.js")));
+    const area = $(".dv-composer textarea");
+    typeInto(area, "half a thought");
+    area.setSelectionRange(4, 4);
+    host.emit("panel.diff.comments_changed", { comments: [] });
+    await settle();
+    let now = $(".dv-composer textarea");
+    assert.notEqual(now, area, "the composer was rebuilt");
+    assert.equal(doc.activeElement, now);
+    assert.equal(now.value, "half a thought");
+    assert.deepEqual([now.selectionStart, now.selectionEnd], [4, 4]);
+    host.emit("panel.diff.patch", { patch: store.patch });
+    await settle();
+    now = $(".dv-composer textarea");
+    assert.equal(doc.activeElement, now);
+    assert.equal(now.value, "half a thought");
+    const e = press("v", {}, now);
+    assert.equal(e.defaultPrevented, false, "v keeps typing instead of toggling Viewed");
+    assert.equal(host.calls("viewedFiles.set").length, 0);
+  });
 });
 
 describe("unit: diff app session", () => {
