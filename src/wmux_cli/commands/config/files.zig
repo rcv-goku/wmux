@@ -57,6 +57,16 @@ pub fn locate(ctx: *Ctx) !Locations {
     };
 }
 
+/// Contents of `path`: null when the file does not exist;
+/// `error.Unreadable` when it exists but cannot be read (or is larger than
+/// `max_file_bytes`). Unlike `read`, an unreadable file is never mistaken
+/// for a missing one, so a rewrite cannot replace a file it did not read.
+pub fn readExisting(ctx: *Ctx, path: []const u8) error{Unreadable}!?[]const u8 {
+    if (read(ctx, path)) |bytes| return bytes;
+    if (ctx.platform.pathExists(path)) return error.Unreadable;
+    return null;
+}
+
 /// `~`-relative spelling of `path` for display.
 pub fn displayPath(arena: Allocator, home: ?[]const u8, path: []const u8) ![]const u8 {
     const h = home orelse return path;

@@ -198,6 +198,39 @@ test "unit: cli-config: a missing wmux.json is created; policy-managed settings 
     try testing.expectEqualStrings("\"allowAll\"  (managed by policy)\n", get.out);
 }
 
+test "unit: cli-config: a config file that exists but cannot be read is reported and never replaced" {
+    var f: Fixture = undefined;
+    f.init();
+    defer f.deinit();
+    const h = &f.h;
+    const a = h.alloc();
+    // Larger than max_file_bytes: Platform.readFile refuses it like a file it
+    // cannot open, yet the file is there.
+    const big = try a.alloc(u8, files.max_file_bytes + 1);
+    @memset(big, ' ');
+    h.addFile(f.wmux_json, big);
+    try harness.expectFail(h.run(&.{ "cmux", "config", "set", "app.appearance", "dark" }), 1, try std.fmt.allocPrint(a, "config set: cannot read {s}", .{f.wmux_json}));
+    try harness.expectFail(h.run(&.{ "cmux", "config", "unset", "app.appearance" }), 1, "it was not changed");
+    try harness.expectFail(h.run(&.{ "cmux", "config", "toggle", "sidebar.showPorts" }), 1, "cannot read");
+    try testing.expectEqual(@as(usize, 0), h.writes);
+    try testing.expectEqual(big.len, h.file(f.wmux_json).?.len);
+    const doc = h.run(&.{ "cmux", "config", "doctor" });
+    try testing.expectEqual(@as(u8, 1), doc.code);
+    try harness.expectContains(doc.out, try std.fmt.allocPrint(a, "wmux.json: {s}: cannot read (unreadable or larger than 4 MiB)\n", .{f.wmux_json}));
+    const js = try std.json.parseFromSliceLeaky(std.json.Value, a, h.run(&.{ "cmux", "config", "doctor", "--json" }).out, .{});
+    const finding = js.object.get("findings").?.array.items[0].object;
+    try testing.expectEqualStrings("error", finding.get("status").?.string);
+    try testing.expectEqual(false, finding.get("ok").?.bool);
+
+    // The theme overlay gets the same protection.
+    addThemes(&f);
+    h.addFile(f.overlay, big);
+    try harness.expectFail(h.run(&.{ "cmux", "themes", "set", "Dracula" }), 1, "themes set: cannot read");
+    try harness.expectFail(h.run(&.{ "cmux", "themes", "clear" }), 1, "themes clear: cannot read");
+    try testing.expectEqual(@as(usize, 0), h.writes);
+    try testing.expectEqual(big.len, h.file(f.overlay).?.len);
+}
+
 test "unit: cli-config: path and docs work offline; reload needs the app" {
     var f: Fixture = undefined;
     f.init();

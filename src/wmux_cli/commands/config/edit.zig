@@ -124,7 +124,8 @@ pub fn apply(ctx: *Ctx, verb: []const u8, which: files.Which, edits: []const Edi
     if (try files.resolveAll(ctx, loc, &failure)) |r| {
         for (edits) |e| if (r.isLocked(e.path)) return ctx.runtimeError("config {s}: '{s}' is managed by policy and cannot be changed", .{ verb, e.path });
     }
-    const original = files.read(ctx, file) orelse "";
+    const original = (files.readExisting(ctx, file) catch
+        return ctx.runtimeError("config {s}: cannot read {s} (unreadable or larger than {d} MiB); it was not changed", .{ verb, file, files.max_file_bytes >> 20 })) orelse "";
     const before: []const u8 = if (std.mem.trim(u8, original, " \t\r\n").len == 0) "{}\n" else original;
     var text = before;
     const changed = try ctx.arena.alloc(bool, edits.len);

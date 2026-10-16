@@ -22,6 +22,9 @@ const flag_specs = [_]util.FlagSpec{
 
 const Status = enum { ok, @"error", missing };
 
+/// A file that exists but cannot be read.
+const unreadable_message = std.fmt.comptimePrint("cannot read (unreadable or larger than {d} MiB)", .{files.max_file_bytes >> 20});
+
 const Finding = struct {
     label: []const u8,
     path: []const u8,
@@ -67,7 +70,12 @@ pub fn run(ctx: *Ctx, args: []const []const u8) !u8 {
 
 fn check(ctx: *Ctx, loc: files.Locations, label: []const u8, path: []const u8, scope: validate.FileScope, required: bool) !Finding {
     var f: Finding = .{ .label = label, .path = path, .display_path = try files.displayPath(ctx.arena, loc.home, path), .status = .ok };
-    const src = files.read(ctx, path) orelse {
+    const src = (files.readExisting(ctx, path) catch {
+        f.status = .@"error";
+        f.message = unreadable_message;
+        f.errors = 1;
+        return f;
+    }) orelse {
         f.status = .missing;
         f.message = "not found";
         if (required) f.errors = 1;
@@ -109,7 +117,9 @@ fn writeText(ctx: *Ctx, findings: []const Finding, error_count: usize, reload: [
                     try w.print("{s}: {s}: OK ({s}, {s})\n", .{ f.label, f.display_path, plural(f.keys, "key", &b1), plural(warnings, "note", &b2) });
                 } else try w.print("{s}: {s}: OK ({s})\n", .{ f.label, f.display_path, plural(f.keys, "key", &b1) });
             },
-            .@"error" => try w.print("{s}: {s}: {s}\n", .{ f.label, f.display_path, plural(f.errors, "error", &b1) }),
+            .@"error" => if (f.message) |m| {
+                try w.print("{s}: {s}: {s}\n", .{ f.label, f.display_path, m });
+            } else try w.print("{s}: {s}: {s}\n", .{ f.label, f.display_path, plural(f.errors, "error", &b1) }),
         }
         for (f.issues) |i| try w.print("  {f}\n", .{i});
     }

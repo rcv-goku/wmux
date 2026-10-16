@@ -268,7 +268,7 @@ fn set(ctx: *Ctx, args: []const []const u8) !u8 {
     dark = dark orelse s.current.dark orelse light;
     const raw = try std.fmt.allocPrint(ctx.arena, "light:{s},dark:{s}", .{ light.?, dark.? });
     const line = try std.fmt.allocPrint(ctx.arena, "theme = {s}", .{raw});
-    const old = files.read(ctx, overlay) orelse "";
+    const old = (files.readExisting(ctx, overlay) catch return unreadable(ctx, "set", overlay)) orelse "";
     const text = try rewriteTheme(ctx.arena, old, line);
     if (!std.mem.eql(u8, text, old)) files.writeFile(overlay, ctx.arena, text) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
@@ -287,7 +287,7 @@ fn clear(ctx: *Ctx) !u8 {
     const style = paths.Style.native;
     const cfg = (try paths.configDir(ctx.arena, ctx.env, style)) orelse return ctx.runtimeError("themes clear: no config directory (set USERPROFILE, XDG_CONFIG_HOME or WMUX_CONFIG_DIR)", .{});
     const overlay = try paths.join(ctx.arena, style, &.{ cfg, paths.files.ghostty_overlay });
-    if (files.read(ctx, overlay)) |old| {
+    if (files.readExisting(ctx, overlay) catch return unreadable(ctx, "clear", overlay)) |old| {
         const text = try rewriteTheme(ctx.arena, old, null);
         if (!std.mem.eql(u8, text, old)) files.writeFile(overlay, ctx.arena, text) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
@@ -301,6 +301,11 @@ fn clear(ctx: *Ctx) !u8 {
         try ctx.out.writeByte('\n');
     } else try ctx.out.print("OK cleared config={s} reload={s}\n", .{ overlay, @tagName(reload) });
     return output.exit.ok;
+}
+
+/// The overlay exists but could not be read: leave it alone (exit 1).
+fn unreadable(ctx: *Ctx, verb: []const u8, overlay: []const u8) u8 {
+    return ctx.runtimeError("themes {s}: cannot read {s} (unreadable or larger than {d} MiB); it was not changed", .{ verb, overlay, files.max_file_bytes >> 20 });
 }
 
 const Reload = enum { requested, skipped, failed };
