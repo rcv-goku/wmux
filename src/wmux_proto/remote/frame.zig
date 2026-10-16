@@ -156,7 +156,11 @@ pub const Decoder = struct {
             }
             const nl = std.mem.indexOfScalarPos(u8, avail, self.scanned, '\n') orelse {
                 self.scanned = avail.len;
-                if (avail.len > self.limits.max_line_len) return error.LineTooLong;
+                // A trailing `\r` may be the first half of the terminator, so
+                // it does not count yet: the verdict must not depend on where
+                // the stream was cut into chunks.
+                const cr = @intFromBool(avail[avail.len - 1] == '\r');
+                if (avail.len - cr > self.limits.max_line_len) return error.LineTooLong;
                 return null;
             };
             var line = avail[0..nl];
@@ -305,6 +309,47 @@ test "unit: remote-protocol: oversized frames and lines are rejected" {
     try testing.expectError(error.FrameTooLarge, writeFrame(&aw.writer, .pty_data, 0, "x" ** 17, 16));
     try testing.expectError(error.InvalidLine, writeLine(&aw.writer, "a\nb"));
     try testing.expectError(error.InvalidLine, writeLine(&aw.writer, "\x00a"));
+}
+
+test "unit: remote-protocol: limits do not depend on how the stream is chunked" {
+    const gpa = testing.allocator;
+    // A line of exactly max_line_len whose CR and LF arrive apart.
+    var d: Decoder = .init(.{ .max_line_len = 8 });
+    defer d.deinit(gpa);
+    try d.feed(gpa, "12345678\r");
+    try testing.expectEqual(@as(?Message, null), try d.next());
+    try d.feed(gpa, "\n");
+    try testing.expectEqualStrings("12345678", (try d.next()).?.line);
+    // One byte more is too long whether or not a CR follows.
+    var cr: Decoder = .init(.{ .max_line_len = 8 });
+    defer cr.deinit(gpa);
+    try cr.feed(gpa, "123456789\r");
+    try testing.expectError(error.LineTooLong, cr.next());
+    // A CR inside the line counts as soon as more bytes follow it.
+    var mid: Decoder = .init(.{ .max_line_len = 8 });
+    defer mid.deinit(gpa);
+    try mid.feed(gpa, "123456\r");
+    try testing.expectEqual(@as(?Message, null), try mid.next());
+    try mid.feed(gpa, "7");
+    try testing.expectEqual(@as(?Message, null), try mid.next());
+    try mid.feed(gpa, "8");
+    try testing.expectError(error.LineTooLong, mid.next());
+
+    // A frame of exactly max_frame_len, fed one byte at a time.
+    var bytes: [header_len + 16]u8 = undefined;
+    encodeHeader(bytes[0..header_len], .pty_data, 3, 16);
+    @memset(bytes[header_len..], 'p');
+    var f: Decoder = .init(.{ .max_frame_len = 16 });
+    defer f.deinit(gpa);
+    f.binary_enabled = true;
+    for (bytes) |b| {
+        try testing.expectEqual(@as(?Message, null), try f.next());
+        try f.feed(gpa, &.{b});
+    }
+    const fr = (try f.next()).?.frame;
+    try testing.expectEqual(@as(u32, 3), fr.channel);
+    try testing.expectEqualStrings("p" ** 16, fr.payload);
+    try f.finish();
 }
 
 test "unit: remote-protocol: binary before hello and unknown kinds are fatal" {
