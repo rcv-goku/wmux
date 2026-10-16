@@ -8,6 +8,7 @@ const Pane = @import("../Pane.zig");
 const SplitTree = @import("../../../../datastruct/split_tree.zig").SplitTree;
 const Tab = @import("../Tab.zig");
 const Window = @import("../../ui/Window.zig");
+const ops_surface = @import("surface.zig");
 
 /// Break a tab out of a multi-tab Pane into a new Pane that becomes a
 /// sibling leaf in the workspace split tree. No-op if the pane has only
@@ -31,17 +32,13 @@ pub fn breakPane(self: *Window, tab: *Tab) void {
     };
 
     // Move the tab (and the reference its pane owns) from the source pane
-    // to the new one.
-    _ = src_container.tabs.orderedRemove(src_tab);
+    // to the new one. The insert cannot fail: the capacity is reserved.
+    _ = ops_surface.remove(src_container, src_tab);
     if (src_container.selected >= src_container.tabCount() and src_container.tabCount() > 0)
         src_container.selected = src_container.tabCount() - 1;
-    new_container.tabs.appendAssumeCapacity(tab);
+    ops_surface.insert(alloc, new_container, tab, 0) catch unreachable;
     new_container.selected = 0;
     new_container.workspace = ws;
-    tab.pane = new_container;
-    // The moved tab keeps its title; its legacy per-tab state starts
-    // fresh, as the new pane's default-initialized slot did before W0-A2.
-    tab.legacy = .{};
 
     // Insert the new pane into the workspace split tree as a sibling.
     var new_tree = SplitTree(Pane).init(alloc, new_container) catch {
@@ -61,6 +58,10 @@ pub fn breakPane(self: *Window, tab: *Tab) void {
     ws.syncZoomed();
     old_tree.deinit();
 
+    // The moved tab keeps its title; its legacy per-tab state starts
+    // fresh, as the new pane's default-initialized slot did before W0-A2.
+    tab.legacy = .{};
+
     const ws_idx = self.workspaceIndex(ws);
     if (ws_idx == self.activeIndex()) {
         ws.focused_pane = new_container;
@@ -75,15 +76,11 @@ pub fn breakPane(self: *Window, tab: *Tab) void {
 /// Put `tab` back at `index` of `src` after a failed break and free the
 /// unused new pane.
 fn undoBreak(alloc: std.mem.Allocator, src: *Pane, index: usize, new_pane: *Pane, tab: *Tab) void {
-    new_pane.tabs.clearRetainingCapacity();
+    _ = ops_surface.remove(new_pane, 0);
     new_pane.tabs.deinit(alloc);
     alloc.destroy(new_pane);
-    src.tabs.insert(alloc, index, tab) catch {
-        // Out of memory restoring the slot: append instead (capacity for
-        // the removed element is still there).
-        src.tabs.appendAssumeCapacity(tab);
-    };
-    tab.pane = src;
+    // Cannot fail: the source list kept the capacity of the removed tab.
+    ops_surface.insert(alloc, src, tab, index) catch unreachable;
 }
 
 /// Move a tab within its pane. `.new_tab` breaks it into a new Pane;

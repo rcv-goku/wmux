@@ -387,11 +387,10 @@ fn buildLeafTree(
             if (tab.hwnd()) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
         }
 
-        container.tabs.append(alloc, tab) catch {
+        ops_surface.insert(alloc, container, tab, container.tabCount()) catch {
             tab.unref(alloc);
             continue;
         };
-        tab.pane = container;
     }
 
     if (container.tabCount() == 0) {
@@ -406,9 +405,8 @@ fn buildLeafTree(
 
     return SplitTree(Pane).init(alloc, container) catch {
         // init failed before taking its reference: release the tabs.
-        for (container.tabs.items) |tab| {
-            tab.pane = null;
-            tab.unref(alloc);
+        while (container.tabCount() > 0) {
+            ops_surface.remove(container, container.tabCount() - 1).unref(alloc);
         }
         container.tabs.deinit(alloc);
         alloc.destroy(container);

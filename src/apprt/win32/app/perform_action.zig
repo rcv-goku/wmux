@@ -22,6 +22,7 @@ const Window = @import("../ui/Window.zig");
 const config_files = @import("../settings/legacy_config_files.zig");
 const foreground = @import("foreground.zig");
 const notifications = @import("../features/notifications/api.zig");
+const ops_surface = @import("../model/ops/surface.zig");
 const updater = @import("../features/updater/legacy_check.zig");
 const w32 = @import("../platform/win32.zig");
 
@@ -552,7 +553,7 @@ fn presentTerminal(self: *App, target: apprt.Target) void {
                 if (win.findLocOfSurface(core_surface.rt_surface)) |loc| {
                     win.selectWorkspace(win.workspaceIndex(loc.ws));
                     loc.ws.focused_pane = loc.pane;
-                    if (loc.index != loc.pane.selected) win.selectTabIndex(loc.index);
+                    if (loc.index != loc.pane.selected) ops_surface.selectInPane(win, loc.ws, loc.pane, loc.index);
                 }
                 // Focus the surface's child HWND.
                 if (core_surface.rt_surface.hwnd) |sh| {

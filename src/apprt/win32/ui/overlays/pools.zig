@@ -12,6 +12,7 @@ const PaneButtons = PaneButtonsMod.PaneButtons;
 const SplitTree = @import("../../../../datastruct/split_tree.zig").SplitTree;
 const Tab = @import("../../model/Tab.zig");
 const Window = @import("../Window.zig");
+const ops_surface = @import("../../model/ops/surface.zig");
 const w32 = @import("../../platform/win32.zig");
 
 const log = std.log.scoped(.win32);
@@ -246,9 +247,11 @@ pub fn onPaneButtonClick(window: *anyopaque, pane: *Tab, action: PaneButtonsMod.
     const loc = self.findLoc(pane) orelse return;
     const ws_idx = self.workspaceIndex(loc.ws);
     if (ws_idx != self.activeIndex()) self.selectWorkspace(ws_idx);
-    if (loc.pane.selected != loc.index) self.selectTabIndex(loc.index);
-    // Focus the pane that owns the clicked tab.
+    // Focus the pane that owns the clicked tab, then select the tab IN that
+    // pane (explicit target). Selecting first acted on the previously
+    // focused pane (ui-model 8.1 #13).
     loc.ws.focused_pane = loc.pane;
+    if (loc.pane.selected != loc.index) ops_surface.selectInPane(self, loc.ws, loc.pane, loc.index);
     pane.focus();
 
     switch (action) {

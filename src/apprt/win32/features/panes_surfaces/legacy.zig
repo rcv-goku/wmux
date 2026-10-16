@@ -20,6 +20,7 @@ const SplitTree = @import("../../../../datastruct/split_tree.zig").SplitTree;
 const ipc = @import("../../rpc/compat/legacy_json.zig");
 const LegacyCommand = @import("../../rpc/compat/legacy_table.zig").LegacyCommand;
 const targets = @import("../../rpc/compat/legacy_targets.zig");
+const ops_surface = @import("../../model/ops/surface.zig");
 
 const IpcError = targets.IpcError;
 
@@ -252,8 +253,8 @@ fn ipcSurfaceFocus(self: *App, req: *ipc.Request) anyerror!void {
         if (loc.ws_idx < loc.window.workspaces.items.len) {
             const ws = loc.window.workspaces.items[loc.ws_idx];
             ws.focused_pane = loc.container;
+            ops_surface.selectInPane(loc.window, ws, loc.container, loc.tab_idx);
         }
-        loc.window.selectTabIndex(loc.tab_idx);
         (loc.surface.tab orelse return IpcError.UnknownSurface).focus();
         server.sendOk(req.id, null) catch {};
         return;

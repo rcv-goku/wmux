@@ -19,6 +19,7 @@ const foreground_mod = @import("../../app/foreground.zig");
 const hooks = @import("../../app/hooks.zig");
 const modal = @import("../../app/modal.zig");
 const taskbar = @import("../../platform/taskbar.zig");
+const ops_surface = @import("../../model/ops/surface.zig");
 const titles = @import("../../model/logic/titles.zig");
 const w32 = @import("../../platform/win32.zig");
 
@@ -521,7 +522,7 @@ pub fn jumpToSurface(self: *App, window: *Window, surface: *Surface) bool {
     // its tab count), then the container and tab within it.
     win.selectWorkspace(win.workspaceIndex(loc.ws));
     loc.ws.focused_pane = loc.pane;
-    if (loc.index != loc.pane.selected) win.selectTabIndex(loc.index);
+    if (loc.index != loc.pane.selected) ops_surface.selectInPane(win, loc.ws, loc.pane, loc.index);
     if (surface.hwnd) |sh| _ = w32.SetFocus(sh);
     return true;
 }

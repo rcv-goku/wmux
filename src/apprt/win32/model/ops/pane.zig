@@ -39,21 +39,20 @@ fn splitWithTab(
         tab.unref(alloc);
         return err;
     };
-    new_container.tabs.append(alloc, tab) catch |err| {
+    ops_surface.insert(alloc, new_container, tab, 0) catch |err| {
         alloc.destroy(new_container);
         tab.unref(alloc);
         return err;
     };
     new_container.selected = 0;
     new_container.workspace = ws;
-    tab.pane = new_container;
 
     // From here the throwaway insert tree owns the pane (and through it
     // the tab): its deinit releases both if the split fails.
     var insert_tree = SplitTree(Pane).init(alloc, new_container) catch |err| {
+        _ = ops_surface.remove(new_container, 0);
         new_container.tabs.deinit(alloc);
         alloc.destroy(new_container);
-        tab.pane = null;
         tab.unref(alloc);
         return err;
     };
