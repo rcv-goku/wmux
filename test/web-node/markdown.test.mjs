@@ -1034,6 +1034,30 @@ describe("unit: markdown app", () => {
     void page;
   });
 
+  test("unit: markdown: TextEdit keeps a CRLF file's line breaks and ignores them for dirty state", async () => {
+    await startApp({ text: "# Title\r\n\r\nbody\r\n" });
+    app.setMode("text");
+    const editor = doc.getElementById("mdv-editor");
+
+    // A browser textarea reports LF line breaks; only those differ from disk.
+    editor.value = "# Title\n\nbody\n";
+    editor.dispatchEvent(new window.Event("input", { bubbles: true }));
+    await settle();
+    assert.equal(app.state.dirty, false);
+
+    editor.value = "# Title\n\nedited\n";
+    editor.dispatchEvent(new window.Event("input", { bubbles: true }));
+    await settle();
+    assert.equal(app.state.dirty, true);
+    await app.save();
+    await settle();
+    assert.deepEqual(host.calls("panel.write_file")[0].params, {
+      text: "# Title\r\n\r\nedited\r\n",
+      encoding: "utf-8",
+    });
+    assert.equal(app.state.dirty, false);
+  });
+
   test("unit: markdown: Revert reloads the file into the editor", async () => {
     const page = await startApp();
     app.setMode("text");

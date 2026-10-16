@@ -63,7 +63,7 @@ The page sets the tab title with `panel.set_title {title: <basename>}`.
 | Method | Params -> result | Notes |
 |---|---|---|
 | `panel.read_file` | `{}` -> `{text, encoding?, base_url?, path?, display_path?}` | own file only. `file_not_found` / `not_found` show "File unavailable". Other errors are retried 3 times (150 ms, 300 ms, 450 ms) |
-| `panel.write_file` | `{text, encoding?}` -> `{encoding?}` | own file only, atomic, encoding preserved (`encoding` is what `read_file` returned). Must publish the committed-write signal so other viewers refresh |
+| `panel.write_file` | `{text, encoding?}` -> `{encoding?}` | own file only, atomic, encoding preserved (`encoding` is what `read_file` returned). `text` uses the file's line breaks: the editor reports LF, and the page converts back to CRLF when the text last read from disk used CRLF. Must publish the committed-write signal so other viewers refresh |
 | `panel.watch_file` | `{on: true}` -> `{}` | start file watching; changes arrive as `panel.markdown.file_changed` |
 | `panel.set_dirty` | `{dirty}` | TextEdit buffer differs from disk |
 | `panel.state_changed` | `{state}` | see "Session state" |

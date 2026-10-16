@@ -72,6 +72,17 @@ function errorCode(err) {
   return err && typeof err.code === "string" ? err.code : "";
 }
 
+/** Text as a <textarea> reports it: CRLF and lone CR line breaks become LF. */
+function editorText(text) {
+  return text.includes("\r") ? text.replace(/\r\n?/g, "\n") : text;
+}
+
+/** The line break a file uses: CRLF when its first line break is CRLF, else LF. */
+function lineBreakOf(text) {
+  const lf = text.indexOf("\n");
+  return lf > 0 && text[lf - 1] === "\r" ? "\r\n" : "\n";
+}
+
 /**
  * @param {{
  *   document?: Document,
@@ -618,14 +629,17 @@ export function createApp(options) {
     if (state.mode !== "text" || state.saving) return;
     if (!state.dirty && !state.deletedOnDisk) return;
     const text = ui.editor.value;
+    // The textarea reports LF line breaks. Write the file's own style back so
+    // saving a CRLF file (usual on Windows) does not rewrite every line ending.
+    const out = lineBreakOf(state.diskText) === "\r\n" ? editorText(text).replace(/\n/g, "\r\n") : text;
     state.saving = true;
     updateEditorButtons();
     try {
-      const params = { text };
+      const params = { text: out };
       if (state.encoding) params.encoding = state.encoding;
       const result = await call("panel.write_file", params);
       if (result && typeof result.encoding === "string") state.encoding = result.encoding;
-      state.diskText = text;
+      state.diskText = out;
       state.deletedOnDisk = false;
       state.available = true;
       setDirty(ui.editor.value !== text);
@@ -890,7 +904,7 @@ export function createApp(options) {
     listen(ui.typoButton, "click", () => toggleTypography());
 
     listen(ui.editor, "input", () => {
-      setDirty(ui.editor.value !== state.diskText || state.deletedOnDisk);
+      setDirty(ui.editor.value !== editorText(state.diskText) || state.deletedOnDisk);
     });
 
     listen(ui.findInput, "input", () => {
