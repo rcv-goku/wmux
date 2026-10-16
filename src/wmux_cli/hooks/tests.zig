@@ -951,6 +951,77 @@ test "unit: agents: codex legacy notify payload comes from the last argv element
     try testing.expectEqualStrings("th", p.session_id.?);
 }
 
+test "unit: agents: argv payload edge cases" {
+    // Surrounding whitespace is kept for `parse`, which trims it.
+    const padded = " \t{\"type\":\"agent-turn-complete\",\"thread-id\":\"th\"}\r\n";
+    try testing.expectEqualStrings(padded, payload.argvPayload(&.{ "x", padded }).?);
+    var p = try parseFixture(payload.argvPayload(&.{ "x", padded }).?);
+    defer p.deinit();
+    try testing.expect(!p.malformed);
+    try testing.expectEqualStrings("th", p.session_id.?);
+    // Only the last element counts, and only a JSON object.
+    try testing.expect(payload.argvPayload(&.{ "{\"a\":1}", "stop" }) == null);
+    try testing.expect(payload.argvPayload(&.{ "x", "[{\"a\":1}]" }) == null);
+    try testing.expect(payload.argvPayload(&.{ "x", "" }) == null);
+    try testing.expect(payload.argvPayload(&.{ "x", " \r\n" }) == null);
+}
+
+test "unit: agents: nested research fields are capped on code-point boundaries" {
+    const a = testing.allocator;
+    const name = "é" ** 200; // 400 bytes, over max_name_bytes
+    const id = "€" ** 100; // 300 bytes, over max_id_bytes
+    const json = try std.fmt.allocPrint(a, "{{\"toolCall\":{{\"name\":\"{s}\"}},\"agent_id\":\"{s}\",\"status\":{{\"type\":\"{s}\"}},\"thread\":{{\"id\":\"{s}\"}}}}", .{ name, id, name, id });
+    defer a.free(json);
+    var p = try parseFixture(json);
+    defer p.deinit();
+    try testing.expectEqual(payload.max_name_bytes, p.tool_name.?.len);
+    try testing.expectEqual(payload.max_name_bytes, p.status.?.len);
+    // 85 three-byte code points; the 86th would straddle the cap.
+    try testing.expectEqual(@as(usize, 255), p.agent_id.?.len);
+    try testing.expectEqual(@as(usize, 255), p.session_id.?.len);
+    for ([_][]const u8{ p.tool_name.?, p.status.?, p.agent_id.?, p.session_id.? }) |s| {
+        try testing.expect(std.unicode.utf8ValidateSlice(s));
+    }
+}
+
+fn parseNormalizeResearchShapes(gpa: std.mem.Allocator) !void {
+    const fixtures = [_]struct { Agent, []const u8, []const u8 }{
+        .{
+            .hermes_agent, "on_session_end",
+            \\{"hook_event_name":"on_session_end","session_id":"h","extra":{"user_message":"hé","assistant_response":"done","failed":true}}
+        },
+        .{
+            .rovodev, "on_tool_start",
+            \\{"session_id":"r","attributes":{"user_prompt":"go","status":"cancelled","tool_calls":[1,{"tool_name":"bash"}],"tool_results":[{"name":"x"}]}}
+        },
+        .{
+            .antigravity, "stop",
+            \\{"conversationId":"c","workspacePaths":["D:\\r"],"terminationReason":"error","toolCall":{"name":"run_command","args":"{\"command\":\"ls\"}"}}
+        },
+        .{
+            .opencode, "session.error",
+            \\{"type":"session.error","properties":{"sessionID":"s","status":{"type":"idle"},"error":{"name":"APIError","data":{"message":"rate limited"}}}}
+        },
+        .{ .amp, "agent.end", "{\"type\":\"agent.end\",\"thread\":{\"id\":\"T-1\"},\"status\":\"error\"}" },
+        .{ .copilot, "errorOccurred", "{\"error\":{\"message\":\"transient\"},\"recoverable\":true,\"agentId\":\"a\"}" },
+        .{ .kimi, "notification", "{\"hook_event_name\":\"StopFailure\",\"error_message\":\"Rate limited\"}" },
+    };
+    for (fixtures) |fx| {
+        var p = try payload.parse(gpa, fx[2]);
+        defer p.deinit();
+        const n = normalize.normalize(fx[0], fx[1], &p) orelse return error.TestUnexpectedResult;
+        var arena = std.heap.ArenaAllocator.init(gpa);
+        defer arena.deinit();
+        _ = try normalize.format(arena.allocator(), n, .{ .payload = &p });
+        const wire = try normalize.hookParamsAlloc(gpa, n, .{ .seq = 1 });
+        gpa.free(wire);
+    }
+}
+
+test "unit: agents: research payload shapes leak nothing when an allocation fails" {
+    try testing.checkAllAllocationFailures(testing.allocator, parseNormalizeResearchShapes, .{});
+}
+
 test "unit: agents: agent_id marks a subagent except for kimi" {
     var c = try normalizeFixture(.claude, "pre-tool-use", "{\"session_id\":\"s\",\"agent_id\":\"a-1\"}");
     defer c.p.deinit();
