@@ -192,6 +192,27 @@ pub fn maskValues(arena: std.mem.Allocator, v: std.json.Value) std.mem.Allocator
     }
 }
 
+/// Keys of a `workspace.env` result that name its target, never a value.
+const env_target_keys = [_][]const u8{ "workspace_id", "workspace_ref", "window_id", "window_ref" };
+
+/// The `workspace.env` result for `--mask`: every value goes through
+/// `maskValues` except the target handles. The result shape is not
+/// specified, so this fails closed: a set under any key, or a result that
+/// is not an object, is masked too.
+pub fn maskEnvResult(arena: std.mem.Allocator, v: std.json.Value) std.mem.Allocator.Error!std.json.Value {
+    if (v != .object) return maskValues(arena, v);
+    var out = std.json.ObjectMap.init(arena);
+    try out.ensureTotalCapacity(v.object.count());
+    var it = v.object.iterator();
+    while (it.next()) |e| {
+        const target = for (env_target_keys) |k| {
+            if (std.mem.eql(u8, k, e.key_ptr.*)) break true;
+        } else false;
+        out.putAssumeCapacity(e.key_ptr.*, if (target) e.value_ptr.* else try maskValues(arena, e.value_ptr.*));
+    }
+    return .{ .object = out };
+}
+
 /// `workspace env [<handle>|--workspace <h>] [--mask]`: the configured
 /// set as `KEY=VALUE` lines (`--mask` shows `***` instead of each value).
 pub fn runEnv(ctx: *Ctx, args: []const []const u8, u: []const u8) !u8 {
@@ -204,18 +225,13 @@ pub fn runEnv(ctx: *Ctx, args: []const []const u8, u: []const u8) !u8 {
     var p = Params.init(ctx.arena);
     if (try common.putWindow(ctx, &p, u, o)) |c| return c;
     if (try common.putWorkspaceTarget(ctx, &p, u, explicit, common.windowText(ctx, o) != null)) |c| return c;
-    const v = switch (try common.request(ctx, "workspace.env", &p)) {
+    const result = switch (try common.request(ctx, "workspace.env", &p)) {
         .code => |c| return c,
-        .ok => |v| v,
+        .ok => |r| r,
     };
+    // No value survives --mask, whatever the result's shape.
+    const v = if (o.has("--mask")) try maskEnvResult(ctx.arena, result) else result;
     const env_key = if (common.field(v, "env") != null) "env" else "workspace_env";
-    // Fails closed: whatever shape the set has, no value survives --mask
-    // (the map entries are rewritten in place).
-    if (o.has("--mask") and v == .object) {
-        for ([_][]const u8{ "env", "workspace_env" }) |k| {
-            if (v.object.getPtr(k)) |ptr| ptr.* = try maskValues(ctx.arena, ptr.*);
-        }
-    }
     if (ctx.json()) {
         try common.writeJsonResult(ctx, v);
         return output.exit.ok;

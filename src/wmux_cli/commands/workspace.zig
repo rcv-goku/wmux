@@ -593,24 +593,45 @@ test "unit: cli-workspace: a blank workspace handle means the caller's workspace
     try testkit.expectUsage(&h, &.{ "reorder-workspace", "--before", " " }, "Workspace handle is blank");
 }
 
+fn expectNoLeak(out: []const u8, secrets: []const []const u8) !void {
+    for (secrets) |secret| {
+        if (std.mem.indexOf(u8, out, secret) != null) {
+            std.debug.print("\nleaked {s} in:\n{s}\n", .{ secret, out });
+            return error.TestUnexpectedResult;
+        }
+    }
+}
+
 test "unit: cli-workspace: workspace env --mask hides values whatever the result shape" {
     var h: testkit.Harness = undefined;
     try h.init();
     defer h.deinit();
     h.ok("workspace.env", "{\"workspace_ref\":\"workspace:2\",\"env\":[{\"name\":\"TOKEN\",\"value\":\"s3cret\"},\"RAW=x9\"],\"workspace_env\":{\"K\":\"v1\",\"N\":7,\"Z\":null}}");
     const js = try testkit.expectOk(&h, &.{ "workspace", "env", "--mask", "--json" });
-    for ([_][]const u8{ "s3cret", "TOKEN", "x9", "v1", "7" }) |secret| {
-        if (std.mem.indexOf(u8, js, secret) != null) {
-            std.debug.print("\nleaked {s} in:\n{s}\n", .{ secret, js });
-            return error.TestUnexpectedResult;
-        }
-    }
+    try expectNoLeak(js, &.{ "s3cret", "TOKEN", "x9", "v1", "7" });
     try testing.expect(std.mem.indexOf(u8, js, "\"K\": \"***\"") != null);
     try testing.expect(std.mem.indexOf(u8, js, "\"Z\": null") != null);
     try testing.expect(std.mem.indexOf(u8, js, "\"workspace_ref\": \"workspace:2\"") != null);
     // Without --mask nothing is rewritten.
     const plain = try testkit.expectOk(&h, &.{ "workspace", "env", "--json" });
     try testing.expect(std.mem.indexOf(u8, plain, "s3cret") != null);
+
+    // A set under any other key is masked as well; only the target handles
+    // keep their values.
+    h.ok("workspace.env", "{\"workspace_id\":\"W-UUID\",\"workspace_ref\":\"workspace:2\",\"window_ref\":\"window:1\",\"variables\":{\"API_KEY\":\"k3y\"},\"count\":1}");
+    const other = try testkit.expectOk(&h, &.{ "workspace", "env", "--mask", "--json", "--id-format", "both" });
+    try expectNoLeak(other, &.{"k3y"});
+    try testing.expect(std.mem.indexOf(u8, other, "\"API_KEY\": \"***\"") != null);
+    try testing.expect(std.mem.indexOf(u8, other, "\"count\": \"***\"") != null);
+    try testing.expect(std.mem.indexOf(u8, other, "\"workspace_id\": \"W-UUID\"") != null);
+    try testing.expect(std.mem.indexOf(u8, other, "\"workspace_ref\": \"workspace:2\"") != null);
+    try testing.expect(std.mem.indexOf(u8, other, "\"window_ref\": \"window:1\"") != null);
+    // So is a result that is not an object, in JSON and in text.
+    h.ok("workspace.env", "[\"TOKEN=s3cret\",{\"name\":\"PW\",\"value\":\"hunter2\"}]");
+    try expectNoLeak(try testkit.expectOk(&h, &.{ "workspace", "env", "--mask", "--json" }), &.{ "s3cret", "hunter2" });
+    try testing.expectEqualStrings("No environment variables set.\n", try testkit.expectOk(&h, &.{ "workspace", "env", "--mask" }));
+    h.ok("workspace.env", "\"TOKEN=s3cret\"");
+    try testing.expectEqualStrings("\"***\"\n", try testkit.expectOk(&h, &.{ "workspace", "env", "--mask", "--json" }));
 
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
@@ -619,6 +640,10 @@ test "unit: cli-workspace: workspace env --mask hides values whatever the result
     const masked = try std.json.Stringify.valueAlloc(a, try create.maskValues(a, v), .{});
     try testing.expectEqualStrings("{\"A\":\"***\",\"B\":{\"c\":[\"***\",\"***\",\"***\"]},\"E\":null}", masked);
     try testing.expectEqualStrings("\"***\"", try std.json.Stringify.valueAlloc(a, try create.maskValues(a, .{ .string = "" }), .{}));
+    const r = try std.json.parseFromSliceLeaky(std.json.Value, a, "{\"workspace_id\":\"W\",\"window_id\":null,\"env\":{\"A\":\"1\"},\"workspace\":\"x\"}", .{});
+    try testing.expectEqualStrings("{\"workspace_id\":\"W\",\"window_id\":null,\"env\":{\"A\":\"***\"},\"workspace\":\"***\"}", try std.json.Stringify.valueAlloc(a, try create.maskEnvResult(a, r), .{}));
+    try testing.expectEqualStrings("\"***\"", try std.json.Stringify.valueAlloc(a, try create.maskEnvResult(a, .{ .integer = 42 }), .{}));
+    try testing.expectEqualStrings("{}", try std.json.Stringify.valueAlloc(a, try create.maskEnvResult(a, .{ .object = std.json.ObjectMap.init(a) }), .{}));
 }
 
 test "unit: cli-workspace: next, previous and last window" {
