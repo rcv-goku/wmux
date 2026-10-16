@@ -289,6 +289,10 @@ tab_font: ?*anyopaque = null,
 /// Whether WM_MOUSELEAVE tracking is active for the tab bar.
 tracking_mouse: bool = false,
 
+/// Inside the modal size/move loop (WM_ENTERSIZEMOVE..WM_EXITSIZEMOVE),
+/// which holds an app.modal level (ADR-1.6).
+in_size_move: bool = false,
+
 /// Whether this window is a quick terminal (borderless popup, no tabs).
 is_quick_terminal: bool = false,
 
@@ -584,6 +588,7 @@ pub fn deinit(self: *Window) void {
     }
 
     // The (already emptied) workspace objects go last.
+    self.leaveSizeMove();
     self.freeWorkspaces();
 }
 
@@ -692,6 +697,13 @@ fn cleanupAllSurfaces(self: *Window) void {
     }
 }
 
+/// Release the app.modal level of an unfinished size/move loop.
+fn leaveSizeMove(self: *Window) void {
+    if (!self.in_size_move) return;
+    self.in_size_move = false;
+    self.app.modal.leave();
+}
+
 /// Free the workspace objects and their list (final teardown, after
 /// cleanupAllSurfaces).
 fn freeWorkspaces(self: *Window) void {
@@ -713,6 +725,7 @@ fn onDestroy(self: *Window) void {
     app.dropDesktopNotifsForWindow(self);
 
     // Surfaces were cleaned up by close(); free the workspace objects.
+    self.leaveSizeMove();
     self.freeWorkspaces();
 
     // Quick terminal windows are managed by QuickTerminal, not the windows list.
@@ -867,6 +880,11 @@ pub fn windowWndProc(
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
         },
         w32.WM_ENTERSIZEMOVE => {
+            // The size/move loop is modal (ADR-1.6): bracket it.
+            if (!window.in_size_move) {
+                window.in_size_move = true;
+                window.app.modal.enter();
+            }
             const ws = window.activeWorkspace();
             var it = ws.tree.iterator();
             while (it.next()) |entry| {
@@ -876,6 +894,7 @@ pub fn windowWndProc(
             return 0;
         },
         w32.WM_EXITSIZEMOVE => {
+            window.leaveSizeMove();
             const ws = window.activeWorkspace();
             var it = ws.tree.iterator();
             while (it.next()) |entry| {
@@ -1190,6 +1209,10 @@ test {
     _ = @import("../model/TabContent.zig");
     _ = chrome;
     _ = menus;
+    _ = @import("backend_picker.zig");
+    _ = @import("tabbar/menu.zig");
+    _ = @import("sidebar/menu.zig");
+    _ = @import("../settings/menu.zig");
     _ = overlay_pools;
     _ = placement;
     _ = rename;
