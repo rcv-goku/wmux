@@ -80,7 +80,7 @@ has no names for these):
 
 | Method | Params -> result | Notes |
 |---|---|---|
-| `panel.todo.open_status` | `{workspace_id, anchor: {x, y, width, height}}` -> `{}` | the status glyph: open the shared status popover anchored at the glyph (CSS px, page coordinates) |
+| `panel.todo.open_status` | `{workspace_id, anchor: {x, y, width, height}}` -> `{}` | the status glyph: open the shared status popover anchored at the glyph (CSS px relative to the panel's viewport, from `getBoundingClientRect`; native scales by the DPI) |
 | `panel.todo.attach_images` | `{workspace_id, item}` -> checklist or `{}` | "Attach Images…": native file picker (image filters), copies the files into its attachment store, persists them with the item. Called without a timeout (the picker is modal) |
 | `panel.todo.open_attachment` | `{workspace_id, item, attachment}` -> `{}` | "Open": default viewer or a preview |
 | `panel.todo.remove_attachment` | `{workspace_id, item, attachment}` -> checklist or `{}` | "Remove Attachment" |

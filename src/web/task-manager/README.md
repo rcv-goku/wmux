@@ -51,11 +51,14 @@ enforces Trusted Types.
 ## Behavior
 
 - **Refresh**: on start, then every 3 s while the page is visible
-  (`document.visibilityState`; WebView2 reports hidden when the window is
-  hidden or minimized). Polling stops while hidden and resumes with an immediate
-  refresh when shown. `Refresh` and the `panel.task_manager.refresh` event force
-  an update. Concurrent refreshes share one request. The next tick is scheduled
-  only after the previous one finished, so slow replies never pile up.
+  (`document.visibilityState`). Polling stops while hidden and resumes with an
+  immediate refresh when shown. WebView2 does not notice its top-level window
+  being minimized: native must call `ICoreWebView2Controller::put_IsVisible`
+  with `FALSE` on `SIZE_MINIMIZED` and when it hides the window, and `TRUE`
+  when it restores or shows it, or the page keeps polling. `Refresh` and the
+  `panel.task_manager.refresh` event force an update. Concurrent refreshes
+  share one request. The next tick is scheduled only after the previous one
+  finished, so slow replies never pile up.
 - **States**: `Loading resource usage` until the first reply; `No resource
   usage` + `Open a workspace, terminal, or browser surface to see it here.` when
   there is no workspace; `Unable to load resource usage` (with the error
