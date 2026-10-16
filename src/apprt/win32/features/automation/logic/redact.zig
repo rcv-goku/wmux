@@ -1,8 +1,8 @@
 //! Credential redaction for `automation show` and `automation test`
 //! (cli-automation-cli): values under credential-like keys in predicates,
 //! actions and events are replaced by `marker`, webhook URLs lose their
-//! userinfo and credential-like query values, and webhook header values
-//! under credential-like names are replaced.
+//! userinfo and credential-like query (and fragment) values, and webhook
+//! header values under credential-like names are replaced.
 
 const std = @import("std");
 const wmux_proto = @import("wmux_proto");
@@ -64,8 +64,12 @@ fn splitUrl(url: []const u8) UrlParts {
     var head: []const u8 = "";
     var rest = url;
     if (std.mem.indexOf(u8, url, "://")) |i| {
-        head = url[0 .. i + 3];
-        rest = url[i + 3 ..];
+        // A `://` after a path, query or fragment has started is data
+        // (`x/?token=1&next=a://b`), not the scheme separator.
+        if (std.mem.indexOfAny(u8, url[0..i], "/?#") == null) {
+            head = url[0 .. i + 3];
+            rest = url[i + 3 ..];
+        }
     }
     var fragment: ?[]const u8 = null;
     if (std.mem.indexOfScalar(u8, rest, '#')) |i| {
@@ -88,8 +92,28 @@ fn splitUrl(url: []const u8) UrlParts {
     return .{ .head = head, .userinfo = userinfo, .middle = rest, .query = query, .fragment = fragment };
 }
 
+/// Appends `k=v&k=v` parameters with credential-like values replaced.
+fn appendRedactedParams(out: *std.ArrayList(u8), gpa: Allocator, params: []const u8) Allocator.Error!void {
+    var it = std.mem.splitScalar(u8, params, '&');
+    var first = true;
+    while (it.next()) |pair| {
+        if (!first) try out.append(gpa, '&');
+        first = false;
+        const eq = std.mem.indexOfScalar(u8, pair, '=');
+        const name = if (eq) |e| pair[0..e] else pair;
+        if (eq != null and isCredentialName(name)) {
+            try out.appendSlice(gpa, name);
+            try out.append(gpa, '=');
+            try out.appendSlice(gpa, marker);
+        } else {
+            try out.appendSlice(gpa, pair);
+        }
+    }
+}
+
 /// `url` without credentials: userinfo becomes `marker@` and credential-like
-/// query values become `marker`. Owned by `gpa`.
+/// query values become `marker`, as do credential-like `k=v` values in the
+/// fragment (OAuth-style `#access_token=…`). Owned by `gpa`.
 pub fn redactUrlAlloc(gpa: Allocator, url: []const u8) Allocator.Error![]u8 {
     const p = splitUrl(url);
     var out: std.ArrayList(u8) = .empty;
@@ -102,25 +126,11 @@ pub fn redactUrlAlloc(gpa: Allocator, url: []const u8) Allocator.Error![]u8 {
     try out.appendSlice(gpa, p.middle);
     if (p.query) |q| {
         try out.append(gpa, '?');
-        var it = std.mem.splitScalar(u8, q, '&');
-        var first = true;
-        while (it.next()) |pair| {
-            if (!first) try out.append(gpa, '&');
-            first = false;
-            const eq = std.mem.indexOfScalar(u8, pair, '=');
-            const name = if (eq) |e| pair[0..e] else pair;
-            if (eq != null and isCredentialName(name)) {
-                try out.appendSlice(gpa, name);
-                try out.append(gpa, '=');
-                try out.appendSlice(gpa, marker);
-            } else {
-                try out.appendSlice(gpa, pair);
-            }
-        }
+        try appendRedactedParams(&out, gpa, q);
     }
     if (p.fragment) |f| {
         try out.append(gpa, '#');
-        try out.appendSlice(gpa, f);
+        try appendRedactedParams(&out, gpa, f);
     }
     return out.toOwnedSlice(gpa);
 }
@@ -246,6 +256,13 @@ test "unit: automation: redaction strips URL userinfo and query credentials" {
         .{ "not a url?secret=1&x", "not a url?secret=[REDACTED]&x" },
         .{ "https://h.example/?token&x=", "https://h.example/?token&x=" },
         .{ "https://ü.example/✓?sig=✓", "https://ü.example/✓?sig=[REDACTED]" },
+        // A `://` inside the query or path is not the scheme: credentials before and after it still go.
+        .{ "hooks.example/x?token=abc&next=a://b", "hooks.example/x?token=[REDACTED]&next=a://b" },
+        .{ "hooks.example/a://b?api_key=1", "hooks.example/a://b?api_key=[REDACTED]" },
+        .{ "https://h.example/cb?next=https://x.example/&sig=1", "https://h.example/cb?next=https://x.example/&sig=[REDACTED]" },
+        // Fragment parameters (OAuth implicit flow) are redacted too; plain fragments are kept.
+        .{ "https://app.example/cb#access_token=abc&state=s", "https://app.example/cb#access_token=[REDACTED]&state=s" },
+        .{ "https://app.example/doc#section-2", "https://app.example/doc#section-2" },
     };
     for (cases) |c| {
         const out = try redactUrlAlloc(testing.allocator, c[0]);
@@ -254,8 +271,10 @@ test "unit: automation: redaction strips URL userinfo and query credentials" {
     }
     try testing.expect(urlHasCredentials("http://u@h/"));
     try testing.expect(urlHasCredentials("http://h/?access_token=1"));
+    try testing.expect(urlHasCredentials("h.example/?token=1&next=a://b"));
     try testing.expect(!urlHasCredentials("http://h/?a=1"));
     try testing.expect(!urlHasCredentials("http://h/p@x"));
+    try testing.expect(!urlHasCredentials("h.example/x?next=a://u@b"));
 }
 
 test "unit: automation: redaction of rules and events keeps structure" {

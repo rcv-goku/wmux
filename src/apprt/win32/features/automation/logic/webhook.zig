@@ -1,6 +1,10 @@
 //! Webhook URL and redirect policy (cli-automation-actions `webhook`).
 //!
-//! - The URL must be absolute `http://` or `https://` with a host.
+//! - The URL must be absolute `http://` or `https://` with a host. Spaces,
+//!   control characters and backslashes are refused, so no HTTP client can
+//!   read a different host than the origin checks here (a WHATWG-style
+//!   parser treats `\` as `/`: `https://a.example\@b.example/` is host
+//!   `a.example` there but `b.example` to an RFC 3986 parser).
 //! - Credential-bearing requests (credential-like header names, URL userinfo
 //!   or credential-like query parameters) must use HTTPS.
 //! - Header names must be HTTP tokens and values must not contain CR, LF or
@@ -42,10 +46,11 @@ pub const Url = struct {
         return a.scheme == b.scheme and std.ascii.eqlIgnoreCase(a.host, b.host) and a.effectivePort() == b.effectivePort();
     }
 
-    /// Parses an absolute http(s) URL. Returns null for anything else.
+    /// Parses an absolute http(s) URL. Returns null for anything else,
+    /// including URLs with spaces, control characters or backslashes.
     pub fn parse(text: []const u8) ?Url {
         for (text) |c| {
-            if (c <= 0x20 or c == 0x7F) return null;
+            if (c <= 0x20 or c == 0x7F or c == '\\') return null;
         }
         const sep = std.mem.indexOf(u8, text, "://") orelse return null;
         const scheme_text = text[0..sep];
@@ -211,8 +216,18 @@ test "unit: automation: webhook URL parsing and origins" {
     try testing.expect(Url.sameOrigin(Url.parse("https://a.example/x").?, Url.parse("https://A.EXAMPLE:443/y").?));
     try testing.expect(!Url.sameOrigin(Url.parse("https://a.example").?, Url.parse("https://a.example:444").?));
     try testing.expect(!Url.sameOrigin(Url.parse("https://a.example").?, Url.parse("http://a.example").?));
-    const bad = [_][]const u8{ "", "hooks.example/x", "ftp://h/", "https://", "https:///x", "https://h:0/", "https://h:99999/", "https://h:x/", "https://h /", "https://[::1/", "https://[::1]x/", "file:///etc/passwd", "https://h/\r\nX: y" };
+    const bad = [_][]const u8{ "", "hooks.example/x", "ftp://h/", "https://", "https:///x", "https://h:0/", "https://h:99999/", "https://h:x/", "https://h /", "https://[::1/", "https://[::1]x/", "file:///etc/passwd", "https://h/\r\nX: y", "https://evil.example\\@hooks.example/x", "https:\\\\h.example/", "https://h.example/a\\b" };
     for (bad) |b| try testing.expect(Url.parse(b) == null);
+}
+
+test "unit: automation: webhook refuses backslash URLs and redirects" {
+    // Hosts must not depend on how a client treats `\` (WHATWG reads it as `/`).
+    try testing.expectEqualStrings(messages.bad_url, validate("https://evil.example\\@hooks.example/x", &.{.{ .name = "Authorization", .value = "x" }}).?);
+    var buf: [256]u8 = undefined;
+    const from = Url.parse("https://hooks.example/a").?;
+    try testing.expectEqual(RedirectDecision.reject_invalid, redirect(from, "https://evil.example\\@hooks.example/b", &buf).decision);
+    try testing.expectEqual(RedirectDecision.reject_invalid, redirect(from, "/\\evil.example/b", &buf).decision);
+    try testing.expectEqual(RedirectDecision.follow, redirect(from, "/b?x=%5C", &buf).decision);
 }
 
 test "unit: automation: webhook with credential headers must use https" {
