@@ -333,7 +333,9 @@ test "unit: agents: per-agent native vocabularies" {
         .{ Agent.gemini, "AfterAgent", Event.stop },
         .{ Agent.gemini, "BeforeTool", Event.pre_tool_use },
         .{ Agent.gemini, "PreCompress", Event.pre_compact },
-        .{ Agent.antigravity, "AfterAgent", Event.stop },
+        .{ Agent.antigravity, "PreInvocation", Event.prompt_submit },
+        .{ Agent.antigravity, "Stop", Event.stop },
+        .{ Agent.antigravity, "PreToolUse", Event.pre_tool_use },
         .{ Agent.cursor, "beforeSubmitPrompt", Event.prompt_submit },
         .{ Agent.cursor, "beforeShellExecution", Event.shell_exec },
         .{ Agent.cursor, "afterShellExecution", Event.shell_done },
@@ -351,6 +353,30 @@ test "unit: agents: per-agent native vocabularies" {
         .{ Agent.omp, "tool_execution_start", Event.pre_tool_use },
         .{ Agent.campfire, "session_shutdown", Event.session_end },
         .{ Agent.amp, "thinking", Event.prompt_submit },
+        .{ Agent.amp, "agent.end", Event.stop },
+        .{ Agent.amp, "tool.call", Event.pre_tool_use },
+        .{ Agent.pi, "agent_settled", Event.stop },
+        .{ Agent.omp, "session_stop", Event.stop },
+        .{ Agent.pi, "tool_call", Event.pre_tool_use },
+        .{ Agent.pi, "ui_prompt_start", Event.notification },
+        .{ Agent.codex, "Interrupt", Event.stop },
+        .{ Agent.kimi, "Interrupt", Event.stop },
+        .{ Agent.kimi, "PermissionResult", Event.approval_response },
+        .{ Agent.copilot, "agentStop", Event.stop },
+        .{ Agent.copilot, "postToolUseFailure", Event.post_tool_use },
+        .{ Agent.cursor, "postToolUseFailure", Event.shell_failed },
+        .{ Agent.hermes_agent, "post_llm_call", Event.agent_response },
+        .{ Agent.hermes_agent, "on_session_end", Event.stop },
+        .{ Agent.hermes_agent, "on_session_finalize", Event.session_finalize },
+        .{ Agent.hermes_agent, "on_session_reset", Event.session_start },
+        .{ Agent.hermes_agent, "pre_approval_request", Event.notification },
+        .{ Agent.hermes_agent, "post_approval_response", Event.approval_response },
+        .{ Agent.rovodev, "on_user_prompt", Event.prompt_submit },
+        .{ Agent.rovodev, "on_tool_start", Event.pre_tool_use },
+        .{ Agent.rovodev, "on_session_start", Event.session_start },
+        .{ Agent.opencode, "permission.asked", Event.notification },
+        .{ Agent.opencode, "question.asked", Event.notification },
+        .{ Agent.opencode, "permission.replied", Event.approval_response },
         .{ Agent.codex, "agent-turn-complete", Event.stop },
         .{ Agent.codebuddy, "Stop", Event.stop },
         .{ Agent.factory, "PreToolUse", Event.pre_tool_use },
@@ -370,6 +396,10 @@ test "unit: agents: per-agent native vocabularies" {
     try testing.expect(normalize.mapNative(.opencode, "session.error").?.failure);
     // Gemini's names are not part of the shared vocabulary.
     try testing.expect(normalize.mapNative(.claude, "AfterAgent") == null);
+    // Antigravity has none of Gemini's BeforeAgent/AfterAgent names.
+    try testing.expect(normalize.mapNative(.antigravity, "AfterAgent") == null);
+    try testing.expect(normalize.mapNative(.antigravity, "PostInvocation") == null);
+    try testing.expect(!normalize.mapNative(.codex, "Interrupt").?.failure);
 }
 
 // ---------------------------------------------------------------------------
@@ -515,6 +545,11 @@ test "unit: agents: neutral acknowledgments" {
     try testing.expectEqualStrings("{\"permission\":\"allow\"}", normalize.neutralAck(.cursor, .shell_exec));
     try testing.expectEqualStrings("{\"continue\":true}", normalize.neutralAck(.cursor, .prompt_submit));
     try testing.expectEqualStrings("{}", normalize.neutralAck(.cursor, .stop));
+    // Kiro adds hook stdout to the model context: print nothing.
+    try testing.expectEqualStrings("", normalize.neutralAck(.kiro, .session_start));
+    try testing.expectEqualStrings("", normalize.neutralAck(.kiro, null));
+    try testing.expectEqualStrings("{\"decision\":\"allow\"}", normalize.neutralAck(.antigravity, .pre_tool_use));
+    try testing.expectEqualStrings("{}", normalize.neutralAck(.antigravity, .stop));
 }
 
 // ---------------------------------------------------------------------------
@@ -830,4 +865,159 @@ test "unit: agents: wmux.agent.hook params minimal and flagged forms" {
     try testing.expectEqualStrings(
         \\{"agent":"claude","event":"notification","seq":1,"message":"Allow edit?","input_kind":"permission"}
     , json2);
+}
+
+// ---------------------------------------------------------------------------
+// research-verified payload shapes (WP R-hooks agent-hooks.md)
+
+test "unit: agents: payload reads hermes extra and rovo attributes envelopes" {
+    var h = try parseFixture(
+        \\{"hook_event_name":"on_session_end","session_id":"h-1","cwd":"/w","tool_name":null,
+        \\ "extra":{"user_message":"héllo","assistant_response":"done","failed":true,"interrupted":false}}
+    );
+    defer h.deinit();
+    try testing.expectEqualStrings("h-1", h.session_id.?);
+    try testing.expectEqual(@as(usize, 5), h.prompt_length.?);
+    try testing.expectEqualStrings("done", h.last_assistant_message.?);
+    try testing.expect(h.failed);
+
+    var r = try parseFixture(
+        \\{"hook_event_name":"on_tool_start","session_id":"r-1","cwd":"/w","transcript_path":"/t.jsonl",
+        \\ "attributes":{"user_prompt":"go","status":"cancelled","tool_calls":[{"tool_name":"bash","tool_args":{}}]}}
+    );
+    defer r.deinit();
+    try testing.expectEqualStrings("bash", r.tool_name.?);
+    try testing.expectEqualStrings("cancelled", r.status.?);
+    try testing.expectEqual(@as(usize, 2), r.prompt_length.?);
+    // Malformed tool arrays are ignored.
+    var r2 = try parseFixture("{\"attributes\":{\"tool_calls\":[1,\"x\",null,{}]}}");
+    defer r2.deinit();
+    try testing.expect(r2.tool_name == null);
+}
+
+test "unit: agents: payload reads antigravity camelCase shape" {
+    var p = try parseFixture(
+        \\{"conversationId":"c-9","transcriptPath":"/t","workspacePaths":["D:\\repo","E:\\other"],
+        \\ "toolCall":{"name":"run_command","args":{"command":"zig build","run_in_background":true}}}
+    );
+    defer p.deinit();
+    try testing.expectEqualStrings("c-9", p.session_id.?);
+    try testing.expectEqualStrings("D:\\repo", p.cwd.?);
+    try testing.expectEqualStrings("run_command", p.tool_name.?);
+    try testing.expectEqualStrings("zig build", p.tool_command.?);
+    try testing.expect(p.run_in_background);
+
+    var stop = try normalizeFixture(.antigravity, "stop", "{\"conversationId\":\"c\",\"terminationReason\":\"error\",\"error\":\"\"}");
+    defer stop.p.deinit();
+    try testing.expect(stop.n.?.failure);
+    var ok = try normalizeFixture(.antigravity, "stop", "{\"terminationReason\":\"model_stop\",\"fullyIdle\":true}");
+    defer ok.p.deinit();
+    try testing.expect(!ok.n.?.failure);
+}
+
+test "unit: agents: payload reads amp thread id and opencode status and error objects" {
+    var amp = try parseFixture("{\"type\":\"agent.end\",\"thread\":{\"id\":\"T-1234\"},\"status\":\"cancelled\"}");
+    defer amp.deinit();
+    try testing.expectEqualStrings("T-1234", amp.session_id.?);
+    var amp_bad = try parseFixture("{\"thread\":\"T-1\"}");
+    defer amp_bad.deinit();
+    try testing.expect(amp_bad.session_id == null);
+
+    var oc = try parseFixture(
+        \\{"id":"evt_1","type":"session.status","properties":{"sessionID":"ses_1","status":{"type":"idle"}}}
+    );
+    defer oc.deinit();
+    try testing.expectEqualStrings("ses_1", oc.session_id.?);
+    try testing.expectEqualStrings("idle", oc.status.?);
+
+    var err = try parseFixture(
+        \\{"type":"session.error","properties":{"sessionID":"s","error":{"name":"APIError","data":{"message":"rate limited"}}}}
+    );
+    defer err.deinit();
+    try testing.expectEqualStrings("rate limited", err.error_text.?);
+    var err2 = try parseFixture("{\"error\":{\"name\":\"MessageAbortedError\",\"data\":{}}}");
+    defer err2.deinit();
+    try testing.expectEqualStrings("MessageAbortedError", err2.error_text.?);
+}
+
+test "unit: agents: codex legacy notify payload comes from the last argv element" {
+    const json = "{\"type\":\"agent-turn-complete\",\"thread-id\":\"th\"}";
+    try testing.expectEqualStrings(json, payload.argvPayload(&.{ "wmux", "hooks", "codex", "notify", json }).?);
+    try testing.expect(payload.argvPayload(&.{}) == null);
+    try testing.expect(payload.argvPayload(&.{ "wmux", "stop" }) == null);
+    try testing.expect(payload.argvPayload(&.{"{"}) == null);
+    var p = try parseFixture(payload.argvPayload(&.{ "x", json }).?);
+    defer p.deinit();
+    try testing.expectEqualStrings("th", p.session_id.?);
+}
+
+test "unit: agents: agent_id marks a subagent except for kimi" {
+    var c = try normalizeFixture(.claude, "pre-tool-use", "{\"session_id\":\"s\",\"agent_id\":\"a-1\"}");
+    defer c.p.deinit();
+    try testing.expect(c.n.?.is_subagent);
+    var k = try normalizeFixture(.kimi, "feed", "{\"session_id\":\"s\",\"agent_id\":\"main\",\"hook_event_name\":\"PermissionRequest\"}");
+    defer k.p.deinit();
+    try testing.expect(!k.n.?.is_subagent);
+    try testing.expectEqualStrings("needsInput", normalize.storeLifecycle(k.n.?, false).?);
+    // An explicit parent id still marks kimi subagents.
+    var k2 = try normalizeFixture(.kimi, "stop", "{\"parent_session_id\":\"p\"}");
+    defer k2.p.deinit();
+    try testing.expect(k2.n.?.is_subagent);
+}
+
+test "unit: agents: informational notifications do not need input" {
+    var auth = try normalizeFixture(.claude, "notification", "{\"notification_type\":\"auth_success\",\"message\":\"Signed in\"}");
+    defer auth.p.deinit();
+    try testing.expect(auth.n.?.informational);
+    try testing.expect(auth.n.?.input_kind == null);
+    try testing.expect(normalize.storeLifecycle(auth.n.?, false) == null);
+    const params = try normalize.hookParamsAlloc(testing.allocator, auth.n.?, .{ .seq = 1 });
+    defer testing.allocator.free(params);
+    try testing.expect(std.mem.indexOf(u8, params, "\"informational\":true") != null);
+
+    var kimi = try normalizeFixture(.kimi, "notification", "{\"notification_type\":\"task.completed\",\"title\":\"Build finished\"}");
+    defer kimi.p.deinit();
+    try testing.expect(kimi.n.?.informational);
+
+    var url = try normalizeFixture(.claude, "notification", "{\"notification_type\":\"elicitation_url_dialog\"}");
+    defer url.p.deinit();
+    try testing.expectEqual(normalize.InputKind.question, url.n.?.input_kind.?);
+    try testing.expectEqualStrings("needsInput", normalize.storeLifecycle(url.n.?, false).?);
+}
+
+test "unit: agents: factory cancel notification and hermes failed turn are stops" {
+    var f = try normalizeFixture(.factory, "notification", "{\"notification_type\":\"idle_prompt\",\"session_id\":\"d\"}");
+    defer f.p.deinit();
+    try testing.expectEqual(Event.stop, f.n.?.event);
+    try testing.expectEqualStrings("idle", normalize.storeLifecycle(f.n.?, false).?);
+    // Claude idle_prompt stays a waiting notification.
+    var c = try normalizeFixture(.claude, "notification", "{\"notification_type\":\"idle_prompt\"}");
+    defer c.p.deinit();
+    try testing.expectEqual(Event.notification, c.n.?.event);
+
+    var h = try normalizeFixture(.hermes_agent, "on_session_end", "{\"extra\":{\"failed\":true}}");
+    defer h.p.deinit();
+    try testing.expectEqual(Event.stop, h.n.?.event);
+    try testing.expect(h.n.?.failure);
+    var h2 = try normalizeFixture(.hermes_agent, "on_session_end", "{\"extra\":{\"completed\":true,\"failed\":false}}");
+    defer h2.p.deinit();
+    try testing.expect(!h2.n.?.failure);
+}
+
+test "unit: agents: copilot errorOccurred ends the turn only when unrecoverable" {
+    var rec = try normalizeFixture(.copilot, "errorOccurred", "{\"error\":{\"message\":\"transient\"},\"recoverable\":true}");
+    defer rec.p.deinit();
+    try testing.expectEqual(Event.notification, rec.n.?.event);
+    try testing.expect(!rec.n.?.failure);
+    var unk = try normalizeFixture(.copilot, "errorOccurred", "{\"error\":{\"message\":\"?\"}}");
+    defer unk.p.deinit();
+    try testing.expectEqual(Event.notification, unk.n.?.event);
+    var fatal = try normalizeFixture(.copilot, "errorOccurred", "{\"error\":{\"message\":\"boom\"},\"recoverable\":false}");
+    defer fatal.p.deinit();
+    try testing.expectEqual(Event.stop, fatal.n.?.event);
+    try testing.expect(fatal.n.?.failure);
+    // An explicit `stop` subcommand is never downgraded.
+    var sub = try normalizeFixture(.copilot, "stop", "{\"hook_event_name\":\"errorOccurred\"}");
+    defer sub.p.deinit();
+    try testing.expectEqual(Event.stop, sub.n.?.event);
 }

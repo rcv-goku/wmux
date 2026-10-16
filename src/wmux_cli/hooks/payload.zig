@@ -1,7 +1,9 @@
 //! Hook stdin payload extraction (ADR-10.1 step 1). Every supported agent
 //! sends a JSON object on stdin; key spellings differ per agent (snake_case,
 //! camelCase, kebab-case, OpenCode-style `properties` envelopes, Codex's
-//! legacy `notify` program payload, Cursor's `conversation_id`, ...). This
+//! legacy `notify` program payload (delivered as the last argv element,
+//! see `argvPayload`), Cursor's `conversation_id`, Hermes `extra`, Rovo Dev
+//! `attributes`, Amp `thread.id`, Antigravity `toolCall`, ...). This
 //! file reads only the fields cmux consumes (session_id, transcript_path,
 //! cwd, hook_event_name, tool_name/tool_input, message, permission_mode and
 //! the prompt length) plus the few extra signals the classifier and the
@@ -47,10 +49,12 @@ pub const Payload = struct {
     notification_type: ?[]const u8 = null,
     permission_mode: ?[]const u8 = null,
     last_assistant_message: ?[]const u8 = null,
-    /// SessionStart `source` (startup|resume|clear|compact) and similar.
+    /// SessionStart `source` (startup|resume|clear|compact|fork) and similar.
     source: ?[]const u8 = null,
     reason: ?[]const u8 = null,
-    /// Cursor `stop.status`, Amp tab status, OpenCode `properties.status`.
+    /// Cursor `stop.status`, Amp `agent.end.status`, OpenCode
+    /// `properties.status.type`, Rovo Dev `attributes.status`, else
+    /// Antigravity's Stop `terminationReason`.
     status: ?[]const u8 = null,
     matcher: ?[]const u8 = null,
     model: ?[]const u8 = null,
@@ -64,9 +68,17 @@ pub const Payload = struct {
     run_in_background: bool = false,
     /// Claude `stop_hook_active`.
     stop_hook_active: bool = false,
-    /// Payload marks a nested/child agent (subagent ids, parent session ids,
-    /// explicit `is_subagent`).
+    /// Payload marks a nested/child agent (parent session ids, subagent
+    /// ids, explicit `is_subagent`). `agent_id` is kept apart in `agent_id`
+    /// because some agents (Kimi Code 2.x) send it for the main agent too;
+    /// normalize decides per agent.
     is_subagent: bool = false,
+    /// `agent_id`/`agentId` (Claude/Codex: present only inside a subagent).
+    agent_id: ?[]const u8 = null,
+    /// Hermes `extra.failed` (turn failed).
+    failed: bool = false,
+    /// Copilot `errorOccurred.recoverable` when present.
+    recoverable: ?bool = null,
     /// A `PushNotification` tool response reports it skipped delivery
     /// (`user_present` or `config_off`).
     push_skipped: bool = false,
@@ -86,8 +98,9 @@ pub const Payload = struct {
 const keys_event = [_][]const u8{ "hook_event_name", "hookEventName", "hook-event-name", "event_name", "eventName", "event", "type", "hook" };
 const keys_session = [_][]const u8{ "session_id", "sessionId", "sessionID", "session-id", "conversation_id", "conversationId", "thread_id", "threadId", "thread-id" };
 const keys_transcript = [_][]const u8{ "transcript_path", "transcriptPath", "transcript-path", "session_file", "sessionFile" };
-const keys_cwd = [_][]const u8{ "cwd", "working_directory", "workingDirectory", "directory", "project_dir", "projectDir" };
-const keys_roots = [_][]const u8{ "workspace_roots", "workspaceRoots" };
+const keys_cwd = [_][]const u8{ "cwd", "working_directory", "workingDirectory", "directory", "project_dir", "projectDir", "workspaceRoot", "workspace_root" };
+/// Cursor `workspace_roots`, Antigravity `workspacePaths` (agy sends no cwd).
+const keys_roots = [_][]const u8{ "workspace_roots", "workspaceRoots", "workspacePaths", "workspace_paths" };
 const keys_tool = [_][]const u8{ "tool_name", "toolName", "tool-name", "tool" };
 const keys_tool_input = [_][]const u8{ "tool_input", "toolInput", "toolArgs", "tool_args", "args", "input", "parameters" };
 const keys_tool_response = [_][]const u8{ "tool_response", "toolResponse", "tool_result", "toolResult", "result" };
@@ -95,16 +108,19 @@ const keys_message = [_][]const u8{ "message", "body", "text", "description", "s
 const keys_error = [_][]const u8{ "error", "error_message", "errorMessage" };
 const keys_notification_type = [_][]const u8{ "notification_type", "notificationType", "kind" };
 const keys_permission = [_][]const u8{ "permission_mode", "permissionMode" };
-const keys_prompt = [_][]const u8{ "prompt", "user_prompt", "userPrompt" };
-const keys_last_message = [_][]const u8{ "last_assistant_message", "lastAssistantMessage", "last-assistant-message", "prompt_response", "promptResponse", "response" };
+const keys_prompt = [_][]const u8{ "prompt", "user_prompt", "userPrompt", "user_message" };
+const keys_last_message = [_][]const u8{ "last_assistant_message", "lastAssistantMessage", "last-assistant-message", "prompt_response", "promptResponse", "response", "assistant_response" };
 const keys_turn = [_][]const u8{ "turn_id", "turnId", "turn-id", "generation_id", "generationId" };
-const keys_subagent_ids = [_][]const u8{ "parent_session_id", "parentSessionId", "parentSessionID", "parent_thread_id", "parentThreadId", "agent_id", "agentId", "subagent_id", "subagentId" };
+const keys_subagent_ids = [_][]const u8{ "parent_session_id", "parentSessionId", "parentSessionID", "parent_thread_id", "parentThreadId", "parent_conversation_id", "subagent_id", "subagentId" };
+const keys_agent_id = [_][]const u8{ "agent_id", "agentId" };
+const keys_status = [_][]const u8{ "status", "terminationReason", "termination_reason" };
 const keys_subagent_flags = [_][]const u8{ "is_subagent", "isSubagent", "subagent", "nested" };
 
 /// Nested containers searched (one level, then their `info`) after the top
 /// level: OpenCode bus events (`properties`, `properties.info`), generic
-/// envelopes (`payload`, `data`), notification objects (`notification`).
-const nested_containers = [_][]const u8{ "properties", "payload", "data", "notification", "event" };
+/// envelopes (`payload`, `data`), notification objects (`notification`),
+/// Hermes shell-hook kwargs (`extra`), Rovo Dev event data (`attributes`).
+const nested_containers = [_][]const u8{ "properties", "payload", "data", "notification", "event", "extra", "attributes" };
 
 /// Parse a hook payload. Only allocation failure is an error; malformed,
 /// non-object and oversized inputs return a flagged empty payload.
@@ -146,7 +162,8 @@ fn extract(p: *Payload, a: Allocator, root: std.json.ObjectMap) Allocator.Error!
     p.transcript_path = try findString(a, scopes, &keys_transcript, max_path_bytes);
     p.cwd = try findString(a, scopes, &keys_cwd, max_path_bytes) orelse
         try findFirstArrayString(a, scopes, &keys_roots, max_path_bytes);
-    p.tool_name = try findString(a, scopes, &keys_tool, max_name_bytes);
+    p.tool_name = try findString(a, scopes, &keys_tool, max_name_bytes) orelse
+        try findNestedToolName(a, root);
     p.message = try findString(a, scopes, &keys_message, max_text_bytes);
     p.title = try findString(a, scopes, &.{"title"}, max_text_bytes);
     p.error_text = try findErrorText(a, scopes);
@@ -155,7 +172,7 @@ fn extract(p: *Payload, a: Allocator, root: std.json.ObjectMap) Allocator.Error!
     p.last_assistant_message = try findString(a, scopes, &keys_last_message, max_text_bytes);
     p.source = try findString(a, scopes, &.{"source"}, max_name_bytes);
     p.reason = try findString(a, scopes, &.{"reason"}, max_text_bytes);
-    p.status = try findString(a, scopes, &.{"status"}, max_name_bytes);
+    p.status = try findStatus(a, scopes);
     p.matcher = try findString(a, scopes, &.{"matcher"}, max_name_bytes);
     p.model = try findModel(a, scopes);
     p.turn_id = try findString(a, scopes, &keys_turn, max_id_bytes);
@@ -167,6 +184,9 @@ fn extract(p: *Payload, a: Allocator, root: std.json.ObjectMap) Allocator.Error!
 
     p.is_subagent = (findBool(scopes, &keys_subagent_flags) orelse false) or
         (findRaw(scopes, &keys_subagent_ids) != null and !isEmptyValue(findRaw(scopes, &keys_subagent_ids).?));
+    p.agent_id = try findString(a, scopes, &keys_agent_id, max_id_bytes);
+    p.failed = findBool(scopes, &.{"failed"}) orelse false;
+    p.recoverable = findBool(scopes, &.{"recoverable"});
 
     if (try toolInputObject(a, scopes)) |ti| {
         const ti_scope = [_]std.json.ObjectMap{ti};
@@ -251,10 +271,16 @@ fn findFirstArrayString(a: Allocator, scopes: []const std.json.ObjectMap, keys: 
     return null;
 }
 
-/// Session ids: the alias table, then an OpenCode `session.*` event's
-/// `properties.info.id`.
+/// Session ids: the alias table, then Amp's `thread.id`, then an OpenCode
+/// `session.*` event's `properties.info.id`.
 fn findSessionId(a: Allocator, root: std.json.ObjectMap, scopes: []const std.json.ObjectMap) Allocator.Error!?[]const u8 {
     if (try findString(a, scopes, &keys_session, max_id_bytes)) |s| return s;
+    if (root.get("thread")) |thread| {
+        if (thread == .object) {
+            const scope = [_]std.json.ObjectMap{thread.object};
+            if (try findString(a, &scope, &.{"id"}, max_id_bytes)) |s| return s;
+        }
+    }
     const props = root.get("properties") orelse return null;
     if (props != .object) return null;
     const info = props.object.get("info") orelse return null;
@@ -263,19 +289,69 @@ fn findSessionId(a: Allocator, root: std.json.ObjectMap, scopes: []const std.jso
     return findString(a, &scope, &.{"id"}, max_id_bytes);
 }
 
-/// `error` may be a string or an object with a `message`.
+/// `error` may be a string or an object with a `message` (OpenCode nests
+/// it as `{name, data: {message}}`).
 fn findErrorText(a: Allocator, scopes: []const std.json.ObjectMap) Allocator.Error!?[]const u8 {
     const v = findRaw(scopes, &keys_error) orelse return null;
     switch (v) {
         .string => |s| return if (s.len > 0) try dupeCapped(a, s, max_text_bytes) else null,
         .object => |o| {
             const scope = [_]std.json.ObjectMap{o};
-            return (try findString(a, &scope, &.{ "message", "name", "type" }, max_text_bytes)) orelse
+            if (try findString(a, &scope, &.{"message"}, max_text_bytes)) |m| return m;
+            if (o.get("data")) |data| {
+                if (data == .object) {
+                    const data_scope = [_]std.json.ObjectMap{data.object};
+                    if (try findString(a, &data_scope, &.{"message"}, max_text_bytes)) |m| return m;
+                }
+            }
+            return (try findString(a, &scope, &.{ "name", "type" }, max_text_bytes)) orelse
                 try a.dupe(u8, "error");
         },
         .bool => |b| return if (b) try a.dupe(u8, "error") else null,
         else => return null,
     }
+}
+
+/// `status` may be a string or an object `{type}` (OpenCode
+/// `session.status`); Antigravity's Stop reports `terminationReason`.
+fn findStatus(a: Allocator, scopes: []const std.json.ObjectMap) Allocator.Error!?[]const u8 {
+    for (scopes) |obj| {
+        for (keys_status) |k| {
+            const v = obj.get(k) orelse continue;
+            switch (v) {
+                .string => |s| if (s.len > 0) return try dupeCapped(a, s, max_name_bytes),
+                .object => |o| {
+                    const scope = [_]std.json.ObjectMap{o};
+                    if (try findString(a, &scope, &.{"type"}, max_name_bytes)) |t| return t;
+                },
+                else => {},
+            }
+        }
+    }
+    return null;
+}
+
+/// Tool names that live below the top level: Antigravity `toolCall.name`,
+/// Rovo Dev `attributes.tool_calls[0].tool_name` (or `tool_results[0]`).
+fn findNestedToolName(a: Allocator, root: std.json.ObjectMap) Allocator.Error!?[]const u8 {
+    if (root.get("toolCall")) |tc| {
+        if (tc == .object) {
+            const scope = [_]std.json.ObjectMap{tc.object};
+            if (try findString(a, &scope, &.{ "name", "tool_name", "toolName" }, max_name_bytes)) |s| return s;
+        }
+    }
+    const attrs = root.get("attributes") orelse return null;
+    if (attrs != .object) return null;
+    for ([_][]const u8{ "tool_calls", "tool_results" }) |key| {
+        const arr = attrs.object.get(key) orelse continue;
+        if (arr != .array) continue;
+        for (arr.array.items) |item| {
+            if (item != .object) continue;
+            const scope = [_]std.json.ObjectMap{item.object};
+            if (try findString(a, &scope, &.{ "tool_name", "toolName", "name" }, max_name_bytes)) |s| return s;
+        }
+    }
+    return null;
 }
 
 /// `model` may be a string or an object `{id|name|display_name}`.
@@ -292,9 +368,13 @@ fn findModel(a: Allocator, scopes: []const std.json.ObjectMap) Allocator.Error!?
 }
 
 /// `tool_input` as an object; a JSON-encoded string (Copilot `toolArgs`) is
-/// decoded.
+/// decoded. Antigravity nests it as `toolCall.args`.
 fn toolInputObject(a: Allocator, scopes: []const std.json.ObjectMap) Allocator.Error!?std.json.ObjectMap {
-    const v = findRaw(scopes, &keys_tool_input) orelse return null;
+    const v = findRaw(scopes, &keys_tool_input) orelse blk: {
+        const tc = scopes[0].get("toolCall") orelse return null;
+        if (tc != .object) return null;
+        break :blk tc.object.get("args") orelse return null;
+    };
     switch (v) {
         .object => |o| return o,
         .string => |s| {
@@ -345,6 +425,17 @@ fn valueMentionsSkip(v: std.json.Value, depth: usize) bool {
         },
         else => return false,
     }
+}
+
+/// Codex's legacy `notify` program receives its JSON as the last argv
+/// element (stdin is null). Returns that element when it looks like a JSON
+/// object, so the CLI can hand it to `parse` instead of empty stdin.
+pub fn argvPayload(args: []const []const u8) ?[]const u8 {
+    if (args.len == 0) return null;
+    const last = args[args.len - 1];
+    const t = std.mem.trim(u8, last, " \t\r\n");
+    if (t.len < 2 or t[0] != '{') return null;
+    return last;
 }
 
 fn countCodepoints(s: []const u8) usize {
