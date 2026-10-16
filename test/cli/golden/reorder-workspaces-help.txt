@@ -8,5 +8,7 @@ Options:
   --order <list>               Comma-separated workspace handles
   --window <id|ref|index>      Window that resolves indexes
   --dry-run                    Print the resulting order, one handle per
-                               line, without applying it
+                               line (or the planned moves as
+                               "<workspace> from=<i> to=<j>"), without
+                               applying it
   --json                       Print the result as JSON

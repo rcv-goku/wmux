@@ -5,7 +5,8 @@
 //!   after_workspace_id, window_id?, dry_run?}`; `--dry-run` prints the
 //!   resolved final index.
 //! - `workspace.reorder_many {workspace_ids, window_id?, dry_run?}`;
-//!   `--dry-run` prints the resulting order, one handle per line.
+//!   `--dry-run` prints the resulting order, one handle per line, or, for
+//!   cmux's `plan[]` result, one `<handle> from=<i> to=<j>` line per step.
 //! - `workspace.action {action, workspace_id?, window_id?, title?,
 //!   description?, color?, force?}`.
 
@@ -101,11 +102,34 @@ pub fn runReorderMany(ctx: *Ctx) !u8 {
         try common.writeJsonResult(ctx, v);
         return output.exit.ok;
     }
-    const items = if (dry) common.list(v, "workspaces") else null;
-    if (items) |list| {
-        for (list) |w| try ctx.out.print("{s}\n", .{(try common.handleText(ctx, w, "workspace")) orelse "?"});
-    } else try ctx.out.writeAll("OK\n");
+    if (dry) {
+        // The resulting order when the result lists it, else cmux's plan
+        // (`plan[]` entries with refs and `from_index`/`to_index`).
+        if (common.list(v, "workspaces")) |list| {
+            for (list) |w| try ctx.out.print("{s}\n", .{(try common.handleText(ctx, w, "workspace")) orelse "?"});
+            return output.exit.ok;
+        }
+        if (common.list(v, "plan")) |plan| {
+            for (plan) |step| try writePlanStep(ctx, step);
+            return output.exit.ok;
+        }
+    }
+    try ctx.out.writeAll("OK\n");
     return output.exit.ok;
+}
+
+/// `<handle> from=<from_index> to=<to_index>` (indexes when present).
+fn writePlanStep(ctx: *Ctx, step: std.json.Value) !void {
+    try ctx.out.writeAll((try common.handleText(ctx, step, "workspace")) orelse "?");
+    if (common.field(step, "from_index")) |f| {
+        try ctx.out.writeAll(" from=");
+        try common.writeNumber(ctx.out, f);
+    }
+    if (common.field(step, "to_index")) |t| {
+        try ctx.out.writeAll(" to=");
+        try common.writeNumber(ctx.out, t);
+    }
+    try ctx.out.writeByte('\n');
 }
 
 pub const actions = [_][]const u8{

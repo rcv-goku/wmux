@@ -644,6 +644,15 @@ test "unit: cli-workspace: reorder-workspaces order list and dry run" {
     const dry = try testkit.expectOk(&h, &.{ "reorder-workspaces", "--order=workspace:3,0", "--window", "window:1", "--dry-run" });
     try testkit.expectGolden(h.alloc(), "reorder-workspaces-dry-run.txt", dry);
     try h.expectLast("workspace.reorder_many", "{\"workspace_ids\":[\"workspace:3\",0],\"window_id\":\"window:1\",\"dry_run\":true}");
+    // cmux's result shape: plan[] and events[] with refs and from/to indexes.
+    h.ok("workspace.reorder_many", "{\"dry_run\":true,\"plan\":[{\"workspace_id\":\"A\",\"workspace_ref\":\"workspace:3\",\"from_index\":2,\"to_index\":0},{\"workspace_id\":\"B\",\"workspace_ref\":\"workspace:1\",\"from_index\":0,\"to_index\":1},{\"ref\":\"workspace:9\"}],\"events\":[]}");
+    const plan = try testkit.expectOk(&h, &.{ "reorder-workspaces", "--order", "workspace:3,workspace:1", "--dry-run" });
+    try testkit.expectGolden(h.alloc(), "reorder-workspaces-dry-run-plan.txt", plan);
+    const plan_both = try testkit.expectOk(&h, &.{ "reorder-workspaces", "--order", "workspace:3", "--dry-run", "--id-format", "both" });
+    try testing.expect(std.mem.startsWith(u8, plan_both, "workspace:3 (A) from=2 to=0\n"));
+    try testing.expectEqualStrings("OK\n", try testkit.expectOk(&h, &.{ "reorder-workspaces", "--order", "workspace:3" }));
+    h.ok("workspace.reorder_many", "{\"ok\":true}");
+    try testing.expectEqualStrings("OK\n", try testkit.expectOk(&h, &.{ "reorder-workspaces", "--order", "workspace:3", "--dry-run" }));
     try testkit.expectUsage(&h, &.{"reorder-workspaces"}, "reorder-workspaces requires --order");
     try testkit.expectUsage(&h, &.{ "reorder-workspaces", "--order", "workspace:1,,workspace:2" }, "--order has an empty entry");
     try testkit.expectUsage(&h, &.{ "reorder-workspaces", "--order=" }, "--order has an empty entry");
