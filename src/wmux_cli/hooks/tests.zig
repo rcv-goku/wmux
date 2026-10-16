@@ -942,13 +942,18 @@ test "unit: agents: payload reads amp thread id and opencode status and error ob
 
 test "unit: agents: codex legacy notify payload comes from the last argv element" {
     const json = "{\"type\":\"agent-turn-complete\",\"thread-id\":\"th\"}";
-    try testing.expectEqualStrings(json, payload.argvPayload(&.{ "wmux", "hooks", "codex", "notify", json }).?);
+    try testing.expectEqualStrings(json, payload.argvPayload(&.{ "wmux", "hooks", "codex", "stop", json }).?);
     try testing.expect(payload.argvPayload(&.{}) == null);
     try testing.expect(payload.argvPayload(&.{ "wmux", "stop" }) == null);
     try testing.expect(payload.argvPayload(&.{"{"}) == null);
     var p = try parseFixture(payload.argvPayload(&.{ "x", json }).?);
     defer p.deinit();
     try testing.expectEqualStrings("th", p.session_id.?);
+    // Registered as `stop` (or the native name) a finished turn is idle;
+    // `notify` would be the `notification` alias and read as needs-input.
+    try testing.expectEqual(Event.stop, normalize.normalize(.codex, "stop", &p).?.event);
+    try testing.expectEqual(Event.stop, normalize.normalize(.codex, "agent-turn-complete", &p).?.event);
+    try testing.expectEqual(Event.notification, normalize.normalize(.codex, "notify", &p).?.event);
 }
 
 test "unit: agents: argv payload edge cases" {

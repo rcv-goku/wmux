@@ -430,6 +430,10 @@ fn valueMentionsSkip(v: std.json.Value, depth: usize) bool {
 /// Codex's legacy `notify` program receives its JSON as the last argv
 /// element (stdin is null). Returns that element when it looks like a JSON
 /// object, so the CLI can hand it to `parse` instead of empty stdin.
+/// Register that program with the `stop` subcommand (or the native
+/// `agent-turn-complete` name), not `notify`: `notify` is cmux's alias of
+/// `notification`, the payload never turns a subcommand into a stop, and a
+/// finished turn would read as needs-input.
 pub fn argvPayload(args: []const []const u8) ?[]const u8 {
     if (args.len == 0) return null;
     const last = args[args.len - 1];
