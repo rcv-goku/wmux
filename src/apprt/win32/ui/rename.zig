@@ -6,6 +6,7 @@ const std = @import("std");
 
 const Sidebar = @import("sidebar/legacy_gdi.zig");
 const Window = @import("Window.zig");
+const tabbar_paint = @import("tabbar/paint.zig");
 const w32 = @import("../platform/win32.zig");
 
 /// What an in-progress inline rename writes back to. `.tab` is an index
@@ -26,12 +27,11 @@ pub fn startTabRename(self: *Window, tab_idx: usize) void {
     const ws = self.activeWorkspace();
     const container = ws.focusedContainerOrFirst() orelse return;
     if (tab_idx >= container.tab_count) return;
-    // In split mode, use the container's own tab_rects; in single-pane
-    // mode, use the Window-level copies (synced during paint).
-    const rect = if (ws.split_tree.isSplit())
-        container.tab_rects[tab_idx]
-    else
-        self.tab_rects[tab_idx];
+    // The tab's rect in the bar the pane shows (shared geometry). A pane
+    // without a visible bar renames through a zero-size overlay, as the
+    // never-painted cached rects did before W0-A2.
+    const rect = tabbar_paint.tabRect(self, container, tab_idx) orelse
+        w32.RECT{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
     const tlen = container.tab_title_lens[tab_idx];
     self.startRename(rect, container.tab_titles[tab_idx][0..tlen], .{ .tab = tab_idx });
 }

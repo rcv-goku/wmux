@@ -237,19 +237,6 @@ tab_bar_visible: bool = false,
 /// DPI scale factor (DPI / 96.0).
 scale: f32 = 1.0,
 
-/// Hit-test rectangles for each tab in the tab bar. Zero-initialized
-/// so input handlers that read it before the first paint (e.g., a
-/// synthetic WM_LBUTTONDOWN during startup) get a no-match instead of
-/// stack garbage.
-tab_rects: [64]w32.RECT = std.mem.zeroes([64]w32.RECT),
-
-/// Hit-test rectangle for the "+" (new tab) button.
-new_tab_rect: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
-
-/// Hit-test rectangle for the "▾" (backend picker) segment beside the
-/// new-tab button.
-new_tab_dropdown_rect: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
-
 /// Index of the tab currently being hovered (-1 = none).
 hover_tab: isize = -1,
 
@@ -992,34 +979,9 @@ pub fn windowWndProc(
                 }
                 return 0;
             }
-            // Double-click on tab bar starts inline rename.
-            // Split mode: check per-container tab bars.
-            if (window.hitTestSplitTabBar(x, y)) |dbl_container| {
-                const ws = window.activeWorkspace();
-                ws.focused_container = dbl_container;
-                window.clearTabAttention(dbl_container, dbl_container.active_tab);
-                window.invalidateTabBar();
-                for (0..dbl_container.tab_rect_count) |i| {
-                    const rect = dbl_container.tab_rects[i];
-                    if (x >= rect.left and x < rect.right) {
-                        window.startTabRename(i);
-                        return 0;
-                    }
-                }
-                return 0;
-            }
-            // Single-pane mode: window-top tab bar.
-            if (y < window.tabBarHeight()) {
-                const dbl_container = window.activeWorkspace().focusedContainerOrFirst() orelse return 0;
-                for (0..dbl_container.tab_count) |i| {
-                    const rect = window.tab_rects[i];
-                    if (x >= rect.left and x < rect.right) {
-                        window.startTabRename(i);
-                        return 0;
-                    }
-                }
-                return 0;
-            }
+            // Double-click on a tab bar (split pane bar or window-top bar)
+            // starts an inline tab rename.
+            if (tabbar_input.handleTabBarDoubleClick(window, x, y)) return 0;
             if (window.hitTestDivider(x, y)) |hit| {
                 const ws = window.activeWorkspace();
                 ws.split_tree.resizeInPlace(hit.handle, @as(f16, 0.5));
@@ -1082,38 +1044,7 @@ pub fn windowWndProc(
             }
             // Handle tab drag reorder
             if (window.drag_tab >= 0) {
-                const xi16: i16 = @truncate(x);
-                const dx = if (xi16 > window.drag_start_x) xi16 - window.drag_start_x else window.drag_start_x - xi16;
-                if (!window.drag_active and dx > 5) {
-                    window.drag_active = true;
-                }
-                const drag_container = window.activeWorkspace().focusedContainerOrFirst();
-                if (window.drag_active and drag_container != null and drag_container.?.tab_count > 1) {
-                    // Use uniform tab widths for drag target calculation,
-                    // not the painted widths (the last tab gets stretched
-                    // to fill remaining space, skewing its midpoint).
-                    const tab_count = drag_container.?.tab_count;
-                    const from: usize = @intCast(window.drag_tab);
-                    // tab_rects are in client coords (offset by the sidebar
-                    // width), so slot 0 starts at tab_rects[0].left, not 0.
-                    const origin_x = window.tab_rects[0].left;
-                    const first_w = window.tab_rects[0].right - window.tab_rects[0].left;
-                    var target: usize = 0;
-                    for (0..tab_count) |i| {
-                        const slot_left: i32 = origin_x + @as(i32, @intCast(i)) * first_w;
-                        const slot_mid = slot_left + @divTrunc(first_w, 2);
-                        if (x >= slot_mid) {
-                            target = i;
-                        }
-                    }
-                    // Clamp to valid range
-                    if (target >= tab_count) target = tab_count - 1;
-                    if (target != from) {
-                        window.moveTabTo(from, target);
-                        window.drag_tab = @intCast(target);
-                        if (window.hwnd) |h| _ = w32.UpdateWindow(h);
-                    }
-                }
+                tabbar_input.updateTabDrag(window, x);
                 return 0;
             }
             // Handle sidebar row drag-reorder.
@@ -1248,6 +1179,7 @@ test {
     _ = sidebar_input;
     _ = tabbar_input;
     _ = tabbar_paint;
+    _ = @import("tabbar/logic/geometry.zig");
     _ = ops_move;
     _ = ops_pane;
     _ = ops_surface;

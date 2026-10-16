@@ -7,6 +7,7 @@ const std = @import("std");
 
 const Pane = @import("../../model/Pane.zig");
 const Window = @import("../Window.zig");
+const geometry = @import("logic/geometry.zig");
 const w32 = @import("../../platform/win32.zig");
 
 /// Paint the tab bar by dispatching to Pane rendering.
@@ -77,28 +78,46 @@ pub fn paintTabBar(self: *Window, hdc_screen: w32.HDC) void {
         self.hover_new_tab,
         self.hover_new_tab_dropdown,
     );
+}
 
-    // Copy hit-test rects from the container back to Window fields so
-    // existing handleTabBarClick/handleTabBarMouseMove work unchanged.
-    for (0..container.tab_rect_count) |i| {
-        self.tab_rects[i] = container.tab_rects[i];
+/// The geometry of the tab bar `pane` shows right now, or null when it
+/// shows none: in a split workspace each pane with more than one tab has a
+/// bar across the top of its layout rect; otherwise the window-top bar
+/// (right of the sidebar) belongs to the focused pane. Every hit-test uses
+/// this, so input always agrees with what paintTabBar draws.
+pub fn barGeometry(self: *Window, pane: *const Pane) ?geometry.Geometry {
+    const ws = self.activeWorkspace();
+    if (ws.split_tree.isSplit()) {
+        if (pane.tab_count <= 1) return null;
+        const lr = pane.layout_rect;
+        return geometry.compute(lr.left, lr.top, lr.right - lr.left, pane.tab_count, self.scale);
     }
-    self.new_tab_rect = container.new_tab_btn_rect;
-    self.new_tab_dropdown_rect = container.new_tab_dropdown_rect;
+    if (!self.tab_bar_visible) return null;
+    const hwnd = self.hwnd orelse return null;
+    var client_rect: w32.RECT = undefined;
+    if (w32.GetClientRect(hwnd, &client_rect) == 0) return null;
+    const sidebar_w = self.sidebarWidth();
+    return geometry.compute(sidebar_w, 0, client_rect.right - sidebar_w, pane.tab_count, self.scale);
+}
+
+/// The client rect of tab `index` in `pane`'s bar (inline rename overlay).
+pub fn tabRect(self: *Window, pane: *const Pane, index: usize) ?w32.RECT {
+    const geo = barGeometry(self, pane) orelse return null;
+    if (index >= geo.tab_count) return null;
+    const span = geo.tabSpan(index);
+    return .{ .left = span.left, .top = geo.top, .right = span.right, .bottom = geo.top + geo.bar_h };
 }
 
 // -------------------------------------------------------------------------
 // Per-pane tab bar rendering
 // -------------------------------------------------------------------------
 
-/// The unscaled tab bar height in pixels (matches Window.tabBarHeight logic).
-pub fn barHeight(scale: f32) i32 {
-    return @intFromFloat(@round(32.0 * scale));
-}
+/// The tab bar height in pixels at `scale` (matches Window.tabBarHeight).
+pub const barHeight = geometry.barHeight;
 
 /// Paint a per-pane tab bar within the top portion of `rect`. Returns the
-/// height consumed (0 when no bar is drawn, e.g. <=1 tab). Stores hit-test
-/// rects on self in window client coords for later click/hover routing.
+/// height consumed (0 when no bar is drawn, e.g. <=1 tab). Hit-testing
+/// recomputes the same geometry (logic/geometry.zig) from the bar rect.
 ///
 /// `is_focused` controls visual treatment: focused gets brighter text and
 /// an accent underline on the active tab; unfocused is dimmed.
@@ -116,10 +135,7 @@ pub fn paintPane(
     hovered_new_tab: bool,
     hovered_dropdown: bool,
 ) i32 {
-    if (!force_visible and self.tab_count <= 1) {
-        self.tab_rect_count = 0;
-        return 0;
-    }
+    if (!force_visible and self.tab_count <= 1) return 0;
 
     const bar_h = barHeight(scale);
     if (bar_h <= 0) return 0;
@@ -182,53 +198,21 @@ pub fn paintPane(
     }
     _ = w32.SetBkMode(mem_dc, w32.TRANSPARENT);
 
-    // --- Calculate tab geometry ---
-    const new_tab_btn_w: i32 = @intFromFloat(@round(36.0 * scale));
-    const dropdown_btn_w: i32 = @intFromFloat(@round(20.0 * scale));
-    const close_btn_w: i32 = @intFromFloat(@round(20.0 * scale));
-    const text_pad: i32 = @intFromFloat(@round(10.0 * scale));
+    // --- Tab geometry (shared with every hit-test: logic/geometry.zig) ---
+    const geo = geometry.compute(rect.left, rect.top, bar_w, self.tab_count, scale);
+    const close_btn_w = geo.close_w;
+    const text_pad = geo.text_pad;
     const accent_h: i32 = @intFromFloat(@round(2.0 * scale));
 
-    const tab_count_i32: i32 = @intCast(self.tab_count);
-    const available_w = bar_w - new_tab_btn_w - dropdown_btn_w;
-
-    const min_tab_w: i32 = @intFromFloat(@round(60.0 * scale));
-    const max_tab_w: i32 = @intFromFloat(@round(200.0 * scale));
-
-    var tab_w: i32 = if (tab_count_i32 > 0)
-        @divTrunc(available_w, tab_count_i32)
-    else
-        0;
-    tab_w = @max(tab_w, min_tab_w);
-    tab_w = @min(tab_w, max_tab_w);
-
     // --- Draw each tab ---
-    var x: i32 = 0;
     for (0..self.tab_count) |i| {
         const is_active = (i == self.active_tab);
         const is_hovered = if (hovered_tab) |ht| (ht == i) else false;
 
-        const this_tab_w: i32 = if (i == self.tab_count - 1 and tab_count_i32 > 0)
-            @max(available_w - x, min_tab_w)
-        else
-            tab_w;
-
-        // Store hit-test rect in window client coords.
-        self.tab_rects[i] = w32.RECT{
-            .left = rect.left + x,
-            .top = rect.top,
-            .right = rect.left + x + this_tab_w,
-            .bottom = rect.top + bar_h,
-        };
-
-        // Store close button hit-test rect.
-        const close_left = x + this_tab_w - close_btn_w - @divTrunc(text_pad, 2);
-        self.close_btn_rects[i] = w32.RECT{
-            .left = rect.left + close_left,
-            .top = rect.top,
-            .right = rect.left + close_left + close_btn_w + @divTrunc(text_pad, 2),
-            .bottom = rect.top + bar_h,
-        };
+        // Local (bitmap) coordinates of this tab and its close glyph.
+        const x = geo.tabLocalLeft(i);
+        const this_tab_w = geo.tabWidth(i);
+        const close_left = geo.closeLocalLeft(i);
 
         // Draw tab background.
         if (is_active) {
@@ -343,20 +327,12 @@ pub fn paintPane(
                 w32.DT_CENTER | w32.DT_VCENTER | w32.DT_SINGLELINE | w32.DT_NOPREFIX,
             );
         }
-
-        x += this_tab_w;
     }
 
     // --- Draw new-tab (+) button ---
     {
-        const btn_left = x;
-        const btn_right = x + new_tab_btn_w;
-        self.new_tab_btn_rect = w32.RECT{
-            .left = rect.left + btn_left,
-            .top = rect.top,
-            .right = rect.left + btn_right,
-            .bottom = rect.top + bar_h,
-        };
+        const btn_left = geo.newTabSpan().left - rect.left;
+        const btn_right = geo.newTabSpan().right - rect.left;
 
         if (hovered_new_tab) {
             var btn_rect = w32.RECT{ .left = btn_left, .top = 0, .right = btn_right, .bottom = bar_h };
@@ -385,18 +361,10 @@ pub fn paintPane(
 
     // --- Draw backend picker (▾) segment beside the new-tab button ---
     {
-        const dd_left = self.new_tab_btn_rect.right - rect.left;
-        self.new_tab_dropdown_rect = w32.RECT{
-            .left = rect.left + dd_left,
-            .top = rect.top,
-            .right = rect.left + dd_left + dropdown_btn_w,
-            .bottom = rect.top + bar_h,
-        };
-
         var dd_rect_local = w32.RECT{
-            .left = dd_left,
+            .left = geo.dropdownSpan().left - rect.left,
             .top = 0,
-            .right = dd_left + dropdown_btn_w,
+            .right = geo.dropdownSpan().right - rect.left,
             .bottom = bar_h,
         };
 
@@ -421,7 +389,6 @@ pub fn paintPane(
     // --- BitBlt to screen at the container's position ---
     _ = w32.BitBlt(hdc, rect.left, rect.top, bar_w, bar_h, mem_dc, 0, 0, w32.SRCCOPY);
 
-    self.tab_rect_count = self.tab_count;
     return bar_h;
 }
 
@@ -447,14 +414,12 @@ test "unit: paintTabBar returns 0 for single tab not force visible" {
     pc.tab_count = 1;
     const h = paintPane(&pc, test_hdc, .{ .left = 0, .top = 0, .right = 800, .bottom = 600 }, 1.0, test_config, true, null, null, null, false, false, false);
     try testing.expectEqual(@as(i32, 0), h);
-    try testing.expectEqual(@as(usize, 0), pc.tab_rect_count);
 }
 
 test "unit: paintTabBar returns 0 for empty container" {
     var pc: Pane = .{};
     const h = paintPane(&pc, test_hdc, .{ .left = 0, .top = 0, .right = 800, .bottom = 600 }, 1.0, test_config, true, null, null, null, false, false, false);
     try testing.expectEqual(@as(i32, 0), h);
-    try testing.expectEqual(@as(usize, 0), pc.tab_rect_count);
 }
 
 test "unit: paintTabBar returns 0 for zero scale" {

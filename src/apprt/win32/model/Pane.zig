@@ -64,26 +64,12 @@ tab_log: [MAX_TABS]log_ring.LogRing = @splat(.{}),
 tab_synchronized: [MAX_TABS]bool = @splat(false),
 
 // -------------------------------------------------------------------------
-// Per-pane tab bar hit-test state
+// Layout
 // -------------------------------------------------------------------------
 
-/// Hit-test rectangles for each tab (in window client coords).
-tab_rects: [MAX_TABS]w32.RECT = std.mem.zeroes([MAX_TABS]w32.RECT),
-
-/// Number of valid entries in tab_rects (mirrors tab_count at paint time).
-tab_rect_count: usize = 0,
-
-/// Hit-test rectangle for the per-pane "+" (new tab) button.
-new_tab_btn_rect: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
-
-/// Hit-test rectangle for the per-pane "▾" (backend picker) button.
-new_tab_dropdown_rect: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
-
-/// Per-tab close button hit-test rectangles (in window client coords).
-close_btn_rects: [MAX_TABS]w32.RECT = std.mem.zeroes([MAX_TABS]w32.RECT),
-
 /// Full layout rect assigned by layoutSplits (includes tab bar area).
-/// Used for painting per-pane tab bars and hit-testing in split mode.
+/// Used for painting per-pane tab bars and, through the shared tab bar
+/// geometry (ui/tabbar/logic/geometry.zig), for hit-testing them.
 layout_rect: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
 
 // -------------------------------------------------------------------------
@@ -304,13 +290,8 @@ test "unit: Pane default hover state is cleared" {
     try testing.expect(!pc.hovered_dropdown);
 }
 
-test "unit: Pane default hit-test rects are zeroed" {
+test "unit: Pane default layout rect is zeroed" {
     const pc: Pane = .{};
-    try testing.expectEqual(@as(usize, 0), pc.tab_rect_count);
-    try testing.expectEqual(@as(i32, 0), pc.new_tab_btn_rect.left);
-    try testing.expectEqual(@as(i32, 0), pc.new_tab_btn_rect.right);
-    try testing.expectEqual(@as(i32, 0), pc.new_tab_dropdown_rect.left);
-    try testing.expectEqual(@as(i32, 0), pc.new_tab_dropdown_rect.right);
     try testing.expectEqual(@as(i32, 0), pc.layout_rect.left);
     try testing.expectEqual(@as(i32, 0), pc.layout_rect.right);
 }
