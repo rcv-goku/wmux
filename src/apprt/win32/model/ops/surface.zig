@@ -126,11 +126,14 @@ pub fn moveInPane(pane: *Pane, from: usize, to: usize) bool {
 
 /// Make tab `index` of `pane` (a pane of `ws`) the pane's selected tab.
 /// Never touches another pane (ui-model 8.1 #1, #13). In the active
-/// workspace the newly selected tab is shown (re-layout) and its
-/// bell/exited status and attention are cleared, as the user can now see
-/// it; keyboard focus and the window title follow only when `pane` is the
-/// workspace's focused pane. In a background workspace only the selection
-/// changes (selectWorkspace shows it later).
+/// workspace the newly selected tab is shown (re-layout). When `pane` is
+/// the workspace's focused pane the user is now looking at the tab: its
+/// bell/exited status and attention are cleared, and keyboard focus and
+/// the window title follow it. A tab shown in another pane keeps its
+/// status and attention, the same rule as setAttentionForSurface and the
+/// bell (only the focused pane's selected tab counts as seen), so that
+/// pane's attention ring can still point at it. In a background workspace
+/// only the selection changes (selectWorkspace shows it later).
 pub fn selectInPane(self: *Window, ws: *Workspace, pane: *Pane, index: usize) void {
     if (index >= pane.tabCount()) return;
     self.cancelTabRename();
@@ -155,11 +158,13 @@ pub fn selectInPane(self: *Window, ws: *Workspace, pane: *Pane, index: usize) vo
         return;
     }
     const tab = pane.tabs.items[index];
-    tab.legacy.status = .normal;
-    // The tab is now visible: clear any pending attention ring on it.
-    self.clearTabAttention(pane, index);
-    self.layoutSplits();
     const is_focused = if (ws.focusedPaneOrFirst()) |fp| fp == pane else false;
+    if (is_focused) {
+        tab.legacy.status = .normal;
+        // The user now sees the tab: clear any pending attention ring on it.
+        self.clearTabAttention(pane, index);
+    }
+    self.layoutSplits();
     if (is_focused) {
         tab.focus();
         self.updateWindowTitle();
