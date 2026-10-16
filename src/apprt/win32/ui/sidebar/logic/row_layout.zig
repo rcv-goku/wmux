@@ -589,28 +589,42 @@ fn layoutLine(cx: *Ctx, l: *const model.Line, item: u16, left: f32, right: f32, 
         truncated = true;
     }
     const h = @max(ext.height, lh);
-    const multi = ext.line_count > 1;
     const run_links = hasRunLinks(l.runs) and override == null;
-    const action: Action = if (l.link != null) .open_link else if (run_links and multi) .text_links else .none;
+    // Per-run link rectangles need all text on one visible line and no run
+    // that paint draws wider or narrower than measured here (bold, italic,
+    // code). Otherwise the text element gets `text_links` and the app
+    // hit-tests its DirectWrite layout.
+    const rect_links = run_links and ext.line_count <= 1 and
+        std.mem.indexOfScalar(u8, text, '\n') == null and !hasStyledRuns(l.runs);
+    const action: Action = if (l.link != null) .open_link else if (run_links and !rect_links) .text_links else .none;
     const text_rect = Rect.xywh(x, y, avail, h);
     try cx.add(.{ .kind = .text, .rect = text_rect, .action = action, .role = .detail, .item = item, .truncated = truncated, .text_override = override });
 
-    // Single-line runs with links get their own clickable rectangles.
-    if (run_links and !multi and l.link == null) {
+    if (rect_links and l.link == null) {
         var single = st;
         single.wrap = .none;
-        var prefix: f32 = 0;
+        const inf = std.math.inf(f32);
+        var end: usize = 0;
         for (l.runs, 0..) |run, i| {
-            const rw = cx.measure(run.text, &single, std.math.inf(f32)).width;
-            defer prefix += rw;
+            end += run.text.len;
             if (run.link == null) continue;
-            const lx = x + prefix;
+            // A link ends where the text through it ends and starts its own
+            // width before that. Measuring prefixes, not single runs, keeps
+            // the whitespace in front of the link: DirectWrite widths leave
+            // out trailing whitespace ("see " measures as "see").
+            const lx_end = x + cx.measure(text[0..end], &single, inf).width;
+            const lx = @max(lx_end - cx.measure(run.text, &single, inf).width, x);
             if (lx >= text_rect.right) break;
-            const lr = Rect{ .left = lx, .top = y, .right = @min(lx + rw, text_rect.right), .bottom = y + lh };
+            const lr = Rect{ .left = lx, .top = y, .right = @min(lx_end, text_rect.right), .bottom = y + lh };
             try cx.add(.{ .kind = .link, .rect = lr, .action = .open_link, .role = .detail, .item = item, .sub = @intCast(@min(i, no_item - 1)) });
         }
     }
     return h;
+}
+
+fn hasStyledRuns(runs: []const model.Run) bool {
+    for (runs) |run| if (run.style.bold or run.style.italic or run.style.code) return true;
+    return false;
 }
 
 fn flowBoxes(cx: *Ctx, labels: []const Size, pm: geometry.PillMetrics, left: f32, right: f32, y: f32) Allocator.Error!struct { rects: []Rect, height: f32 } {

@@ -592,6 +592,67 @@ test "unit: sidebar: wrapped description with links resolves runs via text posit
     try testing.expect(lay_off.rows[0].height < lay.rows[0].height);
 }
 
+/// FakeMeasurer metrics, but widths leave out trailing spaces like
+/// DirectWrite's DWRITE_TEXT_METRICS.width (what the app measures with).
+const TrailingSpaceMeasurer = struct {
+    fake: text_style.FakeMeasurer = .{},
+
+    fn measurer(self: *TrailingSpaceMeasurer) text_style.TextMeasurer {
+        return .{ .ctx = self, .measure_fn = measureErased };
+    }
+
+    fn measureErased(ctx: *anyopaque, text: []const u8, style: *const text_style.TextStyle, max_width: f32) text_style.TextExtent {
+        const self: *TrailingSpaceMeasurer = @ptrCast(@alignCast(ctx));
+        return self.fake.measure(std.mem.trimRight(u8, text, " "), style, max_width);
+    }
+};
+
+fn describedRow(a: std.mem.Allocator, n: u8, markdown: []const u8) ![]model.Row {
+    var b = model.RowBuilder.init(a);
+    b.beginSlot(.description);
+    try b.markdown(markdown, 0);
+    const nodes = try a.alloc(model.Node, 1);
+    nodes[0] = .{ .workspace = .{ .id = testId(n), .details = b.finish() } };
+    return model.build(a, .{ .nodes = nodes });
+}
+
+test "unit: sidebar: single-line link rects line up with DirectWrite widths" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var dw: TrailingSpaceMeasurer = .{};
+    const params: layout.Params = .{ .width = 240 };
+    // 12.5 * 0.88 * 0.5 = 5.5 DIPs per code point; the text starts at 10.
+    const adv: f32 = 12.5 * 0.88 * 0.5;
+
+    // The space that ends "see " counts even though a width measured on its
+    // own run would drop it.
+    const rows = try describedRow(a, 1, "see [docs](https://example.com) now");
+    const lay = try layout.layoutRows(a, null, rows, dw.measurer(), params);
+    const link = findKind(lay.rows[0], .link).?;
+    try testing.expectApproxEqAbs(10 + 4 * adv, link.rect.left, 0.5);
+    try testing.expectApproxEqAbs(10 + 8 * adv, link.rect.right, 0.5);
+    try testing.expectEqualStrings("https://example.com", layout.elementLink(&rows[0], link).?);
+
+    // Bold or code runs before a link are wider or narrower in paint than
+    // measured here: the line resolves links through the text layout.
+    const styled = try describedRow(a, 2, "**Note:** run `zig build` then [docs](https://example.com)");
+    const sl = try layout.layoutRows(a, null, styled, dw.measurer(), params);
+    try testing.expectEqual(layout.Action.text_links, findKind(sl.rows[0], .text).?.action);
+    try testing.expect(findKind(sl.rows[0], .link) == null);
+
+    // A one-line item whose link sits after a line break shows only its
+    // first line: no rectangle may point at the hidden link.
+    var b = model.RowBuilder.init(a);
+    b.beginSlot(.status_entries);
+    try b.lineEx(.{ .runs = try model.parseInlineMarkdown(a, "first line\nsee [docs](https://example.com)", .keep) });
+    const nodes = [_]model.Node{.{ .workspace = .{ .id = testId(3), .details = b.finish() } }};
+    const hidden = try model.build(a, .{ .nodes = &nodes });
+    const hl = try layout.layoutRows(a, null, hidden, dw.measurer(), params);
+    try testing.expect(findKind(hl.rows[0], .link) == null);
+    try testing.expectEqual(layout.Action.text_links, findKind(hl.rows[0], .text).?.action);
+}
+
 test "unit: sidebar: notification preview is capped at the line limit" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
