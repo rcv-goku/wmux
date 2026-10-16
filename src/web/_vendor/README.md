@@ -136,8 +136,8 @@ the native dependencies.
 
 | Directory | License (SPDX) | Upstream | Entry file(s) | Used by | Added |
 |---|---|---|---|---|---|
-| `dompurify@3.4.17` | MPL-2.0 OR Apache-2.0 (Apache-2.0 used) | cure53/DOMPurify | `purify.es.js` | markdown | PB-web-markdown |
-| `highlightjs-cdn-assets@11.12.0` | BSD-3-Clause | highlightjs/highlight.js | `highlight.min.js`, `styles/github*.min.css` | markdown | PB-web-markdown |
+| `dompurify@3.4.17` | MPL-2.0 OR Apache-2.0 (Apache-2.0 used) | cure53/DOMPurify | `purify.es.js` | markdown, diff | PB-web-markdown |
+| `highlightjs-cdn-assets@11.12.0` | BSD-3-Clause | highlightjs/highlight.js | `highlight.min.js`, `styles/github*.min.css` | markdown, diff | PB-web-markdown |
 | `markdown-it-footnote@4.0.0` | MIT | markdown-it/markdown-it-footnote | `markdown-it-footnote.js` | markdown | PB-web-markdown |
 | `markdown-it@15.0.2` | MIT (bundles BSD-2-Clause, MIT) | markdown-it/markdown-it | `markdown-it.js` | markdown | PB-web-markdown |
 | `mermaid@11.17.2` | MIT (bundles MIT, ISC, BSD-3-Clause, Apache-2.0) | mermaid-js/mermaid | `mermaid.min.js` (lazy) | markdown | PB-web-markdown |
