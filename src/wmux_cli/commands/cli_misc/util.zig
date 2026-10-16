@@ -2,8 +2,9 @@
 //! layout_todo, open_files, right_sidebar): a small flag parser with cmux's
 //! error wording, caller-context selector defaults (ADR-4.6), JSON params
 //! building, one-call request/print helpers, handle text for `OK ...` lines
-//! and a file-system hook for the writes, directory listings and directory
-//! checks the `Platform` abstraction does not offer yet (see out/REPORT.md).
+//! and a file-system hook for the writes, directory listings, directory
+//! checks and file identities the `Platform` abstraction does not offer yet
+//! (see out/REPORT.md).
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -363,8 +364,14 @@ pub fn isAbsolute(p: []const u8) bool {
 
 pub const WriteError = error{ WriteFailed, OutOfMemory };
 
-/// Writes, directory listings and directory checks (reads go through
-/// `Platform.readFile`). Tests swap in an in-memory implementation.
+/// Identity of an existing file or directory: the same for every spelling
+/// of it (8.3 names such as `C:\Users\REY~1.COL`, junctions, symlinks,
+/// `subst` drives).
+pub const FileId = struct { volume: u64, index: u64 };
+
+/// Writes, directory listings, directory checks and file identities (reads
+/// go through `Platform.readFile`). Tests swap in an in-memory
+/// implementation.
 pub const Fs = struct {
     ptr: ?*anyopaque = null,
     vtable: *const VTable,
@@ -375,7 +382,14 @@ pub const Fs = struct {
         /// Entry names of a directory, or null when it cannot be listed.
         listDir: *const fn (ptr: ?*anyopaque, arena: Allocator, path: []const u8) ?[]const []const u8,
         isDir: *const fn (ptr: ?*anyopaque, path: []const u8) bool,
+        /// The identity of `path`, or null when it cannot be opened or the
+        /// file system has no stable file ids.
+        fileId: *const fn (ptr: ?*anyopaque, path: []const u8) ?FileId,
     };
+
+    pub fn fileId(f: Fs, path: []const u8) ?FileId {
+        return f.vtable.fileId(f.ptr, path);
+    }
 
     pub fn writeFile(f: Fs, arena: Allocator, path: []const u8, bytes: []const u8) WriteError!void {
         return f.vtable.writeFile(f.ptr, arena, path, bytes);
@@ -393,7 +407,45 @@ pub const Fs = struct {
 /// The process-wide hook (tests replace it and restore `native_fs`).
 pub var fs: Fs = native_fs;
 
-pub const native_fs: Fs = .{ .vtable = &.{ .writeFile = nativeWrite, .listDir = nativeList, .isDir = nativeIsDir } };
+pub const native_fs: Fs = .{ .vtable = &.{ .writeFile = nativeWrite, .listDir = nativeList, .isDir = nativeIsDir, .fileId = nativeFileId } };
+
+fn nativeFileId(_: ?*anyopaque, path: []const u8) ?FileId {
+    var file = std.fs.cwd().openFile(path, .{}) catch {
+        var dir = std.fs.cwd().openDir(path, .{}) catch return null;
+        defer dir.close();
+        return handleFileId(dir.fd);
+    };
+    defer file.close();
+    return handleFileId(file.handle);
+}
+
+/// Volume serial number and file index on Windows (the pair std's build
+/// watcher uses; `realpath` there keeps 8.3 names), `st_dev`/`st_ino`
+/// elsewhere. An index of 0 means the file system has no stable ids.
+fn handleFileId(h: std.fs.File.Handle) ?FileId {
+    if (builtin.os.tag == .windows) {
+        const w = std.os.windows;
+        var iosb: w.IO_STATUS_BLOCK = undefined;
+        var volume: w.FILE_FS_VOLUME_INFORMATION = undefined;
+        switch (w.ntdll.NtQueryVolumeInformationFile(h, &iosb, &volume, @sizeOf(w.FILE_FS_VOLUME_INFORMATION), .FileFsVolumeInformation)) {
+            // The volume label does not fit; the serial number is there.
+            .SUCCESS, .BUFFER_OVERFLOW => {},
+            else => return null,
+        }
+        var internal: w.FILE_INTERNAL_INFORMATION = undefined;
+        switch (w.ntdll.NtQueryInformationFile(h, &iosb, &internal, @sizeOf(w.FILE_INTERNAL_INFORMATION), .FileInternalInformation)) {
+            .SUCCESS => {},
+            else => return null,
+        }
+        const index: u64 = @bitCast(internal.IndexNumber);
+        if (index == 0) return null;
+        return .{ .volume = volume.VolumeSerialNumber, .index = index };
+    } else {
+        const st = std.posix.fstat(h) catch return null;
+        if (st.ino == 0) return null;
+        return .{ .volume = @intCast(st.dev), .index = @intCast(st.ino) };
+    }
+}
 
 fn nativeWrite(_: ?*anyopaque, arena: Allocator, path: []const u8, bytes: []const u8) WriteError!void {
     const cwd = std.fs.cwd();

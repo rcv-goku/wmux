@@ -301,6 +301,28 @@ test "unit: cli-config: the global files are not project files and explicit file
     try harness.expectOk(h.run(&.{ "cmux", "config", "doctor", "--path", other }));
 }
 
+test "unit: cli-config: the global file is recognized through another spelling of its directory" {
+    var f: Fixture = undefined;
+    f.init();
+    defer f.deinit();
+    const h = &f.h;
+    const a = h.alloc();
+    // WMUX_CONFIG_DIR (root/cfg) reaches the directory through an alias (an
+    // 8.3 name, junction or symlink); the cwd is its canonical spelling.
+    const real_dir = harness.p(a, &.{ harness.root, "real-cfg" });
+    const real_file = harness.p(a, &.{ real_dir, "wmux.json" });
+    h.addAlias(harness.p(a, &.{ harness.root, "cfg" }), real_dir);
+    const global_only = "{\"app\": {\"minimalMode\": true}}\n";
+    h.addFile(f.wmux_json, global_only);
+    h.addFile(real_file, global_only);
+    h.fp.cwd_path = real_dir;
+    const doc = h.run(&.{ "cmux", "config", "doctor" });
+    try harness.expectOk(doc);
+    try testing.expect(!harness.contains(doc.out, "project:"));
+    // An explicit --path through the canonical spelling is global as well.
+    try harness.expectOk(h.run(&.{ "cmux", "config", "doctor", "--path", real_file }));
+}
+
 test "unit: cli-config: samePath compares normalized spellings" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();

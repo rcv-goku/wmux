@@ -36,8 +36,13 @@ pub const Harness = struct {
     server: fake.Server,
     /// Directories `isDir` reports in addition to parents of files.
     dirs: std.ArrayList([]const u8),
+    /// `fileId` treats a path under `from` as the same path under `to`
+    /// (an 8.3 name, junction or symlink for the same directory).
+    aliases: std.ArrayList(Alias),
     writes: usize,
     fail_writes: bool,
+
+    pub const Alias = struct { from: []const u8, to: []const u8 };
 
     pub fn init(self: *Harness) void {
         self.arena_state = std.heap.ArenaAllocator.init(testing.allocator);
@@ -51,6 +56,7 @@ pub const Harness = struct {
         self.env_map = std.process.EnvMap.init(a);
         self.server = fake.Server.init(a);
         self.dirs = .empty;
+        self.aliases = .empty;
         self.writes = 0;
         self.fail_writes = false;
         self.setEnv("WMUX_CHANNEL", "stable");
@@ -87,6 +93,13 @@ pub const Harness = struct {
         self.dirs.append(self.alloc(), path) catch unreachable;
         // Directories exist for `Platform.pathExists`.
         self.fp.addFile(path, "") catch unreachable;
+    }
+
+    /// `from` is another spelling of the directory `to` for `fileId`. The
+    /// fake platform matches paths exactly, so files reached through both
+    /// spellings must be added under both.
+    pub fn addAlias(self: *Harness, from: []const u8, to: []const u8) void {
+        self.aliases.append(self.alloc(), .{ .from = from, .to = to }) catch unreachable;
     }
 
     /// Current bytes of a fake file.
@@ -129,7 +142,26 @@ pub const Harness = struct {
         return self.server.requests.items.len;
     }
 
-    const mem_vtable: util.Fs.VTable = .{ .writeFile = memWrite, .listDir = memList, .isDir = memIsDir };
+    const mem_vtable: util.Fs.VTable = .{ .writeFile = memWrite, .listDir = memList, .isDir = memIsDir, .fileId = memFileId };
+
+    /// A hash of the path after lexical normalization and the alias table;
+    /// null for paths the fake does not know (they cannot be opened).
+    fn memFileId(ptr: ?*anyopaque, path: []const u8) ?util.FileId {
+        const self = self_(ptr);
+        if (!self.fp.platform().pathExists(path) and !memIsDir(ptr, path)) return null;
+        var buf: [1024]u8 = undefined;
+        var fba = std.heap.FixedBufferAllocator.init(&buf);
+        const a = fba.allocator();
+        var real = std.fs.path.resolve(a, &.{path}) catch return null;
+        for (self.aliases.items) |al| {
+            if (!std.mem.startsWith(u8, real, al.from)) continue;
+            const rest = real[al.from.len..];
+            if (rest.len > 0 and rest[0] != '/' and rest[0] != '\\') continue;
+            real = std.mem.concat(a, u8, &.{ al.to, rest }) catch return null;
+            break;
+        }
+        return .{ .volume = 1, .index = std.hash.Wyhash.hash(0, real) };
+    }
 
     fn self_(ptr: ?*anyopaque) *Harness {
         return @ptrCast(@alignCast(ptr.?));

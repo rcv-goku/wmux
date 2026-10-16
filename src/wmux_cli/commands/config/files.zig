@@ -45,13 +45,20 @@ pub const Locations = struct {
     }
 };
 
-/// True when `a` and `b` name the same path after lexical normalization
-/// (ASCII case-insensitive on Windows, whose file names are).
+/// True when `a` and `b` name the same file: compared by file identity
+/// (`util.fs.fileId`, so 8.3 names such as `C:\Users\REY~1.COL`,
+/// junctions and symlinks match) when both have one, else after lexical
+/// normalization, ASCII case-insensitive on Windows, whose file names are.
 pub fn samePath(arena: Allocator, a: []const u8, b: []const u8) Allocator.Error!bool {
-    const na = try std.fs.path.resolve(arena, &.{a});
-    const nb = try std.fs.path.resolve(arena, &.{b});
-    if (paths.Style.native == .windows) return std.ascii.eqlIgnoreCase(na, nb);
-    return std.mem.eql(u8, na, nb);
+    if (util.fs.fileId(a)) |ia| {
+        if (util.fs.fileId(b)) |ib| return ia.volume == ib.volume and ia.index == ib.index;
+    }
+    return pathEql(try std.fs.path.resolve(arena, &.{a}), try std.fs.path.resolve(arena, &.{b}));
+}
+
+fn pathEql(a: []const u8, b: []const u8) bool {
+    if (paths.Style.native == .windows) return std.ascii.eqlIgnoreCase(a, b);
+    return std.mem.eql(u8, a, b);
 }
 
 pub fn locate(ctx: *Ctx) !Locations {
