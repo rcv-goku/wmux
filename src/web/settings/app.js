@@ -32,6 +32,14 @@ import { createThemesView } from "./themes-view.js";
 export const UNSUPPORTED_CODES = new Set(["method_not_found", "not_supported", "forbidden"]);
 const STATUS_MS = 4000;
 
+/**
+ * Settings owned by a hand-built page, never shown as generic rows (in their
+ * section or in search results). `shortcuts.bindings` belongs to the shortcut
+ * editor: its effective value merges cmux.json (macOS strokes) into
+ * wmux.json, so saving it as one object would copy strokes wmux.json rejects.
+ */
+export const EDITOR_PATHS = new Set(["shortcuts.bindings"]);
+
 export function errorMessage(err) {
   return err && typeof err.message === "string" && err.message ? err.message : String(err);
 }
@@ -380,7 +388,7 @@ export function createApp(options) {
   /* ------------------------------------------------------------ sections */
 
   function fieldsIn(sectionId) {
-    return state.fields.filter((f) => f.section === sectionId);
+    return state.fields.filter((f) => f.section === sectionId && !EDITOR_PATHS.has(f.path));
   }
 
   /** Sections shown in the nav: the fixed list plus unknown ids from the schema. */
@@ -398,6 +406,7 @@ export function createApp(options) {
 
   function matchingFields(tokens) {
     return state.fields.filter((f) => {
+      if (EDITOR_PATHS.has(f.path)) return false;
       const sec = findSection(f.section);
       return matchesTokens(fieldHaystack(f, sectionTitle(f.section), sec ? sec.keywords : []), tokens);
     });
@@ -532,8 +541,7 @@ export function createApp(options) {
     const title = heading(sectionTitle(id));
     title.id = "set-section-title";
     container.append(title);
-    // The shortcut editor owns shortcuts.bindings; it stays searchable.
-    const fields = fieldsIn(id).filter((f) => !(id === "keyboardShortcuts" && f.path === "shortcuts.bindings"));
+    const fields = fieldsIn(id);
     if (id === "themes") container.append(themes.render());
     if (id === "keyboardShortcuts") container.append(shortcuts.render());
     if (id === "settingsJSON") renderSettingsJson(container);

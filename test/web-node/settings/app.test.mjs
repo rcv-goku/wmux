@@ -145,6 +145,26 @@ describe("unit: persistence-settings-window: search", () => {
     assert.equal(doc.activeElement, $("#set-search"));
   });
 
+  test("unit: persistence-settings-window: shortcuts.bindings is never a generic row, even in search", async () => {
+    // cmux.json strokes are macOS syntax: saving the merged object would copy them into wmux.json.
+    await startSettings({ store: createStore({ cmux: { "shortcuts.bindings": { splitRight: "cmd+d" } } }) });
+    edit($("#set-search"), "shortcuts");
+    assert.equal(rowEl("shortcuts.bindings"), null);
+    assert.ok(rowEl("shortcuts.showModifierHoldHints"));
+    edit($("#set-search"), "bindings");
+    assert.equal(rowEl("shortcuts.bindings"), null);
+    // Only the other key of the section matches (through the section keyword "keybindings").
+    assert.deepEqual(
+      $$(".set-search-results .set-row").map((r) => r.dataset.path),
+      ["shortcuts.showModifierHoldHints"],
+    );
+    const link = $(".set-result-group[data-section='keyboardShortcuts'] .set-result-section");
+    assert.ok(link, "the Keyboard Shortcuts page is offered instead");
+    link.click();
+    assert.equal(sectionShown(), "keyboardShortcuts");
+    assert.equal(rowEl("shortcuts.bindings"), null);
+  });
+
   test("unit: persistence-settings-window: huge and unicode queries do not break", async () => {
     const { app } = await startSettings();
     app.setQuery("x".repeat(10000));
