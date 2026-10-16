@@ -76,6 +76,27 @@ describe("unit: diff files", () => {
     assert.notEqual(a, files.fingerprint({ raw: "x", status: "modified", path: "b" }));
   });
 
+  test("unit: diff: fingerprints follow git blob ids, not context size or abbreviation", () => {
+    const head = (index) => ["diff --git a/g.txt b/g.txt", index, "--- a/g.txt", "+++ b/g.txt"];
+    const fp = (lines) => files.fingerprint(parsePatch(patch(lines)).files[0]);
+    const u1 = fp([...head("index aaaaaaa..bbbbbbb 100644"), "@@ -2,3 +2,3 @@", " 2", "-3", "+X", " 4"]);
+    const u2 = fp([...head("index aaaaaaa..bbbbbbb 100644"), "@@ -1,5 +1,5 @@", " 1", " 2", "-3", "+X", " 4", " 5"]);
+    const full = fp([...head("index aaaaaaa0123..bbbbbbb4567 100644"), "@@ -2,3 +2,3 @@", " 2", "-3", "+X", " 4"]);
+    const edited = fp([...head("index aaaaaaa..ccccccc 100644"), "@@ -2,3 +2,3 @@", " 2", "-3", "+Y", " 4"]);
+    const mode = fp([...head("index aaaaaaa..bbbbbbb 100755"), "@@ -2,3 +2,3 @@", " 2", "-3", "+X", " 4"]);
+    assert.equal(u1, u2, "-U1 and -U2 of the same change");
+    assert.equal(u1, full, "longer abbreviation of the same blobs");
+    assert.notEqual(u1, edited);
+    assert.notEqual(u1, mode);
+    assert.equal(files.blobIds({ headers: ["index 1234567890,abcdef1234..fedcba98765 100644"] }), "1234567,abcdef1..fedcba9");
+    assert.equal(files.blobIds({ headers: ["old mode 100644"] }), null);
+    assert.equal(files.blobIds({}), null);
+    // Without an index line the patch text decides (plain diff -u).
+    const plain = (t) => files.fingerprint(parsePatch(patch("--- a/p", "+++ b/p", "@@ -1 +1 @@", "-a", "+" + t)).files[0]);
+    assert.equal(plain("b"), plain("b"));
+    assert.notEqual(plain("b"), plain("c"));
+  });
+
   test("unit: diff: fuzzy score prefers basename and contiguous matches", () => {
     assert.equal(files.fuzzyScore("zzz", "src/app.js"), -1);
     assert.ok(files.fuzzyScore("app", "src/app.js") > files.fuzzyScore("app", "a/p/p/x.js"));

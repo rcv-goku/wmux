@@ -165,9 +165,33 @@ export function matchesFilter(file, filter, isViewed) {
     .every((term) => hay.includes(term));
 }
 
-/** Content fingerprint of a file's patch text ("fp1:" + 16 hex digits). */
+/**
+ * Blob ids of a git `index <old>..<new>` header ("abc1234,def5678..0123456"
+ * for combined diffs), each cut to 7 hex digits so a longer abbreviation
+ * (core.abbrev grows with the repository, --full-index) names the same
+ * content. null when the file has no index line.
+ */
+export function blobIds(file) {
+  const line = (file.headers || []).find((h) => h.startsWith("index "));
+  const m = line ? line.match(/^index ([0-9a-fA-F]+(?:,[0-9a-fA-F]+)*)\.\.([0-9a-fA-F]+)/) : null;
+  if (!m) return null;
+  const short = (id) => id.slice(0, 7).toLowerCase();
+  return m[1].split(",").map(short).join(",") + ".." + short(m[2]);
+}
+
+/**
+ * Content fingerprint for "Viewed" ("fp1:" + 16 hex digits). Git diffs name
+ * both versions by blob id on their `index` line, so the fingerprint covers
+ * those ids, the paths, the status and the modes: it stays the same when the
+ * diff is regenerated with other context (`-U<n>`) or whitespace options and
+ * changes whenever either version's content does. Patches without an index
+ * line (plain `diff -u`, pure renames and mode changes) use their patch text.
+ */
 export function fingerprint(file) {
-  const s = String(file.raw || "") + "\n" + file.status + "\n" + file.path;
+  const ids = blobIds(file);
+  const s = ids
+    ? ["blob", ids, file.status, file.oldPath || "", file.path, file.oldMode || "", file.newMode || ""].join("\n")
+    : String(file.raw || "") + "\n" + file.status + "\n" + file.path;
   let h1 = 0x811c9dc5;
   let h2 = 0x9747b28c;
   for (let i = 0; i < s.length; i += 1) {

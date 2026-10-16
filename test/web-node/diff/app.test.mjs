@@ -384,7 +384,16 @@ describe("unit: diff app viewed and filter", () => {
     click($("#dv-refresh"));
     await settle();
     assert.equal($("#dv-progress").textContent, "2 of 5 files viewed");
-    store.patch = PATCH.replace("42", "43");
+    // Regenerated with more context: same blob ids, so still viewed.
+    store.patch = PATCH.replace(
+      "@@ -1,5 +1,5 @@ function main() {\n",
+      "@@ -1,6 +1,6 @@ function main() {\n",
+    ).replace(" done();\n", " done();\n more();\n");
+    click($("#dv-refresh"));
+    await settle();
+    assert.equal($("#dv-progress").textContent, "2 of 5 files viewed", "context size is not content");
+    // A content change gives the new version another blob id.
+    store.patch = PATCH.replace("42", "43").replace("index 1111111..2222222", "index 1111111..3333333");
     click($("#dv-refresh"));
     await settle();
     assert.equal($("#dv-progress").textContent, "1 of 5 files viewed");
