@@ -1,10 +1,11 @@
 //! Shared helpers of the cf-cli-misc command families (config, session,
 //! layout_todo, open_files, right_sidebar): a small flag parser with cmux's
 //! error wording, caller-context selector defaults (ADR-4.6), JSON params
-//! building, one-call request/print helpers, handle text for `OK ...` lines
-//! and a file-system hook for the writes, directory listings, directory
-//! checks, file identities and the stdin terminal check that the `Platform`
-//! abstraction does not offer yet (see out/REPORT.md).
+//! building, one-call request/print helpers, the foreground grant, handle
+//! text for `OK ...` lines and a file-system hook for the writes, directory
+//! listings, directory checks, file identities and the stdin terminal check
+//! that the `Platform` abstraction does not offer yet (a framework change is
+//! requested: Platform.writeFileAtomic, listDir, stat, stdinIsTerminal).
 
 const std = @import("std");
 const builtin = @import("builtin");

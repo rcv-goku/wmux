@@ -4,8 +4,8 @@
 //! target syntax, `todo set` payload validation with the same messages, and
 //! the `todo list` / `OK (<c>/<t> completed)` text rendered from the wire
 //! payload. The CLI module cannot import files outside src/wmux_cli (Zig
-//! module boundary), so the rules are restated here and pinned by tests;
-//! out/REPORT.md asks for a shared build module instead.
+//! module boundary), so the rules are restated here and pinned by tests
+//! until the todo logic is exposed as a shared build module (requested).
 
 const std = @import("std");
 const proto = @import("wmux_proto");
