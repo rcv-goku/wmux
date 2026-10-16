@@ -377,6 +377,9 @@ test "unit: cli-notify: clear-notifications scopes" {
     try kit.expectResult(h.run(&.{ "cmux", "clear-notifications", "--surface", "surface:1" }), 2, "", "cmux: clear-notifications --surface requires a workspace or window context\n");
     _ = h.run(&.{ "cmux", "clear-notifications", "--window", "window:1", "--workspace", "workspace:1", "--panel", "surface:1" });
     try testing.expectEqualStrings("{\"window_id\":\"window:1\",\"workspace_id\":\"workspace:1\",\"surface_id\":\"surface:1\"}", params(&h));
+    // A window alone is enough context for a surface.
+    _ = h.run(&.{ "cmux", "clear-notifications", "--window", "window:1", "--surface", "surface:3" });
+    try testing.expectEqualStrings("{\"window_id\":\"window:1\",\"surface_id\":\"surface:3\"}", params(&h));
     h.setEnv("CMUX_WORKSPACE_ID", ws_uuid);
     _ = h.run(&.{ "cmux", "clear-notifications" });
     try testing.expectEqualStrings("{\"workspace_id\":\"" ++ ws_uuid ++ "\"}", params(&h));

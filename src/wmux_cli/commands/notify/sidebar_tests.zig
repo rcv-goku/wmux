@@ -304,6 +304,63 @@ test "unit: cli-sidebar: pr finds the workspace open in this worktree" {
     Script.reset();
     Script.git_missing = true;
     try kit.expectResult(h.run(&.{ "cmux", "pr", "clear" }), 1, "", "cmux pr: requires git on PATH\n");
+    // A named window is the target: no worktree lookup at all.
+    Script.reset();
+    try kit.expectResult(h.run(&.{ "cmux", "pr", "clear", "--window", "window:1" }), 0, "OK\n", "");
+    try testing.expectEqualStrings("{\"window_id\":\"window:1\"}", params(&h));
+    try testing.expectEqual(@as(usize, 0), Script.n);
+}
+
+test "unit: cli-sidebar: pr needs exactly one workspace in the worktree" {
+    var h: Harness = undefined;
+    try h.init(struct {
+        fn f(server: *fake.Server, req: fake.Request) fake.Action {
+            if (!std.mem.eql(u8, req.method, "workspace.list")) return .{ .ok = "{}" };
+            // A sibling directory is not inside the worktree; a case or
+            // separator variant and a subdirectory are.
+            if (server.user == null) return .{ .ok = "{\"workspaces\":[{\"id\":\"W1\",\"cwd\":\"C:\\\\src\\\\apiary\"}]}" };
+            return .{ .ok = "{\"workspaces\":[{\"id\":\"W1\",\"cwd\":\"C:\\\\src\\\\api\"},{\"id\":\"W2\",\"cwd\":\"c:/SRC/api/web/\"}]}" };
+        }
+    }.f);
+    defer h.deinit();
+    const saved = pr.runner;
+    defer pr.runner = saved;
+    pr.runner = Script.run;
+    Script.reset();
+    try kit.expectResult(h.run(&.{ "cmux", "pr", "clear" }), 1, "", "cmux pr: no workspace is open in this repository; pass --workspace\n");
+    h.server.user = &h;
+    try kit.expectResult(h.run(&.{ "cmux", "pr", "clear" }), 1, "", "cmux pr: several workspaces are open in this repository; pass --workspace\n");
+    // Ambiguity changes nothing.
+    try testing.expectEqual(@as(usize, 0), h.server.countMethod("wmux.workspace.pr.clear"));
+}
+
+test "unit: cli-sidebar: sidebar-state reads alternate result shapes" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const r = try std.json.parseFromSliceLeaky(std.json.Value, a, "{\"workspace_ref\":\"workspace:4\",\"focused_panel\":\"P\"," ++
+        "\"git_branch\":\"feat/\\u00e9\",\"git_dirty\":true,\"pr\":{\"number\":\"7\",\"label\":\"Draft\"}," ++
+        "\"progress\":2.5,\"progress_label\":\"late\",\"statuses\":[{\"key\":\"k\",\"value\":\"v\",\"priority\":-2.9}]," ++
+        "\"meta_blocks\":[{\"markdown\":\"m\"},{}],\"logs\":[{\"message\":\"no level\"}]}", .{});
+    var aw: std.Io.Writer.Allocating = .init(a);
+    try sidebar.writeSidebarState(&aw.writer, r);
+    try testing.expectEqualStrings("tab=workspace:4\n" ++
+        "color=none\n" ++
+        "cwd=\n" ++
+        "focused_cwd=unknown\n" ++
+        "focused_panel=P\n" ++
+        "git_branch=feat/\u{e9} dirty\n" ++
+        "pr=#7 open \n" ++
+        "pr_label=Draft\n" ++
+        "ports=none\n" ++
+        "progress=1.00 late\n" ++
+        "status_count=1\n" ++
+        "  k=v priority=-2\n" ++
+        "meta_block_count=2\n" ++
+        "  m\n" ++
+        "  \n" ++
+        "log_count=1\n" ++
+        "  [info] no level\n", aw.written());
 }
 
 test "unit: cli-sidebar: goldens for help" {
