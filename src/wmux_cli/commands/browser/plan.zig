@@ -227,12 +227,19 @@ pub const C = struct {
     /// the user gives as absolute is kept as typed. A Windows drive-relative
     /// path (`D:shot.png`) is resolved only when it names the working
     /// directory's drive; another drive's working directory is unknown here,
-    /// so that path is kept as typed rather than glued onto ours.
+    /// so that path is kept as typed rather than glued onto ours. A Windows
+    /// root-relative path (`\shots\p.png`) takes the working directory's
+    /// drive or UNC share: the app resolving it would use its own current
+    /// drive, which need not be ours.
     pub fn absPath(c: *C, path: []const u8) Error![]const u8 {
         var p = path;
         if (c.in.home) |h| {
             if (eql(p, "~")) return h;
             if (p.len >= 2 and p[0] == '~' and (p[1] == '/' or p[1] == '\\')) p = try c.joinPath(&.{ h, p[2..] });
+        }
+        if (c.in.style == .windows and isRootRelative(p)) {
+            const root = windowsRoot(c.in.cwd orelse return p) orelse return p;
+            return c.joinPath(&.{ root, p });
         }
         if (isAbsolute(c.in.style, p)) return p;
         const cwd = c.in.cwd orelse return p;
@@ -268,6 +275,31 @@ pub fn isAbsolute(style: paths.Style, p: []const u8) bool {
 /// `X:` drive prefix (Windows).
 fn hasDrive(p: []const u8) bool {
     return p.len >= 2 and std.ascii.isAlphabetic(p[0]) and p[1] == ':';
+}
+
+fn isSep(ch: u8) bool {
+    return ch == '\\' or ch == '/';
+}
+
+/// `\dir\file` or `/dir/file` (Windows): rooted, but on no particular drive.
+/// `\\server\share` and `\\?\...` name their own root.
+pub fn isRootRelative(p: []const u8) bool {
+    return p.len > 0 and isSep(p[0]) and !(p.len > 1 and isSep(p[1]));
+}
+
+/// The root a Windows root-relative path hangs off: `X:` for a drive path,
+/// `\\server\share` for a UNC path; null for anything else.
+pub fn windowsRoot(cwd: []const u8) ?[]const u8 {
+    if (hasDrive(cwd)) return cwd[0..2];
+    if (cwd.len < 3 or !isSep(cwd[0]) or !isSep(cwd[1]) or cwd[2] == '?' or cwd[2] == '.') return null;
+    // `\\server\share[\...]`: the root ends before the third separator.
+    var seps: usize = 0;
+    for (cwd[2..], 2..) |ch, i| {
+        if (!isSep(ch)) continue;
+        seps += 1;
+        if (seps == 2) return cwd[0..i];
+    }
+    return if (seps == 1 and !isSep(cwd[cwd.len - 1])) cwd else null;
 }
 
 /// A call on the required surface (see `C.base`).

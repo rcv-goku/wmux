@@ -251,6 +251,43 @@ test "unit: browser-cli: windows paths are absolutized with the windows style" {
     try testing.expect(!plan_mod.isAbsolute(.posix, "C:\\x"));
 }
 
+test "unit: browser-cli: windows root-relative paths take the working directory's root" {
+    var t = T.init();
+    defer t.deinit();
+    t.base.style = .windows;
+    t.base.cwd = "D:\\proj\\sub";
+    t.base.home = "C:\\Users\\u";
+    // The app would resolve `\x` against its own current drive, not ours.
+    try t.expectCall(&.{ "surface:1", "state", "save", "\\tmp\\s.json" }, "browser.state.save", "{\"surface_id\":\"surface:1\",\"path\":\"D:\\\\tmp\\\\s.json\"}");
+    try t.expectCall(&.{ "surface:1", "download", "--path", "/dl/r.csv" }, "browser.download.wait", "{\"surface_id\":\"surface:1\",\"path\":\"D:\\\\dl\\\\r.csv\"}");
+    try t.expectCall(&.{ "surface:1", "trace", "stop", "\\t.zip" }, "browser.trace.stop", "{\"surface_id\":\"surface:1\",\"path\":\"D:\\\\t.zip\"}");
+    try testing.expectEqualStrings("D:\\", (try t.call(&.{ "surface:1", "screenshot", "--out", "\\" })).out_path.?);
+    // UNC working directory: the share is the root.
+    t.base.cwd = "\\\\server\\share\\dir";
+    try testing.expectEqualStrings("\\\\server\\share\\x.png", (try t.call(&.{ "surface:1", "screenshot", "--out", "\\x.png" })).out_path.?);
+    // Fully qualified paths, UNC paths and device paths stay as typed.
+    try testing.expectEqualStrings("\\\\other\\s\\x.png", (try t.call(&.{ "surface:1", "screenshot", "--out", "\\\\other\\s\\x.png" })).out_path.?);
+    try testing.expectEqualStrings("\\\\?\\C:\\x.png", (try t.call(&.{ "surface:1", "screenshot", "--out", "\\\\?\\C:\\x.png" })).out_path.?);
+    // No usable root (unknown or device working directory): kept as typed.
+    t.base.cwd = "\\\\?\\C:\\work";
+    try testing.expectEqualStrings("\\x.png", (try t.call(&.{ "surface:1", "screenshot", "--out", "\\x.png" })).out_path.?);
+    t.base.cwd = null;
+    try testing.expectEqualStrings("\\x.png", (try t.call(&.{ "surface:1", "screenshot", "--out", "\\x.png" })).out_path.?);
+    // POSIX keeps `/x` as an absolute path.
+    t.base.style = .posix;
+    t.base.cwd = "/work";
+    try testing.expectEqualStrings("/x.png", (try t.call(&.{ "surface:1", "screenshot", "--out", "/x.png" })).out_path.?);
+    // The root helpers.
+    try testing.expect(plan_mod.isRootRelative("\\a") and plan_mod.isRootRelative("/") and !plan_mod.isRootRelative("\\\\a") and !plan_mod.isRootRelative("a\\b") and !plan_mod.isRootRelative(""));
+    try testing.expectEqualStrings("c:", plan_mod.windowsRoot("c:\\").?);
+    try testing.expectEqualStrings("\\\\srv\\share", plan_mod.windowsRoot("\\\\srv\\share").?);
+    try testing.expectEqualStrings("//srv/share", plan_mod.windowsRoot("//srv/share/").?);
+    try testing.expectEqual(@as(?[]const u8, null), plan_mod.windowsRoot("\\\\srv"));
+    try testing.expectEqual(@as(?[]const u8, null), plan_mod.windowsRoot("\\\\srv\\"));
+    try testing.expectEqual(@as(?[]const u8, null), plan_mod.windowsRoot("\\\\.\\pipe\\x"));
+    try testing.expectEqual(@as(?[]const u8, null), plan_mod.windowsRoot("relative"));
+}
+
 test "unit: browser-cli: get, is and find" {
     var t = T.init();
     defer t.deinit();
