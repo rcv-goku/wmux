@@ -312,6 +312,9 @@ test "unit: remote-daemon: fs.put and fs.get over the protocol" {
     try testing.expectEqual(@as(i64, content.len), int(put.result, "size"));
     const st = try tmp.dir.statFile(".wmux/bin/tool");
     try testing.expectEqual(@as(std.fs.File.Mode, 0o755), st.mode & 0o777);
+    // mkdirs created the missing parents private.
+    const bin = try tmp.dir.statFile(".wmux/bin");
+    try testing.expectEqual(@as(std.fs.File.Mode, 0o700), bin.mode & 0o777);
 
     const got = try c.request(.fs_get, msgs.FsGetParams{ .path = ".wmux/bin/tool" }, timeout);
     try testing.expectEqualStrings(enc, str(got.result, "data"));

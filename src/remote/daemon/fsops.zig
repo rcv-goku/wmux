@@ -25,6 +25,18 @@ pub fn resolvePath(gpa: Allocator, home: []const u8, path: []const u8) error{ In
     return std.fs.path.join(gpa, &.{ home, path });
 }
 
+/// `mkdir -p` that creates the missing directories with mode 0o700 (as
+/// `FsPutParams.mkdirs` documents); existing directories are left alone.
+fn makePrivatePath(path: []const u8) std.fs.Dir.MakeError!void {
+    var it = try std.fs.path.componentIterator(path);
+    while (it.next()) |comp| {
+        std.posix.mkdir(comp.path, 0o700) catch |err| switch (err) {
+            error.PathAlreadyExists => {},
+            else => |e| return e,
+        };
+    }
+}
+
 pub const PutOptions = struct {
     mode: std.fs.File.Mode = 0o600,
     expected_sha256: ?[]const u8 = null,
@@ -49,7 +61,7 @@ pub fn put(abs_path: []const u8, data: []const u8, opts: PutOptions) PutError!He
     const dir_path = std.fs.path.dirname(abs_path) orelse return error.InvalidPath;
     const base = std.fs.path.basename(abs_path);
     if (base.len == 0 or std.mem.eql(u8, base, ".") or std.mem.eql(u8, base, "..")) return error.InvalidPath;
-    if (opts.mkdirs) try std.fs.cwd().makePath(dir_path);
+    if (opts.mkdirs) try makePrivatePath(dir_path);
     var dir = try std.fs.cwd().openDir(dir_path, .{});
     defer dir.close();
 
@@ -170,6 +182,21 @@ test "unit: remote-daemon: fs.put is atomic, verified and never promotes empty f
     var n: usize = 0;
     while (try it.next()) |e| : (n += 1) try testing.expectEqualStrings("f.bin", e.name);
     try testing.expectEqual(@as(usize, 1), n);
+}
+
+test "unit: remote-daemon: fs.put creates missing parents private" {
+    const gpa = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmp.dir.realpathAlloc(gpa, ".");
+    defer gpa.free(root);
+    const target = try std.fs.path.join(gpa, &.{ root, "p", "q", "f" });
+    defer gpa.free(target);
+    _ = try put(target, "x", .{ .mkdirs = true });
+    for ([_][]const u8{ "p", "p/q" }) |d| {
+        const st = try tmp.dir.statFile(d);
+        try testing.expectEqual(@as(std.fs.File.Mode, 0o700), st.mode & 0o777);
+    }
 }
 
 test "unit: remote-daemon: fs.get enforces the size cap and rejects directories" {
