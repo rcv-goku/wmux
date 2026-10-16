@@ -1381,12 +1381,17 @@ export function createApp(options) {
   /* line selection                                                         */
   /* ---------------------------------------------------------------------- */
 
-  /** {fileIndex, side, line} of a code cell, or null. */
+  /** {fileIndex, side, line, hunk} of a code cell, or null. */
   function cellInfo(cell) {
     if (!cell || !cell.dataset || cell.dataset.line === undefined) return null;
     const section = cell.closest(".dv-file");
     if (!section) return null;
-    return { fileIndex: Number(section.dataset.file), side: cell.dataset.side, line: Number(cell.dataset.line) };
+    return {
+      fileIndex: Number(section.dataset.file),
+      side: cell.dataset.side,
+      line: Number(cell.dataset.line),
+      hunk: Number(cell.dataset.h),
+    };
   }
 
   /** Code cell for a clicked line-number cell (split: its side; unified: the row). */
@@ -1408,12 +1413,25 @@ export function createApp(options) {
     }
   }
 
+  /**
+   * Select a line; Shift extends the selection within one hunk. Lines between
+   * hunks are not in the diff, so a range across them could never anchor (its
+   * comment would be "Outdated" as soon as it is saved): a Shift+click in
+   * another hunk starts a new selection instead.
+   */
   function selectLine(info, extend) {
     const s = state.selection;
-    if (extend && s && s.fileIndex === info.fileIndex && s.side === info.side) {
+    if (extend && s && s.fileIndex === info.fileIndex && s.side === info.side && s.hunk === info.hunk) {
       state.selection = { ...s, start: Math.min(s.anchor, info.line), end: Math.max(s.anchor, info.line) };
     } else {
-      state.selection = { fileIndex: info.fileIndex, side: info.side, start: info.line, end: info.line, anchor: info.line };
+      state.selection = {
+        fileIndex: info.fileIndex,
+        side: info.side,
+        hunk: info.hunk,
+        start: info.line,
+        end: info.line,
+        anchor: info.line,
+      };
     }
     applySelection();
   }

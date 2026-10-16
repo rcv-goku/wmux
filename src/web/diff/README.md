@@ -194,7 +194,9 @@ passes the patch again (`panels-diff-session-restore`).
   `g g`, `/`, `] f`/`[ f`, `n`/`p` hunks, `v`), replaced by `panel.init.keymap`.
   Bare keys are ignored while a text field has focus (keys.js).
 - **Comments.** Click a line number to select it, Shift+click another on the
-  same side to extend the range, then the `+` button on a selected line ("Add
+  same side of the same hunk to extend the range (a Shift+click in another
+  hunk starts a new selection: lines between hunks are not in the diff, so a
+  comment could not anchor there), then the `+` button on a selected line ("Add
   comment") opens the composer ("Leave a comment", Comment / Cancel; Ctrl+Enter
   submits, Escape cancels). In split view the left column is the old version
   (`deletions`), the right the new one (`additions`); in unified view deleted

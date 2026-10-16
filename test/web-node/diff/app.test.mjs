@@ -733,6 +733,27 @@ describe("unit: diff app comments", () => {
     assert.match(saved.submissionText, /^Review comment on src\/app\.js lines 1-3 \(new version\):/);
   });
 
+  test("unit: diff: a range stays inside one hunk, so its comment anchors", async () => {
+    await startApp();
+    const sec = section("src/app.js");
+    const num = (line) => $(`td.dv-num-new[data-line="${line}"]`, sec);
+    const selected = () => $$("td.dv-code.dv-selected", sec).map((c) => c.dataset.line);
+    click(num(2));
+    click(num(21), { shiftKey: true });
+    assert.deepEqual(selected(), ["21"], "Shift+click in another hunk starts a new selection");
+    click(num(20), { shiftKey: true });
+    assert.deepEqual(selected(), ["20", "21"]);
+    click($('td.dv-code[data-side="additions"][data-line="21"] .dv-add-comment', sec));
+    assert.match($(".dv-composer-label", sec).textContent, /lines 20-21 \(new version\)/);
+    typeInto($(".dv-composer textarea", sec), "range in hunk 2");
+    click($('.dv-composer [data-action="submit-comment"]', sec));
+    await settle();
+    const saved = lastCall("comments.save").params.comment;
+    assert.deepEqual([saved.startLine, saved.endLine, saved.lineText], [20, 21, "a();\nb();"]);
+    assert.equal(app.state.anchors.get(saved.id).status, "anchored");
+    assert.ok($(`.dv-comment-row [data-comment="${saved.id}"]`, section("src/app.js")), "shown inline");
+  });
+
   test("unit: diff: Escape and Cancel close the composer; save errors keep it", async () => {
     await startApp({ handlers: { "comments.save": () => { throw hostError("not_allowed", "nope"); } } });
     const sec = section("src/app.js");
