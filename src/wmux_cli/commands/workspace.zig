@@ -50,7 +50,10 @@ pub const commands = [_]CommandSpec{
     .{ .name = "current-workspace", .group = .start, .usage = u_current, .help = @embedFile("../help/current-workspace.txt"), .run = runCurrent },
     .{ .name = "new-workspace", .group = .start, .usage = u_new, .help = @embedFile("../help/new-workspace.txt"), .legacy_notice = true, .legacy_alias_of = "workspace create", .run = runNewLegacy },
     .{ .name = "select-workspace", .group = .start, .usage = u_select, .help = @embedFile("../help/select-workspace.txt"), .legacy_notice = true, .legacy_alias_of = "workspace select", .run = runSelectLegacy },
-    .{ .name = "rename-workspace", .aliases = &.{"rename-window"}, .group = .start, .usage = u_rename, .help = @embedFile("../help/rename-workspace.txt"), .legacy_notice = true, .legacy_alias_of = "workspace rename", .run = runRenameLegacy },
+    .{ .name = "rename-workspace", .group = .start, .usage = u_rename, .help = @embedFile("../help/rename-workspace.txt"), .legacy_notice = true, .legacy_alias_of = "workspace rename", .run = runRenameLegacy },
+    // The tmux-compatible spelling of rename-workspace: same command and
+    // help, but no legacy notice (cmux prints none for it).
+    .{ .name = "rename-window", .group = .start, .usage = u_rename, .help = @embedFile("../help/rename-workspace.txt"), .run = runRenameLegacy },
     .{ .name = "close-workspace", .group = .start, .usage = u_close, .help = @embedFile("../help/close-workspace.txt"), .legacy_notice = true, .legacy_alias_of = "workspace close", .run = runCloseLegacy },
     .{ .name = "workspace", .group = .start, .usage = u_ns, .help = @embedFile("../help/workspace.txt"), .run = runNamespace },
     .{ .name = "workspace-action", .group = .start, .usage = reorder.u_action, .help = @embedFile("../help/workspace-action.txt"), .run = reorder.runAction },
@@ -74,11 +77,11 @@ fn runNamespace(ctx: *Ctx) !u8 {
     const rest = a[1..];
     const eql = std.mem.eql;
     if (eql(u8, sub, "list")) return runList(ctx, rest, u_ns_list);
-    if (eql(u8, sub, "create")) return create.run(ctx, rest, u_ns_create);
+    if (eql(u8, sub, "create")) return create.run(ctx, rest, u_ns_create, true);
     if (eql(u8, sub, "env")) return create.runEnv(ctx, rest, u_ns_env);
-    if (eql(u8, sub, "close")) return runClose(ctx, rest, u_ns_close, "workspace close");
+    if (eql(u8, sub, "close")) return runClose(ctx, rest, u_ns_close, "workspace close", .namespace);
     if (eql(u8, sub, "rename")) return runRenameNs(ctx, rest);
-    if (eql(u8, sub, "select")) return runSelect(ctx, rest, u_ns_select, "workspace select");
+    if (eql(u8, sub, "select")) return runSelect(ctx, rest, u_ns_select, "workspace select", .namespace);
     if (eql(u8, sub, "status")) return status.runStatus(ctx, rest, u_ns_status);
     if (eql(u8, sub, "reconnect")) return status.runRemote(ctx, rest, u_ns_reconnect, "workspace.remote.reconnect");
     if (eql(u8, sub, "disconnect")) return status.runRemote(ctx, rest, u_ns_disconnect, "workspace.remote.disconnect");
@@ -91,16 +94,23 @@ fn runListLegacy(ctx: *Ctx) !u8 {
 }
 
 fn runNewLegacy(ctx: *Ctx) !u8 {
-    return create.run(ctx, ctx.args(), u_new);
+    return create.run(ctx, ctx.args(), u_new, false);
 }
 
 fn runSelectLegacy(ctx: *Ctx) !u8 {
-    return runSelect(ctx, ctx.args(), u_select, "select-workspace");
+    return runSelect(ctx, ctx.args(), u_select, "select-workspace", .legacy);
 }
 
 fn runCloseLegacy(ctx: *Ctx) !u8 {
-    return runClose(ctx, ctx.args(), u_close, "close-workspace");
+    return runClose(ctx, ctx.args(), u_close, "close-workspace", .legacy);
 }
+
+/// The cmux legacy verbs (`select-workspace`, `close-workspace`) act only
+/// on a workspace they are given (positional, kept for `+workspace close
+/// <index>`, or `--workspace`; a blank one is the caller's, ADR-4.6) and
+/// say "<verb> requires --workspace" otherwise, as cmux does. The
+/// namespace verbs fall back to the caller's workspace.
+const Form = enum { legacy, namespace };
 
 // ----- list and current -----
 
@@ -115,7 +125,7 @@ fn runList(ctx: *Ctx, args: []const []const u8, u: []const u8) !u8 {
         .ok => |v| v,
     };
     if (ctx.json()) {
-        try common.writeJsonResult(ctx, v);
+        try common.writeWorkspaceInspectionJson(ctx, v);
         return output.exit.ok;
     }
     const items = common.list(v, "workspaces") orelse &.{};
@@ -127,15 +137,18 @@ fn runList(ctx: *Ctx, args: []const []const u8, u: []const u8) !u8 {
     return output.exit.ok;
 }
 
-/// `* workspace:2  <title>  [ssh:connected]  [selected]`: the remote tag
-/// only for remote workspaces, `*` and `[selected]` for the selected one.
+/// cmux's row `* workspace:2  <title>  [ssh:connected]  [selected]`: `*`
+/// and `[selected]` mark the selected workspace, an empty title is left
+/// out, and the `[<transport>:<state>]` tag shows only for an enabled
+/// remote (every row carries `remote`; a local one has `enabled: false`).
 fn writeListLine(ctx: *Ctx, w: std.json.Value) !void {
     const selected = common.boolean(w, "selected");
-    const handle = (try common.handleText(ctx, w, "workspace")) orelse "?";
-    try ctx.out.print("{s}{s}  {s}", .{ if (selected) "* " else "  ", handle, common.str(w, "title") orelse "" });
+    try ctx.out.print("{s}{s}", .{ if (selected) "* " else "  ", try common.rowHandle(ctx, w, "workspace") });
+    const title = common.str(w, "title") orelse "";
+    if (title.len > 0) try ctx.out.print("  {s}", .{title});
     const remote = common.field(w, "remote");
-    if (common.str(remote, "state")) |state| {
-        try ctx.out.print("  [{s}:{s}]", .{ common.str(remote, "transport") orelse "ssh", state });
+    if (common.boolean(remote, "enabled")) {
+        try ctx.out.print("  [{s}:{s}]", .{ common.str(remote, "transport") orelse "remote", common.str(remote, "state") orelse "unknown" });
     }
     if (selected) try ctx.out.writeAll("  [selected]");
     try ctx.out.writeByte('\n');
@@ -153,7 +166,7 @@ fn runCurrent(ctx: *Ctx) !u8 {
         .ok => |v| v,
     };
     if (ctx.json()) {
-        try common.writeJsonResult(ctx, v);
+        try common.writeWorkspaceInspectionJson(ctx, v);
         return output.exit.ok;
     }
     const handle = (try common.handleText(ctx, v, "workspace")) orelse return ctx.runtimeError("No workspace selected", .{});
@@ -180,45 +193,55 @@ fn explicitWorkspace(ctx: *Ctx, u: []const u8, o: common.opts.Opts, code: *u8) ?
     return if (o.positionals.len == 1) o.positionals[0] else o.get("--workspace");
 }
 
-fn runSelect(ctx: *Ctx, args: []const []const u8, u: []const u8, name: []const u8) !u8 {
+fn missingWorkspace(ctx: *Ctx, u: []const u8, name: []const u8, form: Form) u8 {
+    return switch (form) {
+        .legacy => common.usage(ctx, u, "{s} requires --workspace", .{name}),
+        .namespace => common.usage(ctx, u, "{s} requires a workspace (<id|ref|index> or --workspace)", .{name}),
+    };
+}
+
+fn runSelect(ctx: *Ctx, args: []const []const u8, u: []const u8, name: []const u8, form: Form) !u8 {
     var code: u8 = 0;
     const o = (try common.parseOpts(ctx, u, args, &target_defs, &code)) orelse return code;
     const ws = explicitWorkspace(ctx, u, o, &code) orelse {
         if (code != 0) return code;
-        return common.usage(ctx, u, "{s} requires a workspace (<id|ref|index> or --workspace)", .{name});
+        return missingWorkspace(ctx, u, name, form);
     };
     var p = Params.init(ctx.arena);
     if (try common.putExplicitWorkspace(ctx, &p, u, "workspace_id", ws, common.windowText(ctx, o) != null)) |c| return c;
     if (try common.putWindow(ctx, &p, u, o)) |c| return c;
-    return common.simple(ctx, "workspace.select", &p);
+    return common.simple(ctx, "workspace.select", &p, &.{"workspace"});
 }
 
-fn runClose(ctx: *Ctx, args: []const []const u8, u: []const u8, name: []const u8) !u8 {
+fn runClose(ctx: *Ctx, args: []const []const u8, u: []const u8, name: []const u8, form: Form) !u8 {
     var code: u8 = 0;
     const o = (try common.parseOpts(ctx, u, args, &close_defs, &code)) orelse return code;
     const explicit = explicitWorkspace(ctx, u, o, &code);
     if (code != 0) return code;
+    // Closing is destructive: the legacy verb never picks a workspace by
+    // itself (cmux: "close-workspace requires --workspace").
+    if (form == .legacy and explicit == null) return missingWorkspace(ctx, u, name, form);
     var p = Params.init(ctx.arena);
     if (try common.putWorkspaceTarget(ctx, &p, u, explicit, common.windowText(ctx, o) != null)) |c| return c;
-    if (p.map.get("workspace_id") == null) return common.usage(ctx, u, "{s} requires a workspace (<id|ref|index> or --workspace)", .{name});
+    if (p.map.get("workspace_id") == null) return missingWorkspace(ctx, u, name, form);
     if (try common.putWindow(ctx, &p, u, o)) |c| return c;
     if (o.has("--force")) try p.boolean("force", true);
-    return common.simple(ctx, "workspace.close", &p);
+    return common.simple(ctx, "workspace.close", &p, &.{"workspace"});
 }
 
 /// `rename-workspace [--workspace <h>] [--] <title>` (tmux-style
-/// `rename-window`): the remaining words are the title.
+/// `rename-window`): the remaining words, trimmed, are the title.
 fn runRenameLegacy(ctx: *Ctx) !u8 {
     const u = u_rename;
     var code: u8 = 0;
     const o = (try common.parseOpts(ctx, u, ctx.args(), &target_defs, &code)) orelse return code;
-    const title = try std.mem.join(ctx.arena, " ", o.positionals);
-    if (std.mem.trim(u8, title, " \t\r\n").len == 0) return common.usage(ctx, u, "rename-workspace requires a title", .{});
+    const title = std.mem.trim(u8, try std.mem.join(ctx.arena, " ", o.positionals), " \t\r\n");
+    if (title.len == 0) return common.usage(ctx, u, "{s} requires a title", .{ctx.command});
     var p = Params.init(ctx.arena);
     if (try common.putWorkspaceTarget(ctx, &p, u, o.get("--workspace"), common.windowText(ctx, o) != null)) |c| return c;
     if (try common.putWindow(ctx, &p, u, o)) |c| return c;
     try p.str("title", title);
-    return common.simple(ctx, "workspace.rename", &p);
+    return common.simple(ctx, "workspace.rename", &p, &.{"workspace"});
 }
 
 fn runRenameNs(ctx: *Ctx, args: []const []const u8) !u8 {
@@ -234,7 +257,7 @@ fn runRenameNs(ctx: *Ctx, args: []const []const u8) !u8 {
     if (try common.putWorkspaceTarget(ctx, &p, u, explicit, common.windowText(ctx, o) != null)) |c| return c;
     if (try common.putWindow(ctx, &p, u, o)) |c| return c;
     try p.str("title", title);
-    return common.simple(ctx, "workspace.rename", &p);
+    return common.simple(ctx, "workspace.rename", &p, &.{"workspace"});
 }
 
 // ----- next, previous, last -----
@@ -245,7 +268,7 @@ fn runCycle(ctx: *Ctx, u: []const u8, method: []const u8) !u8 {
     if (o.positionals.len > 0) return common.usage(ctx, u, "unexpected argument '{s}'", .{o.positionals[0]});
     var p = Params.init(ctx.arena);
     if (try common.putWindow(ctx, &p, u, o)) |c| return c;
-    return common.simple(ctx, method, &p);
+    return common.simple(ctx, method, &p, &.{"workspace"});
 }
 
 fn runNext(ctx: *Ctx) !u8 {
@@ -292,11 +315,17 @@ test "unit: cli-workspace: offline help for every workspace command" {
     try testing.expectEqual(@as(usize, 0), h.fp.connects);
 }
 
+// cmux's workspace.list rows: every row has `remote`, local ones with
+// `enabled: false`.
 const workspaces_json =
     \\{"window_id":"6F1D2C3B-0000-4000-8000-000000000001","window_ref":"window:1","workspaces":[
-    \\{"id":"9B690000-0000-4000-8000-000000000001","ref":"workspace:1","index":0,"title":"api","custom_title":null,"pinned":true,"selected":false},
-    \\{"id":"9B690000-0000-4000-8000-000000000002","ref":"workspace:2","index":1,"title":"build été 🚀","custom_title":"build","selected":true,"remote":{"transport":"ssh","state":"connected"}},
-    \\{"id":"9B690000-0000-4000-8000-000000000005","ref":"workspace:5","index":2,"title":"","selected":false,"remote":{"transport":"mosh","state":"reconnecting"}}]}
+    \\{"id":"9B690000-0000-4000-8000-000000000001","ref":"workspace:1","index":0,"title":"api","custom_title":null,"pinned":true,"selected":false,
+    \\"remote":{"enabled":false,"state":"disconnected","connected":false}},
+    \\{"id":"9B690000-0000-4000-8000-000000000002","ref":"workspace:2","index":1,"title":"build été 🚀","custom_title":"build","selected":true,
+    \\"remote":{"enabled":true,"transport":"ssh","state":"connected","connected":true}},
+    \\{"id":"9B690000-0000-4000-8000-000000000005","ref":"workspace:5","index":2,"title":"","selected":false,
+    \\"remote":{"enabled":true,"transport":"mosh","state":"reconnecting"}},
+    \\{"id":"9B690000-0000-4000-8000-000000000006","ref":"workspace:6","index":3,"title":"tagless","selected":false,"remote":{"enabled":true}}]}
 ;
 
 test "unit: cli-workspace: list-workspaces and workspace list text, json and empty" {
@@ -314,10 +343,22 @@ test "unit: cli-workspace: list-workspaces and workspace list text, json and emp
     try h.expectLast("workspace.list", "{\"window_id\":\"window:2\"}");
     _ = try testkit.expectOk(&h, &.{ "--window", "0", "list-workspaces" });
     try h.expectLast("workspace.list", "{\"window_id\":0}");
+    // --json alone keeps the workspace UUIDs (cmux), an explicit
+    // --id-format formats them like everything else.
     const js = try testkit.expectOk(&h, &.{ "workspace", "list", "--json" });
     try testkit.expectGolden(h.alloc(), "workspace-list-json.txt", js);
+    try testing.expectEqualStrings(js, try testkit.expectOk(&h, &.{ "--json", "list-workspaces" }));
+    const refs = try testkit.expectOk(&h, &.{ "workspace", "list", "--json", "--id-format", "refs" });
+    try testing.expect(std.mem.indexOf(u8, refs, "\"id\"") == null);
+    try testing.expect(std.mem.indexOf(u8, refs, "\"ref\": \"workspace:6\"") != null);
+    const uuids = try testkit.expectOk(&h, &.{ "workspace", "list", "--json", "--id-format", "uuids" });
+    try testing.expect(std.mem.indexOf(u8, uuids, "\"ref\"") == null);
+    try testing.expect(std.mem.indexOf(u8, uuids, "\"window_id\": \"6F1D2C3B-0000-4000-8000-000000000001\"") != null);
     h.ok("workspace.list", "{\"workspaces\":[]}");
     try testing.expectEqualStrings("No workspaces\n", try testkit.expectOk(&h, &.{ "workspace", "list" }));
+    // Rows without handles or remote status still print.
+    h.ok("workspace.list", "{\"workspaces\":[{\"title\":\"bare\"},{\"workspace_ref\":\"workspace:9\",\"selected\":true,\"remote\":null}]}");
+    try testing.expectEqualStrings("  ?  bare\n* workspace:9  [selected]\n", try testkit.expectOk(&h, &.{ "workspace", "list" }));
     try testkit.expectUsage(&h, &.{ "workspace", "list", "x" }, "unexpected argument 'x'");
     try testkit.expectUsage(&h, &.{ "list-workspaces", "--window", "pane:1" }, "Invalid window handle: pane:1 (expected UUID, ref like window:1, or index)");
 }
@@ -337,6 +378,15 @@ test "unit: cli-workspace: legacy verbs print the alias notice unless quiet" {
     try testing.expectEqualStrings("OK workspace:3\n", n.out);
     const ns = h.run(&.{ "workspace", "list" });
     try testing.expectEqualStrings("", ns.err);
+    // rename-window is the tmux-compatible spelling: cmux prints no notice
+    // for it, only for rename-workspace.
+    h.ok("workspace.rename", "{\"workspace_ref\":\"workspace:1\"}");
+    const rw = h.run(&.{ "rename-window", "--workspace", "workspace:1", "x" });
+    try testing.expectEqual(@as(u8, 0), rw.code);
+    try testing.expectEqualStrings("", rw.err);
+    try testing.expectEqualStrings("OK workspace:1\n", rw.out);
+    const rn = h.run(&.{ "rename-workspace", "--workspace", "workspace:1", "x" });
+    try testing.expectEqualStrings("cmux: 'rename-workspace' is now an alias for 'workspace rename'. The legacy form keeps working indefinitely; set CMUX_QUIET=1 to silence this notice.\n", rn.err);
     h.setEnv("CMUX_QUIET", "1");
     try testing.expectEqualStrings("", h.run(&.{"list-workspaces"}).err);
 }
@@ -351,6 +401,9 @@ test "unit: cli-workspace: current-workspace prints the selected handle" {
     try h.expectLast("workspace.current", "{}");
     try testing.expectEqualStrings("9B690000-0000-4000-8000-000000000002\n", try testkit.expectOk(&h, &.{ "current-workspace", "--id-format", "uuids", "--window", "window:1" }));
     try h.expectLast("workspace.current", "{\"window_id\":\"window:1\"}");
+    // --json keeps the workspace UUID unless --id-format is given.
+    try testing.expectEqualStrings("{\n  \"workspace_id\": \"9B690000-0000-4000-8000-000000000002\",\n  \"workspace_ref\": \"workspace:2\",\n  \"window_ref\": \"window:1\"\n}\n", try testkit.expectOk(&h, &.{ "current-workspace", "--json" }));
+    try testing.expectEqualStrings("{\n  \"workspace_ref\": \"workspace:2\",\n  \"window_ref\": \"window:1\"\n}\n", try testkit.expectOk(&h, &.{ "current-workspace", "--json", "--id-format", "refs" }));
     h.ok("workspace.current", "{\"workspace_id\":null}");
     const r = h.run(&.{"current-workspace"});
     try testing.expectEqual(@as(u8, 1), r.code);
@@ -378,7 +431,9 @@ test "unit: cli-workspace: new-workspace maps every flag onto workspace.create" 
     // A bare --focus (the `+workspace new --focus` spelling) means true.
     _ = try testkit.expectOk(&h, &.{ "new-workspace", "--focus" });
     try h.expectLast("workspace.create", "{\"focus\":true}");
-    _ = try testkit.expectOk(&h, &.{ "new-workspace", "--name", "N", "--focus", "--json" });
+    // The legacy verb prints its OK line even with --json (cmux; JSON is
+    // `workspace create --json`, below).
+    try testing.expectEqualStrings("OK workspace:7\n", try testkit.expectOk(&h, &.{ "new-workspace", "--name", "N", "--focus", "--json" }));
     try h.expectLast("workspace.create", "{\"title\":\"N\",\"focus\":true}");
     _ = try testkit.expectOk(&h, &.{ "+workspace", "new", "--focus", "--name", "N" });
     try h.expectLast("workspace.create", "{\"title\":\"N\",\"focus\":true}");
@@ -406,8 +461,8 @@ test "unit: cli-workspace: new-workspace usage errors" {
     try testkit.expectUsage(&h, &.{ "new-workspace", "--command" }, "--command requires a value");
     try testkit.expectUsage(&h, &.{ "new-workspace", "--name", "" }, "--name requires a non-empty value");
     try testkit.expectUsage(&h, &.{ "new-workspace", "--cwd=" }, "--cwd requires a non-empty value");
-    try testkit.expectUsage(&h, &.{ "new-workspace", "--focus", "maybe" }, "--focus must be true or false");
-    try testkit.expectUsage(&h, &.{ "new-workspace", "--focus=" }, "--focus must be true or false");
+    try testkit.expectUsage(&h, &.{ "new-workspace", "--focus", "maybe" }, "--focus must be true|false");
+    try testkit.expectUsage(&h, &.{ "new-workspace", "--focus=" }, "--focus must be true|false");
     try testkit.expectUsage(&h, &.{ "new-workspace", "--layout", "{bad" }, "--layout is not valid JSON");
     try testkit.expectUsage(&h, &.{ "new-workspace", "--layout", " " }, "--layout requires a non-empty value");
     try testkit.expectUsage(&h, &.{ "new-workspace", "--group-placement", "top" }, "--group-placement requires --group");
@@ -489,7 +544,9 @@ test "unit: cli-workspace: workspace env lists, masks and targets" {
     var h: testkit.Harness = undefined;
     try h.init();
     defer h.deinit();
-    h.ok("workspace.env", "{\"workspace_id\":\"W\",\"workspace_ref\":\"workspace:2\",\"env\":{\"AWS_PROFILE\":\"prod\",\"TOKEN\":\"s3cr\u{e9}t\",\"EMPTY\":\"\"}}");
+    // cmux's workspace.env result.
+    h.ok("workspace.env", "{\"window_id\":\"6F1D2C3B-0000-4000-8000-000000000001\",\"window_ref\":\"window:1\",\"workspace_id\":\"W\",\"workspace_ref\":\"workspace:2\",\"env\":{\"TOKEN\":\"s3cr\u{e9}t\",\"AWS_PROFILE\":\"prod\",\"EMPTY\":\"\"},\"count\":3}");
+    // Lines are sorted by name.
     const out = try testkit.expectOk(&h, &.{ "workspace", "env" });
     try testkit.expectGolden(h.alloc(), "workspace-env.txt", out);
     try h.expectLast("workspace.env", "{}");
@@ -498,6 +555,7 @@ test "unit: cli-workspace: workspace env lists, masks and targets" {
     const mj = try testkit.expectOk(&h, &.{ "workspace", "env", "--mask", "--json" });
     try testing.expect(std.mem.indexOf(u8, mj, "s3cr") == null);
     try testing.expect(std.mem.indexOf(u8, mj, "\"TOKEN\": \"***\"") != null);
+    try testing.expect(std.mem.indexOf(u8, mj, "\"count\": 3") != null);
     _ = try testkit.expectOk(&h, &.{ "workspace", "env", "workspace:3" });
     try h.expectLast("workspace.env", "{\"workspace_id\":\"workspace:3\"}");
     _ = try testkit.expectOk(&h, &.{ "workspace", "env", "--workspace", "2" });
@@ -507,8 +565,8 @@ test "unit: cli-workspace: workspace env lists, masks and targets" {
     try h.expectLast("workspace.env", "{\"workspace_id\":\"CALLER-UUID\"}");
     _ = try testkit.expectOk(&h, &.{ "workspace", "env", "--window", "window:1" });
     try h.expectLast("workspace.env", "{\"window_id\":\"window:1\"}");
-    h.ok("workspace.env", "{\"env\":{}}");
-    try testing.expectEqualStrings("No environment variables set.\n", try testkit.expectOk(&h, &.{ "workspace", "env" }));
+    h.ok("workspace.env", "{\"env\":{},\"count\":0}");
+    try testing.expectEqualStrings("No environment variables\n", try testkit.expectOk(&h, &.{ "workspace", "env" }));
     try testkit.expectUsage(&h, &.{ "workspace", "env", "a", "b" }, "unexpected argument 'b'");
     try testkit.expectUsage(&h, &.{ "workspace", "env", "workspace:1", "--workspace", "workspace:2" }, "give the workspace as an argument or --workspace, not both");
     try testkit.expectUsage(&h, &.{ "workspace", "env", "surface:1" }, "Invalid workspace handle: surface:1 (expected UUID, ref like workspace:1, or index)");
@@ -518,12 +576,15 @@ test "unit: cli-workspace: select, close and rename in legacy and namespace form
     var h: testkit.Harness = undefined;
     try h.init();
     defer h.deinit();
-    for ([_][]const u8{ "workspace.select", "workspace.close", "workspace.rename" }) |m| h.ok(m, "{\"workspace_ref\":\"workspace:3\"}");
-    try testing.expectEqualStrings("OK\n", try testkit.expectOk(&h, &.{ "select-workspace", "--workspace", "workspace:3" }));
+    for ([_][]const u8{ "workspace.select", "workspace.close", "workspace.rename" }) |m| h.ok(m, "{\"workspace_id\":\"9B690000-0000-4000-8000-000000000003\",\"workspace_ref\":\"workspace:3\",\"window_ref\":\"window:1\"}");
+    // cmux's summary: OK and the workspace handle per --id-format.
+    try testing.expectEqualStrings("OK workspace:3\n", try testkit.expectOk(&h, &.{ "select-workspace", "--workspace", "workspace:3" }));
     try h.expectLast("workspace.select", "{\"workspace_id\":\"workspace:3\"}");
+    try testing.expectEqualStrings("OK 9B690000-0000-4000-8000-000000000003\n", try testkit.expectOk(&h, &.{ "workspace", "close", "workspace:3", "--id-format", "uuids" }));
+    try testing.expectEqualStrings("OK workspace:3 (9B690000-0000-4000-8000-000000000003)\n", try testkit.expectOk(&h, &.{ "workspace", "rename", "workspace:3", "--title", "t", "--id-format", "both" }));
     _ = try testkit.expectOk(&h, &.{ "workspace", "select", "2", "--window", "window:1" });
     try h.expectLast("workspace.select", "{\"workspace_id\":2,\"window_id\":\"window:1\"}");
-    try testkit.expectUsage(&h, &.{"select-workspace"}, "select-workspace requires a workspace (<id|ref|index> or --workspace)");
+    try testkit.expectUsage(&h, &.{"select-workspace"}, "select-workspace requires --workspace");
     try testkit.expectUsage(&h, &.{ "workspace", "select" }, "workspace select requires a workspace (<id|ref|index> or --workspace)");
     try testkit.expectUsage(&h, &.{ "workspace", "select", "workspace:0" }, "Invalid workspace handle: workspace:0 (expected UUID, ref like workspace:1, or index)");
 
@@ -531,20 +592,33 @@ test "unit: cli-workspace: select, close and rename in legacy and namespace form
     try h.expectLast("workspace.close", "{\"workspace_id\":\"workspace:3\",\"force\":true}");
     _ = try testkit.expectOk(&h, &.{ "workspace", "close", "9b690000-0000-4000-8000-000000000003" });
     try h.expectLast("workspace.close", "{\"workspace_id\":\"9b690000-0000-4000-8000-000000000003\"}");
-    try testkit.expectUsage(&h, &.{"close-workspace"}, "close-workspace requires a workspace (<id|ref|index> or --workspace)");
+    try testkit.expectUsage(&h, &.{"close-workspace"}, "close-workspace requires --workspace");
+    try testkit.expectUsage(&h, &.{ "workspace", "close" }, "workspace close requires a workspace (<id|ref|index> or --workspace)");
     try testkit.expectUsage(&h, &.{ "workspace", "close", "a", "b" }, "unexpected argument 'b'");
+    // The legacy +workspace close <index> keeps its positional index.
+    _ = try testkit.expectOk(&h, &.{ "+workspace", "close", "2" });
+    try h.expectLast("workspace.close", "{\"workspace_id\":2}");
 
     try testkit.expectUsage(&h, &.{"rename-workspace"}, "rename-workspace requires a title");
     try testkit.expectUsage(&h, &.{ "workspace", "rename", "workspace:1" }, "workspace rename requires --title <title>");
     _ = try testkit.expectOk(&h, &.{ "workspace", "rename", "workspace:1", "--title", "API \u{1F680}" });
     try h.expectLast("workspace.rename", "{\"workspace_id\":\"workspace:1\",\"title\":\"API \u{1F680}\"}");
 
-    // Inside a terminal the caller's workspace is the default target.
+    // Inside a terminal the caller's workspace is the default target...
     h.setEnv("CMUX_WORKSPACE_ID", "CALLER-UUID");
-    _ = try testkit.expectOk(&h, &.{"close-workspace"});
+    _ = try testkit.expectOk(&h, &.{ "workspace", "close" });
+    try h.expectLast("workspace.close", "{\"workspace_id\":\"CALLER-UUID\"}");
+    // ...except for close-workspace, which only closes what it is given
+    // (a blank --workspace "" is the caller's workspace).
+    try testkit.expectUsage(&h, &.{"close-workspace"}, "close-workspace requires --workspace");
+    try testkit.expectUsage(&h, &.{ "close-workspace", "--force" }, "close-workspace requires --workspace");
+    _ = try testkit.expectOk(&h, &.{ "close-workspace", "--workspace", "" });
     try h.expectLast("workspace.close", "{\"workspace_id\":\"CALLER-UUID\"}");
     _ = try testkit.expectOk(&h, &.{ "rename-window", "agent", "run" });
     try h.expectLast("workspace.rename", "{\"workspace_id\":\"CALLER-UUID\",\"title\":\"agent run\"}");
+    _ = try testkit.expectOk(&h, &.{ "rename-window", "  padded  " });
+    try h.expectLast("workspace.rename", "{\"workspace_id\":\"CALLER-UUID\",\"title\":\"padded\"}");
+    try testkit.expectUsage(&h, &.{ "rename-window", " " }, "rename-window requires a title");
     _ = try testkit.expectOk(&h, &.{ "rename-workspace", "--workspace", "workspace:2", "--", "--odd title" });
     try h.expectLast("workspace.rename", "{\"workspace_id\":\"workspace:2\",\"title\":\"--odd title\"}");
     _ = try testkit.expectOk(&h, &.{ "workspace", "rename", "--title", "x" });
@@ -553,7 +627,8 @@ test "unit: cli-workspace: select, close and rename in legacy and namespace form
     // window's selected workspace.
     _ = try testkit.expectOk(&h, &.{ "rename-workspace", "--window", "window:2", "new" });
     try h.expectLast("workspace.rename", "{\"window_id\":\"window:2\",\"title\":\"new\"}");
-    try testkit.expectUsage(&h, &.{ "close-workspace", "--window", "window:2" }, "close-workspace requires a workspace (<id|ref|index> or --workspace)");
+    try testkit.expectUsage(&h, &.{ "close-workspace", "--window", "window:2" }, "close-workspace requires --workspace");
+    try testkit.expectUsage(&h, &.{ "workspace", "close", "--window", "window:2" }, "workspace close requires a workspace (<id|ref|index> or --workspace)");
 }
 
 test "unit: cli-workspace: a blank workspace handle means the caller's workspace or fails closed" {
@@ -593,24 +668,47 @@ test "unit: cli-workspace: a blank workspace handle means the caller's workspace
     try testkit.expectUsage(&h, &.{ "reorder-workspace", "--before", " " }, "Workspace handle is blank");
 }
 
+fn expectNoLeak(out: []const u8, secrets: []const []const u8) !void {
+    for (secrets) |secret| {
+        if (std.mem.indexOf(u8, out, secret) != null) {
+            std.debug.print("\nleaked {s} in:\n{s}\n", .{ secret, out });
+            return error.TestUnexpectedResult;
+        }
+    }
+}
+
 test "unit: cli-workspace: workspace env --mask hides values whatever the result shape" {
     var h: testkit.Harness = undefined;
     try h.init();
     defer h.deinit();
     h.ok("workspace.env", "{\"workspace_ref\":\"workspace:2\",\"env\":[{\"name\":\"TOKEN\",\"value\":\"s3cret\"},\"RAW=x9\"],\"workspace_env\":{\"K\":\"v1\",\"N\":7,\"Z\":null}}");
     const js = try testkit.expectOk(&h, &.{ "workspace", "env", "--mask", "--json" });
-    for ([_][]const u8{ "s3cret", "TOKEN", "x9", "v1", "7" }) |secret| {
-        if (std.mem.indexOf(u8, js, secret) != null) {
-            std.debug.print("\nleaked {s} in:\n{s}\n", .{ secret, js });
-            return error.TestUnexpectedResult;
-        }
-    }
+    try expectNoLeak(js, &.{ "s3cret", "TOKEN", "x9", "v1", "7" });
     try testing.expect(std.mem.indexOf(u8, js, "\"K\": \"***\"") != null);
     try testing.expect(std.mem.indexOf(u8, js, "\"Z\": null") != null);
     try testing.expect(std.mem.indexOf(u8, js, "\"workspace_ref\": \"workspace:2\"") != null);
     // Without --mask nothing is rewritten.
     const plain = try testkit.expectOk(&h, &.{ "workspace", "env", "--json" });
     try testing.expect(std.mem.indexOf(u8, plain, "s3cret") != null);
+
+    // A set under any other key is masked as well; only the target handles
+    // and a numeric count keep their values.
+    h.ok("workspace.env", "{\"workspace_id\":\"W-UUID\",\"workspace_ref\":\"workspace:2\",\"window_ref\":\"window:1\",\"variables\":{\"API_KEY\":\"k3y\"},\"count\":1}");
+    const other = try testkit.expectOk(&h, &.{ "workspace", "env", "--mask", "--json", "--id-format", "both" });
+    try expectNoLeak(other, &.{"k3y"});
+    try testing.expect(std.mem.indexOf(u8, other, "\"API_KEY\": \"***\"") != null);
+    try testing.expect(std.mem.indexOf(u8, other, "\"count\": 1") != null);
+    try testing.expect(std.mem.indexOf(u8, other, "\"workspace_id\": \"W-UUID\"") != null);
+    try testing.expect(std.mem.indexOf(u8, other, "\"workspace_ref\": \"workspace:2\"") != null);
+    try testing.expect(std.mem.indexOf(u8, other, "\"window_ref\": \"window:1\"") != null);
+    h.ok("workspace.env", "{\"count\":\"k3y\"}");
+    try expectNoLeak(try testkit.expectOk(&h, &.{ "workspace", "env", "--mask", "--json" }), &.{"k3y"});
+    // So is a result that is not an object, in JSON and in text.
+    h.ok("workspace.env", "[\"TOKEN=s3cret\",{\"name\":\"PW\",\"value\":\"hunter2\"}]");
+    try expectNoLeak(try testkit.expectOk(&h, &.{ "workspace", "env", "--mask", "--json" }), &.{ "s3cret", "hunter2" });
+    try testing.expectEqualStrings("No environment variables\n", try testkit.expectOk(&h, &.{ "workspace", "env", "--mask" }));
+    h.ok("workspace.env", "\"TOKEN=s3cret\"");
+    try testing.expectEqualStrings("\"***\"\n", try testkit.expectOk(&h, &.{ "workspace", "env", "--mask", "--json" }));
 
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
@@ -619,6 +717,43 @@ test "unit: cli-workspace: workspace env --mask hides values whatever the result
     const masked = try std.json.Stringify.valueAlloc(a, try create.maskValues(a, v), .{});
     try testing.expectEqualStrings("{\"A\":\"***\",\"B\":{\"c\":[\"***\",\"***\",\"***\"]},\"E\":null}", masked);
     try testing.expectEqualStrings("\"***\"", try std.json.Stringify.valueAlloc(a, try create.maskValues(a, .{ .string = "" }), .{}));
+    const r = try std.json.parseFromSliceLeaky(std.json.Value, a, "{\"workspace_id\":\"W\",\"window_id\":null,\"env\":{\"A\":\"1\"},\"workspace\":\"x\"}", .{});
+    try testing.expectEqualStrings("{\"workspace_id\":\"W\",\"window_id\":null,\"env\":{\"A\":\"***\"},\"workspace\":\"***\"}", try std.json.Stringify.valueAlloc(a, try create.maskEnvResult(a, r), .{}));
+    try testing.expectEqualStrings("\"***\"", try std.json.Stringify.valueAlloc(a, try create.maskEnvResult(a, .{ .integer = 42 }), .{}));
+    try testing.expectEqualStrings("{}", try std.json.Stringify.valueAlloc(a, try create.maskEnvResult(a, .{ .object = std.json.ObjectMap.init(a) }), .{}));
+    const c = try std.json.parseFromSliceLeaky(std.json.Value, a, "{\"count\":2,\"env\":{\"count\":\"9\"}}", .{});
+    try testing.expectEqualStrings("{\"count\":2,\"env\":{\"count\":\"***\"}}", try std.json.Stringify.valueAlloc(a, try create.maskEnvResult(a, c), .{}));
+}
+
+test "unit: cli-workspace: workspace env --json formats handles but never the variables" {
+    var h: testkit.Harness = undefined;
+    try h.init();
+    defer h.deinit();
+    // Variable names that look like handle pairs.
+    h.ok("workspace.env", "{\"workspace_id\":\"W-UUID\",\"workspace_ref\":\"workspace:2\",\"env\":{\"id\":\"1\",\"ref\":\"main\",\"db_id\":\"7\",\"db_ref\":\"prod\",\"svc_ids\":\"a,b\",\"svc_refs\":\"x,y\"},\"count\":6}");
+    const all_vars = [_][]const u8{ "\"id\": \"1\"", "\"ref\": \"main\"", "\"db_id\": \"7\"", "\"db_ref\": \"prod\"", "\"svc_ids\": \"a,b\"", "\"svc_refs\": \"x,y\"" };
+    for ([_][]const u8{ "refs", "uuids", "both" }) |mode| {
+        const js = try testkit.expectOk(&h, &.{ "workspace", "env", "--json", "--id-format", mode });
+        for (all_vars) |want| {
+            if (std.mem.indexOf(u8, js, want) == null) {
+                std.debug.print("\n--id-format {s} lost {s}:\n{s}\n", .{ mode, want, js });
+                return error.TestUnexpectedResult;
+            }
+        }
+        // The result's own handles still follow --id-format.
+        const has_id = std.mem.indexOf(u8, js, "\"workspace_id\"") != null;
+        const has_ref = std.mem.indexOf(u8, js, "\"workspace_ref\"") != null;
+        try testing.expect(has_id == !std.mem.eql(u8, mode, "refs"));
+        try testing.expect(has_ref == !std.mem.eql(u8, mode, "uuids"));
+    }
+    try testing.expect(std.mem.indexOf(u8, try testkit.expectOk(&h, &.{ "workspace", "env", "--json" }), "\"db_id\": \"7\"") != null);
+    // Masked sets keep their names too.
+    const masked = try testkit.expectOk(&h, &.{ "workspace", "env", "--json", "--mask" });
+    try testing.expect(std.mem.indexOf(u8, masked, "\"db_id\": \"***\"") != null);
+    try testing.expect(std.mem.indexOf(u8, masked, "\"id\": \"***\"") != null);
+    try testing.expect(std.mem.indexOf(u8, masked, "\"count\": 6") != null);
+    try expectNoLeak(masked, &.{ "main", "prod", "a,b", "x,y" });
+    try testing.expectEqualStrings("db_id=7\ndb_ref=prod\nid=1\nref=main\nsvc_ids=a,b\nsvc_refs=x,y\n", try testkit.expectOk(&h, &.{ "workspace", "env" }));
 }
 
 test "unit: cli-workspace: next, previous and last window" {
@@ -628,7 +763,7 @@ test "unit: cli-workspace: next, previous and last window" {
     const cases = [_][2][]const u8{ .{ "next-window", "workspace.next" }, .{ "previous-window", "workspace.previous" }, .{ "last-window", "workspace.last" } };
     for (cases) |c| {
         h.ok(c[1], "{\"workspace_ref\":\"workspace:2\"}");
-        try testing.expectEqualStrings("OK\n", try testkit.expectOk(&h, &.{c[0]}));
+        try testing.expectEqualStrings("OK workspace:2\n", try testkit.expectOk(&h, &.{c[0]}));
         try h.expectLast(c[1], "{}");
         _ = try testkit.expectOk(&h, &.{ c[0], "--window", "window:2" });
         try h.expectLast(c[1], "{\"window_id\":\"window:2\"}");
@@ -693,6 +828,7 @@ test "unit: cli-workspace: workspace-action actions, flags and errors" {
     try h.init();
     defer h.deinit();
     h.ok("workspace.action", "{\"workspace_ref\":\"workspace:2\"}");
+    // Every action goes out in cmux's wire spelling (`_` for `-`).
     for (reorder.actions) |a| {
         const argv: []const []const u8 = if (std.mem.eql(u8, a, "rename"))
             &.{ "workspace-action", a, "--title", "T" }
@@ -702,32 +838,58 @@ test "unit: cli-workspace: workspace-action actions, flags and errors" {
             &.{ "workspace-action", a, "--color", "teal" }
         else
             &.{ "workspace-action", "--action", a };
-        try testing.expectEqualStrings("OK\n", try testkit.expectOk(&h, argv));
-        try testing.expectEqualStrings(a, h.requests()[h.requestCount() - 1].params.object.get("action").?.string);
+        const wire = try std.mem.replaceOwned(u8, h.alloc(), a, "-", "_");
+        const want = try std.fmt.allocPrint(h.alloc(), "OK action={s} workspace=workspace:2\n", .{wire});
+        try testing.expectEqualStrings(want, try testkit.expectOk(&h, argv));
+        try testing.expectEqualStrings(wire, h.requests()[h.requestCount() - 1].params.object.get("action").?.string);
     }
-    try h.expectLast("workspace.action", "{\"action\":\"clear-color\"}");
+    try h.expectLast("workspace.action", "{\"action\":\"clear_color\"}");
     _ = try testkit.expectOk(&h, &.{ "workspace-action", "set-color", "--color", "teal" });
-    try h.expectLast("workspace.action", "{\"action\":\"set-color\",\"color\":\"Teal\"}");
+    try h.expectLast("workspace.action", "{\"action\":\"set_color\",\"color\":\"Teal\"}");
     _ = try testkit.expectOk(&h, &.{ "workspace-action", "set-color", "--color", "#1a2B3c", "--workspace", "workspace:4" });
-    try h.expectLast("workspace.action", "{\"action\":\"set-color\",\"workspace_id\":\"workspace:4\",\"color\":\"#1a2B3c\"}");
+    try h.expectLast("workspace.action", "{\"action\":\"set_color\",\"workspace_id\":\"workspace:4\",\"color\":\"#1a2B3c\"}");
     _ = try testkit.expectOk(&h, &.{ "workspace-action", "set-description", "two", "words\nkept" });
-    try h.expectLast("workspace.action", "{\"action\":\"set-description\",\"description\":\"two words\\nkept\"}");
+    try h.expectLast("workspace.action", "{\"action\":\"set_description\",\"description\":\"two words\\nkept\"}");
     _ = try testkit.expectOk(&h, &.{ "workspace-action", "close-others", "--force", "--window", "window:1" });
-    try h.expectLast("workspace.action", "{\"action\":\"close-others\",\"window_id\":\"window:1\",\"force\":true}");
+    try h.expectLast("workspace.action", "{\"action\":\"close_others\",\"window_id\":\"window:1\",\"force\":true}");
+    // Any case and either separator; rename and set-color also take the
+    // remaining words; surrounding whitespace is trimmed.
+    _ = try testkit.expectOk(&h, &.{ "workspace-action", "--action", " MOVE_Up " });
+    try h.expectLast("workspace.action", "{\"action\":\"move_up\"}");
+    _ = try testkit.expectOk(&h, &.{ "workspace-action", "Set_Description", "  padded\n", "text  " });
+    try h.expectLast("workspace.action", "{\"action\":\"set_description\",\"description\":\"padded\\n text\"}");
+    _ = try testkit.expectOk(&h, &.{ "workspace-action", "rename", "Build", "\u{1F680}" });
+    try h.expectLast("workspace.action", "{\"action\":\"rename\",\"title\":\"Build \u{1F680}\"}");
+    _ = try testkit.expectOk(&h, &.{ "workspace-action", "set-color", "navy" });
+    try h.expectLast("workspace.action", "{\"action\":\"set_color\",\"color\":\"Navy\"}");
     h.setEnv("CMUX_WORKSPACE_ID", "CALLER-UUID");
     _ = try testkit.expectOk(&h, &.{ "workspace-action", "rename", "--title", "Agent \u{1F916}" });
     try h.expectLast("workspace.action", "{\"action\":\"rename\",\"workspace_id\":\"CALLER-UUID\",\"title\":\"Agent \u{1F916}\"}");
+    // The summary lists what the result reports, per --id-format.
+    h.ok("workspace.action", "{\"workspace_id\":\"9B690000-0000-4000-8000-000000000002\",\"workspace_ref\":\"workspace:2\",\"window_ref\":\"window:1\",\"closed\":3,\"index\":0,\"color\":\"#AABBCC\"}");
+    try testing.expectEqualStrings("OK action=close_below workspace=workspace:2 window=window:1 closed=3 index=0 color=#AABBCC\n", try testkit.expectOk(&h, &.{ "workspace-action", "close-below" }));
+    try testing.expectEqualStrings("OK action=pin workspace=9B690000-0000-4000-8000-000000000002 window=window:1 closed=3 index=0 color=#AABBCC\n", try testkit.expectOk(&h, &.{ "workspace-action", "pin", "--id-format", "uuids" }));
+    h.ok("workspace.action", "{\"closed\":true,\"index\":null}");
+    try testing.expectEqualStrings("OK action=mark_read closed=true index=null\n", try testkit.expectOk(&h, &.{ "workspace-action", "mark-read" }));
+    h.ok("workspace.action", "{}");
+    try testing.expectEqualStrings("OK action=unpin\n", try testkit.expectOk(&h, &.{ "workspace-action", "unpin" }));
+    try testing.expectEqualStrings("{}\n", try testkit.expectOk(&h, &.{ "workspace-action", "unpin", "--json" }));
 
     try testkit.expectUsage(&h, &.{"workspace-action"}, "workspace-action requires --action <name>");
     try testkit.expectUsage(&h, &.{ "workspace-action", "explode" }, "Unknown workspace action: explode. Valid actions: pin, unpin, rename, clear-name, set-description, clear-description, move-up, move-down, move-top, close-others, close-above, close-below, mark-read, mark-unread, set-color, clear-color");
-    try testkit.expectUsage(&h, &.{ "workspace-action", "rename" }, "workspace-action rename requires --title <text>");
-    try testkit.expectUsage(&h, &.{ "workspace-action", "set-description" }, "workspace-action set-description requires --description <text> or trailing text");
+    try testkit.expectUsage(&h, &.{ "workspace-action", "--action", "move--up" }, "Unknown workspace action: move--up. Valid actions: pin, unpin, rename, clear-name, set-description, clear-description, move-up, move-down, move-top, close-others, close-above, close-below, mark-read, mark-unread, set-color, clear-color");
+    try testkit.expectUsage(&h, &.{ "workspace-action", "rename" }, "workspace-action rename requires --title <text> (or a trailing title)");
+    try testkit.expectUsage(&h, &.{ "workspace-action", "rename", "--title", " " }, "workspace-action rename requires --title <text> (or a trailing title)");
+    try testkit.expectUsage(&h, &.{ "workspace-action", "rename", "--title", "T", "extra" }, "unexpected argument 'extra'");
+    try testkit.expectUsage(&h, &.{ "workspace-action", "set-description" }, "workspace-action set-description requires --description <text> (or trailing text)");
     try testkit.expectUsage(&h, &.{ "workspace-action", "set-description", "--description", "a", "b" }, "unexpected argument 'b'");
-    try testkit.expectUsage(&h, &.{ "workspace-action", "set-color" }, "workspace-action set-color requires --color <name|#RRGGBB>");
+    try testkit.expectUsage(&h, &.{ "workspace-action", "set-color" }, "workspace-action set-color requires --color <name|#hex> (or a trailing color)");
     try testkit.expectUsage(&h, &.{ "workspace-action", "set-color", "--color", "#12345" }, "invalid color '#12345': use #RRGGBB or one of Red, Crimson, Orange, Amber, Olive, Green, Teal, Aqua, Blue, Navy, Indigo, Purple, Magenta, Rose, Brown, Charcoal");
+    try testkit.expectUsage(&h, &.{ "workspace-action", "set-color", "light", "blue" }, "invalid color 'light blue': use #RRGGBB or one of Red, Crimson, Orange, Amber, Olive, Green, Teal, Aqua, Blue, Navy, Indigo, Purple, Magenta, Rose, Brown, Charcoal");
     try testkit.expectUsage(&h, &.{ "workspace-action", "pin", "extra" }, "unexpected argument 'extra'");
     try testing.expectEqualStrings("Charcoal", reorder.normalizeColor(" CHARCOAL ").?);
     try testing.expect(reorder.normalizeColor("#GG0000") == null);
+    try testing.expect(reorder.isAction("close_others") and !reorder.isAction("close-others") and !reorder.isAction(""));
 }
 
 test "unit: cli-workspace: workspace status get, set, cycle and errors" {
@@ -757,6 +919,10 @@ test "unit: cli-workspace: workspace status get, set, cycle and errors" {
     try h.expectLast("workspace.status.get", "{\"workspace_id\":\"CALLER-UUID\"}");
     const js = try testkit.expectOk(&h, &.{ "workspace", "status", "--json" });
     try testing.expect(std.mem.indexOf(u8, js, "\"inferred_at_override\": \"working\"") != null);
+    // Missing lanes read as "todo" (cmux); an override without its own
+    // inferred lane names the current one.
+    h.ok("workspace.status.get", "{\"override\":{\"status\":\"review\"}}");
+    try testing.expectEqualStrings("todo\ninferred: todo\noverride: review (auto-clears when inferred moves off todo)\n", try testkit.expectOk(&h, &.{ "workspace", "status" }));
     try testkit.expectUsage(&h, &.{ "workspace", "status", "bogus" }, "Unknown workspace status subcommand: bogus. Try: cmux workspace status [set <lane|auto> | cycle]");
     try testkit.expectUsage(&h, &.{ "workspace", "status", "set" }, "workspace status set requires a lane: todo, working, needs-attention, review, done, auto, none");
     try testkit.expectUsage(&h, &.{ "workspace", "status", "set", "Done" }, "Invalid workspace status 'Done'. Expected one of: todo, working, needs-attention, review, done, auto, none");
@@ -768,9 +934,9 @@ test "unit: cli-workspace: workspace reconnect and disconnect" {
     var h: testkit.Harness = undefined;
     try h.init();
     defer h.deinit();
-    h.ok("workspace.remote.reconnect", "{\"workspace_ref\":\"workspace:3\",\"remote\":{\"state\":\"connecting\"}}");
+    h.ok("workspace.remote.reconnect", "{\"workspace_ref\":\"workspace:3\",\"window_ref\":\"window:1\",\"remote\":{\"state\":\"connecting\"}}");
     h.ok("workspace.remote.disconnect", "{\"workspace_ref\":\"workspace:3\",\"remote\":{\"state\":\"disconnected\"}}");
-    try testing.expectEqualStrings("OK\n", try testkit.expectOk(&h, &.{ "workspace", "reconnect", "workspace:3" }));
+    try testing.expectEqualStrings("OK workspace:3 window:1\n", try testkit.expectOk(&h, &.{ "workspace", "reconnect", "workspace:3" }));
     try h.expectLast("workspace.remote.reconnect", "{\"workspace_id\":\"workspace:3\"}");
     _ = try testkit.expectOk(&h, &.{ "workspace", "disconnect", "--workspace", "workspace:3" });
     try h.expectLast("workspace.remote.disconnect", "{\"workspace_id\":\"workspace:3\"}");

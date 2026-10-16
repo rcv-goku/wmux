@@ -1,11 +1,15 @@
 Usage: cmux workspace-action --action <name> [--workspace <id|ref|index>] [--window <id|ref|index>] [--title <text>] [--description <text>] [--color <name|#RRGGBB>] [--force]
 
 Run a workspace context-menu action (default target: the caller's
-workspace). The action may also be the first argument. Prints "OK".
+workspace). The action may also be the first argument, in any case and
+with "-" or "_". Prints "OK action=<action> workspace=<workspace>" (the
+action spelled with "_"), followed by the window, closed count, index and
+color when the app reports them.
 
 Actions:
   pin, unpin                 Pin or unpin the workspace
-  rename                     Set the title (--title <text>)
+  rename                     Set the title (--title <text> or the remaining
+                             words)
   clear-name                 Drop the custom title
   set-description            Set the description (--description <text> or the
                              remaining words; newlines are kept)
@@ -16,10 +20,10 @@ Actions:
                              Close other workspaces (--force closes even when
                              a running process would be killed)
   mark-read, mark-unread     Change the unread state
-  set-color                  Set the color (--color <name|#RRGGBB>): Red,
-                             Crimson, Orange, Amber, Olive, Green, Teal, Aqua,
-                             Blue, Navy, Indigo, Purple, Magenta, Rose, Brown,
-                             Charcoal
+  set-color                  Set the color (--color <name|#RRGGBB> or the
+                             remaining word): Red, Crimson, Orange, Amber,
+                             Olive, Green, Teal, Aqua, Blue, Navy, Indigo,
+                             Purple, Magenta, Rose, Brown, Charcoal
   clear-color                Drop the color
 
 Options:

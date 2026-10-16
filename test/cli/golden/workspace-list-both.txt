@@ -1,3 +1,4 @@
-  workspace:1 (9B690000-0000-4000-8000-000000000001)  api
-* workspace:2 (9B690000-0000-4000-8000-000000000002)  build été 🚀  [ssh:connected]  [selected]
-  workspace:5 (9B690000-0000-4000-8000-000000000005)    [mosh:reconnecting]
+  workspace:1 9B690000-0000-4000-8000-000000000001  api
+* workspace:2 9B690000-0000-4000-8000-000000000002  build été 🚀  [ssh:connected]  [selected]
+  workspace:5 9B690000-0000-4000-8000-000000000005  [mosh:reconnecting]
+  workspace:6 9B690000-0000-4000-8000-000000000006  tagless  [remote:unknown]

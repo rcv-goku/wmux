@@ -179,15 +179,37 @@ pub fn writeJsonResult(ctx: *Ctx, v: std.json.Value) !void {
     try output.writeResult(ctx.arena, ctx.out, v, ctx.parsed.globals.id_format);
 }
 
-/// Calls `method` and prints the JSON result or `OK`.
-pub fn simple(ctx: *Ctx, method: []const u8, p: *const Params) !u8 {
+/// `--json` for workspace inspection (`workspace list`, `list-workspaces`,
+/// `current-workspace`): without an explicit `--id-format`, workspace UUIDs
+/// (`id` next to a ref, `workspace_id`) stay next to their refs, as cmux
+/// keeps them for scripts that compare with `CMUX_WORKSPACE_ID`. These
+/// results carry no other bare `id`/`ref` pair.
+pub fn writeWorkspaceInspectionJson(ctx: *Ctx, v: std.json.Value) !void {
+    if (ctx.parsed.globals.id_format_explicit) return writeJsonResult(ctx, v);
+    const keep: idformat.Options = .{ .preserve_ids = &.{ "", "workspace" } };
+    try output.writeJson(ctx.out, try idformat.apply(ctx.arena, v, ctx.parsed.globals.id_format, keep));
+}
+
+/// Calls `method` and prints the JSON result, or cmux's v2 summary: `OK`
+/// followed by the handle of each of `kinds` (`workspace`, `window`) that
+/// the result names.
+pub fn simple(ctx: *Ctx, method: []const u8, p: *const Params, kinds: []const []const u8) !u8 {
     switch (try request(ctx, method, p)) {
         .code => |c| return c,
         .ok => |v| {
-            if (ctx.json()) try writeJsonResult(ctx, v) else try ctx.out.writeAll("OK\n");
+            if (ctx.json()) try writeJsonResult(ctx, v) else try writeOkSummary(ctx, v, kinds);
             return output.exit.ok;
         },
     }
+}
+
+/// `OK` plus ` <handle>` for each of `kinds` present in `v`.
+pub fn writeOkSummary(ctx: *Ctx, v: std.json.Value, kinds: []const []const u8) !void {
+    try ctx.out.writeAll("OK");
+    for (kinds) |k| {
+        if (try kindHandle(ctx, v, k)) |t| try ctx.out.print(" {s}", .{t});
+    }
+    try ctx.out.writeByte('\n');
 }
 
 /// Calls `method` and prints the JSON result or `OK <handle>` of the
@@ -196,16 +218,17 @@ pub fn created(ctx: *Ctx, method: []const u8, p: *const Params, prefix: []const 
     switch (try request(ctx, method, p)) {
         .code => |c| return c,
         .ok => |v| {
-            if (ctx.json()) {
-                try writeJsonResult(ctx, v);
-                return output.exit.ok;
-            }
-            try ctx.out.writeAll("OK");
-            if (try handleText(ctx, v, prefix)) |t| try ctx.out.print(" {s}", .{t});
-            try ctx.out.writeByte('\n');
+            if (ctx.json()) try writeJsonResult(ctx, v) else try writeCreated(ctx, v, prefix);
             return output.exit.ok;
         },
     }
+}
+
+/// `OK <handle>` of the created `prefix` object (`OK` when `v` names none).
+pub fn writeCreated(ctx: *Ctx, v: std.json.Value, prefix: []const u8) !void {
+    try ctx.out.writeAll("OK");
+    if (try handleText(ctx, v, prefix)) |t| try ctx.out.print(" {s}", .{t});
+    try ctx.out.writeByte('\n');
 }
 
 // ----- result access -----
@@ -259,6 +282,42 @@ pub fn handleText(ctx: *Ctx, v: std.json.Value, prefix: []const u8) !?[]const u8
     const id = str(v, try std.fmt.allocPrint(a, "{s}_id", .{prefix})) orelse alt_id orelse str(v, "id");
     if (ref == null and id == null) return null;
     return try idformat.handleTextAlloc(a, ctx.parsed.globals.id_format, ref, id, .{});
+}
+
+/// `<kind>_ref` / `<kind>_id` of `v` for `--id-format` (`both` prints
+/// `<ref> (<uuid>)`); null when `v` names neither (cmux's summaries).
+pub fn kindHandle(ctx: *Ctx, v: std.json.Value, kind: []const u8) !?[]const u8 {
+    const a = ctx.arena;
+    const ref = str(v, try std.fmt.allocPrint(a, "{s}_ref", .{kind}));
+    const id = str(v, try std.fmt.allocPrint(a, "{s}_id", .{kind}));
+    if (ref == null and id == null) return null;
+    return try idformat.handleTextAlloc(a, ctx.parsed.globals.id_format, ref, id, .{});
+}
+
+/// A list row's handle as cmux prints list lines: `ref` (else
+/// `<prefix>_ref`) and `id` (else `<prefix>_id`); `both` joins the two
+/// with a space, and a row with neither prints `?`.
+pub fn rowHandle(ctx: *Ctx, v: std.json.Value, prefix: []const u8) ![]const u8 {
+    const a = ctx.arena;
+    const ref = str(v, "ref") orelse str(v, try std.fmt.allocPrint(a, "{s}_ref", .{prefix}));
+    const id = str(v, "id") orelse str(v, try std.fmt.allocPrint(a, "{s}_id", .{prefix}));
+    return switch (ctx.parsed.globals.id_format) {
+        .refs => ref orelse id orelse "?",
+        .uuids => id orelse ref orelse "?",
+        .both => if (ref) |r| (if (id) |i| try std.fmt.allocPrint(a, "{s} {s}", .{ r, i }) else r) else id orelse "?",
+    };
+}
+
+/// A scalar result value as text: numbers as `writeNumber`, strings as
+/// they are, booleans and null spelled out; anything else as compact JSON.
+pub fn writeScalar(w: *Writer, v: std.json.Value) !void {
+    switch (v) {
+        .integer, .float, .number_string => try writeNumber(w, v),
+        .string => |s| try w.writeAll(s),
+        .bool => |b| try w.writeAll(if (b) "true" else "false"),
+        .null => try w.writeAll("null"),
+        else => try std.json.Stringify.value(v, .{}, w),
+    }
 }
 
 /// Writes a number as an integer when whole, else with up to two decimals.

@@ -1,2 +1,2 @@
-workspace_group:1  Backend  workspaces=3  [collapsed]
-workspace_group:2  Fronts été  workspaces=2  [pinned]
+workspace_group:1  Backend  (3 members) [collapsed]
+workspace_group:2  Fronts été  (1 members) [pinned] [collapsed]

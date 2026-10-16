@@ -85,7 +85,9 @@ fn focusValue(o: common.opts.Opts) error{Invalid}!bool {
     return v;
 }
 
-pub fn run(ctx: *Ctx, args: []const []const u8, u: []const u8) !u8 {
+/// `honor_json`: `workspace create --json` prints the result; the legacy
+/// `new-workspace` prints its OK line even with `--json`, as cmux does.
+pub fn run(ctx: *Ctx, args: []const []const u8, u: []const u8, honor_json: bool) !u8 {
     var code: u8 = 0;
     const o = (try common.parseOpts(ctx, u, args, &create_defs, &code)) orelse return code;
     if (o.positionals.len > 0) return common.usage(ctx, u, "unexpected argument '{s}'", .{o.positionals[0]});
@@ -127,7 +129,7 @@ pub fn run(ctx: *Ctx, args: []const []const u8, u: []const u8) !u8 {
     if (try envSet(ctx, u, o, &env)) |c| return c;
     if (env) |*set| try p.value("workspace_env", try set.toJson(ctx.arena));
     if (try common.putWindow(ctx, &p, u, o)) |c| return c;
-    try p.boolean("focus", focusValue(o) catch return common.usage(ctx, u, "--focus must be true or false", .{}));
+    try p.boolean("focus", focusValue(o) catch return common.usage(ctx, u, "--focus must be true|false", .{}));
     if (o.get("--group")) |g| {
         if (try common.putHandle(ctx, &p, u, "group_id", .workspace_group, g)) |c| return c;
     }
@@ -140,7 +142,13 @@ pub fn run(ctx: *Ctx, args: []const []const u8, u: []const u8) !u8 {
         if (!o.has("--group")) return common.usage(ctx, u, "--group-reference requires --group", .{});
         if (try common.putHandle(ctx, &p, u, "group_reference_workspace_id", .workspace, v)) |c| return c;
     }
-    return common.created(ctx, "workspace.create", &p, "workspace");
+    switch (try common.request(ctx, "workspace.create", &p)) {
+        .code => |c| return c,
+        .ok => |v| {
+            if (honor_json and ctx.json()) try common.writeJsonResult(ctx, v) else try common.writeCreated(ctx, v, "workspace");
+            return output.exit.ok;
+        },
+    }
 }
 
 /// `--env-file` files in order, then `--env` (which overrides) into
@@ -192,8 +200,56 @@ pub fn maskValues(arena: std.mem.Allocator, v: std.json.Value) std.mem.Allocator
     }
 }
 
+/// Keys of a `workspace.env` result that name its target, never a value.
+const env_target_keys = [_][]const u8{ "workspace_id", "workspace_ref", "window_id", "window_ref" };
+
+/// Keys of a `workspace.env` result that hold the variable set (cmux:
+/// `env`; `workspace_env` is accepted too).
+const env_set_keys = [_][]const u8{ "env", "workspace_env" };
+
+/// The `workspace.env` result for `--mask`: every value goes through
+/// `maskValues` except the target handles and a numeric `count` (cmux
+/// reports the number of variables, which is not secret). Anything else
+/// fails closed: a set under any key, or a result that is not an object,
+/// is masked too.
+pub fn maskEnvResult(arena: std.mem.Allocator, v: std.json.Value) std.mem.Allocator.Error!std.json.Value {
+    if (v != .object) return maskValues(arena, v);
+    var out = std.json.ObjectMap.init(arena);
+    try out.ensureTotalCapacity(v.object.count());
+    var it = v.object.iterator();
+    while (it.next()) |e| {
+        const key = e.key_ptr.*;
+        const target = for (env_target_keys) |k| {
+            if (std.mem.eql(u8, k, key)) break true;
+        } else false;
+        const count = std.mem.eql(u8, key, "count") and e.value_ptr.* == .integer;
+        out.putAssumeCapacity(key, if (target or count) e.value_ptr.* else try maskValues(arena, e.value_ptr.*));
+    }
+    return .{ .object = out };
+}
+
+/// `--json` for `workspace env`: `--id-format` rewrites the result's
+/// handles only. The variable set is user data (a variable may be called
+/// `id`, or `x_id` next to `x_ref`), so it is put back verbatim after
+/// formatting, as cmux does.
+fn writeEnvJson(ctx: *Ctx, v: std.json.Value) !void {
+    if (v != .object or ctx.parsed.globals.id_format == .both) return common.writeJsonResult(ctx, v);
+    var formatted = try output.formatIds(ctx.arena, v, ctx.parsed.globals.id_format);
+    for (env_set_keys) |k| {
+        if (v.object.get(k)) |set| try formatted.object.put(k, set);
+    }
+    try output.writeJson(ctx.out, formatted);
+}
+
+const EnvLine = struct { key: []const u8, value: std.json.Value };
+
+fn envLineLess(_: void, a: EnvLine, b: EnvLine) bool {
+    return std.mem.lessThan(u8, a.key, b.key);
+}
+
 /// `workspace env [<handle>|--workspace <h>] [--mask]`: the configured
-/// set as `KEY=VALUE` lines (`--mask` shows `***` instead of each value).
+/// set as `KEY=VALUE` lines sorted by name (`--mask` shows `***` instead
+/// of each value).
 pub fn runEnv(ctx: *Ctx, args: []const []const u8, u: []const u8) !u8 {
     var code: u8 = 0;
     const defs = [_]Def{ .{ .name = "--workspace" }, .{ .name = "--window" }, .{ .name = "--mask", .takes_value = false } };
@@ -204,35 +260,33 @@ pub fn runEnv(ctx: *Ctx, args: []const []const u8, u: []const u8) !u8 {
     var p = Params.init(ctx.arena);
     if (try common.putWindow(ctx, &p, u, o)) |c| return c;
     if (try common.putWorkspaceTarget(ctx, &p, u, explicit, common.windowText(ctx, o) != null)) |c| return c;
-    const v = switch (try common.request(ctx, "workspace.env", &p)) {
+    const result = switch (try common.request(ctx, "workspace.env", &p)) {
         .code => |c| return c,
-        .ok => |v| v,
+        .ok => |r| r,
     };
+    // No value survives --mask, whatever the result's shape.
+    const v = if (o.has("--mask")) try maskEnvResult(ctx.arena, result) else result;
     const env_key = if (common.field(v, "env") != null) "env" else "workspace_env";
-    // Fails closed: whatever shape the set has, no value survives --mask
-    // (the map entries are rewritten in place).
-    if (o.has("--mask") and v == .object) {
-        for ([_][]const u8{ "env", "workspace_env" }) |k| {
-            if (v.object.getPtr(k)) |ptr| ptr.* = try maskValues(ctx.arena, ptr.*);
-        }
-    }
     if (ctx.json()) {
-        try common.writeJsonResult(ctx, v);
+        try writeEnvJson(ctx, v);
         return output.exit.ok;
     }
     const m = common.obj(common.field(v, env_key)) orelse std.json.ObjectMap.init(ctx.arena);
     if (m.count() == 0) {
-        try ctx.out.writeAll("No environment variables set.\n");
+        try ctx.out.writeAll("No environment variables\n");
         return output.exit.ok;
     }
+    var lines = try ctx.arena.alloc(EnvLine, m.count());
     var it = m.iterator();
-    while (it.next()) |e| {
-        const val = e.value_ptr.*;
-        try ctx.out.print("{s}=", .{e.key_ptr.*});
-        switch (val) {
+    var n: usize = 0;
+    while (it.next()) |e| : (n += 1) lines[n] = .{ .key = e.key_ptr.*, .value = e.value_ptr.* };
+    std.mem.sort(EnvLine, lines, {}, envLineLess);
+    for (lines) |l| {
+        try ctx.out.print("{s}=", .{l.key});
+        switch (l.value) {
             .string => |s| try ctx.out.writeAll(s),
             .null => {},
-            else => try std.json.Stringify.value(val, .{}, ctx.out),
+            else => try std.json.Stringify.value(l.value, .{}, ctx.out),
         }
         try ctx.out.writeByte('\n');
     }

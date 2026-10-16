@@ -29,7 +29,8 @@ Options:
                                 for <branch>
   --repo <path>                 wmux: repository for --worktree (default: the
                                 current directory)
-  --json                        Print the result as JSON
+  --json                        Not used here (the OK line is printed);
+                                "cmux workspace create --json" prints JSON
 
 Workspace environment variables reach every shell in the workspace, are
 saved with the session (in plaintext) and never override the CMUX_*

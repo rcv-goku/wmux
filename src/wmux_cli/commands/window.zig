@@ -10,6 +10,7 @@
 //! id-formatted result.
 
 const std = @import("std");
+const selectors = @import("wmux_proto").selectors;
 const command = @import("../command.zig");
 const CommandSpec = command.CommandSpec;
 const Ctx = command.Ctx;
@@ -129,7 +130,7 @@ fn runFocus(ctx: *Ctx) !u8 {
     // Bringing the window to front needs the foreground grant (ADR-3.11),
     // which only an interactive, non-agent caller hands over.
     if (!try common.grantForeground(ctx, &p)) return output.exit.runtime;
-    return common.simple(ctx, "window.focus", &p);
+    return common.simple(ctx, "window.focus", &p, &.{});
 }
 
 fn runClose(ctx: *Ctx) !u8 {
@@ -140,7 +141,7 @@ fn runClose(ctx: *Ctx) !u8 {
     var p = Params.init(ctx.arena);
     if (try requiredWindow(ctx, u_close, o, &p)) |c| return c;
     if (o.has("--force")) try p.boolean("force", true);
-    return common.simple(ctx, "window.close", &p);
+    return common.simple(ctx, "window.close", &p, &.{});
 }
 
 /// A `--width`/`--height` value: finite, > 0 and <= 100000.
@@ -246,9 +247,14 @@ fn runDisplay(ctx: *Ctx, args: []const []const u8) !u8 {
         try common.writeJsonResult(ctx, v);
         return output.exit.ok;
     }
-    const moved = common.int(v, "moved") orelse 0;
+    // cmux's result lists the moved window ids (`moved: [...]`); a count
+    // is accepted too.
+    const moved: usize = if (common.field(v, "moved")) |m| switch (m) {
+        .array => |arr| arr.items.len,
+        else => if (common.int(v, "moved")) |n| (if (n > 0) @intCast(n) else 0) else 0,
+    } else 0;
     const display = common.str(v, "display") orelse common.str(common.field(v, "display"), "name") orelse o.positionals[0];
-    try ctx.out.print("Moved {d} window(s) to {s}.\n", .{ moved, display });
+    try ctx.out.print("Moved {d} window{s} to {s}.\n", .{ moved, if (moved == 1) "" else "s", display });
     return output.exit.ok;
 }
 
@@ -271,9 +277,36 @@ fn runMove(ctx: *Ctx) !u8 {
     if (noPositionals(ctx, u_move, o)) |c| return c;
     var p = Params.init(ctx.arena);
     if (try common.putWorkspaceTarget(ctx, &p, u_move, o.get("--workspace"), false)) |c| return c;
-    if (p.map.get("workspace_id") == null) return common.usage(ctx, u_move, "move-workspace-to-window requires --workspace", .{});
+    const ws = p.map.get("workspace_id") orelse return common.usage(ctx, u_move, "move-workspace-to-window requires --workspace", .{});
     if (try requiredWindow(ctx, u_move, o, &p)) |c| return c;
-    return common.simple(ctx, "workspace.move_to_window", &p);
+    // `window_id` is the destination here, and the server reads a workspace
+    // index in the `window_id` window (ADR-2.4). Like cmux, resolve an index
+    // first, in the caller's (or the active) window.
+    if (ws == .integer) switch (try resolveWorkspaceIndex(ctx, ws.integer)) {
+        .code => |c| return c,
+        .handle => |h| try p.str("workspace_id", h),
+    };
+    return common.simple(ctx, "workspace.move_to_window", &p, &.{ "workspace", "window" });
+}
+
+const Resolved = union(enum) { handle: []const u8, code: u8 };
+
+/// The workspace at `index` of the caller's (or the active) window, from
+/// `workspace.list` without a window: its UUID, else its ref. Failures are
+/// reported (exit code in `.code`).
+fn resolveWorkspaceIndex(ctx: *Ctx, index: i64) !Resolved {
+    var lp = Params.init(ctx.arena);
+    const v = switch (try common.request(ctx, "workspace.list", &lp)) {
+        .code => |c| return .{ .code = c },
+        .ok => |v| v,
+    };
+    for (common.list(v, "workspaces") orelse &.{}) |w| {
+        const i = common.int(w, "index") orelse continue;
+        if (i != index) continue;
+        if (common.str(w, "id") orelse common.str(w, "ref")) |h| return .{ .handle = h };
+    }
+    const msg = try selectors.cliMessage(ctx.arena, .index_not_found, .workspace, "");
+    return .{ .code = ctx.runtimeError("{s}", .{msg}) };
 }
 
 // ----- tests -----
@@ -483,7 +516,8 @@ test "unit: cli-window: window displays and display" {
     h.ok("window.displays", "{\"displays\":[]}");
     try testing.expectEqualStrings("No displays found.\n", try testkit.expectOk(&h, &.{ "window", "displays" }));
 
-    h.ok("window.display", "{\"moved\":2,\"display\":{\"name\":\"LG \\u00e9cran\",\"index\":1}}");
+    // cmux's result: the resolved display name and the moved window ids.
+    h.ok("window.display", "{\"display\":\"LG \\u00e9cran\",\"moved\":[\"6F1D2C3B-0000-4000-8000-000000000001\",\"6F1D2C3B-0000-4000-8000-000000000003\"]}");
     const moved = try testkit.expectOk(&h, &.{ "window", "display", "1" });
     try testkit.expectGolden(h.alloc(), "window-display.txt", moved);
     try h.expectLast("window.display", "{\"display\":\"1\"}");
@@ -491,8 +525,16 @@ test "unit: cli-window: window displays and display" {
     try h.expectLast("window.display", "{\"display\":\"LG\",\"window_id\":\"window:2\"}");
     _ = try testkit.expectOk(&h, &.{ "window", "display", "LG", "--window", "window:3" });
     try h.expectLast("window.display", "{\"display\":\"LG\",\"window_id\":\"window:3\"}");
-    h.ok("window.display", "{\"moved\":1,\"display\":\"DELL\"}");
-    try testing.expectEqualStrings("Moved 1 window(s) to DELL.\n", try testkit.expectOk(&h, &.{ "window", "display", "DE" }));
+    h.ok("window.display", "{\"display\":\"DELL\",\"moved\":[\"6F1D2C3B-0000-4000-8000-000000000001\"]}");
+    try testing.expectEqualStrings("Moved 1 window to DELL.\n", try testkit.expectOk(&h, &.{ "window", "display", "DE" }));
+    h.ok("window.display", "{\"display\":\"DELL\",\"moved\":[]}");
+    try testing.expectEqualStrings("Moved 0 windows to DELL.\n", try testkit.expectOk(&h, &.{ "window", "display", "DE" }));
+    // A count and a display object are accepted too; a missing name falls
+    // back to the argument.
+    h.ok("window.display", "{\"moved\":3,\"display\":{\"name\":\"LG\"}}");
+    try testing.expectEqualStrings("Moved 3 windows to LG.\n", try testkit.expectOk(&h, &.{ "window", "display", "1" }));
+    h.ok("window.display", "{\"moved\":-1}");
+    try testing.expectEqualStrings("Moved 0 windows to 2.\n", try testkit.expectOk(&h, &.{ "window", "display", "2" }));
 
     try testkit.expectUsage(&h, &.{"window"}, "window requires a subcommand: displays, display, default-display");
     try testkit.expectUsage(&h, &.{ "window", "bogus" }, "unknown window subcommand 'bogus'; expected one of: displays, display, default-display");
@@ -518,15 +560,51 @@ test "unit: cli-window: move-workspace-to-window targets and defaults" {
     var h: testkit.Harness = undefined;
     try h.init();
     defer h.deinit();
-    h.ok("workspace.move_to_window", "{}");
-    try testing.expectEqualStrings("OK\n", try testkit.expectOk(&h, &.{ "move-workspace-to-window", "--workspace", "workspace:3", "--window", "window:2" }));
+    h.ok("workspace.move_to_window", "{\"workspace_ref\":\"workspace:3\",\"window_ref\":\"window:2\"}");
+    try testing.expectEqualStrings("OK workspace:3 window:2\n", try testkit.expectOk(&h, &.{ "move-workspace-to-window", "--workspace", "workspace:3", "--window", "window:2" }));
     try h.expectLast("workspace.move_to_window", "{\"workspace_id\":\"workspace:3\",\"window_id\":\"window:2\"}");
+    h.ok("workspace.move_to_window", "{}");
     try testkit.expectUsage(&h, &.{ "move-workspace-to-window", "--window", "window:2" }, "move-workspace-to-window requires --workspace");
     h.setEnv("CMUX_WORKSPACE_ID", "9B690000-0000-4000-8000-000000000002");
     _ = try testkit.expectOk(&h, &.{ "move-workspace-to-window", "--window", "2" });
     try h.expectLast("workspace.move_to_window", "{\"workspace_id\":\"9B690000-0000-4000-8000-000000000002\",\"window_id\":2}");
     try testkit.expectUsage(&h, &.{"move-workspace-to-window"}, "move-workspace-to-window requires --window");
     try testkit.expectUsage(&h, &.{ "move-workspace-to-window", "--workspace", "pane:1", "--window", "1" }, "Invalid workspace handle: pane:1 (expected UUID, ref like workspace:1, or index)");
+}
+
+test "unit: cli-window: move-workspace-to-window resolves an index before naming the destination" {
+    var h: testkit.Harness = undefined;
+    try h.init();
+    defer h.deinit();
+    h.ok("workspace.list", "{\"window_ref\":\"window:1\",\"workspaces\":[{\"id\":\"9B690000-0000-4000-8000-000000000001\",\"ref\":\"workspace:1\",\"index\":0},{\"id\":\"9B690000-0000-4000-8000-000000000004\",\"ref\":\"workspace:4\",\"index\":1}]}");
+    h.ok("workspace.move_to_window", "{\"workspace_ref\":\"workspace:4\",\"window_ref\":\"window:2\"}");
+    // The index counts in the caller's (or the active) window: the list is
+    // asked without a window, and the move names the workspace's UUID.
+    try testing.expectEqualStrings("OK workspace:4 window:2\n", try testkit.expectOk(&h, &.{ "move-workspace-to-window", "--workspace", "1", "--window", "window:2" }));
+    const reqs = h.requests();
+    try testing.expectEqual(@as(usize, 2), reqs.len);
+    try testing.expectEqualStrings("workspace.list", reqs[0].method);
+    try testing.expectEqualStrings("{}", reqs[0].params_json);
+    try h.expectLast("workspace.move_to_window", "{\"workspace_id\":\"9B690000-0000-4000-8000-000000000004\",\"window_id\":\"window:2\"}");
+    // Refs and UUIDs go out as typed, without a lookup.
+    _ = try testkit.expectOk(&h, &.{ "move-workspace-to-window", "--workspace", "workspace:4", "--window", "window:2" });
+    try testing.expectEqual(@as(usize, 3), h.requestCount());
+    // A row without a UUID gives its ref.
+    h.ok("workspace.list", "{\"workspaces\":[{\"title\":\"no index\"},{\"ref\":\"workspace:7\",\"index\":0}]}");
+    _ = try testkit.expectOk(&h, &.{ "move-workspace-to-window", "--workspace", "0", "--window", "2" });
+    try h.expectLast("workspace.move_to_window", "{\"workspace_id\":\"workspace:7\",\"window_id\":2}");
+    // A missing index fails after the lookup and moves nothing.
+    const before = h.requestCount();
+    const r = h.run(&.{ "move-workspace-to-window", "--workspace", "5", "--window", "window:2" });
+    try testing.expectEqual(@as(u8, 1), r.code);
+    try testing.expectEqualStrings("cmux: Workspace index not found\n", r.err);
+    try testing.expectEqual(before + 1, h.requestCount());
+    // A failed lookup is reported as the server's error.
+    h.fail("workspace.list", "{\"code\":\"unavailable\",\"message\":\"TabManager not available\"}");
+    const f = h.run(&.{ "move-workspace-to-window", "--workspace", "0", "--window", "window:2" });
+    try testing.expectEqual(@as(u8, 1), f.code);
+    try testing.expectEqualStrings("unavailable: TabManager not available\n", f.err);
+    try testing.expectEqualStrings("workspace.list", h.requests()[h.requestCount() - 1].method);
 }
 
 test "unit: cli-window: server errors and missing app exit 1" {

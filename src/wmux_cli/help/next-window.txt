@@ -1,7 +1,7 @@
 Usage: cmux next-window [--window <id|ref|index>]
 
-Select the next workspace in the window (wraps around). Prints "OK".
-tmux-compatible name: a tmux window is a workspace here.
+Select the next workspace in the window (wraps around) and print
+"OK <workspace>". tmux-compatible name: a tmux window is a workspace here.
 
 Options:
   --window <id|ref|index>   Window to act in (default: the active window)

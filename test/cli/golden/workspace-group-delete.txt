@@ -1,1 +1,1 @@
-OK operation=close_workspaces affected=3
+OK group deleted (closed 3 workspaces)
