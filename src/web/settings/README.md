@@ -54,8 +54,11 @@ beyond what these replies contain.
 | `params.query` | optional: open with this search query |
 | `state.section` | last section (from `panel.state_changed`) when restored |
 
-Unknown or Windows-omitted targets (`account`, `devices`, `networking`, ...)
-keep the current section and show "“x” is not available on Windows."
+A target that names no section keeps the current section (for `params.target`:
+the restored `state.section`, else the first section) and says why:
+Windows-omitted targets (`account`, `devices`, `networking`, ...) show
+"“x” is not available on Windows.", anything else "Unknown settings section
+“x”." A restored `state.section` that no longer exists is ignored quietly.
 
 ### Methods called by the page
 

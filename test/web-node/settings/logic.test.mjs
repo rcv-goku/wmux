@@ -8,7 +8,7 @@ const schemaMod = await importWeb("settings/schema.js");
 const { flattenSchema, validateValue, parseInput, formatInput, deepEqual, humanize, kindOf } = schemaMod;
 const { queryTokens, fieldHaystack, matchesTokens, highlightRanges } = schemaMod;
 const { normalizeEffective, rowState, normalizeSource } = await importWeb("settings/effective.js");
-const { resolveTarget, SECTION_IDS, sectionTitle } = await importWeb("settings/sections.js");
+const { isOmittedTarget, resolveTarget, SECTION_IDS, sectionTitle } = await importWeb("settings/sections.js");
 
 const byPath = (fields) => new Map(fields.map((f) => [f.path, f]));
 
@@ -99,6 +99,23 @@ describe("unit: settings-schema: flatten", () => {
     assert.equal(f.get("shortcuts.bindings").section, "keyboardShortcuts");
     assert.equal(f.get("x.mixed").kind, "enum");
     assert.equal(f.get("x.arr").kind, "json");
+  });
+
+  test("unit: settings-schema: prototype-named path segments fall back to the app section", () => {
+    const schema = JSON.parse(
+      '{"properties": {"constructor": {"properties": {"x": {"type": "boolean", "default": true}}},' +
+        ' "__proto__": {"properties": {"y": {"type": "boolean", "default": false}}},' +
+        ' "toString": {"type": "string", "default": ""}}}',
+    );
+    const fields = flattenSchema(schema);
+    assert.deepEqual(
+      fields.map((fld) => [fld.path, fld.section]),
+      [
+        ["constructor.x", "app"],
+        ["__proto__.y", "app"],
+        ["toString", "app"],
+      ],
+    );
   });
 
   test("unit: settings-schema: deep nesting is bounded", () => {
@@ -302,6 +319,12 @@ describe("unit: settings-window: targets", () => {
   test("unit: settings-window: omitted, empty and unknown targets resolve to null", () => {
     for (const target of ["account", "devices", "networking", "", "  ", null, 7, "constructor", "__proto__"]) {
       assert.equal(resolveTarget(target), null, String(target));
+    }
+    for (const target of ["account", " Devices ", "iroh", "cloudMachines", "custom-sidebars"]) {
+      assert.equal(isOmittedTarget(target), true, target);
+    }
+    for (const target of ["termnal", "constructor", "", null, 7, "shortcuts"]) {
+      assert.equal(isOmittedTarget(target), false, String(target));
     }
   });
 });

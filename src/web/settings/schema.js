@@ -116,7 +116,7 @@ function fieldFor(path, node) {
   const segments = path.split(".");
   const kind = kindOf(node);
   let section = typeof node["x-wmux-section"] === "string" ? node["x-wmux-section"] : "";
-  if (!section) section = FALLBACK_SECTIONS[segments[0]] || "app";
+  if (!section) section = hasOwn(FALLBACK_SECTIONS, segments[0]) ? FALLBACK_SECTIONS[segments[0]] : "app";
   const field = {
     path,
     section,

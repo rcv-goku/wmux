@@ -23,7 +23,7 @@ import {
   queryTokens,
   validateValue,
 } from "./schema.js";
-import { SECTIONS, findSection, resolveTarget, sectionTitle } from "./sections.js";
+import { SECTIONS, findSection, isOmittedTarget, resolveTarget, sectionTitle } from "./sections.js";
 import { createShortcutsView } from "./shortcuts-view.js";
 import { t } from "./strings.js";
 import { createThemesView } from "./themes-view.js";
@@ -632,16 +632,25 @@ export function createApp(options) {
     }
   }
 
+  /** Section id for a CLI alias, a raw id or a schema-only section; null otherwise. */
+  function resolveSection(target) {
+    return resolveTarget(target) || (typeof target === "string" && sectionList().includes(target) ? target : null);
+  }
+
+  /** Status text for a target that names no section. */
+  function targetMessage(target) {
+    return t(isOmittedTarget(target) ? "settings.unavailableTarget" : "settings.unknownTarget", { target });
+  }
+
   /**
    * Show a section (raw id or CLI alias). Returns the section id shown. A
    * search in progress ends: a nav click, a result link or a deep link
    * (`wmux settings <target>`) always lands on the section itself.
    */
   function navigate(target) {
-    const id = resolveTarget(target) || (sectionList().includes(target) ? target : null);
+    const id = resolveSection(target);
     if (!id) {
-      if (typeof target === "string" && target.trim())
-        setStatus(t("settings.unavailableTarget", { target: target.trim() }));
+      if (typeof target === "string" && target.trim()) setStatus(targetMessage(target.trim()));
       if (state.loaded && !els.content.querySelector(".set-section")) render();
       return state.section;
     }
@@ -747,11 +756,13 @@ export function createApp(options) {
       bridge.panel.setTitle(t("settings.title")).catch(() => {});
     const params = (ctx && ctx.params) || {};
     const saved = ctx && ctx.state && typeof ctx.state.section === "string" ? ctx.state.section : null;
-    const target = typeof params.target === "string" && params.target ? params.target : saved;
+    const requested = typeof params.target === "string" && params.target.trim() ? params.target.trim() : null;
     if (!(await load())) return false;
-    const initial = resolveTarget(target) || (target && sectionList().includes(target) ? target : null);
+    // An explicit target wins; a bad one is reported and the restored section
+    // is used instead. A saved section that no longer exists is dropped quietly.
+    const initial = (requested && resolveSection(requested)) || resolveSection(saved);
     if (initial) state.section = initial;
-    else if (target) setStatus(t("settings.unavailableTarget", { target }));
+    if (requested && !resolveSection(requested)) setStatus(targetMessage(requested));
     if (typeof params.query === "string" && params.query) state.query = params.query.slice(0, 256);
     els.search.value = state.query;
     render();

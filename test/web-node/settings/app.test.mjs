@@ -53,8 +53,19 @@ describe("unit: persistence-settings-window: navigation", () => {
     assert.equal(sectionShown(), "globalHotkey");
     assert.equal(app.navigate("account"), "globalHotkey");
     assert.equal($("#set-status").textContent, "“account” is not available on Windows.");
+    assert.equal(app.navigate("termnal"), "globalHotkey");
+    assert.equal($("#set-status").textContent, "Unknown settings section “termnal”.");
     host.emit("wmux.settings.navigate", { target: 42 });
     assert.equal(sectionShown(), "globalHotkey");
+  });
+
+  test("unit: persistence-settings-window: a bad target falls back to the saved section; a stale saved one is quiet", async () => {
+    await startSettings({ init: { params: { target: "devices" }, state: { section: "browser" } } });
+    assert.equal(sectionShown(), "browser");
+    assert.equal($("#set-status").textContent, "“devices” is not available on Windows.");
+    await startSettings({ init: { params: { target: "  " }, state: { section: "sleepyMode" } } });
+    assert.equal(sectionShown(), "app");
+    assert.equal($("#set-status").textContent, "");
   });
 
   test("unit: persistence-settings-window: a deep link while searching shows the section", async () => {

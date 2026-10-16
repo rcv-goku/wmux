@@ -3,7 +3,8 @@
  * and used for deep links, never renamed) plus the Windows-only `windows`
  * section, their labels, search keywords and the `settings open <target>`
  * aliases. Account, mobile, cloud, devices and networking are omitted on
- * Windows; their targets fall back to the first section.
+ * Windows; a request for one of their targets keeps the current section and
+ * says it is not available on Windows.
  */
 import { t } from "./strings.js";
 
@@ -120,6 +121,11 @@ export const OMITTED_TARGETS = Object.freeze([
   "custom-sidebars",
   "customsidebars",
 ]);
+
+/** True for a cmux target (or raw section id) that wmux omits on Windows. */
+export function isOmittedTarget(target) {
+  return typeof target === "string" && OMITTED_TARGETS.includes(target.trim().toLowerCase());
+}
 
 /**
  * Resolve a CLI target or raw section id to a section id. Returns null for
