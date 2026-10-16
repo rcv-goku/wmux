@@ -3,7 +3,7 @@
 //! App.terminate calls `stop` before msg_hwnd is destroyed. Until W1-1
 //! adds the v2 pipe server (PipeServer.zig, the launch pipe, admission,
 //! lanes) behind this facade, it runs only the legacy wmux-v1 JSON server
-//! on `\.\pipe\wmux-ipc-<pid>` (legacy_pipe.zig).
+//! on `\\.\pipe\wmux-ipc-<pid>` (legacy_pipe.zig).
 
 const App = @import("../../App.zig");
 const legacy_pipe = @import("legacy_pipe.zig");

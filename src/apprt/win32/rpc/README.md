@@ -13,7 +13,7 @@ server, router, dispatch, auth).
   comptime duplicate checks; `legacyCommand` maps a parsed legacy command
   to its handler.
 - `server/mod.zig`: the server facade App calls (`start`/`stop`); today
-  it runs `server/legacy_pipe.zig` (`\.\pipe\wmux-ipc-<pid>`).
+  it runs `server/legacy_pipe.zig` (`\\.\pipe\wmux-ipc-<pid>`).
 - `compat/legacy_json.zig`, `compat/legacy_targets.zig`: the legacy
   wmux-v1 JSON protocol and its target resolution (kept until wmux 2.0,
   ADR-3.7).
