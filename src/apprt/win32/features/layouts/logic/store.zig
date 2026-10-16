@@ -64,11 +64,20 @@ pub fn namesEqual(a: []const u8, b: []const u8) bool {
     return std.ascii.eqlIgnoreCase(a, b);
 }
 
+const name_space = " \t\r\n";
+
+/// A name as stored and compared: trimmed, capped on a code point boundary,
+/// then trimmed again so the cut never leaves trailing whitespace.
+fn nameKey(name: []const u8) []const u8 {
+    const t = std.mem.trim(u8, name, name_space);
+    return std.mem.trimEnd(u8, proto.utf8.truncateUtf8(t, max_name_bytes), name_space);
+}
+
 /// Trims and caps a user-entered name; error.BlankName when nothing is left.
 pub fn normalizeName(name: []const u8) error{BlankName}![]const u8 {
-    const t = std.mem.trim(u8, name, " \t\r\n");
-    if (t.len == 0) return error.BlankName;
-    return proto.utf8.truncateUtf8(t, max_name_bytes);
+    const n = nameKey(name);
+    if (n.len == 0) return error.BlankName;
+    return n;
 }
 
 /// True when `src` holds only whitespace after an optional UTF-8 byte order
@@ -169,8 +178,10 @@ pub const Store = struct {
         return .{ .name = name, .description = description, .workspace = ws };
     }
 
+    /// Position of the layout `name` refers to. The name is normalized
+    /// exactly as `save` stores it, so any input that saved a layout finds it.
     pub fn indexOf(self: *const Store, name: []const u8) ?usize {
-        const n = std.mem.trim(u8, name, " \t\r\n");
+        const n = nameKey(name);
         for (self.layouts.items, 0..) |l, i| {
             if (namesEqual(l.name, n)) return i;
         }
@@ -466,6 +477,27 @@ test "unit: layouts: list text, list json and CLI lines" {
     try testing.expectEqualStrings("New Workspace from Layout: dev", try paletteTitleAlloc(a, "dev"));
     const got = try entryToJsonAlloc(a, st.get("solo").?.*);
     try testing.expect(std.mem.indexOf(u8, got, "\"name\": \"solo\"") != null);
+}
+
+test "unit: layouts: a long name is saved, found, refused and deleted under one key" {
+    var st: Store = .init(testing.allocator);
+    defer st.deinit();
+    const long = "a" ** 300;
+    _ = try st.save(long, null, .{}, false);
+    // The save prompt asks needsReplaceConfirm first: it must agree with save.
+    try testing.expect(st.needsReplaceConfirm(long));
+    try testing.expect(st.get(long) != null);
+    try testing.expectError(error.DuplicateName, st.save(long, null, .{}, false));
+    // A cut right after a space keeps no trailing space, so the stored name
+    // equals what a reload of layouts.json normalizes it to.
+    const spaced = ("b" ** 255) ++ " tail";
+    const saved = try st.save(spaced, null, .{}, false);
+    try testing.expectEqualStrings("b" ** 255, saved.name);
+    try testing.expect(st.get(spaced) != null);
+    try testing.expect(st.get("b" ** 255) != null);
+    try st.delete(long);
+    try testing.expect(st.get(long) == null);
+    try testing.expectEqual(@as(usize, 1), st.layouts.items.len);
 }
 
 test "unit: layouts: names are trimmed and capped on a code point boundary" {
