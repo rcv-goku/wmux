@@ -36,7 +36,7 @@ pub const ok_deleted_text = "OK deleted=true";
 pub const max_name_bytes: usize = 256;
 pub const max_description_bytes: usize = 4096;
 
-pub const Error = error{ OutOfMemory, BlankName, DuplicateName, NotFound, CorruptFile };
+pub const Error = error{ OutOfMemory, BlankName, DuplicateName, NotFound, CorruptFile, InvalidLayout };
 
 /// Why a file is corrupt. Messages live in the caller's `arena`.
 pub const Problems = struct {
@@ -201,21 +201,46 @@ pub const Store = struct {
     /// Saves a deep copy of `ws`. A case-insensitive collision fails with
     /// error.DuplicateName unless `overwrite`, in which case the entry is
     /// replaced in place (keeping its position) under the new spelling.
+    /// An entry that would not load back (an invalid color or environment
+    /// variable name, an empty pane, nesting past the depth cap, invalid
+    /// UTF-8) fails with error.InvalidLayout and leaves the store unchanged,
+    /// so a save can never turn layouts.json into a corruptFile.
     pub fn save(self: *Store, name: []const u8, description: ?[]const u8, ws: Workspace, overwrite: bool) Error!*const SavedLayout {
         const n = try normalizeName(name);
+        const existing = self.indexOf(n);
+        if (existing != null and !overwrite) return error.DuplicateName;
+        const candidate: SavedLayout = .{
+            .name = n,
+            .description = if (description) |d| proto.utf8.truncateUtf8(d, max_description_bytes) else null,
+            .workspace = ws,
+        };
+        try checkLoadable(self.arena.child_allocator, candidate);
         const a = self.arena.allocator();
         const entry: SavedLayout = .{
-            .name = try a.dupe(u8, n),
-            .description = if (description) |d| try a.dupe(u8, proto.utf8.truncateUtf8(d, max_description_bytes)) else null,
+            .name = try a.dupe(u8, candidate.name),
+            .description = if (candidate.description) |d| try a.dupe(u8, d) else null,
             .workspace = try layout_json.cloneWorkspace(a, ws),
         };
-        if (self.indexOf(n)) |i| {
-            if (!overwrite) return error.DuplicateName;
+        if (existing) |i| {
             self.layouts.items[i] = entry;
             return &self.layouts.items[i];
         }
         try self.layouts.append(a, entry);
         return &self.layouts.items[self.layouts.items.len - 1];
+    }
+
+    /// error.InvalidLayout unless `entry` survives the exact load path
+    /// (`writeEntry` then `parse`).
+    fn checkLoadable(gpa: Allocator, entry: SavedLayout) Error!void {
+        var aw: std.Io.Writer.Allocating = .init(gpa);
+        defer aw.deinit();
+        var jw: std.json.Stringify = .{ .writer = &aw.writer };
+        writeDocument(&jw, &.{entry}) catch return error.OutOfMemory;
+        var st = parse(gpa, aw.written(), null) catch |e| return switch (e) {
+            error.OutOfMemory => error.OutOfMemory,
+            else => error.InvalidLayout,
+        };
+        st.deinit();
     }
 
     pub fn delete(self: *Store, name: []const u8) error{NotFound}!void {
@@ -228,20 +253,20 @@ pub const Store = struct {
         var aw: std.Io.Writer.Allocating = .init(gpa);
         defer aw.deinit();
         var jw: std.json.Stringify = .{ .writer = &aw.writer, .options = .{ .whitespace = .indent_2 } };
-        self.writeJson(&jw) catch return error.OutOfMemory;
+        writeDocument(&jw, self.layouts.items) catch return error.OutOfMemory;
         aw.writer.writeByte('\n') catch return error.OutOfMemory;
         return aw.toOwnedSlice();
     }
-
-    fn writeJson(self: *const Store, jw: *std.json.Stringify) std.Io.Writer.Error!void {
-        try jw.beginObject();
-        try jw.objectField("layouts");
-        try jw.beginArray();
-        for (self.layouts.items) |l| try writeEntry(jw, l);
-        try jw.endArray();
-        try jw.endObject();
-    }
 };
+
+fn writeDocument(jw: *std.json.Stringify, layouts: []const SavedLayout) std.Io.Writer.Error!void {
+    try jw.beginObject();
+    try jw.objectField("layouts");
+    try jw.beginArray();
+    for (layouts) |l| try writeEntry(jw, l);
+    try jw.endArray();
+    try jw.endObject();
+}
 
 /// One saved layout as JSON (`layout get` output and the file entry).
 pub fn writeEntry(jw: *std.json.Stringify, l: SavedLayout) std.Io.Writer.Error!void {
@@ -498,6 +523,40 @@ test "unit: layouts: a long name is saved, found, refused and deleted under one 
     try st.delete(long);
     try testing.expect(st.get(long) == null);
     try testing.expectEqual(@as(usize, 1), st.layouts.items.len);
+}
+
+test "unit: layouts: save refuses an entry that would not load back" {
+    var ar: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    var st: Store = .init(testing.allocator);
+    defer st.deinit();
+    const leaf: layout_json.Node = .{ .pane = .{ .surfaces = &.{.{}} } };
+    var deep = leaf;
+    for (0..layout_json.max_node_depth) |i| {
+        if (i + 1 == layout_json.max_node_depth) _ = try st.save("deepest that loads", null, .{ .layout = deep }, false);
+        const kids = try a.create([2]layout_json.Node);
+        kids.* = .{ deep, leaf };
+        deep = .{ .split = .{ .direction = .vertical, .children = kids } };
+    }
+    const bad = [_]struct { []const u8, ?[]const u8, Workspace }{
+        .{ "color", null, .{ .color = "" } },
+        .{ "env", null, .{ .env = &.{.{ .name = "A=B", .value = "x" }} } },
+        .{ "empty pane", null, .{ .layout = .{ .pane = .{ .surfaces = &.{} } } } },
+        .{ "too deep", null, .{ .layout = deep } },
+        .{ "bad description", "\xff", .{} },
+        // A Windows title with an unpaired surrogate, converted to WTF-8.
+        .{ "wtf-8 title", null, .{ .layout = .{ .pane = .{ .surfaces = &.{.{ .name = "x \xed\xa0\x80" }} } } } },
+    };
+    for (bad) |b| try testing.expectError(error.InvalidLayout, st.save(b[0], b[1], b[2], false));
+    // Refused saves change nothing, and what was saved still loads.
+    try testing.expectEqual(@as(usize, 1), st.layouts.items.len);
+    _ = try st.save("ok", null, .{ .color = "#00ff00" }, false);
+    const text = try st.serializeAlloc(testing.allocator);
+    defer testing.allocator.free(text);
+    var again = try Store.parse(testing.allocator, text, null);
+    defer again.deinit();
+    try testing.expectEqual(@as(usize, 2), again.layouts.items.len);
 }
 
 test "unit: layouts: names are trimmed and capped on a code point boundary" {
