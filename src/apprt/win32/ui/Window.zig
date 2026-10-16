@@ -18,6 +18,8 @@ const Tab = @import("../model/Tab.zig");
 const Pane = @import("../model/Pane.zig");
 const RightSidebar = @import("right_sidebar/legacy_strip.zig");
 const Sidebar = @import("sidebar/legacy_gdi.zig");
+const right_sidebar = @import("right_sidebar/mod.zig");
+const sidebar = @import("sidebar/mod.zig");
 const Surface = @import("../Surface.zig");
 const SessionState = @import("../features/session/legacy_v2.zig");
 const WindowState = @import("placement_state.zig");
@@ -547,6 +549,10 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
         std.unicode.utf8ToUtf16LeStringLiteral("Segoe UI"),
     );
 
+    // The sidebar facades (filled by W1-8) attach to the new HWND.
+    sidebar.attach(self);
+    right_sidebar.attach(self);
+
     // Don't show the window yet — addTab() will show the child
     // surface which triggers ShowWindow on the parent as needed.
     // Showing the parent before the terminal is ready can cause
@@ -589,6 +595,7 @@ pub fn deinit(self: *Window) void {
 
     // The (already emptied) workspace objects go last.
     self.leaveSizeMove();
+    self.detachSidebars();
     self.freeWorkspaces();
 }
 
@@ -697,6 +704,13 @@ fn cleanupAllSurfaces(self: *Window) void {
     }
 }
 
+/// Detach the sidebar facades (final teardown; the deinit and WM_DESTROY
+/// paths are mutually exclusive, so this runs once).
+fn detachSidebars(self: *Window) void {
+    right_sidebar.detach(self);
+    sidebar.detach(self);
+}
+
 /// Release the app.modal level of an unfinished size/move loop.
 fn leaveSizeMove(self: *Window) void {
     if (!self.in_size_move) return;
@@ -726,6 +740,7 @@ fn onDestroy(self: *Window) void {
 
     // Surfaces were cleaned up by close(); free the workspace objects.
     self.leaveSizeMove();
+    self.detachSidebars();
     self.freeWorkspaces();
 
     // Quick terminal windows are managed by QuickTerminal, not the windows list.
