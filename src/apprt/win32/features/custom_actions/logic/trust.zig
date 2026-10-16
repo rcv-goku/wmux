@@ -329,13 +329,16 @@ pub const ActionTrustStore = struct {
     /// Empty text (a lone byte order mark included) is an empty store.
     /// Entries with a malformed fingerprint are dropped; a wrong document
     /// shape is error.CorruptFile (the caller starts empty and keeps the bad
-    /// file aside).
+    /// file aside). The store keeps no reference to `src`.
     pub fn parse(gpa: Allocator, src: []const u8) LoadError!ActionTrustStore {
         var self: ActionTrustStore = .init(gpa);
         errdefer self.deinit();
         if (isBlankDocument(src)) return self;
         const a = self.arena.allocator();
-        const root = jsonc.parseInto(a, src, .{}, null) catch |e| switch (e) {
+        // jsonc keeps unescaped strings as slices of its input: parse a copy
+        // in the store arena so the caller can free its file buffer.
+        const text = try a.dupe(u8, src);
+        const root = jsonc.parseInto(a, text, .{}, null) catch |e| switch (e) {
             error.OutOfMemory => return error.OutOfMemory,
             error.SyntaxError => return error.CorruptFile,
         };
@@ -771,6 +774,25 @@ test "unit: custom_actions: trusted-actions.json round-trips and tolerates bad e
         try testing.expectError(error.CorruptFile, ActionTrustStore.parse(testing.allocator, bad));
     }
     try testing.expect(!isFingerprint("E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"));
+}
+
+test "unit: custom_actions: a parsed trust store does not borrow the file text" {
+    const buf = try testing.allocator.dupe(u8,
+        \\{"trusted": [{"fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        \\  "actionID": "build", "projectRoot": "/p", "configPath": "/p/.cmux/cmux.json"}]}
+    );
+    defer testing.allocator.free(buf);
+    var store = try ActionTrustStore.parse(testing.allocator, buf);
+    defer store.deinit();
+    // The app frees (or reuses) its file buffer right after loading.
+    @memset(buf, 'X');
+    const e = store.entries.items[0];
+    try testing.expectEqualStrings("build", e.action_id);
+    try testing.expectEqualStrings("/p", e.project_root.?);
+    try testing.expectEqualStrings("/p/.cmux/cmux.json", e.config_path.?);
+    const text = try store.serializeAlloc(testing.allocator);
+    defer testing.allocator.free(text);
+    try testing.expect(std.mem.indexOf(u8, text, "\"actionID\": \"build\"") != null);
 }
 
 test "unit: custom_actions: trust files holding only a byte order mark are empty stores" {

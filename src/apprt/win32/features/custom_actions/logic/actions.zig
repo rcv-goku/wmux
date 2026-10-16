@@ -11,7 +11,9 @@
 //! Workspace definitions are kept as raw JSON nodes here; the layouts
 //! feature parses them (`FileContext.validate_workspace` lets the app wire
 //! its validator in without a cross-feature import). Pure: std + wmux_proto.
-//! Every result lives in a caller-provided arena.
+//! Every result lives in a caller-provided arena. `parseConfig` also borrows
+//! the root node's source text (jsonc keeps unescaped strings as slices of
+//! its input); `parseConfigText` copies its input into the arena first.
 
 const std = @import("std");
 const proto = @import("wmux_proto");
@@ -288,6 +290,8 @@ pub const Config = struct {
 /// Parses one config file's root object. Invalid entries are skipped and
 /// reported in `diags` (errors) so the rest of the file still applies; the
 /// caller decides whether a file with errors falls back (schema error row).
+/// Ids, titles and command strings may be slices of `root`'s source text,
+/// so that text must outlive the result.
 pub fn parseConfig(arena: Allocator, root: *const jsonc.Node, ctx: FileContext, diags: *Diagnostics) Allocator.Error!Config {
     var cfg: Config = .{ .source = ctx.source, .config_path = ctx.config_path };
     if (root.data != .object) {
@@ -300,10 +304,14 @@ pub fn parseConfig(arena: Allocator, root: *const jsonc.Node, ctx: FileContext, 
     return cfg;
 }
 
-/// Parses JSONC text; a syntax error is reported as one error issue.
+/// Parses JSONC text; a syntax error is reported as one error issue. The
+/// result lives entirely in `arena`, so the caller may free `src`.
 pub fn parseConfigText(arena: Allocator, src: []const u8, ctx: FileContext, diags: *Diagnostics) Allocator.Error!Config {
+    // jsonc keeps unescaped strings as slices of its input: parse a copy so
+    // nothing in the result points into the caller's buffer.
+    const text = try arena.dupe(u8, src);
     var jd: jsonc.Diagnostic = .{};
-    const root = jsonc.parseInto(arena, src, .{}, &jd) catch |e| switch (e) {
+    const root = jsonc.parseInto(arena, text, .{}, &jd) catch |e| switch (e) {
         error.OutOfMemory => return error.OutOfMemory,
         error.SyntaxError => {
             try diags.add(.err, "", "{d}:{d}: {s}", .{ jd.pos.line, jd.pos.col, jd.message });
@@ -1664,6 +1672,29 @@ test "unit: custom_actions: malformed actions are reported and skipped" {
     try testing.expectEqual(@as(usize, 1), cfg.actions.len);
     try testing.expectEqualStrings("good", cfg.actions[0].id);
     try testing.expect(d.hasErrors());
+}
+
+test "unit: custom_actions: parseConfigText does not borrow the caller's buffer" {
+    var t = T.init();
+    defer t.deinit();
+    const buf = try testing.allocator.dupe(u8,
+        \\{"actions": {"t": {"command": "npm test", "title": "Test", "keywords": ["jest"]}},
+        \\ "commands": [{"name": "Lint", "command": "npm run lint"}],
+        \\ "ui": {"surfaceTabBar": {"buttons": ["t"]}, "newWorkspace": {"action": "t"}}}
+    );
+    defer testing.allocator.free(buf);
+    var d: Diagnostics = .init(t.a());
+    const cfg = try parseConfigText(t.a(), buf, .{ .source = .global }, &d);
+    // The settings loader frees (or reuses) its file buffer after parsing.
+    @memset(buf, 'X');
+    try testing.expectEqualStrings("t", cfg.actions[0].id);
+    try testing.expectEqualStrings("Test", cfg.actions[0].title.?);
+    try testing.expectEqualStrings("jest", cfg.actions[0].keywords[0]);
+    try testing.expectEqualStrings("npm test", cfg.actions[0].body.command.command);
+    try testing.expectEqualStrings("Lint", cfg.commands[0].name);
+    try testing.expectEqualStrings("npm run lint", cfg.commands[0].body.shell);
+    try testing.expectEqualStrings("t", cfg.ui.tab_bar_buttons.?[0].action);
+    try testing.expectEqualStrings("t", cfg.ui.new_workspace_action.?);
 }
 
 test "unit: custom_actions: unknown keys and unknown builtins only warn" {
