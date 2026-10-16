@@ -1,0 +1,7 @@
+Usage: cmux clear-notifications [--workspace <id|ref|index>] [--surface <id|ref|index>] [--window <id|ref|index>]
+
+Clear queued notifications. Without options it clears everything, except
+inside a wmux terminal (CMUX_WORKSPACE_ID set), where it clears the caller's
+workspace. --window alone clears that window's current workspace; --surface
+(alias --panel) narrows to one surface and needs a workspace or window
+context. Prints `OK`.

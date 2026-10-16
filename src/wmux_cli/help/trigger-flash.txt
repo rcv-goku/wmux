@@ -1,0 +1,5 @@
+Usage: cmux trigger-flash [--workspace <id|ref|index>] [--surface <id|ref|index>] [--window <id|ref|index>]
+
+Flash a workspace's or surface's pane outline. Defaults to the calling pane
+(CMUX_WORKSPACE_ID / CMUX_SURFACE_ID; inside tmux the surface variable is
+ignored). --panel is an alias for --surface. Prints `OK`.

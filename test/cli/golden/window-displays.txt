@@ -1,0 +1,2 @@
+0: \\.\DISPLAY1 Dell U2720Q  (main)
+1: LG écran

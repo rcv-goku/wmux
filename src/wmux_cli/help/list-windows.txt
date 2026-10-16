@@ -1,0 +1,3 @@
+Usage: cmux list-windows
+
+List windows.

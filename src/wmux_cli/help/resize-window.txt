@@ -1,0 +1,11 @@
+Usage: cmux resize-window --window <id|ref|index> [--width <points>] [--height <points>]
+
+Resize a window keeping its top-left corner fixed and print
+"OK <width> <height>" of the resulting frame (title bar included). With
+neither --width nor --height the size is only read. Never steals focus.
+
+Options:
+  --window <id|ref|index>   Window to resize (required)
+  --width <points>          New width: a finite number > 0 and <= 100000
+  --height <points>         New height: a finite number > 0 and <= 100000
+  --json                    Print the result as JSON

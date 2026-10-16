@@ -1,0 +1,7 @@
+Usage: cmux feed tui [--opentui|--legacy]
+       cmux feed clear [--yes|-y]
+
+Feed workstream history. `feed clear` permanently deletes the history file
+%LOCALAPPDATA%\wmux\<channel>\workstream.jsonl (in WMUX_STATE_DIR when set)
+after a [y/N] confirmation (skipped with --yes) and works without a running
+app. `feed tui` is not available in this build of wmux yet.

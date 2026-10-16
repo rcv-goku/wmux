@@ -1,0 +1,21 @@
+tab=11111111-1111-4111-8111-111111111111
+color=blue
+cwd=C:\src\api
+focused_cwd=C:\src\api\web
+focused_panel=22222222-2222-4222-8222-222222222222
+git_branch=main clean
+pr=#123 open https://github.com/o/r/pull/123
+pr_label=Review
+ports=3000,5173
+progress=0.50 Building...
+status_count=1
+  build=ok priority=1
+meta_block_count=2
+  ## Notes
+  block two
+log_count=6
+  [info] 2
+  [info] 3
+  [info] 4
+  [success] 5
+  [error] 6

@@ -1,0 +1,1 @@
+OK operation=close_workspaces affected=3

@@ -1,0 +1,9 @@
+Usage: cmux new-window [--name <title>]
+
+Open a new window (starts wmux if it is not running) and print
+"OK <window>".
+
+Options:
+  --name <title>   Title for the window and its first workspace, set before
+                   the window appears; must not be empty
+  --json           Print the result as JSON

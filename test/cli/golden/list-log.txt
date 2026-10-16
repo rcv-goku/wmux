@@ -1,0 +1,3 @@
+[info] one
+[ci] [warning] two
+[build] [error] Compilation failed

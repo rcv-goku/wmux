@@ -1,0 +1,4 @@
+Usage: cmux open-browser [url] [--workspace <id|ref|index>] [--window <id|ref|index>] [--focus <true|false>] [--profile <name|uuid>]
+
+Legacy alias for 'cmux browser open'. Run 'cmux browser --help' for details.
+--panel <id|ref|index> is accepted as the legacy spelling of --surface.

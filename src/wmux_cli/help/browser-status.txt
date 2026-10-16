@@ -1,0 +1,7 @@
+Usage: cmux browser-status [--json]
+
+Print whether the browser is enabled ('enabled' or 'disabled'). Works without
+the app. --json adds enabled, disabled, managed, domain (the settings file),
+key, url_allowlist, url_allowlist_active, url_allowlist_managed,
+url_allowlist_allows_localhost, url_allowlist_localhost_implicit and
+url_allowlist_allows_local_files.

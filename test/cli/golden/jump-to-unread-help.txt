@@ -1,0 +1,5 @@
+Usage: cmux jump-to-unread [--json] [--id-format refs|uuids|both]
+
+Focus the latest unread notification and mark it read. Prints
+`OK <workspace> <surface>`, or `No unread notifications` (exit 0; --json
+shows "opened": false).

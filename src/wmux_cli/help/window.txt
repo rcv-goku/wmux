@@ -1,0 +1,19 @@
+Usage: cmux window <displays|display <name|index>|default-display [<name>|--clear]>
+
+Display commands for wmux windows.
+
+Subcommands:
+  displays                  List connected displays as "<index>: <name>",
+                            marking the main one "(main)"
+  display <name|index>      Move the windows onto a display matched by exact
+                            name, substring or index, keeping their size and
+                            without stealing focus; prints
+                            "Moved N window(s) to <display>.". With the global
+                            --window (or --window after the subcommand) only
+                            that window moves. --list (-l) aliases displays.
+  default-display [<name>|--clear]
+                            macOS dev-build placement setting; not supported
+                            on wmux
+
+Options:
+  --json                    Print the result as JSON

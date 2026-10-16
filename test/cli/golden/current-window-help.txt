@@ -1,0 +1,6 @@
+Usage: cmux current-window
+
+Print the selected window's handle (--id-format picks ref, UUID or both).
+
+Options:
+  --json    Print the result as JSON ({window_id, window_ref})

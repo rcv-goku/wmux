@@ -1,0 +1,24 @@
+[
+  {
+    "id": "33333333-3333-4333-8333-333333333333",
+    "workspace_id": "11111111-1111-4111-8111-111111111111",
+    "surface_id": "22222222-2222-4222-8222-222222222222",
+    "is_read": false,
+    "title": "Done",
+    "subtitle": "",
+    "body": "All tests passed | 42",
+    "created_at": "2026-10-16T08:00:00Z",
+    "tab_title": "api"
+  },
+  {
+    "id": "55555555-5555-4555-8555-555555555555",
+    "workspace_id": "11111111-1111-4111-8111-111111111111",
+    "surface_id": null,
+    "is_read": true,
+    "title": "Héllo 😀",
+    "subtitle": "sub",
+    "body": "line1\nline2",
+    "created_at": 1760601600,
+    "tab_title": null
+  }
+]

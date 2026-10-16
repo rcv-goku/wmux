@@ -1,0 +1,3 @@
+build=compiling icon=hammer color=#ff9500 priority=80
+docs=see [PR](https://x.example) url=https://x.example format=markdown work=waiting
+日本=multi line

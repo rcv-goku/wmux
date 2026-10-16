@@ -151,6 +151,7 @@ fn runInner(rt: Runtime, argv: []const []const u8) !u8 {
         },
     };
     var rest: []const []const u8 = if (argv.len > 0) argv[1..] else argv;
+    var plus_rewritten = false;
 
     // Legacy `+verb` at argv[1] (ADR-4.3 step 2, ADR-4.11).
     if (rest.len > 0 and rest[0].len > 1 and rest[0][0] == '+') {
@@ -165,6 +166,7 @@ fn runInner(rt: Runtime, argv: []const []const u8) !u8 {
             .rewrite => |r| {
                 if (!command.isQuiet(rt.env)) try command.writeLegacyNotice(rt.err, b, r.legacy, r.new);
                 rest = r.argv;
+                plus_rewritten = true;
             },
         }
     }
@@ -192,6 +194,7 @@ fn runInner(rt: Runtime, argv: []const []const u8) !u8 {
         .err = rt.err,
         .channel = try proto.channel.resolveFromEnv(rt.arena, compiledChannel(), rt.env),
         .version_summary = try version.summaryAlloc(rt.arena, b, rt.version_info),
+        .legacy_notice_shown = plus_rewritten,
     };
     defer ctx.deinit();
 
@@ -247,7 +250,9 @@ fn runSpec(ctx: *command.Ctx, spec: *const CommandSpec) !u8 {
         if (spec.help.len == 0 or spec.help[spec.help.len - 1] != '\n') try ctx.out.writeByte('\n');
         return output.exit.ok;
     }
-    if (spec.legacy_notice and !command.isQuiet(ctx.env)) {
+    // One notice per invocation: `+workspace list` names list-workspaces,
+    // itself a cmux legacy verb, and does not print that verb's notice too.
+    if (spec.legacy_notice and !ctx.legacy_notice_shown and !command.isQuiet(ctx.env)) {
         try command.writeLegacyNotice(ctx.err, ctx.brand, spec.name, spec.legacy_alias_of);
     }
     return spec.run(ctx);

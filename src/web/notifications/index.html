@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; frame-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types 'none'">
+    <meta name="referrer" content="no-referrer">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Notifications</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="../_shared/base.css">
+    <link rel="stylesheet" href="notifications.css">
+    <script type="module" src="notifications.js"></script>
+  </head>
+  <body>
+    <header class="ntf-header">
+      <h1 class="ntf-title">
+        <span data-i18n="notifications.title">Notifications</span>
+        <span id="ntf-count" class="ntf-count" hidden></span>
+      </h1>
+      <div class="ntf-actions">
+        <button type="button" id="ntf-jump" disabled>
+          <span id="ntf-jump-label" data-i18n="notifications.jumpLatest">Jump to Latest</span>
+          <kbd id="ntf-jump-chip" class="ntf-chip" hidden></kbd>
+        </button>
+        <button type="button" id="ntf-clear" disabled data-i18n="notifications.clearAll">Clear All</button>
+      </div>
+    </header>
+    <span id="ntf-status" class="ntf-status" role="status" aria-live="polite"></span>
+
+    <main id="ntf-viewport" class="ntf-viewport">
+      <div id="ntf-list" class="ntf-list" role="listbox" aria-label="Notifications" data-i18n-attr="aria-label:notifications.list" hidden></div>
+      <section id="ntf-empty" class="ntf-empty" hidden aria-labelledby="ntf-empty-title">
+        <svg class="ntf-empty-icon" viewBox="0 0 48 48" width="48" height="48" aria-hidden="true">
+          <path class="ntf-bell" d="M24 7c-6 0-10 4.5-10 10.5V27l-4 6h28l-4-6v-9.5C34 11.5 30 7 24 7z"></path>
+          <path class="ntf-bell" d="M20 37a4 4 0 0 0 8 0"></path>
+          <path id="ntf-empty-slash" class="ntf-slash" d="M9 9l30 30"></path>
+          <circle id="ntf-empty-badge" class="ntf-badge-dot" cx="34" cy="13" r="5" hidden></circle>
+        </svg>
+        <h2 id="ntf-empty-title"></h2>
+        <p id="ntf-empty-body"></p>
+      </section>
+    </main>
+
+    <div id="ntf-menu" class="ntf-menu" role="menu" aria-label="Notification actions" data-i18n-attr="aria-label:notifications.menu.label" hidden>
+      <button type="button" role="menuitem" data-action="open" data-i18n="notifications.menu.open">Open</button>
+      <button type="button" role="menuitem" data-action="copy" data-i18n="notifications.menu.copy">Copy</button>
+      <button type="button" role="menuitem" data-action="toggleRead">Mark as Read</button>
+      <button type="button" role="menuitem" data-action="dismiss" data-i18n="notifications.menu.dismiss">Dismiss</button>
+    </div>
+  </body>
+</html>

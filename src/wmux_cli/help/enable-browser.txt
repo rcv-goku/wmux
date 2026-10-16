@@ -1,0 +1,5 @@
+Usage: cmux enable-browser [--json]
+
+Re-enable browser creation and link interception. Works without the app: sets
+wmux.browser.enabled=true in wmux.json. Prints 'cmux browser enabled'; --json
+prints the availability status.

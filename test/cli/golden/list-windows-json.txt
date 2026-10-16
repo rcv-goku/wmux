@@ -1,0 +1,18 @@
+{
+  "windows": [
+    {
+      "ref": "window:1",
+      "index": 0,
+      "key": true,
+      "workspace_count": 3,
+      "selected_workspace_ref": "workspace:2"
+    },
+    {
+      "ref": "window:3",
+      "index": 1,
+      "key": false,
+      "workspace_count": 1,
+      "selected_workspace_ref": null
+    }
+  ]
+}

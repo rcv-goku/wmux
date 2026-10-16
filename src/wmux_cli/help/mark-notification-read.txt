@@ -1,0 +1,5 @@
+Usage: cmux mark-notification-read (--id <uuid> | --workspace <id|ref|index> [--surface <id|ref|index>] [--window <id|ref|index>] | --all) [--json]
+
+Mark notifications read without opening or focusing anything: one
+notification, a workspace (optionally one surface in it), or all of them.
+Prints `OK`.

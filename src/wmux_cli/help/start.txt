@@ -16,7 +16,8 @@ Start & Resume:
                                               Run a workspace context-menu action
   reorder-workspace --workspace <id|ref|index> --index <n>
                                               Move a workspace inside its window
-  reorder-workspaces <json>                   Reorder pinned and unpinned workspaces atomically
+  reorder-workspaces --order <id|ref|index>,<id|ref|index>,... [--window <id|ref|index>] [--dry-run]
+                                              Reorder pinned and unpinned workspaces atomically
   next-window                                 Select the next workspace
   previous-window                             Select the previous workspace
   last-window                                 Select the previously selected workspace

@@ -1,0 +1,21 @@
+# cmux browser skill
+
+Drive browser surfaces from an agent without stealing focus.
+
+1. Find your surfaces: `cmux identify --json` (caller and focused handles) or
+   `cmux tree --all --json`. Do not focus anything to discover it.
+2. Open a page next to your terminal: `cmux browser open <url>` prints
+   `OK surface=surface:N pane=pane:M placement=split|reuse`. Keep the ref.
+3. Always pass the surface: `cmux browser surface:N <verb> ...` or
+   `--surface surface:N`. Page verbs never retarget the focused browser.
+4. Read the page with `snapshot -i` (interactive elements with `[ref=eN]`),
+   then act with refs: `click @e3`, `fill @e1 --text you@example.com`,
+   `press Enter`.
+5. Add `--snapshot-after` to actions to get the resulting page in one call.
+   Refs expire on navigation: snapshot again after the page changes.
+6. Wait instead of sleeping: `wait --text Welcome`, `wait --url-contains /done`,
+   `wait --load-state complete`.
+7. Verify with `get url`, `get title`, `get text <sel>`, `is visible <sel>`.
+8. Use `--json` for machine-readable results (refs by default).
+9. Saved state files (`state save`) contain session cookies: keep them
+   private (owner-only permissions) and never commit them.

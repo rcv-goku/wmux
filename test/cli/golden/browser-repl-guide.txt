@@ -1,0 +1,13 @@
+cmux browser repl
+
+Runs JavaScript in a persistent session for the workspace's browser panes.
+Each call sees the variables of the previous ones until 'repl reset'.
+
+  cmux browser repl 'const t = await page.title(); t'
+  cmux browser repl --script 'await page.goto("https://example.com")'
+  cmux browser repl list      List the session's pages
+  cmux browser repl reset     Start a new session
+
+'page' is the workspace's focused browser surface with a Playwright-style
+API (goto, click, fill, locator, evaluate, title, url). The value of the last
+expression is printed like 'browser eval'. Use --surface to pick a page.

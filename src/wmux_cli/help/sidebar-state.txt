@@ -1,0 +1,6 @@
+Usage: cmux sidebar-state [--workspace <id|ref|index>] [--window <id|ref|index>]
+
+Dump one workspace's sidebar metadata as key=value lines: tab, color, cwd,
+focused_cwd, focused_panel, git_branch, pr, pr_label, ports, progress,
+status_count (+ entries), meta_block_count (+ blocks) and log_count (+ the
+last 5 entries).

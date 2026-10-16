@@ -1,0 +1,26 @@
+Usage: cmux events [options]
+
+Stream app events as newline-delimited JSON frames (ack, event, heartbeat),
+flushed per line.
+
+Options:
+  --after <seq>, --after-seq <seq>
+                              Start after this sequence number
+  --cursor-file <path>        Read the start sequence from the file and rewrite
+                              it after every event
+  --name <event>              Only this event name (repeatable)
+  --category <name>           Only this category (repeatable)
+  --reconnect                 On transient errors wait up to 1 s, reconnect and
+                              resume from the last sequence, forever
+  --limit <n>                 Exit 0 after printing n event frames
+  --timeout <seconds>         Fail when no --limit/--snapshot completion within
+                              this time (monotonic, across reconnects)
+  --snapshot                  Print the ack (subscription snapshot) and exit
+  --no-ack                    Hide the ack frame
+  --no-heartbeat, --no-heartbeats
+                              Hide heartbeat frames
+
+Examples:
+  cmux events --cursor-file events.seq --reconnect
+  cmux events --category notification
+  cmux events --after 42 --name feed.item.received

@@ -1,0 +1,13 @@
+tab=unknown
+color=none
+cwd=
+focused_cwd=unknown
+focused_panel=unknown
+git_branch=none
+pr=none
+pr_label=none
+ports=none
+progress=none
+status_count=0
+meta_block_count=0
+log_count=0
