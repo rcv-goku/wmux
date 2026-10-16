@@ -135,12 +135,17 @@ export function createApp(options) {
     return node;
   }
 
+  /** cmux's global unread count: unread records plus workspace/surface markers. */
+  function globalUnread() {
+    return unreadCount(state.records) + state.markers;
+  }
+
   function renderHeader() {
-    const unread = unreadCount(state.records);
+    const unread = globalUnread();
     els.count.hidden = unread === 0;
     els.count.textContent = unread > 99 ? "99+" : String(unread);
     els.count.setAttribute("aria-label", t("notifications.unreadBadge", { count: unread }));
-    els.jump.disabled = unread === 0 && state.markers === 0;
+    els.jump.disabled = unread === 0;
     els.clear.disabled = state.records.length === 0;
     els.jumpLabel.textContent = t(state.placement === "popover" ? "notifications.jumpLatest" : "notifications.jumpLatestUnread");
     const chip = keys ? shortcutLabel(keys.bindingsFor("jumpToUnread")[0]) : "";
@@ -385,10 +390,12 @@ export function createApp(options) {
     bridge.call("panel.notifications.close_popover", {}).catch(() => {});
   }
 
+  // cmux's notification.open, .mark_read and .dismiss select the record with
+  // `id`; panel.notifications.mark_unread uses the same key.
   async function open(id) {
     const record = find(id);
     if (!record) return;
-    const ok = await act("notification.open", { notification_id: id }, () => (record.read = true));
+    const ok = await act("notification.open", { id }, () => (record.read = true));
     if (ok) closePopover();
   }
 
@@ -396,7 +403,7 @@ export function createApp(options) {
     const record = find(id);
     if (!record || record.read === read) return Promise.resolve(false);
     const method = read ? "notification.mark_read" : "panel.notifications.mark_unread";
-    return act(method, { notification_id: id }, () => (record.read = read));
+    return act(method, { id }, () => (record.read = read));
   }
 
   function toggleRead(id) {
@@ -412,7 +419,7 @@ export function createApp(options) {
       const i = ids.indexOf(id);
       state.focusedId = ids[i + 1] || ids[i - 1] || null;
     }
-    const done = act("notification.dismiss", { notification_id: id }, () => {
+    const done = act("notification.dismiss", { id }, () => {
       state.records = state.records.filter((r) => r.id !== id);
     });
     if (hadFocus) applyFocus(true);
@@ -428,7 +435,7 @@ export function createApp(options) {
   }
 
   async function jumpToUnread() {
-    if (unreadCount(state.records) === 0 && state.markers === 0) {
+    if (globalUnread() === 0) {
       setStatus(t("notifications.status.nothingUnread"));
       return false;
     }

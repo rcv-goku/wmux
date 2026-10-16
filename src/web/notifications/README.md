@@ -56,25 +56,29 @@ applied in place. The page sets the title with `panel.set_title
 |---|---|---|
 | `notification.list` | `{}` -> `{notifications: [record], marker_count?}` | start and after every relevant event (debounced 40 ms; only the newest reply applies). A bare array is accepted too |
 | `workspace.list` | `{}` -> `{workspaces: [{id, title}]}` | live workspace titles; reloaded on the workspace events that change titles or order |
-| `notification.open` | `{notification_id}` | row click, Enter, menu Open. In the popover the page then calls `panel.notifications.close_popover` |
-| `notification.mark_read` | `{notification_id}` | menu Mark as Read, Space on an unread row |
-| `panel.notifications.mark_unread` | `{notification_id}` -> `{}` | menu Mark as Unread, Space on a read row. Native: `Store.markUnread(id)` (record-level, not the workspace `toggleUnread`) |
-| `notification.dismiss` | `{notification_id}` | hover X, Delete/Backspace, menu Dismiss |
+| `notification.open` | `{id}` | row click, Enter, menu Open. In the popover the page then calls `panel.notifications.close_popover` |
+| `notification.mark_read` | `{id}` | menu Mark as Read, Space on an unread row |
+| `panel.notifications.mark_unread` | `{id}` -> `{}` | menu Mark as Unread, Space on a read row. Native: `Store.markUnread(id)` (record-level, not the workspace `toggleUnread`) |
+| `notification.dismiss` | `{id}` | hover X, Delete/Backspace, menu Dismiss |
 | `notification.clear` | `{}` | Clear All |
 | `notification.jump_to_unread` | `{}` | Jump to Latest (Unread), `jumpToUnread` key handler; popover closes after |
 | `panel.notifications.close_popover` | `{}` -> `{}` | after open/jump from the popover, and Escape in the popover. Native hides the popup (keeps the warm host) |
 | `panel.clipboard_write` | `{text}` | Copy (Ctrl+C on a row, menu Copy) |
 | `panel.state_changed` | `{state: {v: 1, focused_id}}` | focus changes, debounced 400 ms |
 
+The record selector is `id`, as in cmux's `notification.open {id}`,
+`notification.mark_read {id}` and `notification.dismiss {id}`.
+
 Record fields mirror `features/notifications/logic/store.zig`: `id`,
 `workspace`, `surface`, `title`, `subtitle`, `body`, `created_at_ms`, `read`,
 `agent {kind, category}`; optional display extras `workspace_title` (used when
 `workspace.list` does not know the workspace) and `surface_title` (caption).
-The page also accepts `notification_id`, `workspace_id`, `surface_id`,
-`is_read`, and `created_at` / `timestamp` in seconds, milliseconds or ISO
-text. `marker_count` (or a `markers` array) counts workspace/surface unread
-markers (manual or restored) so the markers-only state can show "N unread
-notifications".
+The page also accepts cmux's payload spellings: `notification_id`,
+`workspace_id`, `surface_id`, `is_read`, `tab_title` (cmux's name for the
+workspace title, so it is the `workspace_title` fallback) and `created_at` /
+`timestamp` in seconds, milliseconds or ISO text. `marker_count` (or a
+`markers` array) counts workspace/surface unread markers (manual or restored)
+so the markers-only state can show "N unread notifications".
 
 Actions are optimistic: the row changes at once; a failed call shows "Could
 not complete the action: <message>" and reloads the list.
@@ -90,8 +94,9 @@ not complete the action: <message>" and reloads the list.
 
 ## Behavior notes
 
-- **Header.** "Notifications", an accent capsule with the unread count (hidden
-  at 0, "99+" above 99), "Jump to Latest" (popover) / "Jump to Latest Unread"
+- **Header.** "Notifications", an accent capsule with the global unread count
+  as cmux counts it: unread records plus `marker_count` (hidden at 0, "99+"
+  above 99), "Jump to Latest" (popover) / "Jump to Latest Unread"
   (pane) with the `jumpToUnread` shortcut chip, disabled without unread records
   or markers, and "Clear All", disabled when the list is empty. The cmux
   "Forward notifications to my iPhone" row is not shown (no mobile companion

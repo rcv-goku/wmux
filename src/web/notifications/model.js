@@ -56,7 +56,9 @@ export function timeOf(raw) {
 
 /**
  * One record in the page's shape, or null when it has no id. Accepts the
- * native field names and the cmux-style `*_id` / `is_read` spellings.
+ * native field names and the cmux-style `*_id` / `is_read` spellings. cmux's
+ * `tab_title` is the workspace title ("tab" = workspace in cmux's legacy
+ * naming), so it is a workspace-title fallback, never the surface caption.
  */
 export function normalizeRecord(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
@@ -74,8 +76,8 @@ export function normalizeRecord(raw) {
     created_at_ms: timeOf(raw),
     read,
     agent: agent ? { kind: str(agent.kind), category: str(agent.category) } : null,
-    workspace_title: str(raw.workspace_title || raw.workspace_name),
-    surface_title: str(raw.surface_title || raw.surface_name || raw.tab_title),
+    workspace_title: str(raw.workspace_title || raw.workspace_name || raw.tab_title),
+    surface_title: str(raw.surface_title || raw.surface_name),
   };
 }
 

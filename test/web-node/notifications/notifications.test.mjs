@@ -56,16 +56,16 @@ async function startApp(opts = {}) {
     "notification.list": () => ({ notifications: records.map((r) => ({ ...r })), marker_count: opts.markers || 0 }),
     "workspace.list": () => WORKSPACES,
     "notification.open": () => ({}),
-    "notification.mark_read": ({ notification_id }) => {
-      records = records.map((r) => (r.id === notification_id ? { ...r, read: true } : r));
+    "notification.mark_read": ({ id }) => {
+      records = records.map((r) => (r.id === id ? { ...r, read: true } : r));
       return {};
     },
-    "panel.notifications.mark_unread": ({ notification_id }) => {
-      records = records.map((r) => (r.id === notification_id ? { ...r, read: false } : r));
+    "panel.notifications.mark_unread": ({ id }) => {
+      records = records.map((r) => (r.id === id ? { ...r, read: false } : r));
       return {};
     },
-    "notification.dismiss": ({ notification_id }) => {
-      records = records.filter((r) => r.id !== notification_id);
+    "notification.dismiss": ({ id }) => {
+      records = records.filter((r) => r.id !== id);
       return {};
     },
     "notification.clear": () => {
@@ -142,6 +142,18 @@ describe("unit: notifications model", () => {
     assert.equal(model.normalizeRecord({ id: "n", created_at: "2026-01-02T03:04:05Z" }).created_at_ms, Date.UTC(2026, 0, 2, 3, 4, 5));
     assert.equal(model.normalizeRecord({ id: "n", title: 42, body: null }).title, "42");
     for (const bad of [null, 5, "x", [], {}, { id: "" }, { id: 7 }]) assert.equal(model.normalizeRecord(bad), null);
+  });
+
+  test("unit: notifications: cmux tab_title is the workspace title, not a surface caption", () => {
+    const r = model.normalizeRecord({ id: "x", workspace_id: WS1, tab_title: "api", title: "Claude Code", body: "Done" });
+    assert.equal(r.workspace_title, "api");
+    assert.equal(r.surface_title, "");
+    assert.equal(model.workspaceTitle(r, new Map()), "api");
+    assert.equal(model.copyText(r, new Map()), "api\nClaude Code\nDone");
+    const named = model.normalizeRecord({ id: "y", workspace_title: "live", tab_title: "stale", surface_title: "zsh" });
+    assert.equal(named.workspace_title, "live", "an explicit workspace_title wins");
+    assert.equal(named.surface_title, "zsh");
+    assert.equal(model.normalizeRecord({ id: "z", tab_title: null }).workspace_title, "", "cmux sends tab_title null when unknown");
   });
 
   test("unit: notifications: records are deduplicated, sorted newest first and capped", () => {
@@ -293,11 +305,52 @@ describe("unit: notifications app", () => {
     assert.equal($("ntf-empty-title").textContent, "1 unread notification");
   });
 
+  test("unit: notifications: the header count is the global unread count (records plus markers)", async () => {
+    await startApp({ records: [rec(1), rec(2, { read: true })], markers: 2 });
+    assert.equal($("ntf-count").textContent, "3");
+    assert.equal($("ntf-count").hidden, false);
+    await startApp({ records: [], markers: 2 });
+    assert.equal($("ntf-count").textContent, "2", "the markers-only state shows the same count as its body");
+    assert.equal($("ntf-count").hidden, false);
+    assert.equal($("ntf-empty-title").textContent, "2 unread notifications");
+  });
+
+  test("unit: notifications: cmux-shaped list payloads render and actions select the record by id", async () => {
+    const cmuxRecord = {
+      id: uuid(7),
+      workspace_id: WS2,
+      workspace_ref: "workspace:2",
+      surface_id: SF2,
+      surface_ref: "surface:5",
+      title: "Claude Code",
+      subtitle: "",
+      body: "Done",
+      created_at: new Date(NOW - 60000).toISOString(),
+      tab_title: "web-old",
+      is_read: false,
+    };
+    await startApp({ records: [cmuxRecord], handlers: { "workspace.list": () => { throw hostError("method_not_found", "Unknown method"); } } });
+    assert.deepEqual(texts(doc, ".ntf-group-name"), ["web-old"], "tab_title names the workspace group");
+    const row = rowById(uuid(7));
+    assert.equal(row.querySelector(".ntf-row-caption"), null, "tab_title is not shown as a surface caption");
+    assert.equal(row.classList.contains("ntf-unread"), true);
+    assert.equal(row.querySelector(".ntf-row-time").dateTime, new Date(NOW - 60000).toISOString());
+    contextmenu(window, row);
+    click(window, $("ntf-menu").querySelector('[data-action="copy"]'));
+    await settle();
+    assert.deepEqual(host.calls("panel.clipboard_write").map((m) => m.params.text), ["web-old\nClaude Code\nDone"]);
+    await app.setRead(uuid(7), true);
+    await app.dismiss(uuid(7));
+    await settle();
+    assert.deepEqual(host.calls("notification.mark_read").map((m) => m.params), [{ id: uuid(7) }]);
+    assert.deepEqual(host.calls("notification.dismiss").map((m) => m.params), [{ id: uuid(7) }]);
+  });
+
   test("unit: notifications: click opens the record, marks it read and closes the popover", async () => {
     await startApp({ params: { placement: "popover" } });
     click(window, rows()[0].querySelector(".ntf-row-primary"));
     await settle();
-    assert.deepEqual(host.calls("notification.open").map((m) => m.params), [{ notification_id: uuid(1) }]);
+    assert.deepEqual(host.calls("notification.open").map((m) => m.params), [{ id: uuid(1) }]);
     assert.equal(host.calls("panel.notifications.close_popover").length, 1);
     assert.equal(rowById(uuid(1)).classList.contains("ntf-unread"), false);
   });
@@ -315,7 +368,7 @@ describe("unit: notifications app", () => {
     app.focusRow(uuid(1));
     click(window, rowById(uuid(1)).querySelector(".ntf-row-clear"));
     await settle();
-    assert.deepEqual(host.calls("notification.dismiss").map((m) => m.params), [{ notification_id: uuid(1) }]);
+    assert.deepEqual(host.calls("notification.dismiss").map((m) => m.params), [{ id: uuid(1) }]);
     assert.equal(host.calls("notification.open").length, 0);
     assert.equal(rows().length, 2);
     assert.equal(app.state.focusedId, uuid(2));
@@ -335,7 +388,7 @@ describe("unit: notifications app", () => {
     click(window, toggle);
     await settle();
     assert.equal(menu.hidden, true);
-    assert.deepEqual(host.calls("panel.notifications.mark_unread").map((m) => m.params), [{ notification_id: uuid(2) }]);
+    assert.deepEqual(host.calls("panel.notifications.mark_unread").map((m) => m.params), [{ id: uuid(2) }]);
     assert.equal(rowById(uuid(2)).classList.contains("ntf-unread"), true);
     assert.equal($("ntf-count").textContent, "3");
 
@@ -343,7 +396,7 @@ describe("unit: notifications app", () => {
     assert.equal(menu.querySelector('[data-action="toggleRead"]').textContent, "Mark as Read");
     click(window, menu.querySelector('[data-action="toggleRead"]'));
     await settle();
-    assert.deepEqual(host.calls("notification.mark_read").map((m) => m.params), [{ notification_id: uuid(2) }]);
+    assert.deepEqual(host.calls("notification.mark_read").map((m) => m.params), [{ id: uuid(2) }]);
     assert.equal($("ntf-count").textContent, "2");
   });
 
@@ -361,11 +414,11 @@ describe("unit: notifications app", () => {
     contextmenu(window, rowById(uuid(3)));
     click(window, $("ntf-menu").querySelector('[data-action="dismiss"]'));
     await settle();
-    assert.deepEqual(host.calls("notification.dismiss").map((m) => m.params.notification_id), [uuid(3)]);
+    assert.deepEqual(host.calls("notification.dismiss").map((m) => m.params.id), [uuid(3)]);
     contextmenu(window, rowById(uuid(2)));
     click(window, $("ntf-menu").querySelector('[data-action="open"]'));
     await settle();
-    assert.deepEqual(host.calls("notification.open").map((m) => m.params.notification_id), [uuid(2)]);
+    assert.deepEqual(host.calls("notification.open").map((m) => m.params.id), [uuid(2)]);
   });
 
   test("unit: notifications: context menu keyboard navigation and Escape", async () => {
@@ -408,13 +461,13 @@ describe("unit: notifications app", () => {
 
     key(window, doc.activeElement, { key: " " });
     await settle();
-    assert.deepEqual(host.calls("panel.notifications.mark_unread").map((m) => m.params.notification_id), [uuid(2)]);
+    assert.deepEqual(host.calls("panel.notifications.mark_unread").map((m) => m.params.id), [uuid(2)]);
     key(window, doc.activeElement, { key: "Enter" });
     await settle();
-    assert.deepEqual(host.calls("notification.open").map((m) => m.params.notification_id), [uuid(2)]);
+    assert.deepEqual(host.calls("notification.open").map((m) => m.params.id), [uuid(2)]);
     key(window, doc.activeElement, { key: "Delete" });
     await settle();
-    assert.deepEqual(host.calls("notification.dismiss").map((m) => m.params.notification_id), [uuid(2)]);
+    assert.deepEqual(host.calls("notification.dismiss").map((m) => m.params.id), [uuid(2)]);
     assert.equal(doc.activeElement, rowById(uuid(3)));
     key(window, doc.activeElement, { key: "c", ctrlKey: true });
     await settle();
@@ -427,7 +480,7 @@ describe("unit: notifications app", () => {
     assert.equal(doc.activeElement, rows()[0]);
     key(window, doc.activeElement, { key: "Enter" });
     await settle();
-    assert.deepEqual(host.calls("notification.open").map((m) => m.params.notification_id), [uuid(1)]);
+    assert.deepEqual(host.calls("notification.open").map((m) => m.params.id), [uuid(1)]);
   });
 
   test("unit: notifications: Escape in the popover asks native to close it", async () => {
