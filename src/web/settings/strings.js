@@ -120,10 +120,12 @@ export const STRINGS = Object.freeze({
   "settings.shortcuts.detectStop": "Stop",
   "settings.shortcuts.record": "Press shortcut…",
   "settings.shortcuts.listening": "Listening…",
-  "settings.shortcuts.recordLabel": "Change shortcut for {action}",
+  "settings.shortcuts.recordLabel": "Change shortcut for {action} (current: {keys})",
   "settings.shortcuts.none": "None",
   "settings.shortcuts.unbind": "Remove shortcut",
+  "settings.shortcuts.unbindLabel": "Remove shortcut for {action}",
   "settings.shortcuts.restore": "Restore previous shortcut",
+  "settings.shortcuts.restoreLabel": "Restore previous shortcut for {action}",
   "settings.shortcuts.resetOne": "Reset to default",
   "settings.shortcuts.resetDefaults": "Reset Default Shortcuts",
   "settings.shortcuts.resetConfirm":

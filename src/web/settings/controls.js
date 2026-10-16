@@ -5,7 +5,7 @@
  * `onError(message)` (unparsable input). Text never goes through innerHTML.
  */
 import { strokeFromKeyboardEvent } from "../_shared/keys.js";
-import { formatInput, parseInput } from "./schema.js";
+import { deepEqual, formatInput, parseInput } from "./schema.js";
 import { t } from "./strings.js";
 
 let idCounter = 0;
@@ -227,6 +227,7 @@ function kvControl(doc, field, id, onCommit, onError) {
   wrap.append(rows, add, json.element);
   let disabled = false;
   let mode = "kv";
+  let shown = false;
 
   const collect = () => {
     const out = {};
@@ -236,7 +237,8 @@ function kvControl(doc, field, id, onCommit, onError) {
       if (key === "" && v.value.trim() === "") continue;
       if (key === "") return { error: t("settings.kv.emptyKey") };
       if (Object.prototype.hasOwnProperty.call(out, key)) return { error: t("settings.kv.duplicate", { key }) };
-      out[key] = parseCell(v.value);
+      // defineProperty: a "__proto__" key stays an ordinary entry.
+      Object.defineProperty(out, key, { value: parseCell(v.value), enumerable: true, writable: true, configurable: true });
     }
     return { value: out };
   };
@@ -286,7 +288,15 @@ function kvControl(doc, field, id, onCommit, onError) {
     },
     setValue(v) {
       const value = v === null || v === undefined ? {} : v;
-      mode = isFlatObject(value) ? "kv" : "json";
+      const next = isFlatObject(value) ? "kv" : "json";
+      if (shown && mode === "kv" && next === "kv") {
+        // Same entries as on screen (the reply to the user's own edit): keep
+        // the inputs, so focus, the caret and a new empty row survive.
+        const current = collect();
+        if (!current.error && deepEqual(current.value, value)) return;
+      }
+      shown = true;
+      mode = next;
       rows.replaceChildren();
       rows.hidden = add.hidden = mode !== "kv";
       json.element.hidden = mode !== "json";

@@ -70,6 +70,24 @@ describe("unit: persistence-settings-window: navigation", () => {
     assert.equal(doc.activeElement, items[0]);
   });
 
+  test("unit: persistence-settings-window: activating a nav item keeps keyboard focus in the nav", async () => {
+    await startSettings();
+    const item = (id) => $(`.set-nav-item[data-section='${id}']`);
+    item("terminal").focus();
+    item("terminal").click();
+    assert.equal(sectionShown(), "terminal");
+    assert.equal(doc.activeElement, item("terminal"), "the rebuilt item keeps focus");
+    keydown({ key: "ArrowDown" });
+    assert.equal(doc.activeElement, item("textBox"), "arrow keys still work after activation");
+    // A search result link is replaced by the section: focus moves to its heading.
+    $("#set-search").focus();
+    edit($("#set-search"), "scrollback");
+    assert.equal(doc.activeElement, $("#set-search"));
+    $(".set-result-group[data-section='terminal'] .set-result-section").click();
+    assert.equal(sectionShown(), "terminal");
+    assert.equal(doc.activeElement, $("#set-section-title"));
+  });
+
   test("unit: persistence-settings-window: empty sections say so; empty schema still renders", async () => {
     const store = createStore();
     store.schema = { properties: {} };
@@ -367,6 +385,38 @@ describe("unit: persistence-settings-window: typed controls", () => {
     row().querySelector(".set-kv-row .set-icon").click();
     await flush();
     assert.deepEqual(Object.keys(store.wmux["notifications.hooks"]), ["b", "ü-ключ"]);
+  });
+
+  test("unit: persistence-settings-window: key-value saves keep the inputs, focus and a new empty row", async () => {
+    const { app, store } = await startSettings({ store: createStore({ wmux: { "notifications.hooks": { a: "1" } } }) });
+    app.navigate("automation");
+    const row = () => rowEl("notifications.hooks");
+    const inputs = () => Array.from(row().querySelectorAll(".set-kv-row input"));
+    const [, value] = inputs();
+    value.focus();
+    value.value = "2";
+    value.dispatchEvent(new window.Event("change", { bubbles: true }));
+    assert.equal(value.isConnected, true, "no rebuild with the old value while saving");
+    row().querySelector(".set-kv > button").click(); // Add entry: focus moves to the new key cell
+    const newKey = doc.activeElement;
+    assert.equal(newKey.value, "");
+    await flush();
+    assert.deepEqual(store.wmux["notifications.hooks"], { a: 2 });
+    assert.equal(newKey.isConnected, true, "the reply did not rebuild the rows");
+    assert.equal(doc.activeElement, newKey);
+    assert.equal(inputs().length, 4, "the new empty row survives");
+    // A different value (another writer) still rebuilds the rows.
+    host.emit("wmux.settings.changed", { values: { "notifications.hooks": { value: { z: "9" }, source: "wmux.json" } } });
+    assert.deepEqual(
+      inputs().map((i) => i.value),
+      ["z", '"9"'],
+    );
+    // "__proto__" is an ordinary key, not the object prototype.
+    inputs()[0].value = "__proto__";
+    inputs()[0].dispatchEvent(new window.Event("change", { bubbles: true }));
+    await flush();
+    assert.deepEqual(Object.keys(store.wmux["notifications.hooks"]), ["__proto__"]);
+    assert.equal(store.wmux["notifications.hooks"].__proto__, "9");
   });
 
   test("unit: persistence-settings-window: nested objects fall back to a JSON editor", async () => {

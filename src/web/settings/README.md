@@ -135,7 +135,12 @@ keep the current section and show "“x” is not available on Windows."
   restores the value from when the gallery was loaded.
 - **Keyboard.** Arrow keys, Home and End move through the nav. The recorder
   uses `keys.startCapture()` (`panel.key_capture {on}`) so native's KeyRouter
-  skips the panel while recording.
+  skips the panel while recording. Views re-render after changes; focus stays
+  on the same control (the activated nav item, the shortcut row's button,
+  with X and Restore standing in for each other, the picked theme, Reset
+  Default Shortcuts), and a search-result link moves focus to the section
+  heading. Shortcut buttons name their action and current binding for screen
+  readers.
 
 ## CSP
 

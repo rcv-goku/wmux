@@ -224,9 +224,10 @@ export function createApp(options) {
     return row;
   }
 
-  function updateRow(row) {
+  /** Refresh a row from the effective state; `keepValue` leaves the control's text alone. */
+  function updateRow(row, keepValue) {
     const s = stateOf(row.field);
-    row.control.setValue(s.value);
+    if (!keepValue) row.control.setValue(s.value);
     row.control.setDisabled(s.readOnly);
     row.element.classList.toggle("set-row-readonly", s.readOnly);
     row.element.dataset.source = s.source;
@@ -301,7 +302,9 @@ export function createApp(options) {
       return;
     }
     row.busy = true;
-    updateRow(row);
+    // Keep the user's edit on screen while saving: showing the old value
+    // would flicker and rebuild key-value rows under the caret.
+    updateRow(row, true);
     try {
       const result = await call("wmux.settings.set", { path: field.path, value });
       row.busy = false;
@@ -540,6 +543,7 @@ export function createApp(options) {
     });
     const title = heading(sectionTitle(id));
     title.id = "set-section-title";
+    title.tabIndex = -1; // focus target after a search-result link
     container.append(title);
     const fields = fieldsIn(id);
     if (id === "themes") container.append(themes.render());
@@ -589,6 +593,9 @@ export function createApp(options) {
         state.query = "";
         els.search.value = "";
         navigate(id);
+        // The link is gone after the re-render: continue at the section heading.
+        const title = doc.getElementById("set-section-title");
+        if (title) title.focus();
       });
       group.append(el(doc, "h2", { class: "set-subheading" }, [link]));
       if (fields.length) {
@@ -605,10 +612,18 @@ export function createApp(options) {
     if (!state.loaded) return;
     // A recorder must not outlive the row it records for.
     cancelRecorders();
+    // The nav is rebuilt: keep keyboard focus on the same item (Enter on an
+    // item must not drop focus to <body> and break arrow-key navigation).
+    const active = doc.activeElement;
+    const navFocus = active && els.navList.contains(active) && active.dataset ? active.dataset.section : null;
     for (const set of rows.values()) set.clear();
     renderNav();
     const view = queryTokens(state.query).length ? renderSearch() : renderSection(state.section);
     els.content.replaceChildren(view);
+    if (navFocus) {
+      const item = Array.from(els.navList.querySelectorAll(".set-nav-item")).find((b) => b.dataset.section === navFocus);
+      if (item) item.focus();
+    }
   }
 
   /** Show a section (raw id or CLI alias). Returns the section id shown. */

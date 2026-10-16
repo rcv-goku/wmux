@@ -88,6 +88,22 @@ describe("unit: persistence-settings-themes-section: gallery", () => {
     assert.equal($("#set-theme-revert").disabled, true);
   });
 
+  test("unit: persistence-settings-themes-section: picking and Revert keep keyboard focus in the gallery", async () => {
+    await open();
+    const doc = window.document;
+    const button = (name) => $$(".set-theme").find((b) => b.dataset.theme === name);
+    button("Dracula").focus();
+    button("Dracula").click();
+    await flush();
+    assert.equal(button("Dracula").getAttribute("aria-pressed"), "true");
+    assert.equal(doc.activeElement, button("Dracula"), "the repainted theme button keeps focus");
+    $("#set-theme-revert").focus();
+    $("#set-theme-revert").click();
+    await flush();
+    assert.equal($("#set-theme-revert").disabled, true);
+    assert.equal(doc.activeElement, $("#set-theme-open"), "Revert disables itself; focus stays in the header");
+  });
+
   test("unit: persistence-settings-themes-section: Ghostty default colors, then a first pick sets both halves", async () => {
     const { th } = await open(null);
     assert.equal($("#set-theme-summary").textContent, "Ghostty default colors");

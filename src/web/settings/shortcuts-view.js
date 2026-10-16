@@ -124,11 +124,52 @@ export function createShortcutsView(ctx) {
   function fillKeys(button, action, listening) {
     button.replaceChildren();
     button.setAttribute("aria-pressed", listening ? "true" : "false");
-    button.setAttribute("aria-label", t("settings.shortcuts.recordLabel", { action: action.title }));
+    button.setAttribute(
+      "aria-label",
+      t("settings.shortcuts.recordLabel", { action: action.title, keys: bindingText(action.keys) }),
+    );
     if (listening) button.textContent = t("settings.shortcuts.listening");
     else if (action.keys.length === 0)
       button.append(el(doc, "span", { class: "wmux-muted", text: t("settings.shortcuts.none") }));
     else for (const k of action.keys) button.append(el(doc, "kbd", { class: "set-kbd", text: displayBinding(k) }));
+  }
+
+  /* Painting replaces elements: keep keyboard focus on the same control. */
+  const ROW_BUTTONS = ["set-sc-keys", "set-sc-unbind", "set-sc-restore", "set-sc-reset"];
+  /** Unbind (X) turns into Restore and back; otherwise focus falls back to the keys button. */
+  const ROW_FALLBACK = { "set-sc-unbind": ["set-sc-restore"], "set-sc-restore": ["set-sc-unbind"] };
+  const ID_FALLBACK = { "set-sc-detect-stop": ["set-sc-detect"] };
+
+  function focusMarker() {
+    const a = doc.activeElement;
+    if (!root || !a || !root.contains(a) || typeof a.closest !== "function") return null;
+    const actionRowEl = a.closest(".set-sc-row");
+    if (actionRowEl) {
+      const cls = ROW_BUTTONS.find((c) => a.classList.contains(c)) || "set-sc-keys";
+      return { action: actionRowEl.dataset.action, cls };
+    }
+    const settingRow = a.closest(".set-row[data-path]");
+    if (settingRow) return { path: settingRow.dataset.path };
+    return a.id ? { id: a.id } : null;
+  }
+
+  function restoreFocus(marker) {
+    if (!marker || !root || !root.isConnected) return;
+    const candidates = [];
+    if (marker.action !== undefined) {
+      const row = Array.from(root.querySelectorAll(".set-sc-row")).find((r) => r.dataset.action === marker.action);
+      if (row) {
+        for (const cls of [marker.cls, ...(ROW_FALLBACK[marker.cls] || []), "set-sc-keys"])
+          candidates.push(row.querySelector(`.${cls}`));
+      }
+    } else if (marker.path !== undefined) {
+      const row = Array.from(root.querySelectorAll(".set-row[data-path]")).find((r) => r.dataset.path === marker.path);
+      if (row) candidates.push(row.querySelector(".set-row-control input, .set-row-control select"));
+    } else {
+      for (const id of [marker.id, ...(ID_FALLBACK[marker.id] || [])]) candidates.push(doc.getElementById(id));
+    }
+    const target = candidates.find((node) => node && root.contains(node) && !node.disabled);
+    if (target && doc.activeElement !== target) target.focus();
   }
 
   function stopRecording() {
@@ -355,7 +396,7 @@ export function createShortcutsView(ctx) {
           type: "button",
           class: "set-icon set-sc-restore",
           title: t("settings.shortcuts.restore"),
-          "aria-label": t("settings.shortcuts.restore"),
+          "aria-label": t("settings.shortcuts.restoreLabel", { action: action.title }),
           text: "↶",
         });
         r.addEventListener("click", () => restore(action));
@@ -365,7 +406,7 @@ export function createShortcutsView(ctx) {
           type: "button",
           class: "set-icon set-sc-unbind",
           title: t("settings.shortcuts.unbind"),
-          "aria-label": t("settings.shortcuts.unbind"),
+          "aria-label": t("settings.shortcuts.unbindLabel", { action: action.title }),
           text: "✕",
         });
         x.addEventListener("click", () => unbind(action));
@@ -376,6 +417,7 @@ export function createShortcutsView(ctx) {
           type: "button",
           class: "set-small set-sc-reset",
           title: t("settings.shortcuts.resetOne"),
+          "aria-label": t("settings.reset.label", { title: action.title }),
           text: t("settings.reset"),
         });
         d.addEventListener("click", () => resetAction(action));
@@ -393,6 +435,12 @@ export function createShortcutsView(ctx) {
 
   function paintList() {
     if (!listEl) return;
+    const marker = focusMarker();
+    fillList();
+    restoreFocus(marker);
+  }
+
+  function fillList() {
     listEl.replaceChildren();
     const actions = visibleActions();
     if (actions.length === 0) {
@@ -511,6 +559,12 @@ export function createShortcutsView(ctx) {
 
   function paint() {
     if (!root) return;
+    const marker = focusMarker();
+    build();
+    restoreFocus(marker);
+  }
+
+  function build() {
     root.replaceChildren();
     listEl = null;
     const field = state.byPath.get(PANE_RESIZE_PATH);
@@ -535,7 +589,7 @@ export function createShortcutsView(ctx) {
     if (banner) root.append(banner);
     listEl = el(doc, "div", { class: "set-sc-groups", id: "set-sc-groups" });
     root.append(listEl);
-    paintList();
+    fillList();
     root.append(chordsHelp());
   }
 

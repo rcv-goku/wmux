@@ -103,8 +103,33 @@ export function createThemesView({ document: doc, call, setStatus }) {
     return wrap;
   }
 
+  /** The focused control, so painting (a pick, Revert, a reload) keeps keyboard focus. */
+  function focusMarker() {
+    const a = doc.activeElement;
+    if (!root || !a || !root.contains(a)) return null;
+    if (a.dataset && typeof a.dataset.theme === "string") return { theme: a.dataset.theme };
+    return a.id ? { id: a.id } : null;
+  }
+
+  function restoreFocus(marker) {
+    if (!marker || !root.isConnected) return;
+    let target =
+      marker.theme !== undefined
+        ? Array.from(root.querySelectorAll(".set-theme")).find((b) => b.dataset.theme === marker.theme)
+        : doc.getElementById(marker.id);
+    // Revert disables itself once used: stay in the gallery header.
+    if (target && target.disabled) target = doc.getElementById("set-theme-open");
+    if (target && root.contains(target) && doc.activeElement !== target) target.focus();
+  }
+
   function paint() {
     if (!root) return;
+    const marker = focusMarker();
+    build();
+    restoreFocus(marker);
+  }
+
+  function build() {
     root.replaceChildren();
     const head = el(doc, "div", { class: "set-theme-head" });
     head.append(el(doc, "h2", { class: "set-subheading", text: t("settings.themes.title") }));

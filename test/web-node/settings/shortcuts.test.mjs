@@ -268,11 +268,45 @@ describe("unit: core-shortcuts-settings-ui: recorder", () => {
     assert.deepEqual(sc.wmux.splitRight, []);
     assert.equal(row("splitRight").querySelector(".set-sc-keys").textContent, "None");
     const restore = row("splitRight").querySelector(".set-sc-restore");
-    assert.equal(restore.getAttribute("aria-label"), "Restore previous shortcut");
+    assert.equal(restore.title, "Restore previous shortcut");
+    assert.equal(restore.getAttribute("aria-label"), "Restore previous shortcut for Split Right");
     restore.click();
     await flush();
     assert.deepEqual(sc.wmux.splitRight, ["ctrl+shift+d"]);
     assert.deepEqual(keysOf("splitRight"), ["Ctrl+Shift+D"]);
+  });
+
+  test("unit: core-shortcuts-settings-ui: keyboard focus stays on the row through record, unbind and restore", async () => {
+    await open();
+    const keysBtn = () => row("newSurface").querySelector(".set-sc-keys");
+    assert.equal(keysBtn().getAttribute("aria-label"), "Change shortcut for New Surface (current: Ctrl+Shift+T)");
+    keysBtn().focus();
+    keysBtn().click();
+    keydown({ key: "N", code: "KeyN", keyCode: 78, ctrlKey: true, shiftKey: true, altKey: true }, keysBtn());
+    await flush();
+    assert.deepEqual(keysOf("newSurface"), ["Ctrl+Shift+Alt+N"]);
+    assert.equal(doc.activeElement, keysBtn(), "focus returns to the repainted keys button");
+    assert.equal(keysBtn().getAttribute("aria-label"), "Change shortcut for New Surface (current: Ctrl+Shift+Alt+N)");
+    assert.equal(
+      row("newSurface").querySelector(".set-sc-reset").getAttribute("aria-label"),
+      "Reset New Surface to its default",
+    );
+    const unbind = row("newSurface").querySelector(".set-sc-unbind");
+    assert.equal(unbind.getAttribute("aria-label"), "Remove shortcut for New Surface");
+    unbind.focus();
+    unbind.click();
+    await flush();
+    assert.equal(doc.activeElement, row("newSurface").querySelector(".set-sc-restore"), "X turns into Restore");
+    doc.activeElement.click();
+    await flush();
+    assert.equal(doc.activeElement, row("newSurface").querySelector(".set-sc-unbind"));
+    // Reset Default Shortcuts repaints the whole page; focus returns to its button.
+    $("#set-sc-reset-defaults").focus();
+    $("#set-sc-reset-defaults").click();
+    $("#set-confirm-ok").click();
+    await flush();
+    assert.deepEqual(keysOf("newSurface"), ["Ctrl+Shift+T"]);
+    assert.equal(doc.activeElement, $("#set-sc-reset-defaults"));
   });
 
   test("unit: core-shortcuts-settings-ui: save failures are shown on the row", async () => {
