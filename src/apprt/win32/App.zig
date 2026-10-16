@@ -15,6 +15,7 @@ const BrowserPane = @import("web/BrowserPane.zig");
 const Surface = @import("Surface.zig");
 const Window = @import("ui/Window.zig");
 const features_ext = @import("features/ext.zig");
+const features_lifecycle = @import("features/lifecycle.zig");
 const model_registry = @import("model/registry.zig");
 
 // app/ plumbing (ARCHITECTURE.md ADR-1.6).
@@ -34,6 +35,8 @@ const RuntimeEnv = @import("app/runtime_env.zig").RuntimeEnv;
 const config_files = @import("settings/legacy_config_files.zig");
 const ipc = @import("rpc/compat/legacy_json.zig");
 const legacy_pipe = @import("rpc/server/legacy_pipe.zig");
+const rpc_server = @import("rpc/server/mod.zig");
+const settings = @import("settings/api.zig");
 const taskbar = @import("platform/taskbar.zig");
 const w32 = @import("platform/win32.zig");
 const web_env = @import("web/env.zig");
@@ -298,6 +301,11 @@ pub fn init(
     self.clipboard.init(alloc, self.runtime_env.test_mode);
     errdefer self.clipboard.deinit();
 
+    // The settings layers (cmux.json/wmux.json, W1-4) before anything
+    // reads them.
+    try settings.init(self);
+    errdefer settings.deinit(self);
+
     // WMUX_TEST_HIDDEN: refuse every activation on this (UI) thread and
     // keep user32's own top-level windows off-screen, before any window
     // exists (app/foreground.zig, ARCHITECTURE.md ADR-12.3).
@@ -428,10 +436,10 @@ pub fn init(
     // messages; failure only disables those hooks.
     self.broadcast.create(self, hinstance);
 
-    // Start the agent IPC server now that msg_hwnd exists (the pipe
-    // thread posts requests to it). A failure here only disables the
-    // `ghostty +browser` CLI, so log and continue.
-    legacy_pipe.start(self);
+    // Start the control server now that msg_hwnd exists (its pipe
+    // threads post requests to it). A failure here only disables the
+    // pipe, so the server logs and the app continues.
+    rpc_server.start(self);
 
     // Start the periodic sidebar-metadata refresh (git branch / ports /
     // PR). The timer fires on this msg_hwnd; each tick spawns a worker
@@ -443,6 +451,14 @@ pub fn init(
 
     // Check for updates in the background (non-blocking).
     updater.startUpdateCheck(self);
+
+    // Every feature's init, once the app plumbing exists and before the
+    // first window (ADR-1.3). A failing feature is logged and left out
+    // (lifecycle.init has already deinitialized the ones before it);
+    // the app still starts.
+    features_lifecycle.init(self) catch |err| {
+        log.err("feature initialization failed err={}", .{err});
+    };
 }
 
 pub fn run(self: *App) !void {
@@ -495,10 +511,7 @@ pub fn terminate(self: *App) void {
     // in msgWndProc it completes before terminate() proceeds
     // (single-threaded UI). sendOk/sendError after stop() is impossible
     // because the GUI thread is here, not in msgWndProc.
-    if (self.ipc_server) |server| {
-        server.stop();
-        self.ipc_server = null;
-    }
+    rpc_server.stop(self);
 
     // Free the agent session store (owned session-id strings). Safe after
     // the IPC server stopped: no pipe-thread callback can still touch it.
@@ -542,11 +555,13 @@ pub fn terminate(self: *App) void {
         self.webview2_env = null;
     }
 
-    // Every model object is gone (their destroy paths retired their
-    // handles and freed their feature state), so the registry and the
-    // app-wide feature state can go too.
-    self.handles.deinit(alloc);
+    // Every window is gone: the features' deinit (ADR-1.3, reverse
+    // manifest order), then the app-wide feature state. The model objects'
+    // destroy paths already retired their handles and freed their feature
+    // state, so the registry can go too.
+    features_lifecycle.deinit(self);
     features_ext.deinitAll(&self.features, alloc);
+    self.handles.deinit(alloc);
 
     if (self.bg_brush) |brush| {
         _ = w32.DeleteObject(@ptrCast(brush));
@@ -573,6 +588,7 @@ pub fn terminate(self: *App) void {
     // Every window is gone: drop the WMUX_TEST_HIDDEN hook (if any).
     app_foreground.uninstallHiddenHooks();
 
+    settings.deinit(self);
     self.config.deinit();
     self.runtime_env.deinit(alloc);
     self.clipboard.deinit();
