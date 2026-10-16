@@ -4,6 +4,9 @@
 //! commands; the parsing, requests and text renderers live here.
 
 const std = @import("std");
+const proto = @import("wmux_proto");
+const PathStyle = proto.paths.Style;
+const Allocator = std.mem.Allocator;
 const command = @import("../command.zig");
 const Ctx = command.Ctx;
 const output = @import("../output.zig");
@@ -520,6 +523,50 @@ pub fn parseRegion(s: []const u8) ?[4]f64 {
     return out;
 }
 
+fn isSep(style: PathStyle, c: u8) bool {
+    return c == '/' or (style == .windows and c == '\\');
+}
+
+/// `X:` drive prefix (Windows).
+fn hasDrive(p: []const u8) bool {
+    return p.len >= 2 and std.ascii.isAlphabetic(p[0]) and p[1] == ':';
+}
+
+/// `--out` as the absolute path the app writes to (its working directory is
+/// not the CLI's). Fully qualified paths (`/x`; `C:\x`, `\\server\share\x`)
+/// are sent as typed; anything else is resolved against the CLI's working
+/// directory `cwd`. On Windows a drive-relative path (`C:shot.png`) resolves
+/// only on the working directory's drive (another drive's working directory
+/// is unknown here, so it is sent as typed), a root-relative path (`\x`)
+/// takes the working directory's drive, and separators become `\`.
+pub fn absoluteOut(arena: Allocator, style: PathStyle, cwd: ?[]const u8, path: []const u8) Allocator.Error![]const u8 {
+    switch (style) {
+        .posix => if (path.len > 0 and path[0] == '/') return path,
+        .windows => {
+            if (path.len >= 2 and isSep(style, path[0]) and isSep(style, path[1])) return path;
+            if (path.len >= 3 and hasDrive(path) and isSep(style, path[2])) return path;
+        },
+    }
+    const base = cwd orelse return path;
+    const out = switch (style) {
+        .posix => try proto.paths.join(arena, style, &.{ base, path }),
+        .windows => blk: {
+            if (path.len > 0 and isSep(style, path[0])) {
+                if (!hasDrive(base)) return path;
+                break :blk try std.mem.concat(arena, u8, &.{ base[0..2], path });
+            }
+            var rel = path;
+            if (hasDrive(path)) {
+                if (!hasDrive(base) or std.ascii.toLower(base[0]) != std.ascii.toLower(path[0])) return path;
+                rel = path[2..];
+            }
+            break :blk try proto.paths.join(arena, style, &.{ base, rel });
+        },
+    };
+    if (style == .windows) std.mem.replaceScalar(u8, out, '/', '\\');
+    return out;
+}
+
 pub fn runShot(ctx: *Ctx) !u8 {
     const o = (try ps.parseArgs(ctx, shot_usage, .{
         .values = &.{ "--format", "--scale", "--max-width", "--quality", "--region", "--out", "--label", "--caption", "--window" },
@@ -558,11 +605,7 @@ pub fn runShot(ctx: *Ctx) !u8 {
     if (o.get(&.{"--out"})) |path| {
         if (path.len == 0) return ps.usageWithLine(ctx, shot_usage, "--out requires a path", .{});
         // The app writes the file: send an absolute path.
-        const abs = if (std.fs.path.isAbsolute(path)) path else if (ctx.platform.cwd(ctx.arena)) |cwd|
-            try std.fs.path.join(ctx.arena, &.{ cwd, path })
-        else
-            path;
-        try p.str("out", abs);
+        try p.str("out", try absoluteOut(ctx.arena, PathStyle.native, ctx.platform.cwd(ctx.arena), path));
     }
     if (ps.windowText(ctx, o)) |w| if (!try ps.putHandle(ctx, &p, "window", .window, w)) return output.exit.usage;
     (try connectWithTimeout(ctx, shot_timeout_ms)) orelse return output.exit.runtime;
@@ -731,11 +774,12 @@ test "unit: cli-ps: shot params, validation and text output" {
     // A relative --out is joined to the CLI's cwd with the native separator.
     const windows = @import("builtin").os.tag == .windows;
     h.fp.cwd_path = if (windows) "C:\\work" else "/work";
-    const out_json = if (windows) "C:\\\\work\\\\shots/b.jpg" else "/work/shots/b.jpg";
+    const out_json = if (windows) "C:\\\\work\\\\shots\\\\b.jpg" else "/work/shots/b.jpg";
     h.ok("window.screenshot", "{\"width\":1600,\"height\":1000,\"bytes\":48213,\"path\":\"/tmp/a.png\",\"format\":\"png\"}");
     const r = h.run(&.{ "cmux", "shot", "--out", "/tmp/a.png" });
     try pt.expectOk(r);
-    try h.expectLast("window.screenshot", "{\"out\":\"/tmp/a.png\"}");
+    // On Windows `/tmp/a.png` is root-relative: it takes the cwd's drive.
+    try h.expectLast("window.screenshot", if (windows) "{\"out\":\"C:\\\\tmp\\\\a.png\"}" else "{\"out\":\"/tmp/a.png\"}");
     try pt.expectGolden(h.alloc(), "shot.txt", r.out);
     _ = h.run(&.{ "cmux", "screenshot", "--jpg", "--scale", "0.5", "--max-width", "800", "--quality", "0.9", "--region", "0,0,100,100", "--label", "l", "--caption", "Build \u{2713}", "--out", "shots/b.jpg", "--window", "window:2" });
     try h.expectLast("window.screenshot", "{\"format\":\"jpg\",\"scale\":0.5,\"max_width\":800,\"quality\":0.9,\"region\":{\"x\":0,\"y\":0,\"width\":100,\"height\":100},\"label\":\"l\",\"caption\":\"Build \u{2713}\",\"out\":\"" ++ out_json ++ "\",\"window\":\"window:2\"}");
@@ -760,6 +804,44 @@ test "unit: cli-ps: shot params, validation and text output" {
     const slow = h.run(&.{ "cmux", "shot" });
     try testing.expectEqual(@as(u8, 1), slow.code);
     try pt.expectContains(slow.err, "timed out after 45s waiting for a response to window.screenshot");
+}
+
+test "unit: cli-ps: shot --out resolves against the CLI's working directory" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const cases = [_]struct { PathStyle, ?[]const u8, []const u8, []const u8 }{
+        // POSIX: absolute as typed, relative joined, no cwd as typed.
+        .{ .posix, "/work", "/tmp/a.png", "/tmp/a.png" },
+        .{ .posix, "/work/", "shots/b.jpg", "/work/shots/b.jpg" },
+        .{ .posix, null, "b.jpg", "b.jpg" },
+        // Windows: fully qualified paths are sent as typed.
+        .{ .windows, "C:\\work", "D:\\x\\a.png", "D:\\x\\a.png" },
+        .{ .windows, "C:\\work", "c:/x/a.png", "c:/x/a.png" },
+        .{ .windows, "C:\\work", "\\\\srv\\share\\a.png", "\\\\srv\\share\\a.png" },
+        .{ .windows, "C:\\work", "\\\\?\\C:\\a.png", "\\\\?\\C:\\a.png" },
+        // Relative paths join the cwd with `\` throughout.
+        .{ .windows, "C:\\work", "shots/b.jpg", "C:\\work\\shots\\b.jpg" },
+        .{ .windows, "C:\\", "a.png", "C:\\a.png" },
+        .{ .windows, "\\\\srv\\share\\dir", "x.png", "\\\\srv\\share\\dir\\x.png" },
+        .{ .windows, "C:\\w\u{e9}rk", "\u{1F600}.png", "C:\\w\u{e9}rk\\\u{1F600}.png" },
+        // Drive-relative: only on the cwd's drive (never `C:\work\C:a.png`,
+        // an NTFS stream name); another drive's cwd is unknown.
+        .{ .windows, "C:\\work", "c:shot.png", "C:\\work\\shot.png" },
+        .{ .windows, "C:\\work", "D:shot.png", "D:shot.png" },
+        .{ .windows, "\\\\srv\\share", "C:shot.png", "C:shot.png" },
+        // Root-relative: the cwd's drive.
+        .{ .windows, "D:\\proj", "\\tmp/a.png", "D:\\tmp\\a.png" },
+        .{ .windows, "\\\\srv\\share", "\\tmp\\a.png", "\\tmp\\a.png" },
+        .{ .windows, null, "a.png", "a.png" },
+    };
+    for (cases) |c| {
+        const got = try absoluteOut(a, c[0], c[1], c[2]);
+        if (!std.mem.eql(u8, c[3], got)) {
+            std.debug.print("absoluteOut({s}, {?s}, {s}) = {s}, want {s}\n", .{ @tagName(c[0]), c[1], c[2], got, c[3] });
+            return error.TestUnexpectedResult;
+        }
+    }
 }
 
 test "unit: cli-ps: identify output golden" {
