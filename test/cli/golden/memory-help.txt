@@ -1,0 +1,11 @@
+Usage: cmux memory [--json]
+
+Print the app's own memory use separately from the recursive memory of
+terminal child processes, so a heavy child process does not read as an app
+leak.
+
+Options:
+  --all                         Every window
+  --workspace <id|ref|index>    Only this workspace
+  --limit <n>                   How many of the heaviest groups to list
+  --json                        Print the full response

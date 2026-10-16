@@ -1,0 +1,21 @@
+Usage: cmux shot [flags]
+
+Screenshot a wmux window, or a region of one, to a png or jpeg file
+(alias: screenshot). Only wmux's own windows are captured. Prints
+"<width>x<height> <bytes> <path>". The image is written beside the output
+path and moved into place, so an existing file is replaced only by a
+complete image.
+
+Flags:
+  --format <png|jpg>            Image format (default: png)
+  --jpg                         Same as --format jpg
+  --scale <0.1-1>               Scale factor (default: 1)
+  --max-width <64-8192>         Largest output width in pixels
+  --quality <0.1-1>             JPEG quality (default: 0.8; ignored for png)
+  --region <x,y,w,h>            Window region in points
+  --out <path>                  Output file (default: a temporary directory)
+  --label <text>                Label stored with the capture
+  --caption <text>              Caption drawn into the image
+  --window <id|ref|index>       Window to capture (default: the frontmost
+                                wmux window)
+  --json                        Print the full response

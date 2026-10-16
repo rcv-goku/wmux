@@ -1,0 +1,19 @@
+Usage: cmux tree [--all] [--json]
+
+Print the window, workspace, pane and surface tree of the current window
+(--all: every window) with box-drawing lines:
+
+  window window:1 [current] ◀ active
+  └── workspace workspace:1 "api" [selected] ◀ active
+      └── pane pane:1 [focused] ◀ active
+          └── surface surface:1 [terminal] "zsh" [selected] ◀ active ◀ here
+
+"◀ active" marks the focused path, "◀ here" the surface the command runs
+in. Browser surfaces show their URL.
+
+Options:
+  --all                         Every window (not with --window)
+  --workspace <id|ref|index>    Only this workspace
+  --window <id|ref|index>       This window instead of the current one
+  --json                        Print the full response (includes the split
+                                layout with orientations and ratios)

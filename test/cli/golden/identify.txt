@@ -1,0 +1,13 @@
+{
+  "app": "wmux",
+  "version": "1.0.0",
+  "build": "7",
+  "socket_path": "\\\\.\\pipe\\wmux-stable-1-s1",
+  "focused": {
+    "window_ref": "window:1",
+    "surface_ref": "surface:1",
+    "surface_type": "terminal",
+    "is_browser_surface": false
+  },
+  "caller": null
+}

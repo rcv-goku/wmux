@@ -1,0 +1,7 @@
+NAME                                                CPU%         RSS  PROCS
+app wmux                                             1.5   120.0 MiB      3
+window window:1                                     12.3   500.0 MiB      9
+  workspace workspace:1 "api"                       12.0   381.5 MiB      7
+    pane pane:1                                      2.0      1000 B      2
+      surface surface:1 "zsh"                        0.5       512 B      1
+      surface surface:2 "cargo"                     95.5   286.1 MiB      5

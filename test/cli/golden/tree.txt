@@ -1,0 +1,11 @@
+window window:1 [current] ◀ active
+├── workspace workspace:1 "api" [selected] ◀ active
+│   ├── pane pane:1 [focused] ◀ active
+│   │   ├── surface surface:1 [terminal] "zsh" [selected] ◀ active tty=pid:4242
+│   │   └── surface surface:2 [browser] "Docs  [2J" ◀ here https://example.com/docs
+│   └── pane pane:2 [dock:workspace]
+│       └── surface surface:3 [terminal] "日本" [shell_exited]
+└── workspace workspace:2 "web"
+window window:2
+└── workspace workspace:3 ""
+    └── pane pane:3
