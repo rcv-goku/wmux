@@ -1,0 +1,301 @@
+/* Todos pane layout on the --wmux-* tokens (src/web/_shared/theme.css). */
+
+html,
+html[data-wmux-theme] {
+  /* cmux: the pane background is the opaque window color. */
+  background-color: var(--wmux-surface, var(--wmux-bg));
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.todo-header {
+  display: flex;
+  align-items: center;
+  gap: var(--wmux-space-2);
+  padding: var(--wmux-space-2) var(--wmux-space-3);
+  border-bottom: 1px solid var(--wmux-border);
+  flex: none;
+}
+
+.todo-title {
+  margin: 0;
+  font-size: 1em;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.todo-lane {
+  padding: 0 var(--wmux-space-2);
+  border-radius: var(--wmux-radius-sm);
+  background: var(--wmux-hover);
+  color: var(--wmux-fg-muted);
+  font-size: 0.9em;
+  white-space: nowrap;
+}
+
+.todo-progress {
+  margin-left: auto;
+  color: var(--wmux-fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.todo-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.todo-status-glyph {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--wmux-fg-muted);
+  border-radius: 50%;
+}
+
+.todo-status[data-lane="in_progress"] .todo-status-glyph,
+.todo-status[data-lane="in-progress"] .todo-status-glyph {
+  border-color: var(--wmux-warning);
+  background: linear-gradient(90deg, var(--wmux-warning) 50%, transparent 50%);
+}
+
+.todo-status[data-lane="review"] .todo-status-glyph {
+  border-color: var(--wmux-info);
+}
+
+.todo-status[data-lane="done"] .todo-status-glyph {
+  border-color: var(--wmux-success);
+  background: var(--wmux-success);
+}
+
+.todo-error {
+  padding: var(--wmux-space-1) var(--wmux-space-3);
+  color: var(--wmux-danger);
+  border-bottom: 1px solid var(--wmux-border);
+}
+
+.todo-main {
+  flex: 1 1 auto;
+  overflow-y: auto;
+}
+
+.todo-list {
+  list-style: none;
+  margin: 0;
+  padding: var(--wmux-space-1) 0;
+  outline: none;
+}
+
+.todo-item {
+  display: flex;
+  align-items: center;
+  gap: var(--wmux-space-2);
+  padding: var(--wmux-space-1) var(--wmux-space-3);
+  border-top: 2px solid transparent;
+  border-bottom: 2px solid transparent;
+  cursor: default;
+}
+
+.todo-item:hover {
+  background: var(--wmux-hover);
+}
+
+.todo-item.is-highlighted {
+  background: var(--wmux-selection-bg);
+  color: var(--wmux-selection-fg);
+}
+
+.todo-list:focus-visible .todo-item.is-highlighted {
+  outline: var(--wmux-focus-ring-width) solid var(--wmux-focus-ring);
+  outline-offset: calc(-1 * var(--wmux-focus-ring-width));
+}
+
+/* Tabbing into the list before anything is highlighted: ring the list itself. */
+.todo-list:focus-visible:not(:has(.todo-item.is-highlighted)) {
+  outline: var(--wmux-focus-ring-width) solid var(--wmux-focus-ring);
+  outline-offset: calc(-1 * var(--wmux-focus-ring-width));
+}
+
+.todo-item.is-completed .todo-text {
+  color: var(--wmux-fg-muted);
+  text-decoration: line-through;
+}
+
+.todo-item.is-dragging {
+  opacity: 0.5;
+}
+
+.todo-item.drop-before {
+  border-top-color: var(--wmux-accent);
+}
+
+.todo-item.drop-after {
+  border-bottom-color: var(--wmux-accent);
+}
+
+.todo-check {
+  flex: none;
+  margin: 0;
+}
+
+.todo-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.todo-editor {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.todo-badge {
+  flex: none;
+  padding: 0 var(--wmux-space-1);
+  border-radius: var(--wmux-radius-sm);
+  font-size: 0.8em;
+  line-height: 1.5;
+}
+
+.todo-badge-agent {
+  border: 1px solid var(--wmux-info);
+  color: var(--wmux-info);
+}
+
+.todo-badge-progress {
+  border: 1px solid var(--wmux-warning);
+  color: var(--wmux-warning);
+}
+
+.todo-attach {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 var(--wmux-space-1);
+  border: 0;
+  background: transparent;
+  color: var(--wmux-fg-muted);
+}
+
+.todo-attach-icon {
+  width: 8px;
+  height: 13px;
+  border: 1.5px solid currentColor;
+  border-radius: 4px;
+}
+
+.todo-item:not(:hover):not(.is-highlighted) .todo-attach:not(:has(.todo-attach-count)) {
+  visibility: hidden;
+}
+
+.todo-empty,
+.todo-unavailable {
+  margin: var(--wmux-space-6) var(--wmux-space-3);
+  color: var(--wmux-fg-muted);
+  text-align: center;
+}
+
+.todo-unavailable {
+  flex: 1 1 auto;
+}
+
+.todo-add {
+  display: flex;
+  align-items: center;
+  gap: var(--wmux-space-2);
+  padding: var(--wmux-space-2) var(--wmux-space-3);
+  border-top: 1px solid var(--wmux-border);
+  flex: none;
+}
+
+.todo-add-icon {
+  flex: none;
+  fill: none;
+  stroke: var(--wmux-fg-muted);
+  stroke-width: 1.4;
+  stroke-linecap: round;
+}
+
+.todo-add input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.todo-menu {
+  position: fixed;
+  z-index: 10;
+  min-width: 180px;
+  padding: var(--wmux-space-1) 0;
+  border: 1px solid var(--wmux-border-strong);
+  border-radius: var(--wmux-radius);
+  background: var(--wmux-surface-raised);
+  box-shadow: var(--wmux-shadow);
+}
+
+.todo-menu-item {
+  display: block;
+  width: 100%;
+  padding: var(--wmux-space-1) var(--wmux-space-3);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  text-align: start;
+}
+
+.todo-menu-item:hover,
+.todo-menu-item:focus {
+  background: var(--wmux-accent);
+  color: var(--wmux-accent-fg);
+  outline: none;
+}
+
+.todo-menu-label {
+  padding: var(--wmux-space-1) var(--wmux-space-3) 0;
+  color: var(--wmux-fg-muted);
+  font-size: 0.85em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.todo-menu-separator {
+  height: 1px;
+  margin: var(--wmux-space-1) 0;
+  background: var(--wmux-border);
+}
+
+.todo-confirm {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgb(var(--wmux-bg-rgb) / 0.6);
+}
+
+.todo-confirm-box {
+  max-width: 360px;
+  padding: var(--wmux-space-4);
+  border: 1px solid var(--wmux-border-strong);
+  border-radius: var(--wmux-radius-lg);
+  background: var(--wmux-surface-raised);
+  box-shadow: var(--wmux-shadow);
+}
+
+.todo-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--wmux-space-2);
+}
