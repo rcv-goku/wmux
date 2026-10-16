@@ -632,7 +632,7 @@ pub fn claudeProjectSlug(gpa: Allocator, cwd: []const u8) Allocator.Error![]u8 {
 }
 
 /// CLI text row `agent<TAB>id<TAB>status<TAB>modified<TAB>title<TAB>cwd`.
-/// Tabs and newlines inside fields are replaced by spaces.
+/// Control characters inside fields are replaced by spaces (see `writeField`).
 pub fn writeTextRow(w: *std.Io.Writer, s: *const Session) std.Io.Writer.Error!void {
     try writeField(w, s.agent);
     try w.writeByte('\t');
@@ -649,8 +649,23 @@ pub fn writeTextRow(w: *std.Io.Writer, s: *const Session) std.Io.Writer.Error!vo
     try w.writeByte('\n');
 }
 
+/// Writes `s` with each control character replaced by one space. Tabs and
+/// newlines would break the row format; ESC and the other C0 controls, DEL
+/// and C1 controls (U+0080..U+009F, matched in their UTF-8 form) would let
+/// transcript text (titles, ids, paths) drive the terminal the CLI prints to.
 fn writeField(w: *std.Io.Writer, s: []const u8) std.Io.Writer.Error!void {
-    for (s) |c| try w.writeByte(if (c == '\t' or c == '\n' or c == '\r') ' ' else c);
+    var i: usize = 0;
+    while (i < s.len) : (i += 1) {
+        const c = s[i];
+        if (c < 0x20 or c == 0x7f) {
+            try w.writeByte(' ');
+        } else if (c == 0xc2 and i + 1 < s.len and s[i + 1] >= 0x80 and s[i + 1] <= 0x9f) {
+            try w.writeByte(' ');
+            i += 1;
+        } else {
+            try w.writeByte(c);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -428,6 +428,22 @@ test "unit: vault: CLI text row format" {
     try testing.expectEqualStrings("claude\t" ++ claude_id ++ "\tinactive\t2026-10-14T09:03:31Z\tFix the socket error in ipc.zig\tC:\\src\\wmux\n", w.buffered());
 }
 
+test "unit: vault: CLI text rows replace control characters from transcripts" {
+    // A first prompt carrying terminal escapes (OSC 52 clipboard write, BEL,
+    // a UTF-8 C1 CSI, DEL), and an id and cwd with controls of their own.
+    const t = "{\"type\":\"user\",\"sessionId\":\"s\\u001b[2J\",\"cwd\":\"/w\\u0007x\",\"message\":{\"role\":\"user\",\"content\":\"\\u001b]52;c;eA==\\u0007hi\\u009b31m\\u007f \\u00e9t\\u00e9\"}}\n";
+    var idx = index.Index.init(testing.allocator);
+    defer idx.deinit();
+    const e = try idx.ingest("/p/s.jsonl", "claude", .{ .size = t.len, .mtime_ms = 0 }, 0, t, true);
+    var buf: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    try index.writeTextRow(&w, &e.session);
+    const row = w.buffered();
+    try testing.expectEqualStrings("claude\ts [2J\tinactive\t1970-01-01T00:00:00Z\t ]52;c;eA== hi 31m  \u{e9}t\u{e9}\t/w x\n", row);
+    for (row[0 .. row.len - 1]) |c| try testing.expect(c >= 0x20 or c == '\t');
+    try testing.expectEqual(@as(usize, 5), std.mem.count(u8, row, "\t"));
+}
+
 test "unit: vault: format and agent name tables" {
     try testing.expectEqual(index.Format.claude_code, index.Format.forAgent("claude"));
     try testing.expectEqual(index.Format.codex, index.Format.forAgent("codex"));
