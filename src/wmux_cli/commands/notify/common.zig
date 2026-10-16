@@ -452,8 +452,14 @@ fn nativeDelete(path: []const u8) anyerror!void {
     try std.fs.cwd().deleteFile(path);
 }
 
+/// A temp file renamed over `path`: a run stopped mid-write (`events` is
+/// stopped with Ctrl+C) never leaves a torn or empty cursor file behind.
 fn nativeWrite(path: []const u8, bytes: []const u8) anyerror!void {
-    try std.fs.cwd().writeFile(.{ .sub_path = path, .data = bytes });
+    var buf: [256]u8 = undefined;
+    var af = try std.fs.cwd().atomicFile(path, .{ .write_buffer = &buf });
+    defer af.deinit();
+    af.file_writer.interface.writeAll(bytes) catch return af.file_writer.err orelse error.WriteFailed;
+    try af.finish();
 }
 
 pub var files: FileOps = .{ .delete = nativeDelete, .write = nativeWrite };
@@ -506,6 +512,26 @@ test "unit: cli-notify-common: scan problems" {
     try testing.expectEqual(@as(?bool, false), parseBool("0"));
     try testing.expectEqual(@as(?bool, null), parseBool("maybe"));
     try testing.expectEqual(@as(?bool, null), parseBool(""));
+}
+
+test "unit: cli-notify-common: native writes replace the whole file and leave no temp file" {
+    var tmp = testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    const dir = try tmp.dir.realpathAlloc(testing.allocator, ".");
+    defer testing.allocator.free(dir);
+    const path = try std.fs.path.join(testing.allocator, &.{ dir, "events.seq" });
+    defer testing.allocator.free(path);
+    try nativeWrite(path, "18446744073709551615\n");
+    try nativeWrite(path, "7\n");
+    const got = try tmp.dir.readFileAlloc(testing.allocator, "events.seq", 64);
+    defer testing.allocator.free(got);
+    try testing.expectEqualStrings("7\n", got);
+    var n: usize = 0;
+    var it = tmp.dir.iterate();
+    while (try it.next()) |_| n += 1;
+    try testing.expectEqual(@as(usize, 1), n);
+    try nativeDelete(path);
+    try testing.expectError(error.FileNotFound, tmp.dir.access("events.seq", .{}));
 }
 
 test "unit: cli-notify-common: params keep insertion order" {
