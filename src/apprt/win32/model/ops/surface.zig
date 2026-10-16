@@ -373,18 +373,11 @@ pub fn closeTab(self: *Window, tab: *Tab) void {
 }
 
 /// Close a tab by index within the focused Pane of the ACTIVE
-/// workspace (tab bar / context menu paths).
+/// workspace (tab bar paths).
 pub fn closeTabByIndex(self: *Window, idx: usize) void {
     const ws = self.activeWorkspace();
     const container = ws.focusedPaneOrFirst() orelse return;
     closeTabAt(self, ws, container, idx);
-}
-
-/// Close the tab at `idx` within the given Pane in workspace `ws_idx`.
-/// Index-addressed wrapper over closeTabAt.
-pub fn closeTabInContainer(self: *Window, ws_idx: usize, container: *Pane, idx: usize) void {
-    if (ws_idx >= self.workspaces.items.len) return;
-    closeTabAt(self, self.workspaces.items[ws_idx], container, idx);
 }
 
 /// Close tab `index` of `pane`, a pane of workspace `ws`. If the pane
@@ -459,16 +452,6 @@ pub fn closeTabAt(self: *Window, ws: *Workspace, pane: *Pane, index: usize) void
     }
 }
 
-/// Public wrapper over closeTabAt for the agent IPC `tab-close`, which
-/// addresses a tab by (workspace index, tab index). Resolves the focused
-/// pane of the target workspace.
-pub fn closeTabInWorkspaceForIpc(self: *Window, ws_idx: usize, idx: usize) void {
-    if (ws_idx >= self.workspaces.items.len) return;
-    const ws = self.workspaces.items[ws_idx];
-    const container = ws.focusedPaneOrFirst() orelse return;
-    closeTabAt(self, ws, container, idx);
-}
-
 /// Close tabs based on mode: this (current), other (all but current), right (all after current).
 pub fn closeTabMode(self: *Window, mode: apprt.action.CloseTabMode, surface: *Surface) void {
     switch (mode) {
@@ -534,7 +517,7 @@ pub fn selectTabIndex(self: *Window, idx: usize) void {
 /// would otherwise paint the background workspace's pane over the visible
 /// one. The hidden pane is laid out and shown the first time
 /// selectWorkspace switches to this workspace, matching the
-/// background-workspace discipline used by closeTabInContainer /
+/// background-workspace discipline used by closeTabAt /
 /// closeSplitPane. The new tab becomes the workspace's own selected tab
 /// (index 0) so a later switch lands on it.
 pub fn addFirstTabBackground(self: *Window, ws_idx: usize, command: ?[]const []const u8) !void {

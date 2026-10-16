@@ -157,7 +157,6 @@ pub const clearTabAttention = ops_surface.clearTabAttention;
 pub const closeSplitPane = ops_surface.closeSplitPane;
 pub const closeSplitSurface = ops_surface.closeSplitSurface;
 pub const closeTabByIndex = ops_surface.closeTabByIndex;
-pub const closeTabInWorkspaceForIpc = ops_surface.closeTabInWorkspaceForIpc;
 pub const closeTabMode = ops_surface.closeTabMode;
 pub const moveTab = ops_surface.moveTab;
 pub const moveTabTo = ops_surface.moveTabTo;

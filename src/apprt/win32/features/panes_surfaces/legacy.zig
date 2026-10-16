@@ -171,19 +171,20 @@ fn ipcTabSelect(self: *App, req: *ipc.Request) anyerror!void {
 
 /// tab-close {index, [workspace], [pane]} → close tab `index` in the
 /// focused Pane (or the one at `pane` index) of the addressed
-/// (or active) workspace.
+/// (or active) workspace. A `pane` index addresses that pane without
+/// focusing it: the workspace's focused pane and its selected tab stay
+/// put (ui-model 8.1 #1; the pane used to become the focused one first).
 fn ipcTabClose(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const target = try targets.ipcResolveWorkspace(self, req);
     const idx = ipcArgU32(req, "index") orelse return IpcError.MissingIndex;
 
-    if (ipcArgU32(req, "pane")) |p| {
-        target.ws.focused_pane = target.ws.paneAt(p) orelse return IpcError.UnknownPane;
-    }
-
-    const container = target.ws.focusedPaneOrFirst() orelse return IpcError.UnknownTab;
+    const container = if (ipcArgU32(req, "pane")) |p|
+        target.ws.paneAt(p) orelse return IpcError.UnknownPane
+    else
+        target.ws.focusedPaneOrFirst() orelse return IpcError.UnknownTab;
     if (idx >= container.tabCount()) return IpcError.UnknownTab;
-    target.window.closeTabInWorkspaceForIpc(target.ws_idx, idx);
+    ops_surface.closeTabAt(target.window, target.ws, container, idx);
     server.sendOk(req.id, null) catch {};
 }
 

@@ -22,11 +22,11 @@ pub fn newTabInsertPos(pos_cfg: anytype, count: usize, active: usize) usize {
     };
 }
 
-/// Pure active-tab fixup for closeTabInContainer: the tab at `idx` was
-/// removed (arrays already shifted left) leaving `new_count` >= 1 tabs;
-/// return the post-close active index. A surviving active tab follows
-/// its shifted slot; closing the active tab selects the tab that slid
-/// into its slot, clamped to the new last index.
+/// Pure active-tab fixup for closeTabAt (model/ops/surface.zig): the tab
+/// at `idx` was removed (the list already shifted left) leaving
+/// `new_count` >= 1 tabs; return the post-close active index. A surviving
+/// active tab follows its shifted slot; closing the active tab selects the
+/// tab that slid into its slot, clamped to the new last index.
 pub fn closeTabActiveFixup(new_count: usize, active: usize, idx: usize) usize {
     if (active >= new_count) return new_count - 1;
     if (active > idx) return active - 1;
