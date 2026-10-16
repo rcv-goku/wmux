@@ -464,6 +464,32 @@ fn nativeWrite(path: []const u8, bytes: []const u8) anyerror!void {
 
 pub var files: FileOps = .{ .delete = nativeDelete, .write = nativeWrite };
 
+// ----- prompt answers -----
+
+/// Reads the answer line of a `[y/N]` prompt from stdin. `Platform.readStdin`
+/// reads to EOF, which a console (or a mintty pipe) only sends on Ctrl+Z or
+/// Ctrl+D, so prompts read one line instead (framework follow-up:
+/// `Platform.readLine`). The test harness swaps this hook.
+pub var read_answer: *const fn (ctx: *Ctx, max: usize) []const u8 = nativeReadAnswer;
+
+fn nativeReadAnswer(ctx: *Ctx, max: usize) []const u8 {
+    return readLineFrom(ctx.arena, max, std.fs.File.stdin());
+}
+
+/// Bytes of `src` up to the first newline (excluded) or EOF, at most `max`.
+/// Reads one byte at a time, so nothing after the line is consumed; a read
+/// error ends the line.
+pub fn readLineFrom(arena: Allocator, max: usize, src: anytype) []const u8 {
+    var line: std.ArrayList(u8) = .empty;
+    var byte: [1]u8 = undefined;
+    while (line.items.len < max) {
+        const n = src.read(&byte) catch break;
+        if (n == 0 or byte[0] == '\n') break;
+        line.append(arena, byte[0]) catch break;
+    }
+    return line.items;
+}
+
 const testing = std.testing;
 
 const t_opts = [_]Opt{
@@ -532,6 +558,38 @@ test "unit: cli-notify-common: native writes replace the whole file and leave no
     try testing.expectEqual(@as(usize, 1), n);
     try nativeDelete(path);
     try testing.expectError(error.FileNotFound, tmp.dir.access("events.seq", .{}));
+}
+
+const ByteSource = struct {
+    data: []const u8,
+    pos: usize = 0,
+    fail_at: ?usize = null,
+
+    fn read(self: *ByteSource, buf: []u8) error{ReadFailed}!usize {
+        if (self.fail_at) |f| if (self.pos == f) return error.ReadFailed;
+        const n = @min(buf.len, self.data.len - self.pos);
+        @memcpy(buf[0..n], self.data[self.pos..][0..n]);
+        self.pos += n;
+        return n;
+    }
+};
+
+test "unit: cli-notify-common: prompt answers stop at the first newline" {
+    var st = std.heap.ArenaAllocator.init(testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    // A console line ends in CRLF; nothing after the line is consumed.
+    var con: ByteSource = .{ .data = "y\r\nrm -rf /\n" };
+    try testing.expectEqualStrings("y\r", readLineFrom(a, 64, &con));
+    try testing.expectEqual(@as(usize, 3), con.pos);
+    var eof: ByteSource = .{ .data = "" };
+    try testing.expectEqualStrings("", readLineFrom(a, 64, &eof));
+    var no_nl: ByteSource = .{ .data = "Yes \u{1F600}" };
+    try testing.expectEqualStrings("Yes \u{1F600}", readLineFrom(a, 64, &no_nl));
+    var long: ByteSource = .{ .data = "abcdef\n" };
+    try testing.expectEqualStrings("ab", readLineFrom(a, 2, &long));
+    var broken: ByteSource = .{ .data = "yes\n", .fail_at = 1 };
+    try testing.expectEqualStrings("y", readLineFrom(a, 64, &broken));
 }
 
 test "unit: cli-notify-common: params keep insertion order" {

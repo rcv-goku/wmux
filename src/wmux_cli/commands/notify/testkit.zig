@@ -10,11 +10,20 @@ const Allocator = std.mem.Allocator;
 const proto = @import("wmux_proto");
 const Env = proto.env_names.Env;
 const main = @import("../../main.zig");
+const command = @import("../../command.zig");
+const common = @import("common.zig");
 pub const fake = @import("../../fake.zig");
 
 pub const Result = struct { code: u8, out: []const u8, err: []const u8 };
 
 pub const test_sid = "S-1-5-21-1000-1000-1000-1001";
+
+/// Prompt answers: the first line of the fake platform's stdin, never the
+/// test runner's real stdin.
+pub fn platformAnswer(ctx: *command.Ctx, max: usize) []const u8 {
+    const all = ctx.platform.readStdin(ctx.arena, max) catch return "";
+    return all[0 .. std.mem.indexOfScalar(u8, all, '\n') orelse all.len];
+}
 
 pub const Harness = struct {
     arena_state: std.heap.ArenaAllocator,
@@ -23,9 +32,12 @@ pub const Harness = struct {
     pairs: std.ArrayList(Env.Pair),
     pairs_slice: []const Env.Pair,
     env_map: std.process.EnvMap,
+    saved_answer: @TypeOf(common.read_answer),
 
     /// A harness with a live control pipe answered by `handler`.
     pub fn init(self: *Harness, handler: fake.Handler) !void {
+        self.saved_answer = common.read_answer;
+        common.read_answer = platformAnswer;
         self.arena_state = std.heap.ArenaAllocator.init(testing.allocator);
         const a = self.arena_state.allocator();
         self.fp = fake.Platform.init(a);
@@ -41,6 +53,7 @@ pub const Harness = struct {
     }
 
     pub fn deinit(self: *Harness) void {
+        common.read_answer = self.saved_answer;
         self.arena_state.deinit();
     }
 

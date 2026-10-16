@@ -393,6 +393,34 @@ test "unit: cli-notify: feed clear confirms, deletes and works offline" {
     try kit.expectContains(bare.err, "cmux feed clear [--yes|-y]");
 }
 
+fn consoleYes(_: *@import("../../command.zig").Ctx, _: usize) []const u8 {
+    return "y\r";
+}
+
+test "unit: cli-notify: feed clear takes one answer line, not stdin up to EOF" {
+    var h: Harness = undefined;
+    try h.init(notifyHandler);
+    defer h.deinit();
+    const saved = common.files;
+    defer common.files = saved;
+    common.files = .{ .delete = recordDelete, .write = noWrite };
+    deleted_n = 0;
+    delete_fails = false;
+    const proto = @import("wmux_proto");
+    const home = if (proto.paths.Style.native == .windows) "C:\\Users\\u" else "/home/u";
+    h.setEnv(if (proto.paths.Style.native == .windows) "USERPROFILE" else "HOME", home);
+    const path = try proto.paths.join(h.alloc(), proto.paths.Style.native, &.{ home, ".cmuxterm", "workstream.jsonl" });
+    try h.fp.addFile(path, "{}\n");
+    // A console answers with one CRLF line and never sends EOF, so the
+    // answer comes from the line hook (h.deinit restores it), not from the
+    // platform's read-to-EOF stdin.
+    h.fp.stdin = "n\n";
+    common.read_answer = consoleYes;
+    const r = h.run(&.{ "cmux", "feed", "clear" });
+    try kit.expectResult(r, 0, try std.fmt.allocPrint(h.alloc(), "This will permanently delete {s}. Proceed? [y/N] Cleared {s}\n", .{ path, path }), "");
+    try testing.expectEqual(@as(usize, 1), deleted_n);
+}
+
 test "unit: cli-notify: feed clear without a home directory" {
     var h: Harness = undefined;
     try h.init(notifyHandler);

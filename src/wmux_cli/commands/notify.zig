@@ -457,8 +457,7 @@ fn feedClear(ctx: *Ctx, rest: []const []const u8) !u8 {
     if (!yes) {
         try ctx.out.print("This will permanently delete {s}. Proceed? [y/N] ", .{path});
         try ctx.out.flush();
-        const answer = ctx.platform.readStdin(ctx.arena, 64 * 1024) catch "";
-        const line = std.mem.trimLeft(u8, answer, " \t");
+        const line = std.mem.trimLeft(u8, common.read_answer(ctx, 64 * 1024), " \t");
         if (line.len == 0 or (line[0] != 'y' and line[0] != 'Y')) {
             try ctx.out.writeAll("Aborted.\n");
             return output.exit.ok;
