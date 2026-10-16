@@ -63,13 +63,13 @@ keep the current section and show "“x” is not available on Windows."
 |---|---|---|
 | `wmux.settings.schema` | `{}` -> `{schema, docs_url?}` or the schema itself | the generated JSON Schema (`docs/wmux/schema/wmux.schema.json` shape) with the `x-wmux-*` hints of `schema_dump.zig`. Root `$schema`, `schemaVersion` and `packs` are not rows |
 | `wmux.settings.get_effective` | `{}` -> `{values: {"<path>": {value, source, locked?, error?}}, files?: {wmux, cmux}}` | `source` as in `config get --json`: `default`, `ghostty`, `cmux.json`, `wmux.json`, `project`, `policy`. `locked: true` (or `source: "policy"`) makes the row read-only. `error` is shown on the row (e.g. a type error that fell back to a lower layer). A list `[{path, value, source, ...}]` is accepted too |
-| `wmux.settings.set` | `{path, value}` -> `{value, source, locked?}` | writes `wmux.json` through the lossless editor. Errors (`invalid_params`, `policy_locked`, ...) show their `message` on the row. Without `source` in the reply the page refetches `get_effective` |
+| `wmux.settings.set` | `{path, value}` -> `{value, source, locked?}` | writes `wmux.json` through the lossless editor. Errors use the ADR-3.5 codes (no new ones), for example `invalid_params` for a bad value or `permission_denied` for a policy-locked key; the page shows their `message` on the row. Without `source` in the reply the page refetches `get_effective` |
 | `wmux.settings.unset` | `{path}` -> `{value, source, ...}` | per-key Reset: removes the key from `wmux.json`; the reply is the next lower layer. Also used with `shortcuts.bindings.<id>` for per-action shortcut reset and by the Reset Default Shortcuts fallback. Everything after `shortcuts.bindings.` is one key, the action id, and ids may contain dots (`wmux.selectLayout.tiled`): native removes the segments `["shortcuts", "bindings", <id>]` (`json_edit.removePath`) and must not split that path on every `.` |
 | `wmux.settings.reset_all` | `{}` -> `{}` | Reset All Settings: remove every setting the Settings window can write from `wmux.json` (keep `$schema`, `packs` and unknown keys); `cmux.json`, project and policy values stay. If native answers `method_not_found`/`not_supported`, the page unsets each `wmux.json` row instead |
 | `wmux.settings.open_file` | `{file: "wmux" \| "cmux"}` -> `{}` | open the file in the default editor (creates `wmux.json` if missing) |
-| `wmux.settings.open_docs` | `{topic: "settings" \| "shortcut-chords"}` -> `{}` | open the docs; on `method_not_found` the page falls back to `panel.open_external {url: docs_url}` when the schema reply carried one |
+| `wmux.settings.open_docs` | `{topic: "settings" \| "shortcut-chords"}` -> `{}` | open the docs; on `method_not_found`, `not_supported` or `forbidden` the page falls back to `panel.open_external {url: docs_url}` when the schema reply carried one |
 | `wmux.shortcuts.list` | `{}` -> `{actions: [...], presets?: [...], preset?}` | action: `{id, title, category, keys, default_keys, when?, when_label?, source, locked?, numbered?, bare_ok?, availability?}`. `keys` is an array of bindings; a binding is a stroke string, a chord string `"ctrl+b c"` or a nested chord array `["ctrl+b", "c"]` (ADR-8.3 Windows grammar). `source` as above. `category` is an `actions_catalog.zig` category; `viewer` (or `bare_ok`) allows bare keys. presets: `{name, title, description?, warning?}` from `keymap_presets.zig` (`cmux` is the default keymap); the page has a built-in fallback list |
-| `wmux.shortcuts.validate` | `{id, keys: ["<binding>"]}` -> `{ok, errors?: [msg], warnings?: [msg], conflicts?: [{id, title?, keys}]}` | runs after the page's own checks; conflicts become "This shortcut conflicts with <action> (<keys>)" and block saving; warnings are shown. `method_not_found` skips it |
+| `wmux.shortcuts.validate` | `{id, keys: ["<binding>"]}` -> `{ok, errors?: [msg], warnings?: [msg], conflicts?: [{id, title?, keys}]}` | runs after the page's own checks; conflicts become "This shortcut conflicts with <action> (<keys>)" and block saving; warnings are shown. `method_not_found` or `not_supported` skips it |
 | `wmux.shortcuts.set` | `{id, keys: ["<binding>"...]}` -> `{action?}` | write `shortcuts.bindings.<id>` in `wmux.json`; `keys: []` writes `null` (unbind). An `action` in the reply replaces the row |
 | `wmux.settings.reset_shortcuts` | `{}` -> `{}` | Reset Default Shortcuts: remove every `shortcuts.bindings.<id>` from `wmux.json` (cmux.json and policy bindings are unaffected). Fallback: `wmux.settings.unset` per `wmux.json` row |
 | `wmux.settings.apply_preset` | `{name}` -> `{changes: [{id, title?, old, new}], kept: [id \| {id, title}], warnings: [msg], notes: [msg]}` | apply `keymap_presets.plan` (writes only the differences). The page shows `<action>: <old> -> <new>`, `Kept your own shortcut for X.`, warnings (Windows-reserved collisions) and notes |
@@ -80,10 +80,16 @@ keep the current section and show "“x” is not available on Windows."
 
 ### Events pushed by native
 
+Bridge events native posts to this panel (`{"v": 1, "event", "payload"}`),
+not `cmux.event` frames. Only `wmux.settings.changed` is also an
+`events.stream` event: `wmux_proto/events_catalog.zig` declares it for the
+settings watcher with the payload key `changed_keys`. The other names are
+panel-only.
+
 | Event | Payload | Effect |
 |---|---|---|
 | `wmux.settings.navigate` | `{target}` | `wmux settings <target>` while the window is open: show that section |
-| `wmux.settings.changed` | `{values?}` (same shape as `get_effective`) | after a reload (file watcher, CLI `config set`): merge `values`, or refetch when absent |
+| `wmux.settings.changed` | `{changed_keys?: ["<path>"], values?}` | after a reload (file watcher, CLI `config set`). `changed_keys` is the catalog payload; `values` (same shape as `get_effective`) is an optional extension for this panel. The page merges `values` when present, else refetches `get_effective` |
 | `wmux.settings.schema_changed` | `{}` | refetch the schema and re-render |
 | `wmux.settings.shortcuts_changed` | `{}` | refetch `wmux.shortcuts.list` |
 | `wmux.settings.themes_changed` | `{}` | refetch `wmux.settings.list_themes` |
@@ -104,7 +110,11 @@ keep the current section and show "“x” is not available on Windows."
   (`true`, `12` and `null` cells are JSON, other text is a string), else a
   JSON editor; `strokes` -> text plus a one-stroke recorder; anything else ->
   JSON editor. Values are validated before `wmux.settings.set`; native
-  validates again.
+  validates again. Object settings merge key by key across layers
+  (`resolve.zig`), so an object row shows the merged value and saving writes
+  all of it to `wmux.json`. A key that comes from a lower layer cannot be
+  removed from this row. `shortcuts.bindings` is never a generic row; the
+  shortcut editor owns it.
 - **Sources.** A badge names the source when it is not the default;
   "Modified" when the value differs from the default; "Restart to apply" for
   `x-wmux-apply: restart`. Policy rows: "Managed by your organization",

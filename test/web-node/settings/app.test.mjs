@@ -258,6 +258,15 @@ describe("unit: persistence-settings-window: sources and locks", () => {
     host.emit("wmux.settings.changed", {});
     await flush();
     assert.equal(control("terminal.scrollSpeed").value, "1");
+    // The events_catalog.zig payload ({changed_keys}) refetches too.
+    host.handlers.set("wmux.settings.get_effective", () => ({
+      values: { "terminal.scrollSpeed": { value: 3, source: "wmux.json" } },
+    }));
+    const before = host.calls("wmux.settings.get_effective").length;
+    host.emit("wmux.settings.changed", { changed_keys: ["terminal.scrollSpeed"] });
+    await flush();
+    assert.equal(host.calls("wmux.settings.get_effective").length, before + 1);
+    assert.equal(control("terminal.scrollSpeed").value, "3");
   });
 });
 

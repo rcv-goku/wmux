@@ -245,7 +245,7 @@ export function createStore({ schema = fixtureSchema(), cmux = {}, wmux = {}, po
       files: { wmux: "C:\\Users\\me\\.config\\wmux\\wmux.json" },
     }));
     host.handlers.set("wmux.settings.set", ({ path: p, value }) => {
-      if (p in store.policy) throw hostError("policy_locked", "Managed by your organization");
+      if (p in store.policy) throw hostError("permission_denied", "Managed by your organization");
       if (!(p in store.defaults)) throw hostError("invalid_params", `Unknown setting ${p}`);
       store.wmux[p] = value;
       return { path: p, ...store.effective()[p] };
