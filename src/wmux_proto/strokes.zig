@@ -652,6 +652,36 @@ test "unit: keys: malformed strokes are rejected" {
     try testing.expectError(error.UnknownKey, Stroke.parse(long_key, .windows));
 }
 
+test "unit: keys: stroke parsing edge cases" {
+    // Tabs and repeated blanks separate chord strokes; case is ignored.
+    const t = try Trigger.parse("\tCTRL+B \t  PageDown\t", .windows);
+    try testing.expect(t.eql(try Trigger.parse("ctrl+b pgdn", .windows)));
+    try testing.expect((try Stroke.parse("Ctrl+Shift+ArrowLeft", .windows)).eql(try Stroke.parse("ctrl+shift+left", .windows)));
+    // Glyph keys and glyph modifiers mix with words.
+    try testing.expect((try Stroke.parse("\u{21E7}\u{21E5}", .mac)).eql(try Stroke.parse("shift+tab", .mac)));
+    try testing.expect((try Stroke.parse("\u{2318}+\u{232B}", .mac)).eql(try Stroke.parse("cmd+backspace", .mac)));
+    try testing.expect((try Stroke.parse("opt+\u{2318}\u{2193}", .mac)).eql(try Stroke.parse("cmd+opt+down", .mac)));
+    try testing.expectError(error.DuplicateModifier, Stroke.parse("\u{2318}\u{2318}a", .mac));
+    try testing.expectError(error.DuplicateModifier, Stroke.parse("cmd+\u{2318}a", .mac));
+    // Every key name round-trips in every dialect that can express it.
+    var buf: [32]u8 = undefined;
+    for (std.enums.values(Key)) |k| {
+        const s: Stroke = .{ .mods = .{ .ctrl = true }, .key = k };
+        for ([_]Dialect{ .windows, .mac }) |d| {
+            const text = try bufPrint(&buf, .{ .first = s }, d);
+            try testing.expect((try Stroke.parse(text, d)).eql(s));
+        }
+        try testing.expectEqual(k, parseKey(@tagName(k)).?);
+    }
+    // Spaces around '+' are not part of the grammar ("ctrl" alone is the
+    // first stroke of a chord here, and it has no key).
+    try testing.expectError(error.MissingKey, Trigger.parse("ctrl + b", .windows));
+    try testing.expectError(error.UnknownModifier, Stroke.parse("ctrl +b", .windows));
+    // A chord whose parts fail reports the part's error.
+    try testing.expectError(error.UnknownKey, Trigger.parseChord("ctrl+b", "nokey", .windows));
+    try testing.expectError(error.CmdNotAllowed, Trigger.parseChord("cmd+b", "c", .windows));
+}
+
 test "unit: keys: unbind spellings" {
     for ([_][]const u8{ "", "none", "NONE", "clear", "unbound", "disabled", "  none " }) |s|
         try testing.expect(isUnbindValue(s));

@@ -960,6 +960,20 @@ test "unit: keys: mini regex" {
     try testing.expect(regexSearch("a.*z", "a" ++ "m" ** 5000 ++ "z", false));
 }
 
+fn parseAndCollect(gpa: std.mem.Allocator, src: []const u8) !void {
+    var c = try parse(gpa, src);
+    defer c.deinit();
+    var keys: std.ArrayList([]const u8) = .empty;
+    defer keys.deinit(gpa);
+    try c.collectKeys(gpa, &keys);
+}
+
+test "unit: keys: when-clause parse frees everything on allocation failure" {
+    // Escaped strings (unescape copies), in-lists and regexes all allocate.
+    const src = "!terminalFocus && (sidebarMode in [files, 'fi\\'nd', 3] || paneCount > 1) || panelKind =~ /^mark/i";
+    try testing.checkAllAllocationFailures(testing.allocator, parseAndCollect, .{src});
+}
+
 test "unit: keys: when-clause key collection" {
     const a = testing.allocator;
     var c = try parse(a, "!terminalFocus && (sidebarMode in [files] || paneCount > 1 || panelKind =~ /x/) || true");

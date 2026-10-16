@@ -647,6 +647,34 @@ test "unit: keys: preset plan keeps the user's own shortcuts" {
     try testing.expect(empty.isEmpty());
 }
 
+fn planOnce(gpa: std.mem.Allocator, current: []const UserBinding) !void {
+    var p = try plan(gpa, "windows-terminal", current);
+    p.deinit(gpa);
+}
+
+fn checkKeymapOnce(gpa: std.mem.Allocator, preset: ?*const Preset) !void {
+    const b = try effectiveBindings(gpa, preset);
+    defer gpa.free(b);
+    gpa.free(try findConflicts(gpa, b, .{}));
+}
+
+test "unit: keys: planning and checking free everything on allocation failure" {
+    const gpa = testing.allocator;
+    const current = [_]UserBinding{
+        .{ .id = "focusLeft", .keys = &.{"ctrl+b left"} }, // tmux value: rewritten
+        .{ .id = "newTab", .keys = &.{"ctrl+b c"} }, // tmux value: removed
+        .{ .id = "splitRight", .keys = &.{"ctrl+shift+alt+\\"} }, // custom: kept
+    };
+    // All three result lists are non-empty, so every failure point is hit.
+    var p = try plan(gpa, "windows-terminal", &current);
+    defer p.deinit(gpa);
+    try testing.expect(p.set.len > 0 and p.remove.len > 0 and p.kept.len > 0);
+    try testing.checkAllAllocationFailures(gpa, planOnce, .{@as([]const UserBinding, &current)});
+    // The strict default check reports one (allowlisted) pair, so the
+    // conflict list allocates too.
+    try testing.checkAllAllocationFailures(gpa, checkKeymapOnce, .{@as(?*const Preset, null)});
+}
+
 test "unit: keys: keysEqual normalizes strokes" {
     try testing.expect(keysEqual(&.{"Ctrl+Shift+D"}, &.{"shift+ctrl+d"}));
     try testing.expect(!keysEqual(&.{"ctrl+shift+d"}, &.{"ctrl+shift+e"}));

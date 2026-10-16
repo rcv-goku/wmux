@@ -506,12 +506,12 @@ test "unit: keys: catalog entries are well-formed" {
     for (entries) |e| {
         errdefer std.log.err("bad catalog entry '{s}'", .{e.id});
         try testing.expect(e.id.len > 0 and e.title.len > 0);
-        for (e.keys) |k| _ = try strokes.Trigger.parse(k, .windows);
+        for (e.keys) |k| try expectCanonical(k, .windows);
         for (e.scoped) |sc| {
-            _ = try strokes.Trigger.parse(sc.key, .windows);
+            try expectCanonical(sc.key, .windows);
             try expectKnownKeys(gpa, sc.when);
         }
-        if (e.mac) |m| _ = try strokes.Trigger.parse(m, .mac);
+        if (e.mac) |m| try expectCanonical(m, .mac);
         if (e.when) |w| try expectKnownKeys(gpa, w);
         if (e.numbered) {
             try testing.expect(e.keys.len <= 1);
@@ -523,6 +523,19 @@ test "unit: keys: catalog entries are well-formed" {
         }
         if (std.mem.startsWith(u8, e.id, "wmux.")) try testing.expect(e.id.len > "wmux.".len);
     }
+}
+
+/// The stroke parses, its canonical text parses back to the same trigger,
+/// and the hint text fits a small buffer.
+fn expectCanonical(text: []const u8, dialect: strokes.Dialect) !void {
+    const t = try strokes.Trigger.parse(text, dialect);
+    var buf: [64]u8 = undefined;
+    const canon = try strokes.bufPrint(&buf, t, dialect);
+    testing.expect((try strokes.Trigger.parse(canon, dialect)).eql(t)) catch |err| {
+        std.log.err("'{s}' formats as '{s}', which parses differently", .{ text, canon });
+        return err;
+    };
+    _ = try strokes.bufPrint(&buf, t, .display);
 }
 
 fn expectKnownKeys(gpa: std.mem.Allocator, src: []const u8) !void {
