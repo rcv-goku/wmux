@@ -46,6 +46,7 @@ const FINAL_READ_CODES = new Set([
 ]);
 const READ_RETRIES = 3;
 const READ_RETRY_DELAY_MS = 150;
+const XLINK_NS = "http://www.w3.org/1999/xlink";
 const STATUS_MS = 2500;
 const COPIED_MS = 1200;
 const STATE_DEBOUNCE_MS = 400;
@@ -948,7 +949,7 @@ export function createApp(options) {
 
     listen(ui.content, "click", (e) => onContentClick(e));
     listen(ui.content, "auxclick", (e) => {
-      if (e.button === 1 && e.target.closest && e.target.closest("a[href]")) onContentClick(e);
+      if (e.button === 1 && linkTarget(eventElement(e)) !== null) onContentClick(e);
     });
     listen(ui.content, "keydown", (e) => {
       if (e.key !== "Enter") return;
@@ -960,8 +961,26 @@ export function createApp(options) {
     });
   }
 
+  function eventElement(e) {
+    return e.target && e.target.nodeType === 1 ? e.target : e.target && e.target.parentElement;
+  }
+
+  /**
+   * The target of the link a click landed in, or null: HTML and SVG <a href>,
+   * SVG <a xlink:href> and image-map <area href>. Anything left to the browser
+   * would navigate the panel itself (same-origin targets are not cancelled).
+   */
+  function linkTarget(start) {
+    for (let el = start; el && el !== ui.content; el = el.parentElement) {
+      if (el.localName !== "a" && el.localName !== "area") continue;
+      const href = el.hasAttribute("href") ? el.getAttribute("href") : el.getAttributeNS(XLINK_NS, "href");
+      if (href !== null) return href;
+    }
+    return null;
+  }
+
   function onContentClick(e) {
-    const target = e.target && e.target.nodeType === 1 ? e.target : e.target && e.target.parentElement;
+    const target = eventElement(e);
     if (!target) return;
     const copy = target.closest("button.mdv-copy-code");
     if (copy) {
@@ -975,10 +994,10 @@ export function createApp(options) {
       imageAction(imageButton);
       return;
     }
-    const link = target.closest("a[href]");
-    if (link && ui.content.contains(link)) {
+    const href = ui.content.contains(target) ? linkTarget(target) : null;
+    if (href !== null) {
       e.preventDefault();
-      routeLink(link.getAttribute("href"));
+      routeLink(href);
       return;
     }
     const code = target.closest('code[data-mdv-file-exists="true"]');

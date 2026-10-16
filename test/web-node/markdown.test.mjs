@@ -808,6 +808,39 @@ describe("unit: markdown app", () => {
     assert.equal(host.calls("panel.open_in_browser").length, 2);
   });
 
+  test("unit: markdown: image-map areas and SVG links are routed, never navigate the panel", async () => {
+    await startApp({
+      text: [
+        '<img src="map.png" usemap="#m" alt="map"><map name="m">',
+        '<area shape="rect" coords="0,0,9,9" href="guide.md#intro" alt="guide">',
+        '<area shape="rect" coords="9,9,19,19" href="https://example.com/area" alt="site"></map>',
+        "",
+        '<svg><a xlink:href="https://example.com/svg"><text>svg xlink</text></a><a href="other.md"><text>svg href</text></a></svg>',
+      ].join("\n"),
+    });
+    const content = doc.getElementById("mdv-content");
+    const clickEvent = (el, type = "click", button = 0) => {
+      const event = new window.MouseEvent(type, { bubbles: true, cancelable: true, button });
+      el.dispatchEvent(event);
+      return event;
+    };
+    const [guide, site] = content.querySelectorAll("area");
+    assert.ok(clickEvent(guide).defaultPrevented, "area click does not navigate");
+    assert.ok(clickEvent(site, "auxclick", 1).defaultPrevented, "middle click on an area is routed too");
+    const [xlinkText, hrefText] = content.querySelectorAll("svg text");
+    assert.ok(clickEvent(xlinkText).defaultPrevented, "SVG xlink:href click does not navigate");
+    assert.ok(clickEvent(hrefText).defaultPrevented);
+    await settle();
+    assert.deepEqual(host.calls("panel.markdown.open").map((m) => m.params), [
+      { path: "guide.md", fragment: "intro" },
+      { path: "other.md" },
+    ]);
+    assert.deepEqual(host.calls("panel.open_in_browser").map((m) => m.params), [
+      { url: "https://example.com/area" },
+      { url: "https://example.com/svg" },
+    ]);
+  });
+
   test("unit: markdown: markdown links fall back to the open router", async () => {
     await startApp({
       handlers: {
