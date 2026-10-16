@@ -447,6 +447,70 @@ describe("unit: persistence-settings-keyboard-shortcuts-section: resets and pres
     assert.equal(await app.shortcuts.applyPreset("missing"), false);
   });
 
+  test("unit: persistence-settings-reset-all: Reset All refetches the shortcut list", async () => {
+    const { app, sc, store } = await open({ wmux: { splitRight: ["ctrl+shift+alt+d"] } });
+    assert.deepEqual(keysOf("splitRight"), ["Ctrl+Shift+Alt+D"]);
+    host.handlers.set("wmux.settings.reset_all", () => {
+      store.wmux = {};
+      sc.wmux = {}; // shortcuts.bindings lives in wmux.json too
+      return {};
+    });
+    app.navigate("reset");
+    $("#set-reset-all").click();
+    $("#set-confirm-ok").click();
+    await flush();
+    app.navigate("shortcuts");
+    await flush();
+    assert.deepEqual(keysOf("splitRight"), ["Ctrl+Shift+D"]);
+    assert.equal(row("splitRight").querySelector(".set-sc-reset"), null);
+  });
+
+  test("unit: core-shortcuts-settings-ui: settings changes that touch shortcuts refetch the list", async () => {
+    const { sc } = await open();
+    const lists = () => host.calls("wmux.shortcuts.list").length;
+    const before = lists();
+    host.emit("wmux.settings.changed", { changed_keys: ["terminal.scrollSpeed"] });
+    await flush();
+    assert.equal(lists(), before, "unrelated keys leave the list alone");
+    sc.wmux.splitRight = ["ctrl+shift+alt+d"]; // wmux.json edited by hand
+    host.emit("wmux.settings.changed", { changed_keys: ["shortcuts.bindings.splitRight"] });
+    await flush();
+    assert.equal(lists(), before + 1);
+    assert.deepEqual(keysOf("splitRight"), ["Ctrl+Shift+Alt+D"]);
+    host.emit("wmux.settings.changed", {
+      values: { "shortcuts.showModifierHoldHints": { value: false, source: "wmux.json" } },
+    });
+    await flush();
+    assert.equal(lists(), before + 2, "the keys of `values` count when changed_keys is absent");
+    // Saving a generic shortcuts.* row on this page refetches too.
+    rowEl("shortcuts.showModifierHoldHints").querySelector("input").click();
+    await flush();
+    assert.equal(lists(), before + 3);
+  });
+
+  test("unit: core-shortcuts-settings-ui: a reload asked for during a fetch fetches again", async () => {
+    const { app, sc } = await open();
+    let release = null;
+    const inner = host.handlers.get("wmux.shortcuts.list");
+    host.handlers.set("wmux.shortcuts.list", () => {
+      const reply = inner(); // the state when native read it
+      return new Promise((resolve) => {
+        release = () => resolve(reply);
+      });
+    });
+    const first = app.shortcuts.reload();
+    await flush(1);
+    sc.wmux.newSurface = ["ctrl+shift+alt+t"]; // written after that read
+    const second = app.shortcuts.reload();
+    assert.equal(second, first, "joins the running fetch");
+    release();
+    await flush(2);
+    release();
+    await first;
+    assert.equal(host.calls("wmux.shortcuts.list").length >= 3, true);
+    assert.deepEqual(keysOf("newSurface"), ["Ctrl+Shift+Alt+T"], "the follow-up fetch wins");
+  });
+
   test("unit: core-shortcuts-settings-ui: find shortcut by keys", async () => {
     await open();
     $("#set-sc-detect").click();

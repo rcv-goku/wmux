@@ -79,6 +79,7 @@ export function createShortcutsView(ctx) {
   const model = {
     loaded: false,
     loading: null,
+    stale: false, // a reload was asked for while one was running
     error: "",
     actions: [],
     presets: [],
@@ -98,18 +99,31 @@ export function createShortcutsView(ctx) {
     return a ? a.title : String(id);
   };
 
-  async function load() {
-    if (model.loading) return model.loading;
+  /**
+   * Fetch `wmux.shortcuts.list` and repaint. A call while a fetch is running
+   * fetches once more after it (that reply may predate the change that asked
+   * for the reload); the returned promise settles after the last fetch.
+   */
+  function load() {
+    if (model.loading) {
+      model.stale = true;
+      return model.loading;
+    }
     model.loading = (async () => {
       try {
-        const data = normalizeShortcutList(await call("wmux.shortcuts.list", {}));
-        model.actions = data.actions;
-        model.presets = data.presets;
-        model.preset = data.preset;
-        model.loaded = true;
-        model.error = "";
-      } catch (err) {
-        model.error = message(err);
+        do {
+          model.stale = false;
+          try {
+            const data = normalizeShortcutList(await call("wmux.shortcuts.list", {}));
+            model.actions = data.actions;
+            model.presets = data.presets;
+            model.preset = data.preset;
+            model.loaded = true;
+            model.error = "";
+          } catch (err) {
+            model.error = message(err);
+          }
+        } while (model.stale);
       } finally {
         model.loading = null;
       }
@@ -619,6 +633,20 @@ export function createShortcutsView(ctx) {
     startDetect,
     stopRecording,
     isRecording: () => recording !== null,
-    onSettingsChanged() {},
+    /**
+     * Settings changed outside this page (a file reload, Reset All, a generic
+     * `shortcuts.*` row). `changed` lists the key paths, or is null when
+     * unknown. Refetches the list once it was loaded and the change may touch
+     * `shortcuts.*` (bindings, when-clauses); a first visit loads it anyway.
+     */
+    onSettingsChanged(changed) {
+      if (!model.loaded && !model.loading) return;
+      if (Array.isArray(changed) && !changed.some(touchesShortcuts)) return;
+      load();
+    },
   };
+}
+
+function touchesShortcuts(path) {
+  return typeof path === "string" && (path === "shortcuts" || path.startsWith("shortcuts."));
 }

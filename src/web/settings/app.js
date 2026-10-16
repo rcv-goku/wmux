@@ -302,10 +302,11 @@ export function createApp(options) {
       if (entry) {
         state.effective.set(path, entry);
         updatePath(path);
+        shortcuts.onSettingsChanged([path]);
         return;
       }
     }
-    await refreshEffective();
+    await refreshEffective([path]);
   }
 
   async function commit(row, value) {
@@ -369,7 +370,12 @@ export function createApp(options) {
     if (result && typeof result.docs_url === "string") state.docsUrl = result.docs_url;
   }
 
-  async function refreshEffective() {
+  /**
+   * Refetch every effective value and refresh the rows. `changed` lists the
+   * key paths that changed (null when unknown, e.g. after Reset All); the
+   * shortcut list is refetched when they may touch `shortcuts.*`.
+   */
+  async function refreshEffective(changed) {
     try {
       const result = await call("wmux.settings.get_effective", {});
       state.effective = normalizeEffective(result);
@@ -379,7 +385,7 @@ export function createApp(options) {
       return false;
     }
     for (const path of rows.keys()) updatePath(path);
-    shortcuts.onSettingsChanged();
+    shortcuts.onSettingsChanged(Array.isArray(changed) ? changed : null);
     return true;
   }
 
@@ -737,12 +743,15 @@ export function createApp(options) {
       if (payload && typeof payload.target === "string") navigate(payload.target);
     });
     on("wmux.settings.changed", (payload) => {
+      // changed_keys is the events_catalog payload; values an optional extension.
+      const changed = payload && Array.isArray(payload.changed_keys) ? payload.changed_keys : null;
       if (payload && payload.values) {
-        for (const [path, entry] of normalizeEffective(payload)) state.effective.set(path, entry);
+        const entries = normalizeEffective(payload);
+        for (const [path, entry] of entries) state.effective.set(path, entry);
         for (const path of rows.keys()) updatePath(path);
-        shortcuts.onSettingsChanged();
+        shortcuts.onSettingsChanged(changed || Array.from(entries.keys()));
       } else {
-        refreshEffective();
+        refreshEffective(changed);
       }
     });
     on("wmux.settings.schema_changed", () => {
