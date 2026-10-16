@@ -668,8 +668,9 @@ pub const RowBody = union(RowKind) {
 
 pub const Row = struct {
     body: RowBody,
-    /// Hash of everything that affects the row's geometry (layout cache
-    /// key together with width, DPI and metrics).
+    /// Hash of everything that affects the row's laid-out elements: their
+    /// presence, rectangles and actions (layout cache key together with
+    /// width, DPI and metrics).
     content_hash: u64,
 
     pub fn id(self: *const Row) Uuid {
@@ -783,7 +784,8 @@ fn groupRow(arena: Allocator, g: GroupInput) Allocator.Error!Row {
     const badge = if (g.collapsed) try badgeText(arena, unread) else null;
     var h = std.hash.Wyhash.init(0x6864_7267); // "grph"
     h.update(title);
-    h.update(&.{ 0, @intFromBool(g.collapsed), @intFromBool(g.pinned) });
+    // A color adds the rail element, so its presence is geometry.
+    h.update(&.{ 0, @intFromBool(g.collapsed), @intFromBool(g.pinned), @intFromBool(g.color != null) });
     h.update(std.mem.asBytes(&@as(u64, g.members.len)));
     if (badge) |b| h.update(b);
     return .{
@@ -928,15 +930,20 @@ fn hashWorkspace(r: *const WorkspaceRow, s: Settings) u64 {
                     h.update(&.{ @bitCast(run.style), @intFromBool(run.link != null) });
                 }
             },
+            // A link makes the cached pill/chip element an open_link target.
             .pills => |ps| for (ps) |p| {
                 hashOpt(&h, p.icon);
                 hashStr(&h, p.text);
+                h.update(&.{@intFromBool(p.link != null)});
             },
             .progress => |p| {
                 h.update(&.{@intFromBool(p.value == null)});
                 hashOpt(&h, p.label);
             },
-            .chips => |cs| for (cs) |c| hashStr(&h, c.text),
+            .chips => |cs| for (cs) |c| {
+                hashStr(&h, c.text);
+                h.update(&.{@intFromBool(c.link != null)});
+            },
             .toggle => |tg| hashStr(&h, tg.label),
         }
     }

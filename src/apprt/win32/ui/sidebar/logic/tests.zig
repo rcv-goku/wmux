@@ -635,6 +635,46 @@ test "unit: sidebar: layout cache reuses rows and survives eviction and clear" {
     try testing.expect(cache2.count() > n2);
 }
 
+test "unit: sidebar: layout cache never serves a stale group rail or link action" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const before = [_]model.Node{
+        .{ .group = .{ .id = testId(10), .title = "G" } },
+        .{ .workspace = .{ .id = testId(1), .details = .{ .items = &.{
+            .{ .slot = .agent_status, .body = .{ .pills = &.{.{ .text = "PR #7" }} } },
+            .{ .slot = .ports, .body = .{ .chips = &.{.{ .text = ":3000" }} } },
+        } } } },
+    };
+    // Same titles and texts; only the group color and the links appear.
+    const after = [_]model.Node{
+        .{ .group = .{ .id = testId(10), .title = "G", .color = model.Color.hex(0x30a14e) } },
+        .{ .workspace = .{ .id = testId(1), .details = .{ .items = &.{
+            .{ .slot = .agent_status, .body = .{ .pills = &.{.{ .text = "PR #7", .link = "https://github.com/o/r/pull/7" }} } },
+            .{ .slot = .ports, .body = .{ .chips = &.{.{ .text = ":3000", .link = "http://localhost:3000" }} } },
+        } } } },
+    };
+    const rows_before = try model.build(a, .{ .nodes = &before });
+    const rows_after = try model.build(a, .{ .nodes = &after });
+    for (rows_before, rows_after) |b, c| try testing.expect(b.content_hash != c.content_hash);
+
+    var fake: text_style.FakeMeasurer = .{};
+    var cache = layout.Cache.init(testing.allocator, 16);
+    defer cache.deinit();
+    const params: layout.Params = .{ .width = 240 };
+    const first = try layout.layoutRows(a, &cache, rows_before, fake.measurer(), params);
+    try testing.expect(findKind(first.rows[0], .rail) == null);
+    try testing.expectEqual(layout.Action.none, findKind(first.rows[1], .pill).?.action);
+    try testing.expectEqual(layout.Action.none, findKind(first.rows[1], .chip).?.action);
+
+    const cached = try layout.layoutRows(a, &cache, rows_after, fake.measurer(), params);
+    try testing.expect(findKind(cached.rows[0], .rail) != null);
+    try testing.expectEqual(layout.Action.open_link, findKind(cached.rows[1], .pill).?.action);
+    try testing.expectEqual(layout.Action.open_link, findKind(cached.rows[1], .chip).?.action);
+    const fresh = try layout.layoutRows(a, null, rows_after, fake.measurer(), params);
+    try testing.expectEqualStrings(try dump(a, rows_after, fresh), try dump(a, rows_after, cached));
+}
+
 test "unit: sidebar: thousands of rows lay out and virtualize" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
