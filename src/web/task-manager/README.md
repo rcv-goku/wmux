@@ -77,13 +77,18 @@ enforces Trusted Types.
   (PID <n>) to terminate gracefully. wmux will force-kill it if it is still
   running after a short grace period.` For several PIDs: `Ask N processes (PIDs
   a, b) to terminate gracefully. wmux will force-kill them …`. Buttons: Kill and
-  Cancel; Cancel has focus and Escape cancels. Targets: a process row -> its
-  PID; a tag -> its PID; a surface / pane / workspace -> the top-level processes
-  under it; an agent -> its outermost PID; a program -> all its PIDs. Windows and
-  webviews are never killed from here. After the call the page refreshes.
-- **Keyboard**: Up/Down/Home/End move within a section, Left/Right collapse,
-  expand or go to the parent / first child, Enter jumps, Delete kills.
-  Focus stays on the same row across refreshes.
+  Cancel; Cancel has focus and Escape cancels. The dialog is modal (the page
+  behind it is `inert`) and gives focus back to the row. Targets: a process
+  row -> its PID; a tag -> its PID; a surface / pane / workspace -> the
+  top-level processes under it; an agent -> its outermost PID; a program -> all
+  its PIDs. Windows and webviews are never killed from here. After the call the
+  page refreshes.
+- **Keyboard**: Tab reaches every section: each table has one tab stop (the
+  selected row, else its first row), and focusing a row selects it.
+  Up/Down/Home/End move within a section, Left/Right collapse, expand or go to
+  the parent / first child, Enter jumps, Delete kills. Focus stays on the same
+  row across refreshes; when that row goes away (the process exited) focus
+  moves to the row that took its place.
 - **Row keys** (selection, focus, collapsed state): windows, workspaces, panes
   and surfaces by id (else ref); processes, tags and webviews by PID within
   their parent row, so a PID listed in two places gives two independent rows.

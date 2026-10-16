@@ -351,6 +351,9 @@ export function createApp(options) {
   function render() {
     const active = doc.activeElement;
     const focusedKey = active && ui.main.contains(active) ? rowKeyOf(active) : null;
+    // Where that row was, for when a refresh drops it (the process exited).
+    const focusedTr = focusedKey ? active.closest("tr[data-key]") : null;
+    const focusedPos = focusedTr ? { body: focusedTr.parentElement, index: focusedTr.sectionRowIndex } : null;
     // Header sort buttons are rebuilt too (every refresh): remember the focused one.
     const focusedSort = !focusedKey && active && ui.main.contains(active) ? sortFocusOf(active) : null;
     rows.clear();
@@ -394,9 +397,29 @@ export function createApp(options) {
     );
     renderTree();
     if (state.selected && !rows.has(state.selected)) state.selected = null;
-    // Refreshes rebuild the rows and headers; keep keyboard focus on the same one.
-    const el = focusedKey ? rowElement(focusedKey) : focusedSort ? sortButton(focusedSort) : null;
+    applyTabStops();
+    // Refreshes rebuild the rows and headers; keep keyboard focus on the same
+    // one, or on the row that took the place of a row that went away.
+    let el = focusedKey ? rowElement(focusedKey) : focusedSort ? sortButton(focusedSort) : null;
+    if (!el && focusedPos) {
+      const left = focusedPos.body.rows;
+      el = left.length
+        ? left[Math.min(focusedPos.index, left.length - 1)]
+        : ui.tables.tree.tBodies[0].rows[0];
+    }
     if (el) el.focus();
+  }
+
+  /**
+   * One Tab stop per table (roving tabindex): the selected row, else the
+   * first row, so every section is reachable from the keyboard.
+   */
+  function applyTabStops() {
+    for (const table of Object.values(ui.tables)) {
+      const trs = Array.from(table.tBodies[0].rows);
+      const stop = trs.find((tr) => tr.dataset.key === state.selected) || trs[0];
+      for (const tr of trs) tr.tabIndex = tr === stop ? 0 : -1;
+    }
   }
 
   /* ---------------------------------------------------------------------- */
@@ -516,15 +539,25 @@ export function createApp(options) {
     return Promise.resolve();
   }
 
+  /** aria-modal: keep focus and the screen reader inside the open confirmation. */
+  function setBackgroundInert(on) {
+    for (const el of Array.from(doc.body.children)) if (el !== ui.confirm) el.toggleAttribute("inert", on);
+  }
+
   function confirmKill(text) {
     if (state.confirmResolve) state.confirmResolve(false);
     ui.confirmText.textContent = text;
     ui.confirm.hidden = false;
+    setBackgroundInert(true);
     ui.confirmCancel.focus();
     return new Promise((resolve) => {
       state.confirmResolve = (ok) => {
         state.confirmResolve = null;
         ui.confirm.hidden = true;
+        setBackgroundInert(false);
+        // Hand focus back to the row the kill started from (not <body>).
+        const el = !state.destroyed && state.selected ? rowElement(state.selected) : null;
+        if (el) el.focus();
         resolve(ok);
       };
     });
@@ -586,8 +619,8 @@ export function createApp(options) {
       const on = tr.dataset.key === key;
       tr.classList.toggle("is-selected", on);
       tr.setAttribute("aria-selected", on ? "true" : "false");
-      tr.tabIndex = on ? 0 : -1;
     }
+    applyTabStops();
     const el = rowElement(key);
     if (el && focus) {
       el.focus();
@@ -693,10 +726,16 @@ export function createApp(options) {
     openMenu(key, e.clientX, e.clientY);
   }
 
+  /** Tab (or a script) moved focus onto a row: selection follows focus. */
+  function onMainFocus(e) {
+    const key = e.target.matches("tr[data-key]") ? e.target.dataset.key : null;
+    if (key && key !== state.selected) select(key, false);
+  }
+
   function onMainKey(e) {
-    const key = rowKeyOf(e.target);
-    if (!key) return;
-    const tr = rowElement(key);
+    const tr = typeof e.target.closest === "function" ? e.target.closest("tr[data-key]") : null;
+    if (!tr) return;
+    const key = tr.dataset.key;
     const body = tr.parentElement;
     const list = Array.from(body.querySelectorAll("tr[data-key]"));
     const pos = list.indexOf(tr);
@@ -758,6 +797,7 @@ export function createApp(options) {
     listen(ui.main, "dblclick", onMainDblClick);
     listen(ui.main, "contextmenu", onMainContextMenu);
     listen(ui.main, "keydown", onMainKey);
+    listen(ui.main, "focusin", onMainFocus);
     listen(ui.refresh, "click", () => refresh());
     listen(ui.processes, "change", () => setShowProcesses(ui.processes.checked));
     listen(ui.menu, "click", (e) => {

@@ -68,6 +68,13 @@ const names = (id) => bodyRows(id).map((tr) => tr.querySelector(".tm-name").text
 const treeRow = (pred) => bodyRows("tm-tree").find((tr) => pred(app.row(tr.dataset.key), tr));
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** Poll `pred` until it holds or `ms` pass (timing tests on a loaded machine). */
+async function waitFor(pred, ms = 5000) {
+  const end = Date.now() + ms;
+  while (!pred() && Date.now() < end) await wait(10);
+  return pred();
+}
+
 after(() => window.close());
 afterEach(() => {
   if (app) {
@@ -84,6 +91,22 @@ describe("unit: task manager basics", () => {
     assert.match(csp, /trusted-types 'none'/);
     assert.doesNotMatch(csp, /unsafe-inline|unsafe-eval|https?:\/\//);
     assert.doesNotMatch(page.html, /<script(?![^>]*src=)|style="|<style|\son[a-z]+=/i);
+  });
+
+  test("unit: task-manager: every data-i18n key in index.html is in strings.js with the same text", async () => {
+    const { STRINGS } = await importWeb("task-manager/strings.js");
+    const tpl = new window.DOMParser().parseFromString(page.html, "text/html");
+    const keyed = tpl.querySelectorAll("[data-i18n]");
+    assert.ok(keyed.length > 0);
+    for (const el of keyed) {
+      assert.equal(el.textContent.trim(), STRINGS[el.dataset.i18n], el.dataset.i18n);
+    }
+    for (const el of tpl.querySelectorAll("[data-i18n-attr]")) {
+      for (const pair of el.dataset.i18nAttr.split(";")) {
+        const [attr, k] = pair.split(":").map((s) => s.trim());
+        assert.equal(el.getAttribute(attr), STRINGS[k], `${attr}:${k}`);
+      }
+    }
   });
 
   test("unit: task-manager: loads system.top and system.memory into cards and sections", async () => {
@@ -201,8 +224,9 @@ describe("unit: task manager sorting and refresh", () => {
     app.destroy();
     await startApp({ refreshMs: 30 });
     const n0 = host.calls("system.top").length;
-    // jsdom renders slowly; give the 30 ms cadence room for a few cycles.
-    await wait(400);
+    // jsdom renders slowly (and CI machines are busy): wait for a few cycles
+    // of the 30 ms cadence instead of a fixed time.
+    await waitFor(() => host.calls("system.top").length >= n0 + 2);
     const n1 = host.calls("system.top").length;
     assert.ok(n1 >= n0 + 2, `expected repeated refreshes, got ${n1 - n0}`);
     setHidden(true);
@@ -538,6 +562,66 @@ describe("unit: task manager actions", () => {
     const list = bodyRows("tm-tree");
     key(window, dupes[1], { key: "ArrowUp" });
     assert.equal(doc.activeElement, list[list.indexOf(dupes[1]) - 1]);
+  });
+
+  test("unit: task-manager: every table is reachable with Tab and focusing a row selects it", async () => {
+    await startApp();
+    for (const id of ["tm-agents", "tm-programs", "tm-child", "tm-tree"]) {
+      const stops = bodyRows(id).filter((tr) => tr.tabIndex === 0);
+      assert.deepEqual(stops, [bodyRows(id)[0]], `${id} has one tab stop: its first row`);
+    }
+    // Tab lands on a row: it becomes the selection, and arrows work from there.
+    const agent = bodyRows("tm-agents")[0];
+    agent.focus();
+    assert.equal(agent.getAttribute("aria-selected"), "true");
+    assert.equal(bodyRows("tm-tree")[0].tabIndex, 0, "other tables keep their tab stop");
+    const tree = bodyRows("tm-tree");
+    tree[0].focus();
+    key(window, tree[0], { key: "ArrowDown" });
+    assert.equal(doc.activeElement, bodyRows("tm-tree")[1]);
+    assert.equal(bodyRows("tm-tree")[1].tabIndex, 0);
+    assert.equal(bodyRows("tm-tree")[0].tabIndex, -1);
+    // The tab stops survive a refresh.
+    await app.refresh();
+    await settle();
+    assert.equal(bodyRows("tm-agents").filter((tr) => tr.tabIndex === 0).length, 1);
+    assert.equal(doc.activeElement.dataset.key, bodyRows("tm-tree")[1].dataset.key);
+  });
+
+  test("unit: task-manager: the kill confirmation is modal and gives focus back to the row", async () => {
+    await startApp();
+    const ws = treeRow((r) => r.kind === "workspace" && r.title === "api <server>");
+    click(window, ws);
+    key(window, ws, { key: "Delete" });
+    assert.equal(doc.activeElement, $("tm-confirm-cancel"));
+    const others = Array.from(doc.body.children).filter((el) => el !== $("tm-confirm"));
+    assert.ok(
+      others.every((el) => el.hasAttribute("inert")),
+      "the page behind the dialog is inert",
+    );
+    key(window, $("tm-confirm-cancel"), { key: "Escape" });
+    await settle();
+    assert.equal(doc.querySelectorAll("[inert]").length, 0);
+    assert.equal(doc.activeElement.dataset.key, ws.dataset.key, "focus is back on the row");
+  });
+
+  test("unit: task-manager: when the focused row goes away focus moves to its neighbour", async () => {
+    await startApp({ init: { state: { show_processes: true } } });
+    const sleep = treeRow((r) => r.kind === "process" && r.pid === 4242);
+    click(window, sleep);
+    key(window, sleep, { key: "Delete" });
+    click(window, $("tm-confirm-ok"));
+    await settle();
+    assert.deepEqual(host.calls("panel.task_manager.kill")[0].params, { pids: [4242] });
+    assert.equal(
+      treeRow((r) => r.kind === "process" && r.pid === 4242),
+      undefined,
+    );
+    const active = doc.activeElement;
+    assert.ok(active && active.matches("#tm-tree tr[data-key]"), "focus stays in the Hierarchy");
+    assert.equal(active.getAttribute("aria-selected"), "true");
+    key(window, active, { key: "ArrowUp" });
+    assert.ok(doc.activeElement.matches("#tm-tree tr[data-key]"));
   });
 
   test("unit: task-manager: arrow keys move, Left/Right collapse and expand", async () => {

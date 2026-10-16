@@ -11,6 +11,7 @@ export const STRINGS = Object.freeze({
   "tm.processes": "Processes",
   "tm.refresh": "Refresh",
 
+  "tm.cards": "Summary",
   "tm.card.cpu": "CPU",
   "tm.card.memory": "Memory",
   "tm.card.app": "App Footprint",
