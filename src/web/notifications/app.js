@@ -245,15 +245,17 @@ export function createApp(options) {
     const restoreFocus = els.list.contains(doc.activeElement);
     const nodes = [];
     if (state.grouped) {
-      groupRecords(state.records, state.titles).forEach((group, gi) => {
+      groupRecords(state.records, state.titles).forEach((group) => {
         const section = el("div", "ntf-group");
         section.setAttribute("role", "group");
         const title = group.title || t("notifications.group.unknown");
         const heading = el("div", "ntf-group-title");
-        heading.id = "ntf-group-" + gi;
         heading.append(el("span", "ntf-group-name", title));
         if (group.unread > 0) heading.append(el("span", "ntf-group-count", String(group.unread)));
-        section.setAttribute("aria-labelledby", heading.id);
+        // The group carries the name; the visible heading would otherwise be
+        // read again as stray text among the listbox options.
+        section.setAttribute("aria-label", t("notifications.group.label", { title, unread: group.unread }));
+        heading.setAttribute("aria-hidden", "true");
         section.append(heading);
         for (const r of group.records) section.append(buildRow(r));
         nodes.push(section);

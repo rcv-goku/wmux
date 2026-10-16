@@ -329,8 +329,9 @@ export function createApp(options) {
     const view = visibleItems(items);
     const nodes = view.main.map((it) => cards.buildCard(it, uiFor(it.id)));
     if (view.resolved.length) {
+      // An item of the list (a list owns only list items), read as "Resolved".
       const divider = el("div", "feed-divider", t("feed.resolved"));
-      divider.setAttribute("role", "separator");
+      divider.setAttribute("role", "listitem");
       nodes.push(divider);
       for (const it of view.resolved) nodes.push(cards.buildCard(it, uiFor(it.id)));
     }
@@ -827,9 +828,13 @@ export function createApp(options) {
     listen(els.list, "dblclick", onDblClick);
     listen(els.list, "input", onInput);
     listen(els.list, "keydown", onListKeydown);
+    // Focus that enters a card (click, Tab into its buttons) moves the roving
+    // tab stop with it, so Tab from outside comes back to that card.
     listen(els.list, "focusin", (e) => {
       const card = e.target.closest && e.target.closest(".feed-card");
-      if (card) state.focusedId = card.dataset.id;
+      if (!card) return;
+      state.focusedId = card.dataset.id;
+      for (const c of els.list.querySelectorAll(".feed-card")) c.tabIndex = c === card ? 0 : -1;
     });
     for (const tab of els.tabs) {
       listen(tab, "click", () => setFilter(tab.dataset.filter));

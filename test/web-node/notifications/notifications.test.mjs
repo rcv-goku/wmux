@@ -250,6 +250,11 @@ describe("unit: notifications app", () => {
     await startApp();
     assert.equal(doc.documentElement.dataset.placement, "tab");
     assert.deepEqual(texts(doc, ".ntf-group-name"), ["api", "web"]);
+    const groups = Array.from(doc.querySelectorAll(".ntf-group"));
+    assert.deepEqual(groups.map((g) => g.getAttribute("role")), ["group", "group"]);
+    assert.deepEqual(groups.map((g) => g.getAttribute("aria-label")), ["api, 1 unread", "web, 1 unread"]);
+    assert.ok(groups.every((g) => g.querySelector(".ntf-group-title").getAttribute("aria-hidden") === "true"), "the group name is read once");
+    assert.ok(groups.every((g) => Array.from(g.children).every((c) => c.getAttribute("role") === "option" || c.getAttribute("aria-hidden") === "true")));
     assert.equal(rows().length, 3);
     assert.deepEqual(rows().map((r) => r.classList.contains("ntf-unread")), [true, false, true]);
     assert.equal($("ntf-count").textContent, "2");

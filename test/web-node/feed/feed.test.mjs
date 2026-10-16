@@ -345,6 +345,7 @@ describe("unit: feed app", () => {
     await settle();
     assert.deepEqual(host.calls("feed.permission.reply").map((m) => m.params), [{ request_id: "req-1", mode: "always" }]);
     assert.ok(doc.querySelector(".feed-divider"));
+    assert.ok(Array.from($("feed-list").children).every((c) => c.getAttribute("role") === "listitem"), "the list owns only list items, the divider included");
     const card = cardById(uuid(1));
     assert.equal(card.dataset.status, "resolved");
     assert.equal(card.querySelector(".feed-badge").textContent, "always");
@@ -872,6 +873,11 @@ describe("unit: feed app", () => {
     assert.equal(doc.activeElement, cardById(uuid(2)));
     assert.equal(cardById(uuid(2)).tabIndex, 0);
     assert.equal(cardById(uuid(1)).tabIndex, -1);
+    // Focus that enters another card (Tab into its buttons, a click) takes the tab stop along.
+    btn(cardById(uuid(1)), "permission").focus();
+    assert.equal(cardById(uuid(1)).tabIndex, 0);
+    assert.equal(cardById(uuid(2)).tabIndex, -1);
+    assert.equal(app.state.focusedId, uuid(1));
 
     $("feed-tab-activity").focus();
     key(window, $("feed-tab-activity"), { key: "ArrowRight" });
