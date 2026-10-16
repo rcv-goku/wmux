@@ -14,7 +14,7 @@ fn syncedPane(source: *Surface) ?*Pane {
     const ws = source.parent_window.activeWorkspace();
     const pane = ws.focusedPaneOrFirst() orelse return null;
     const selected = pane.selectedTab() orelse return null;
-    if (!selected.legacy.synchronized) return null;
+    if (!selected.ext.sync_input.synchronized) return null;
     return pane;
 }
 

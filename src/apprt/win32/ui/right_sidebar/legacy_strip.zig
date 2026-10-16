@@ -222,7 +222,7 @@ pub fn paint(win: *Window, hdc_screen: w32.HDC) void {
 
     // --- Progress bar ---
     if (sel_tab) |tab| {
-        if (tab.legacy.progress) |progress| {
+        if (tab.ext.status.progress) |progress| {
             y += section_gap;
 
             // Label.
@@ -298,7 +298,7 @@ pub fn paint(win: *Window, hdc_screen: w32.HDC) void {
 
     // --- Log entries ---
     if (sel_tab) |tab| {
-        const ring = &tab.legacy.log;
+        const ring = &tab.ext.status.log;
         if (ring.len > 0) {
             y += section_gap;
 

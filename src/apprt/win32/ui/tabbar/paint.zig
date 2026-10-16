@@ -245,7 +245,7 @@ pub fn paintPane(
         }
 
         // Attention dot.
-        const attn_dot_w: i32 = if (tab.legacy.attention) @intFromFloat(@round(12.0 * scale)) else 0;
+        const attn_dot_w: i32 = if (tab.ext.notifications.attention) @intFromFloat(@round(12.0 * scale)) else 0;
         if (attn_dot_w > 0) {
             _ = w32.SetTextColor(mem_dc, accent_color);
             const dot_char = std.unicode.utf8ToUtf16LeStringLiteral("\u{25CF}");
@@ -265,7 +265,7 @@ pub fn paintPane(
         }
 
         // Sync indicator.
-        const sync_indicator_w: i32 = if (tab.legacy.synchronized) @intFromFloat(@round(14.0 * scale)) else 0;
+        const sync_indicator_w: i32 = if (tab.ext.sync_input.synchronized) @intFromFloat(@round(14.0 * scale)) else 0;
         if (sync_indicator_w > 0) {
             _ = w32.SetTextColor(mem_dc, w32.RGB(0xE8, 0x9C, 0x20));
             const sync_char = std.unicode.utf8ToUtf16LeStringLiteral("\u{21C4}");

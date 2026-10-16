@@ -132,6 +132,7 @@ pub fn create(gpa: Allocator, window: *Window) Allocator.Error!*Workspace {
 /// so every tab), its strings and environment, then the object itself.
 pub fn destroy(self: *Workspace, gpa: Allocator) void {
     if (self.registry) |r| r.retire(self.handle.uuid);
+    features_ext.deinitAll(&self.ext, gpa);
     self.tree.deinit();
     self.title.deinit(gpa);
     if (self.description) |d| gpa.free(d);
@@ -411,20 +412,20 @@ pub fn hasMetadata(self: *const Workspace) bool {
 pub fn firstStatusText(self: *const Workspace) []const u8 {
     if (self.focused_pane) |fp| {
         if (fp.selectedTab()) |tab| {
-            if (tab.legacy.status_text_len > 0) return tab.legacy.statusText();
+            if (tab.ext.status.status_text_len > 0) return tab.ext.status.statusText();
         }
     }
     var it = self.tree.iterator();
     while (it.next()) |entry| {
         for (entry.view.tabs.items) |tab| {
-            if (tab.legacy.status_text_len > 0) return tab.legacy.statusText();
+            if (tab.ext.status.status_text_len > 0) return tab.ext.status.statusText();
         }
     }
     // focused_pane may not be in the split tree (transient state during
     // init or in unit tests). Check its non-selected tabs.
     if (self.focused_pane) |fp| {
         for (fp.tabs.items) |tab| {
-            if (tab.legacy.status_text_len > 0) return tab.legacy.statusText();
+            if (tab.ext.status.status_text_len > 0) return tab.ext.status.statusText();
         }
     }
     return "";
@@ -434,14 +435,14 @@ pub fn firstStatusText(self: *const Workspace) []const u8 {
 pub fn tabStatusText(self: *const Workspace, idx: usize) []const u8 {
     const pane = self.focusedPaneOrFirst() orelse return "";
     const tab = pane.tabAt(idx) orelse return "";
-    return tab.legacy.statusText();
+    return tab.ext.status.statusText();
 }
 
 /// Set status text for tab `idx` of the focused pane.
 pub fn setTabStatusText(self: *Workspace, idx: usize, text: []const u8) void {
     const pane = self.focusedPaneOrFirst() orelse return;
     const tab = pane.tabAt(idx) orelse return;
-    tab.legacy.setStatusText(text);
+    tab.ext.status.setStatusText(text);
 }
 
 // ---------------------------------------------------------------------------
@@ -494,15 +495,15 @@ test "unit: model: firstStatusText prefers the focused pane's selected tab" {
     try testing.expectEqualStrings("", ws.firstStatusText());
 
     // Status on non-selected tab (tab 1) → falls back to scanning.
-    tabs[1].legacy.setStatusText("building");
+    tabs[1].ext.status.setStatusText("building");
     try testing.expectEqualStrings("building", ws.firstStatusText());
 
     // Status on the selected tab (tab 0) takes priority.
-    tabs[0].legacy.setStatusText("testing");
+    tabs[0].ext.status.setStatusText("testing");
     try testing.expectEqualStrings("testing", ws.firstStatusText());
 
     // Clear the selected tab → falls back to tab 1.
-    tabs[0].legacy.setStatusText("");
+    tabs[0].ext.status.setStatusText("");
     try testing.expectEqualStrings("building", ws.firstStatusText());
 }
 

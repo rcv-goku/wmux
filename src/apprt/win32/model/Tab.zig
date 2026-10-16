@@ -2,12 +2,13 @@
 //! in one tab bar slot (ARCHITECTURE.md §0.2, ADR-2.3). It is a
 //! heap-allocated, reference-counted object (ref/unref/eql, the protocol of
 //! src/datastruct/split_tree.zig): its pane holds one reference, and an
-//! in-flight WebView2 creation holds another. It carries its title (user
-//! override + automatic title), its content, and the legacy per-tab state
-//! (status, attention, status text, progress, log, synchronized input)
-//! that W0-A3 moves into feature ext state. Formerly `Pane` (renamed in
-//! W0-A2, ADR-1.8), whose per-tab fields lived in parallel arrays of the
-//! former PaneContainer.
+//! in-flight WebView2 creation holds another. It carries its identity,
+//! its title (user override + automatic title), its content and the
+//! per-surface feature state (`ext`: the legacy status text, progress and
+//! log are `ext.status`, the bell/exited dot and attention
+//! `ext.notifications`, synchronized input `ext.sync_input`). Formerly
+//! `Pane` (renamed in W0-A2, ADR-1.8), whose per-tab fields lived in
+//! parallel arrays of the former PaneContainer.
 const Tab = @This();
 
 const std = @import("std");
@@ -20,18 +21,14 @@ const Title = @import("Title.zig");
 const features_ext = @import("../features/ext.zig");
 const handle_registry = @import("logic/handle_registry.zig");
 const ids = @import("ids.zig");
-const log_ring = @import("../features/status/log_ring.zig");
 const w32 = @import("../platform/win32.zig");
 
 pub const TabContent = @import("TabContent.zig").TabContent;
 
-/// Per-tab status indicator shown in the session sidebar.
-pub const TabStatus = enum { normal, bell, exited };
-
-/// Maximum bytes of a per-tab status string (set-status). Inline, so
-/// set-status never allocates; over-long text is byte truncated by the
-/// setter (legacy behavior, W2-6 replaces it).
-pub const MAX_STATUS_BYTES: usize = 96;
+/// Per-tab status indicator shown in the session sidebar
+/// (`ext.notifications.status`), named through features/ext.zig so the
+/// model does not import feature internals (ADR-1.2).
+pub const TabStatus = @FieldType(@FieldType(features_ext.TabExt, "notifications"), "status");
 
 /// Reference count. Starts at 0; the owning pane takes the first ref.
 ref_count: u32 = 0,
@@ -65,38 +62,6 @@ cwd: ?[]u8 = null,
 
 /// Per-surface feature state (ADR-1.3).
 ext: features_ext.TabExt = .{},
-
-/// Legacy per-tab state (W0-A3 moves it to the status, notifications and
-/// sync_input feature ext state).
-legacy: Legacy = .{},
-
-pub const Legacy = struct {
-    /// Sidebar dot: bell/exited, cleared when the tab is selected.
-    status: TabStatus = .normal,
-    /// "Needs attention" aggregate of the content's Surface.attention.
-    attention: bool = false,
-    /// Orchestration status string (set-status), byte truncated.
-    status_text: [MAX_STATUS_BYTES]u8 = undefined,
-    status_text_len: u16 = 0,
-    /// Progress percent (set-progress), 0..100, or null for none.
-    progress: ?u8 = null,
-    /// Ring log buffer (log).
-    log: log_ring.LogRing = .{},
-    /// Synchronized input flag.
-    synchronized: bool = false,
-
-    pub fn statusText(self: *const Legacy) []const u8 {
-        return self.status_text[0..self.status_text_len];
-    }
-
-    /// Store the status text, byte-truncated to MAX_STATUS_BYTES (empty
-    /// clears it).
-    pub fn setStatusText(self: *Legacy, text: []const u8) void {
-        const n: u16 = @intCast(@min(text.len, MAX_STATUS_BYTES));
-        @memcpy(self.status_text[0..n], text[0..n]);
-        self.status_text_len = n;
-    }
-};
 
 /// Allocate a tab wrapping a terminal surface and set the surface's
 /// back-pointer. The caller owns the allocation until a pane takes it.
@@ -174,8 +139,10 @@ pub fn unref(self: *Tab, alloc: Allocator) void {
             if (self.content.hwnd()) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
         },
         .destroy => {
-            // The handle stops resolving before the content goes away.
+            // The handle stops resolving and the feature state is freed
+            // before the content goes away.
             if (self.registry) |r| r.retire(self.handle.uuid);
+            features_ext.deinitAll(&self.ext, alloc);
             switch (self.content) {
                 .terminal => |surface_ptr| {
                     if (surface_ptr.hwnd) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
@@ -316,17 +283,16 @@ test "unit: model: tab eql is identity" {
     try testing.expect(!a.eql(&b));
 }
 
-test "unit: model: tab legacy status text is byte truncated" {
-    var l: Legacy = .{};
-    try testing.expectEqualStrings("", l.statusText());
-    l.setStatusText("running tests");
-    try testing.expectEqualStrings("running tests", l.statusText());
-    var long: [MAX_STATUS_BYTES + 10]u8 = undefined;
-    @memset(&long, 'x');
-    l.setStatusText(&long);
-    try testing.expectEqual(MAX_STATUS_BYTES, l.statusText().len);
-    l.setStatusText("");
-    try testing.expectEqualStrings("", l.statusText());
+test "unit: model: a new tab's feature state is clear" {
+    // The former legacy per-tab fields, now feature state (W0-A3).
+    const tab: Tab = .{ .content = .{ .placeholder = .{} } };
+    try testing.expectEqual(TabStatus.normal, tab.ext.notifications.status);
+    try testing.expect(!tab.ext.notifications.attention);
+    try testing.expectEqualStrings("", tab.ext.status.statusText());
+    try testing.expectEqual(@as(?u8, null), tab.ext.status.progress);
+    try testing.expect(tab.ext.status.log.latest() == null);
+    try testing.expect(!tab.ext.sync_input.synchronized);
+    try testing.expect(!ids.isRegistered(tab.handle));
 }
 
 test "unit: model: placeholder tabs have no HWND or surface" {

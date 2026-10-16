@@ -64,9 +64,13 @@ pub fn breakPane(self: *Window, tab: *Tab) void {
     ws.syncZoomed();
     old_tree.deinit();
 
-    // The moved tab keeps its title; its legacy per-tab state starts
-    // fresh, as the new pane's default-initialized slot did before W0-A2.
-    tab.legacy = .{};
+    // The moved tab keeps its title; the legacy per-tab state (status
+    // text, progress, log, bell/exited dot, attention, synchronized input)
+    // starts fresh, as the new pane's default-initialized slot did before
+    // W0-A2. Other feature state stays with the tab.
+    tab.ext.status = .{};
+    tab.ext.notifications = .{};
+    tab.ext.sync_input = .{};
 
     const ws_idx = self.workspaceIndex(ws);
     if (ws_idx == self.activeIndex()) {

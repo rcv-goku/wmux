@@ -56,7 +56,6 @@ pub const RenameTarget = rename.RenameTarget;
 
 // Constants that moved to their model owners in W0-A2, aliased for the
 // existing callers (W0 aliases, ARCHITECTURE.md §0.4).
-pub const MAX_STATUS_BYTES = Tab.MAX_STATUS_BYTES;
 pub const MAX_BRANCH_BYTES = Workspace.MAX_BRANCH_BYTES;
 pub const MAX_PORTS = Workspace.MAX_PORTS;
 pub const PrState = Workspace.PrState;

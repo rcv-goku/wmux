@@ -9,7 +9,7 @@ const std = @import("std");
 const Window = @import("../../ui/Window.zig");
 const Workspace = @import("../Workspace.zig");
 const arith_logic = @import("../logic/arith.zig");
-const ids = @import("../ids.zig");
+const features_ext = @import("../../features/ext.zig");
 const model_registry = @import("../registry.zig");
 const w32 = @import("../../platform/win32.zig");
 
@@ -38,6 +38,7 @@ pub fn initWindowModel(self: *Window) !void {
 /// are mutually exclusive).
 pub fn freeWindowModel(self: *Window) void {
     const gpa = self.app.core_app.alloc;
+    features_ext.deinitAll(&self.ext, gpa);
     self.selected = null;
     for (self.workspaces.items) |ws| ws.destroy(gpa);
     self.workspaces.deinit(gpa);
@@ -92,7 +93,7 @@ pub fn selectWorkspace(self: *Window, idx: usize) void {
     // visible: clear its bell/exited status and attention ring.
     const new_ws = self.activeWorkspace();
     if (new_ws.focusedPaneOrFirst()) |fc| {
-        if (fc.selectedTab()) |tab| tab.legacy.status = .normal;
+        if (fc.selectedTab()) |tab| tab.ext.notifications.status = .normal;
         self.clearTabAttention(fc, fc.selected);
     }
 

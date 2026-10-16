@@ -204,7 +204,7 @@ pub fn selectInPane(self: *Window, ws: *Workspace, pane: *Pane, index: usize) vo
     const tab = pane.tabs.items[index];
     const is_focused = if (ws.focusedPaneOrFirst()) |fp| fp == pane else false;
     if (is_focused) {
-        tab.legacy.status = .normal;
+        tab.ext.notifications.status = .normal;
         // The user now sees the tab: clear any pending attention ring on it.
         self.clearTabAttention(pane, index);
     }
@@ -604,7 +604,7 @@ pub fn toggleSynchronizedInput(self: *Window) void {
     const ws = self.activeWorkspace();
     const container = ws.focusedPaneOrFirst() orelse return;
     const tab = container.selectedTab() orelse return;
-    tab.legacy.synchronized = !tab.legacy.synchronized;
+    tab.ext.sync_input.synchronized = !tab.ext.sync_input.synchronized;
     self.invalidateTabBar();
 }
 
@@ -675,8 +675,8 @@ pub fn onPaneTitleChanged(self: *Window, tab: *Tab, title: [:0]const u8) void {
 pub fn setTabStatusForSurface(self: *Window, surface: *Surface, status: TabStatus) void {
     const loc = self.findLocOfSurface(surface) orelse return;
     const tab = loc.pane.tabs.items[loc.index];
-    if (tab.legacy.status == status) return;
-    tab.legacy.status = status;
+    if (tab.ext.notifications.status == status) return;
+    tab.ext.notifications.status = status;
     self.invalidateSidebar();
 }
 
@@ -688,7 +688,7 @@ pub fn setTabStatusForSurface(self: *Window, surface: *Surface, status: TabStatu
 pub fn recomputeTabAttention(self: *Window, container: *Pane, tab: usize) void {
     _ = self;
     const t = container.tabs.items[tab];
-    t.legacy.attention = if (t.surface()) |s| s.attention else false;
+    t.ext.notifications.attention = if (t.surface()) |s| s.attention else false;
 }
 
 /// Flag (or clear) the notification ring on the tab wrapping `surface`.
@@ -738,7 +738,7 @@ pub fn clearTabAttention(self: *Window, container: *Pane, tab: usize) void {
     _ = self;
     const t = container.tabAt(tab) orelse return;
     if (t.surface()) |s| s.attention = false;
-    t.legacy.attention = false;
+    t.ext.notifications.attention = false;
 }
 
 /// Move a tab from one index to another, shifting intermediate tabs.
