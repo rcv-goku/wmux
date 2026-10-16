@@ -123,7 +123,6 @@ pub const ringAt = overlay_pools.ringAt;
 pub const updateAttentionRings = overlay_pools.updateAttentionRings;
 pub const updatePaneButtons = overlay_pools.updatePaneButtons;
 
-pub const clearAllContainerHover = tabbar_input.clearAllContainerHover;
 pub const handleTabBarClick = tabbar_input.handleTabBarClick;
 pub const handleTabBarMiddleClick = tabbar_input.handleTabBarMiddleClick;
 pub const handleTabBarMouseLeave = tabbar_input.handleTabBarMouseLeave;
@@ -157,9 +156,7 @@ pub const clearAttentionForSurface = ops_surface.clearAttentionForSurface;
 pub const clearTabAttention = ops_surface.clearTabAttention;
 pub const closeSplitPane = ops_surface.closeSplitPane;
 pub const closeSplitSurface = ops_surface.closeSplitSurface;
-pub const closeTab = ops_surface.closeTab;
 pub const closeTabByIndex = ops_surface.closeTabByIndex;
-pub const closeTabInContainer = ops_surface.closeTabInContainer;
 pub const closeTabInWorkspaceForIpc = ops_surface.closeTabInWorkspaceForIpc;
 pub const closeTabMode = ops_surface.closeTabMode;
 pub const moveTab = ops_surface.moveTab;
