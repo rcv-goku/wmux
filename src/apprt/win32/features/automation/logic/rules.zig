@@ -966,13 +966,17 @@ pub fn setEnabled(gpa: Allocator, src: []const u8, id: []const u8, enabled: bool
         if (cur.asBool()) |b| if (b == enabled) return .{ .text = try gpa.dupe(u8, src), .changed = false };
     } else if (enabled) return .{ .text = try gpa.dupe(u8, src), .changed = false };
 
-    const sub_src = src[target.start..target.end];
+    // json_edit sees only the rule's text. When the rule starts its line, give
+    // it that line's indentation too (leading blanks are valid JSONC), so a
+    // closing brace it moves to a new line is indented like the opening one.
+    const sub_start = if (jsonc.isFirstOnLine(src, target.start)) jsonc.lineStart(src, target.start) else target.start;
+    const sub_src = src[sub_start..target.end];
     const edited = json_edit.setPath(gpa, sub_src, &.{"enabled"}, if (enabled) "true" else "false", null) catch |e| switch (e) {
         error.OutOfMemory => return error.OutOfMemory,
         else => return error.SyntaxError,
     };
     defer gpa.free(edited.text);
-    const out = try std.mem.concat(gpa, u8, &.{ src[0..target.start], edited.text, src[target.end..] });
+    const out = try std.mem.concat(gpa, u8, &.{ src[0..sub_start], edited.text, src[target.end..] });
     return .{ .text = out, .changed = true };
 }
 
@@ -1525,6 +1529,20 @@ test "unit: automation: rules enable and disable edit the file losslessly" {
     defer gpa.free(en.text);
     try testing.expect(en.changed);
     try testing.expect(std.mem.indexOf(u8, en.text, "{ \"id\": \"b\", \"enabled\": true, \"when\"") != null);
+
+    // A closing brace on the last member's line moves down with the rule's indentation.
+    const tight =
+        \\{
+        \\  "rules": [
+        \\    {
+        \\      "id": "t",
+        \\      "then": [] }
+        \\  ]
+        \\}
+    ;
+    const t = try setEnabled(gpa, tight, "t", false);
+    defer gpa.free(t.text);
+    try testing.expect(std.mem.indexOf(u8, t.text, "\n      \"enabled\": false\n    }\n  ]") != null);
 
     try testing.expectError(error.RuleNotFound, setEnabled(gpa, src, "zzz", true));
     try testing.expectError(error.RuleNotFound, setEnabled(gpa, "{\"version\":1}", "a", true));
