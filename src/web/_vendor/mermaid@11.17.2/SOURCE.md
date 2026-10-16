@@ -1,0 +1,88 @@
+# mermaid 11.17.2
+
+- Upstream project: https://github.com/mermaid-js/mermaid
+- npm package and version: `mermaid@11.17.2`
+- Upstream tag: `11.17.2` (the published npm release)
+- Tarball: https://registry.npmjs.org/mermaid/-/mermaid-11.17.2.tgz
+- `dist.integrity` (verified before extraction): `sha512-V6K3C8EBdEsPFZXSKMJe6ppQOENxuHARr9GvHX4hh47lAbhMRD9qf4oEK7LoaRQxULMa80/qt5gHO73aCleBBg==`
+- Files taken from the tarball: `dist/mermaid.min.js` (single-file IIFE build that defines the global `mermaid`; loaded lazily by the markdown panel with a `<script src>` element only when a page contains a mermaid block)
+- License (SPDX): `MIT`
+- Date: 2026-10-16
+- Added by: PB-web-markdown (markdown viewer panel)
+- Changes: none, except removing the trailing `sourceMappingURL` comment (source maps are not shipped).
+
+Why 11.17.2 and not 12.x: mermaid 12 bundles the ELK layout engine (elkjs, EPL-2.0), which the license policy does not allow. 11.17.2 does not contain it.
+
+Bundled third-party packages (from the build's source map, plus the packages that `@mermaid-js/parser` bundles into its own dist; license texts appended to `LICENSE`, taken from the npm tarballs of exactly these versions, each verified against its `dist.integrity`; none ships a NOTICE file):
+
+  - @braintree/sanitize-url@7.1.2: MIT
+  - @iconify/utils@3.0.2: MIT
+  - @upsetjs/venn.js@2.0.0: MIT
+  - cose-base@1.0.3: MIT
+  - cose-base@2.2.0: MIT
+  - cytoscape-cose-bilkent@4.1.0: MIT
+  - cytoscape-fcose@2.2.0: MIT
+  - cytoscape@3.34.0: MIT
+  - d3-array@2.12.1: BSD-3-Clause
+  - d3-array@3.2.4: ISC
+  - d3-axis@3.0.0: ISC
+  - d3-brush@3.0.0: ISC
+  - d3-chord@3.0.1: ISC
+  - d3-color@3.1.0: ISC
+  - d3-contour@4.0.2: ISC
+  - d3-delaunay@6.0.4: ISC
+  - d3-dispatch@3.0.1: ISC
+  - d3-drag@3.0.0: ISC
+  - d3-dsv@3.0.1: ISC
+  - d3-ease@3.0.1: BSD-3-Clause
+  - d3-fetch@3.0.1: ISC
+  - d3-force@3.0.0: ISC
+  - d3-format@3.1.0: ISC
+  - d3-geo@3.1.1: ISC
+  - d3-hierarchy@3.1.2: ISC
+  - d3-interpolate@3.0.1: ISC
+  - d3-path@1.0.9: BSD-3-Clause
+  - d3-path@3.1.0: ISC
+  - d3-polygon@3.0.1: ISC
+  - d3-quadtree@3.0.1: ISC
+  - d3-random@3.0.1: ISC
+  - d3-sankey@0.12.3: BSD-3-Clause
+  - d3-scale-chromatic@3.1.0: ISC
+  - d3-scale@4.0.2: ISC
+  - d3-selection@3.0.0: ISC
+  - d3-shape@1.3.7: BSD-3-Clause
+  - d3-shape@3.2.0: ISC
+  - d3-time-format@4.1.0: ISC
+  - d3-time@3.1.0: ISC
+  - d3-timer@3.0.1: ISC
+  - d3-transition@3.0.1: ISC
+  - d3-zoom@3.0.0: ISC
+  - d3@7.9.0: ISC
+  - dagre-d3-es@7.0.14: MIT
+  - dayjs@1.11.21: MIT
+  - dompurify@3.4.12: (MPL-2.0 OR Apache-2.0)
+  - es-toolkit@1.45.1: MIT
+  - fastdom@1.0.12: MIT
+  - internmap@2.0.3: ISC
+  - js-yaml@4.3.0: MIT
+  - katex@0.16.47: MIT
+  - khroma@2.1.0: MIT (license file; no package.json field)
+  - layout-base@1.0.2: MIT
+  - layout-base@2.0.1: MIT
+  - lodash-es@4.18.1: MIT
+  - marked@16.3.0: MIT
+  - roughjs@4.6.6: MIT
+  - stylis@4.3.6: MIT
+  - ts-dedent@2.2.0: MIT
+  - uuid@14.0.0: MIT
+  - @chevrotain/gast@11.1.2: Apache-2.0
+  - @chevrotain/regexp-to-ast@11.1.2: Apache-2.0
+  - @chevrotain/utils@11.1.2: Apache-2.0
+  - chevrotain@11.1.2: Apache-2.0
+  - chevrotain-allstar@0.3.1: MIT
+  - langium@4.2.1: MIT
+  - path-browserify@1.0.1: MIT
+  - vscode-jsonrpc@8.2.0: MIT
+  - vscode-languageserver-protocol@3.17.5: MIT
+  - vscode-languageserver-textdocument@1.0.12: MIT
+  - vscode-languageserver-types@3.17.5: MIT
