@@ -114,6 +114,15 @@ fn parseServe(it: *FlagIter, detail: *[]const u8) Error!Command {
     return .{ .serve = s };
 }
 
+/// `--session-ttl` seconds as the server's millisecond TTL, saturating
+/// instead of overflowing. `capped` is a u64 on purpose: `@min` with a
+/// comptime-known bound narrows to a u54, and the multiply would overflow.
+pub fn ttlMs(seconds: u64) i64 {
+    const max_s: u64 = std.math.maxInt(i64) / std.time.ms_per_s;
+    const capped: u64 = @min(seconds, max_s);
+    return @intCast(capped * std.time.ms_per_s);
+}
+
 fn slotValue(v: []const u8, detail: *[]const u8) Error![]const u8 {
     if (!remote.messages.isValidName(v)) {
         detail.* = v;
@@ -203,6 +212,19 @@ test "unit: remote-daemon: other commands parse" {
     const s = try p(&.{ "x", "status", "--json", "--slot", "a" });
     try testing.expect(s.status.json);
     try testing.expectEqualStrings("a", s.status.slot.?);
+}
+
+test "unit: remote-daemon: session ttl converts to milliseconds and saturates" {
+    try testing.expectEqual(@as(i64, 0), ttlMs(0));
+    try testing.expectEqual(@as(i64, 1000), ttlMs(1));
+    try testing.expectEqual(@as(i64, 604_800_000), ttlMs(default_session_ttl_s));
+    // Huge values (a u64 parses from the command line) clamp, never trap.
+    const max = ttlMs(std.math.maxInt(i64) / 1000);
+    try testing.expectEqual(@as(i64, 9_223_372_036_854_775_000), max);
+    try testing.expectEqual(max, ttlMs(99_999_999_999_999_999));
+    try testing.expectEqual(max, ttlMs(std.math.maxInt(u64)));
+    const big = try p(&.{ "x", "serve", "--stdio", "--session-ttl", "18446744073709551615" });
+    try testing.expectEqual(max, ttlMs(big.serve.session_ttl_s));
 }
 
 test "unit: remote-daemon: bad command lines are rejected with detail" {

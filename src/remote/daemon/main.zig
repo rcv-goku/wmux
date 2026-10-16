@@ -95,7 +95,7 @@ fn run(gpa: std.mem.Allocator, argv: []const []const u8, out: *std.Io.Writer, er
 }
 
 fn serve(gpa: std.mem.Allocator, s: args.Serve, home: []const u8, out: *std.Io.Writer, errw: *std.Io.Writer) u8 {
-    const ttl_ms: i64 = @intCast(@min(s.session_ttl_s, std.math.maxInt(i64) / 1000) * 1000);
+    const ttl_ms = args.ttlMs(s.session_ttl_s);
     switch (s.mode) {
         .stdio => {
             installSignals(false);
