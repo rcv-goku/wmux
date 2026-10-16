@@ -68,8 +68,7 @@ pub fn put(abs_path: []const u8, data: []const u8, opts: PutOptions) PutError!He
     var rnd: [8]u8 = undefined;
     std.crypto.random.bytes(&rnd);
     var tmp_buf: [std.fs.max_name_bytes + 32]u8 = undefined;
-    const short_base = base[0..@min(base.len, 200)];
-    const tmp = std.fmt.bufPrint(&tmp_buf, ".{s}.wmux-tmp-{s}", .{ short_base, std.fmt.bytesToHex(rnd, .lower) }) catch return error.InvalidPath;
+    const tmp = try tempName(&tmp_buf, base, rnd);
 
     var file = try dir.createFile(tmp, .{ .exclusive = true, .mode = opts.mode });
     var promoted = false;
@@ -86,6 +85,14 @@ pub fn put(abs_path: []const u8, data: []const u8, opts: PutOptions) PutError!He
     try dir.rename(tmp, base);
     promoted = true;
     return digest;
+}
+
+/// `.<base>.wmux-tmp-<16 hex>`: hidden, next to the target, unique. The
+/// base is cut to 200 bytes on a UTF-8 boundary (macOS file systems refuse
+/// names that are not valid UTF-8).
+fn tempName(buf: []u8, base: []const u8, rnd: [8]u8) error{InvalidPath}![]const u8 {
+    const short = @import("wmux_proto").utf8.truncateUtf8(base, 200);
+    return std.fmt.bufPrint(buf, ".{s}.wmux-tmp-{s}", .{ short, std.fmt.bytesToHex(rnd, .lower) }) catch error.InvalidPath;
 }
 
 pub const GetError = error{ TooLarge, IsDir, NotRegularFile } || std.fs.File.OpenError || std.fs.File.ReadError ||
@@ -182,6 +189,18 @@ test "unit: remote-daemon: fs.put is atomic, verified and never promotes empty f
     var n: usize = 0;
     while (try it.next()) |e| : (n += 1) try testing.expectEqualStrings("f.bin", e.name);
     try testing.expectEqual(@as(usize, 1), n);
+}
+
+test "unit: remote-daemon: fs.put temp names stay valid UTF-8 and fit a file name" {
+    var buf: [std.fs.max_name_bytes + 32]u8 = undefined;
+    const rnd = [_]u8{0xab} ** 8;
+    // A plain 200-byte cut of this name ends on the lead byte of an "é".
+    const long = "x" ++ "é" ** 150;
+    const name = try tempName(&buf, long, rnd);
+    try testing.expect(std.unicode.utf8ValidateSlice(name));
+    try testing.expect(name.len <= std.fs.max_name_bytes);
+    try testing.expect(std.mem.endsWith(u8, name, ".wmux-tmp-abababababababab"));
+    try testing.expectEqualStrings(".f.wmux-tmp-abababababababab", try tempName(&buf, "f", rnd));
 }
 
 test "unit: remote-daemon: fs.put creates missing parents private" {
