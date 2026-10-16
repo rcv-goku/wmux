@@ -220,6 +220,22 @@ describe("unit: feed model", () => {
     assert.equal(model.relativeTime(0, NOW), "");
   });
 
+  test("unit: feed: relative times and the unknown agent name go through tr()", async () => {
+    const strings = await importWeb("_shared/strings.js");
+    const prev = strings.getLocale();
+    strings.addStrings("qps-ploc", { "feed.time.now": "[now]", "feed.time.minutes": "[{count} min]", "feed.source.unknown": "[agent]" });
+    strings.setLocale("qps-ploc");
+    try {
+      assert.equal(model.relativeTime(NOW - 10000, NOW), "[now]");
+      assert.equal(model.relativeTime(NOW - 5 * 60000, NOW), "[5 min]");
+      assert.equal(model.relativeTime(NOW - 3 * 3600000, NOW), "3h", "keys without a translation keep the English default");
+      assert.equal(model.sourceDisplayName(""), "[agent]");
+      assert.equal(model.sourceDisplayName("claude"), "Claude");
+    } finally {
+      strings.setLocale(prev);
+    }
+  });
+
   test("unit: feed: selections flatten answers in question order with free text", () => {
     const qs = [
       { question: "A?", multi_select: false, options: [{ label: "x" }, { label: "y" }] },

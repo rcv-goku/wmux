@@ -2,8 +2,10 @@
  * Feed panel model (pure, no DOM): item normalization mirroring the native
  * `feed.list` encoding (features/feed/logic/query.zig writeListItem), the
  * Actionable/Resolved partition, workstreams, decision-mode labels and
- * badges, todo summaries, banner text and relative time.
+ * badges, todo summaries, banner text and relative time. User-visible words
+ * go through t() (strings.js).
  */
+import { t } from "./strings.js";
 
 /** Items kept by the page at most (one feed.list page is <= 2000). */
 export const MAX_ITEMS = 2000;
@@ -73,7 +75,7 @@ const SOURCE_NAMES = {
 
 /** Display name of an agent source (model.zig sourceDisplayName). */
 export function sourceDisplayName(source) {
-  if (typeof source !== "string" || source === "") return "Agent";
+  if (typeof source !== "string" || source === "") return t("feed.source.unknown");
   return Object.prototype.hasOwnProperty.call(SOURCE_NAMES, source) ? SOURCE_NAMES[source] : source;
 }
 
@@ -124,11 +126,11 @@ function normalizeQuestions(v) {
 function normalizeTodos(v) {
   if (!Array.isArray(v)) return [];
   return v
-    .filter((t) => t && typeof t === "object")
-    .map((t) => ({
-      content: str(t.content),
-      status: t.status === "in_progress" || t.status === "completed" ? t.status : "pending",
-      active_form: str(t.active_form || t.activeForm),
+    .filter((todo) => todo && typeof todo === "object")
+    .map((todo) => ({
+      content: str(todo.content),
+      status: todo.status === "in_progress" || todo.status === "completed" ? todo.status : "pending",
+      active_form: str(todo.active_form || todo.activeForm),
     }));
 }
 
@@ -294,9 +296,9 @@ export function todoSummary(todos) {
   let open = 0;
   let progress = 0;
   let done = 0;
-  for (const t of todos) {
-    if (t.status === "completed") done += 1;
-    else if (t.status === "in_progress") progress += 1;
+  for (const todo of todos) {
+    if (todo.status === "completed") done += 1;
+    else if (todo.status === "in_progress") progress += 1;
     else open += 1;
   }
   const parts = [];
@@ -309,9 +311,9 @@ export function todoSummary(todos) {
 /** {open, in_progress, done} counts of a todo list. */
 export function todoCounts(todos) {
   const c = { open: 0, in_progress: 0, done: 0 };
-  for (const t of todos) {
-    if (t.status === "completed") c.done += 1;
-    else if (t.status === "in_progress") c.in_progress += 1;
+  for (const todo of todos) {
+    if (todo.status === "completed") c.done += 1;
+    else if (todo.status === "in_progress") c.in_progress += 1;
     else c.open += 1;
   }
   return c;
@@ -343,14 +345,14 @@ export function bannerText(item) {
 export function relativeTime(ms, nowMs) {
   if (!Number.isFinite(ms) || ms <= 0) return "";
   const s = Math.max(0, Math.floor((nowMs - ms) / 1000));
-  if (s < 45) return "now";
+  if (s < 45) return t("feed.time.now");
   const m = Math.round(s / 60);
-  if (m < 60) return `${Math.max(1, m)}m`;
+  if (m < 60) return t("feed.time.minutes", { count: Math.max(1, m) });
   const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h`;
+  if (h < 24) return t("feed.time.hours", { count: h });
   const d = Math.floor(h / 24);
-  if (d < 7) return `${d}d`;
-  return `${Math.floor(d / 7)}w`;
+  if (d < 7) return t("feed.time.days", { count: d });
+  return t("feed.time.weeks", { count: Math.floor(d / 7) });
 }
 
 /**

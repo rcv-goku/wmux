@@ -16,6 +16,13 @@ export const STRINGS = Object.freeze({
   "feed.loadingOlder": "Loading older activity...",
   "feed.workstreams": "Agents",
   "feed.workstream.pending": "{count} pending",
+  "feed.source.unknown": "Agent",
+
+  "feed.time.now": "now",
+  "feed.time.minutes": "{count}m",
+  "feed.time.hours": "{count}h",
+  "feed.time.days": "{count}d",
+  "feed.time.weeks": "{count}w",
 
   "feed.empty.actionable.title": "No pending decisions",
   "feed.empty.actionable.body": "Permission, plan, and question requests from AI agents will appear here.",

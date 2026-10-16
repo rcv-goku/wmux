@@ -199,6 +199,8 @@ describe("unit: notifications model", () => {
     assert.equal(model.shortcutLabel("ctrl+shift+u"), "Ctrl+Shift+U");
     assert.equal(model.shortcutLabel("g g"), "G G");
     assert.equal(model.shortcutLabel("ctrl++"), "Ctrl++");
+    assert.equal(model.shortcutLabel("ctrl+alt+pgdn"), "Ctrl+Alt+PgDn");
+    assert.equal(model.shortcutLabel("ctrl+constructor"), "Ctrl+Constructor", "inherited object keys are not key names");
     assert.equal(model.shortcutLabel(undefined), "");
     assert.ok(model.isRecordEvent("notification.created"));
     assert.ok(model.isRecordEvent("wmux.notification.unread_count.changed"));
@@ -211,6 +213,19 @@ describe("unit: notifications model", () => {
     assert.equal(model.frameName({ type: "event", name: "notification.read" }), "notification.read");
     assert.equal(model.frameName({ event: "notification.read" }), "notification.read");
     assert.equal(model.frameName(null), "");
+  });
+
+  test("unit: notifications: shortcut key names go through tr()", async () => {
+    const strings = await importWeb("_shared/strings.js");
+    const prev = strings.getLocale();
+    strings.addStrings("qps-ploc", { "notifications.key.ctrl": "Strg", "notifications.key.shift": "Umschalt" });
+    strings.setLocale("qps-ploc");
+    try {
+      assert.equal(model.shortcutLabel("ctrl+shift+u"), "Strg+Umschalt+U");
+      assert.equal(model.shortcutLabel("alt+u"), "Alt+U", "keys without a translation keep the English default");
+    } finally {
+      strings.setLocale(prev);
+    }
   });
 });
 

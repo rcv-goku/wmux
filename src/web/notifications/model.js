@@ -2,8 +2,10 @@
  * Notifications panel model (pure, no DOM): record normalization mirroring the
  * native store (features/notifications/logic/store.zig: id, workspace,
  * surface, title, subtitle, body, created_at_ms, read, agent), workspace
- * grouping, unread counts, the copy text and time formatting.
+ * grouping, unread counts, the copy text and time formatting. User-visible
+ * words go through t() (strings.js).
  */
+import { t } from "./strings.js";
 
 /** Records kept by the page at most (native history cap is 500). */
 export const MAX_RECORDS = 1000;
@@ -262,18 +264,13 @@ export function frameName(frame) {
   return "";
 }
 
-const KEY_NAMES = {
-  ctrl: "Ctrl",
-  shift: "Shift",
-  alt: "Alt",
-  win: "Win",
-  enter: "Enter",
-  escape: "Esc",
-  space: "Space",
-  tab: "Tab",
-  backspace: "Backspace",
-  delete: "Del",
-};
+/** Canonical key names with a display name in strings.js (notifications.key.*). */
+const KEY_NAMES = new Set(["ctrl", "shift", "alt", "win", "enter", "escape", "space", "tab", "backspace", "delete", "pgup", "pgdn"]);
+
+function keyLabel(part) {
+  if (KEY_NAMES.has(part)) return t("notifications.key." + part);
+  return part.length === 1 ? part.toUpperCase() : part.charAt(0).toUpperCase() + part.slice(1);
+}
 
 /** Display text of a canonical binding ("ctrl+shift+u" -> "Ctrl+Shift+U"). */
 export function shortcutLabel(binding) {
@@ -281,11 +278,6 @@ export function shortcutLabel(binding) {
   return binding
     .trim()
     .split(/\s+/)
-    .map((stroke) =>
-      stroke
-        .split(/\+(?!$)/)
-        .map((part) => KEY_NAMES[part] || (part.length === 1 ? part.toUpperCase() : part.charAt(0).toUpperCase() + part.slice(1)))
-        .join("+"),
-    )
+    .map((stroke) => stroke.split(/\+(?!$)/).map(keyLabel).join("+"))
     .join(" ");
 }

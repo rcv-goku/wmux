@@ -37,6 +37,20 @@ export const STRINGS = Object.freeze({
   "notifications.status.loadFailed": "Could not load notifications: {message}",
   "notifications.status.actionFailed": "Could not complete the action: {message}",
   "notifications.status.nothingUnread": "No unread notifications",
+
+  // Key names in the shortcut chip ("Ctrl+Shift+U").
+  "notifications.key.ctrl": "Ctrl",
+  "notifications.key.shift": "Shift",
+  "notifications.key.alt": "Alt",
+  "notifications.key.win": "Win",
+  "notifications.key.enter": "Enter",
+  "notifications.key.escape": "Esc",
+  "notifications.key.space": "Space",
+  "notifications.key.tab": "Tab",
+  "notifications.key.backspace": "Backspace",
+  "notifications.key.delete": "Del",
+  "notifications.key.pgup": "PgUp",
+  "notifications.key.pgdn": "PgDn",
 });
 
 /**
