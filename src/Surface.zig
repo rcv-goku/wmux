@@ -548,7 +548,7 @@ pub fn init(
 
     log.debug("size computed: screen={}x{} cell={}x{}", .{
         size.screen.width, size.screen.height,
-        size.cell.width, size.cell.height,
+        size.cell.width,   size.cell.height,
     });
 
     // Create our terminal grid with the initial size
@@ -655,12 +655,26 @@ pub fn init(
             std.fmt.bufPrint(&buf, "0x{x:0>16}", .{self.id}) catch unreachable,
         );
 
+        // What the apprt adds to the spawn, when it declares the hook: the
+        // protected terminal environment (applied after `env`) and the
+        // job object of the child. A failure must not block startup.
+        var spawn_hooks: termio.Exec.SpawnHooks = if (comptime @hasDecl(apprt.runtime.Surface, "spawnHooks"))
+            rt_surface.spawnHooks() catch |err| hooks: {
+                log.warn("error getting spawn hooks for surface err={}", .{err});
+                break :hooks .{};
+            }
+        else
+            .{};
+        defer spawn_hooks.deinit();
+
         // Initialize our IO backend
         log.debug("creating IO exec...", .{});
         var io_exec = try termio.Exec.init(alloc, .{
             .command = command,
             .env = env,
             .env_override = config.env,
+            .protected_env = if (spawn_hooks.protected_env) |*protected| protected else null,
+            .job = spawn_hooks.job,
             .shell_integration = config.@"shell-integration",
             .shell_integration_features = config.@"shell-integration-features",
             .cursor_blink = config.@"cursor-style-blink",
@@ -692,6 +706,11 @@ pub fn init(
             .renderer_wakeup = &self.renderer_thread.wakeup,
             .renderer_mailbox = render_thread.mailbox,
             .surface_mailbox = .{ .surface = self, .app = app_mailbox },
+            // Saved scrollback to replay, when the apprt declares the hook.
+            .restore_history = if (comptime @hasDecl(apprt.runtime.Surface, "restoreHistory"))
+                rt_surface.restoreHistory()
+            else
+                null,
         });
     }
     // Outside the block, IO has now taken ownership of our temporary state
@@ -5434,6 +5453,14 @@ pub fn performBindingAction(self: *Surface, action: input.Binding.Action) !bool 
             .{ .surface = self },
             .flash_pane,
             {},
+        ),
+
+        // wmux: forwarded as is; the win32 apprt runs it through its
+        // actions registry and reports whether it was performed.
+        .wmux => |param| return try self.rt_app.performAction(
+            .{ .surface = self },
+            .wmux_action,
+            .{ .action = param },
         ),
 
         .toggle_split_zoom => return try self.rt_app.performAction(

@@ -6,6 +6,7 @@ const std = @import("std");
 
 const Sidebar = @import("sidebar/legacy_gdi.zig");
 const Window = @import("Window.zig");
+const ops_workspace = @import("../model/ops/workspace.zig");
 const tabbar_paint = @import("tabbar/paint.zig");
 const titles = @import("../model/logic/titles.zig");
 const w32 = @import("../platform/win32.zig");
@@ -171,7 +172,7 @@ pub fn finishTabRename(self: *Window) void {
             },
             .workspace => |ws_idx| {
                 if (ws_idx < self.workspaces.items.len) {
-                    self.workspaces.items[ws_idx].setNameUtf16(gpa, wbuf[0..wlen]) catch {};
+                    ops_workspace.setWorkspaceNameUtf16(self, ws_idx, wbuf[0..wlen]);
                 }
             },
             .description => |ws_idx| {

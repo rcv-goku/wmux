@@ -24,6 +24,9 @@ const Window = @import("../../ui/Window.zig");
 const Workspace = @import("../Workspace.zig");
 const app_foreground = @import("../../app/foreground.zig");
 const arith = @import("../logic/arith.zig");
+const emit = @import("lifecycle_events.zig");
+const ids = @import("../ids.zig");
+const model_registry = @import("../registry.zig");
 const titles = @import("../logic/titles.zig");
 const w32 = @import("../../platform/win32.zig");
 
@@ -52,39 +55,96 @@ pub fn initTitle(alloc: Allocator, tab: *Tab, title: ?[]const u8, default: []con
     try tab.title.setAuto(alloc, value, .auto, false);
 }
 
-/// The focused pane of `ws`, creating the workspace's first pane (and its
-/// split tree) when the workspace is still empty.
-fn focusedOrFirstPane(alloc: Allocator, ws: *Workspace) !*Pane {
-    if (ws.focusedPaneOrFirst()) |pane| return pane;
+const TargetPane = struct {
+    pane: *Pane,
+    /// The pane was just created (it gets its `pane.created` once its
+    /// first tab is in).
+    created: bool,
+};
+
+/// The focused pane of `ws`, creating (and registering) the workspace's
+/// first pane and its split tree when the workspace is still empty.
+fn focusedOrFirstPane(self: *Window, ws: *Workspace) !TargetPane {
+    if (ws.focusedPaneOrFirst()) |pane| return .{ .pane = pane, .created = false };
     // Empty workspace — create the first Pane and init the workspace
     // split tree with it.
+    const alloc = self.app.core_app.alloc;
     const pc = try Pane.create(alloc);
     errdefer alloc.destroy(pc);
+    try model_registry.register(&self.app.handles, alloc, pc);
+    errdefer model_registry.unregister(pc);
     const tree = try SplitTree(Pane).init(alloc, pc);
     pc.workspace = ws;
     ws.tree = tree;
     ws.syncZoomed();
     ws.focused_pane = pc;
-    return pc;
+    return .{ .pane = pc, .created = true };
+}
+
+/// The lifecycle events of a tab that just entered `target.pane` of `ws`:
+/// `pane.created` when the tab made the pane (its first tab), then the
+/// tab's `surface.created`.
+fn announceNewTab(self: *Window, ws: *Workspace, target: TargetPane, tab: *Tab, origin: []const u8, focused: bool) void {
+    if (target.created) emit.paneCreated(self, ws, target.pane, "pane.created", null, null, origin);
+    emit.surfaceCreated(self, ws, target.pane, tab, origin, focused);
 }
 
 /// Create a terminal tab running `command` (null = the configured default)
-/// in `cwd`, holding the reference its pane will own. On failure nothing
-/// is left behind.
+/// in `cwd` for workspace `ws`, to become a tab of the pane `pane_uuid`
+/// names (a split creates that pane after the tab, with that UUID),
+/// holding the reference its pane will own. The tab's identity is fixed
+/// before the terminal spawns (ids.SpawnIdentity, ADR-3.9) and its handle
+/// is minted with it. On failure nothing is left behind.
 pub fn createTerminalTab(
     self: *Window,
+    ws: *Workspace,
+    pane_uuid: ids.Uuid,
     context: apprt.surface.NewSurfaceContext,
     command: ?[]const []const u8,
     cwd: ?[]const u8,
 ) !*Tab {
     const alloc = self.app.core_app.alloc;
+    const spawn: ids.SpawnIdentity = .{
+        .window = self.handle.uuid,
+        .workspace = ws.handle.uuid,
+        .pane = pane_uuid,
+        .surface = ids.Uuid.v4(),
+        .lifecycle = ids.Uuid.v4(),
+    };
     const surface = try alloc.create(Surface);
     errdefer alloc.destroy(surface);
-    try surface.init(self.app, self, context, command, cwd);
+    try surface.init(self.app, self, context, command, cwd, spawn);
     errdefer surface.deinit();
     const tab = try Tab.create(alloc, surface);
+    errdefer {
+        surface.tab = null;
+        alloc.destroy(tab);
+    }
+    try model_registry.registerUuid(&self.app.handles, alloc, tab, spawn.surface);
+    tab.lifecycle_id = spawn.lifecycle;
+    // Legacy surface ids (GHOSTTY_SURFACE_ID) resolve through the registry.
+    self.app.handles.bindCoreId(alloc, tab.handle.uuid, surface.core_surface.id) catch |err| {
+        log.warn("failed to bind the core surface id err={}", .{err});
+    };
     // The tab is owned by its pane's tab list; ref it for that ownership.
     _ = tab.ref(alloc) catch unreachable;
+    return tab;
+}
+
+/// Wrap `browser` in a new registered tab holding the reference its pane
+/// will own. On failure the browser is destroyed and nothing is left
+/// behind.
+pub fn createBrowserTab(self: *Window, browser: *BrowserPane) !*Tab {
+    const alloc = self.app.core_app.alloc;
+    const tab = Tab.createBrowser(alloc, browser) catch |err| {
+        browser.destroy(alloc);
+        return err;
+    };
+    _ = tab.ref(alloc) catch unreachable;
+    model_registry.register(&self.app.handles, alloc, tab) catch |err| {
+        tab.unref(alloc);
+        return err;
+    };
     return tab;
 }
 
@@ -151,16 +211,20 @@ pub fn selectInPane(self: *Window, ws: *Workspace, pane: *Pane, index: usize) vo
         self.sidebar_drag_active = false;
         _ = w32.ReleaseCapture();
     }
+    const previous = pane.selectedTab();
+    const previous_id: ?ids.Uuid = if (previous) |p| p.handle.uuid else null;
     if (pane.selectedHwnd()) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
     pane.selected = index;
+    const tab = pane.tabs.items[index];
     if (ws != self.activeWorkspace()) {
         self.invalidateSidebar();
+        if (previous != tab) emit.surfaceSelected(self, ws, pane, tab, previous_id, false, "select");
         return;
     }
-    const tab = pane.tabs.items[index];
     const is_focused = if (ws.focusedPaneOrFirst()) |fp| fp == pane else false;
+    defer if (previous != tab) emit.surfaceSelected(self, ws, pane, tab, previous_id, is_focused, "select");
     if (is_focused) {
-        tab.legacy.status = .normal;
+        tab.ext.notifications.status = .normal;
         // The user now sees the tab: clear any pending attention ring on it.
         self.clearTabAttention(pane, index);
     }
@@ -220,15 +284,17 @@ pub fn addTabWithCommand(
     const alloc = self.app.core_app.alloc;
 
     // Resolve or create the target container.
-    const container = try focusedOrFirstPane(alloc, ws);
+    const target = try focusedOrFirstPane(self, ws);
+    const container = target.pane;
 
-    const tab = try createTerminalTab(self, .tab, command, ws.cwd);
+    const tab = try createTerminalTab(self, ws, container.handle.uuid, .tab, command, ws.cwd);
     errdefer tab.unref(alloc);
     const surface = tab.surface().?;
     try initTitle(alloc, tab, title, terminal_default_title);
 
     const pos: usize = newTabInsertPos(self.app.config.@"window-new-tab-position", container.tabCount(), container.selected);
     try insert(alloc, container, tab, pos);
+    announceNewTab(self, ws, target, tab, "terminal_tab", true);
 
     if (container.tabCount() == 1) {
         if (!self.is_quick_terminal) {
@@ -282,9 +348,10 @@ pub fn addTabBackground(
 
     const alloc = self.app.core_app.alloc;
 
-    const container = try focusedOrFirstPane(alloc, ws);
+    const target = try focusedOrFirstPane(self, ws);
+    const container = target.pane;
 
-    const tab = try createTerminalTab(self, .tab, command, ws.cwd);
+    const tab = try createTerminalTab(self, ws, container.handle.uuid, .tab, command, ws.cwd);
     errdefer tab.unref(alloc);
     try initTitle(alloc, tab, title, terminal_default_title);
 
@@ -292,6 +359,7 @@ pub fn addTabBackground(
 
     const pos: usize = newTabInsertPos(self.app.config.@"window-new-tab-position", container.tabCount(), container.selected);
     try insert(alloc, container, tab, pos);
+    announceNewTab(self, ws, target, tab, "terminal_tab", false);
 
     container.selected = pos;
     self.invalidateSidebar();
@@ -328,20 +396,18 @@ pub fn addBrowserTab(self: *Window) !void {
 
     const alloc = self.app.core_app.alloc;
 
-    const container = try focusedOrFirstPane(alloc, ws);
+    const target = try focusedOrFirstPane(self, ws);
+    const container = target.pane;
 
     const browser = try BrowserPane.create(alloc, self.app, self);
-    errdefer browser.destroy(alloc);
-    const browser_tab = try Tab.createBrowser(alloc, browser);
-    _ = browser_tab.ref(alloc) catch |err| {
-        alloc.destroy(browser_tab);
-        return err;
-    };
+    // From here the tab owns the browser: releasing the tab destroys it.
+    const browser_tab = try createBrowserTab(self, browser);
     errdefer browser_tab.unref(alloc);
     try initTitle(alloc, browser_tab, null, browser_default_title);
 
     const pos: usize = newTabInsertPos(self.app.config.@"window-new-tab-position", container.tabCount(), container.selected);
     try insert(alloc, container, browser_tab, pos);
+    announceNewTab(self, ws, target, browser_tab, "browser_tab", true);
 
     if (container.tabCount() == 1) {
         if (self.hwnd) |h| {
@@ -398,11 +464,18 @@ pub fn closeTabAt(self: *Window, ws: *Workspace, pane: *Pane, index: usize) void
     // Detach the tab BEFORE unreffing: the unref can destroy a
     // browser host HWND, which moves focus synchronously and
     // re-enters our wndprocs. They must not see the dying tab.
+    const was_selected = index == pane.selected;
     const tab = remove(pane, index);
+    // The identities the close events report, read before the unref
+    // retires them.
+    const tab_id = tab.handle.uuid;
+    const tab_kind = tab.content.kindName();
+    const pane_id = pane.handle.uuid;
 
     if (pane.tabCount() == 0) {
         // Pane is empty: remove it from the workspace split tree.
         tab.unref(alloc);
+        emit.surfaceClosed(self, ws, pane_id, tab_id, tab_kind, "tab_close");
         const handle = ws.paneHandle(pane);
         if (handle) |h| {
             const new_tree = ws.tree.remove(alloc, h) catch {
@@ -425,6 +498,7 @@ pub fn closeTabAt(self: *Window, ws: *Workspace, pane: *Pane, index: usize) void
             if (ws.focused_pane == pane) ws.focused_pane = null;
             pane.unref(alloc);
         }
+        emit.paneClosed(self, ws, pane_id, &.{tab_id}, "pane_close");
 
         if (ws.paneCount() == 0) {
             if (self.workspaces.items.len > 1) {
@@ -449,6 +523,12 @@ pub fn closeTabAt(self: *Window, ws: *Workspace, pane: *Pane, index: usize) void
 
     pane.selected = closeTabActiveFixup(pane.tabCount(), pane.selected, index);
     tab.unref(alloc);
+    emit.surfaceClosed(self, ws, pane_id, tab_id, tab_kind, "tab_close");
+    // Closing the selected tab selects another one.
+    if (was_selected) {
+        const focused = ws == self.activeWorkspace() and ws.focused_pane == pane;
+        emit.surfaceSelected(self, ws, pane, pane.tabs.items[pane.selected], tab_id, focused, "tab_close");
+    }
     if (ws == self.activeWorkspace()) {
         selectInPane(self, ws, pane, pane.selected);
         self.updateTabBarVisibility();
@@ -532,12 +612,17 @@ pub fn addFirstTabBackground(self: *Window, ws_idx: usize, command: ?[]const []c
     std.debug.assert(ws.paneCount() == 0);
 
     const alloc = self.app.core_app.alloc;
-    const tab = try createTerminalTab(self, .tab, command, ws.cwd);
+    // The pane is created after the tab; its UUID is fixed now so the
+    // terminal is spawned with it.
+    const pane_uuid = ids.Uuid.v4();
+    const tab = try createTerminalTab(self, ws, pane_uuid, .tab, command, ws.cwd);
     errdefer tab.unref(alloc);
     try initTitle(alloc, tab, null, terminal_default_title);
 
     const container = try Pane.create(alloc);
     errdefer alloc.destroy(container);
+    try model_registry.registerUuid(&self.app.handles, alloc, container, pane_uuid);
+    errdefer model_registry.unregister(container);
     try insert(alloc, container, tab, 0);
     errdefer {
         _ = remove(container, 0);
@@ -553,13 +638,14 @@ pub fn addFirstTabBackground(self: *Window, ws_idx: usize, command: ?[]const []c
     if (tab.hwnd()) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
 
     self.invalidateSidebar();
+    announceNewTab(self, ws, .{ .pane = container, .created = true }, tab, "terminal_tab", false);
 }
 
 pub fn toggleSynchronizedInput(self: *Window) void {
     const ws = self.activeWorkspace();
     const container = ws.focusedPaneOrFirst() orelse return;
     const tab = container.selectedTab() orelse return;
-    tab.legacy.synchronized = !tab.legacy.synchronized;
+    tab.ext.sync_input.synchronized = !tab.ext.sync_input.synchronized;
     self.invalidateTabBar();
 }
 
@@ -599,6 +685,7 @@ pub fn moveTab(self: *Window, amount: isize) void {
     container.selected = new_index;
     self.invalidateTabBar();
     self.invalidateSidebar();
+    emit.surfaceReordered(self, ws, container, container.tabs.items[new_index]);
 }
 
 /// Called when a terminal surface's title changes. Delegates to the
@@ -630,8 +717,8 @@ pub fn onPaneTitleChanged(self: *Window, tab: *Tab, title: [:0]const u8) void {
 pub fn setTabStatusForSurface(self: *Window, surface: *Surface, status: TabStatus) void {
     const loc = self.findLocOfSurface(surface) orelse return;
     const tab = loc.pane.tabs.items[loc.index];
-    if (tab.legacy.status == status) return;
-    tab.legacy.status = status;
+    if (tab.ext.notifications.status == status) return;
+    tab.ext.notifications.status = status;
     self.invalidateSidebar();
 }
 
@@ -643,7 +730,7 @@ pub fn setTabStatusForSurface(self: *Window, surface: *Surface, status: TabStatu
 pub fn recomputeTabAttention(self: *Window, container: *Pane, tab: usize) void {
     _ = self;
     const t = container.tabs.items[tab];
-    t.legacy.attention = if (t.surface()) |s| s.attention else false;
+    t.ext.notifications.attention = if (t.surface()) |s| s.attention else false;
 }
 
 /// Flag (or clear) the notification ring on the tab wrapping `surface`.
@@ -693,7 +780,7 @@ pub fn clearTabAttention(self: *Window, container: *Pane, tab: usize) void {
     _ = self;
     const t = container.tabAt(tab) orelse return;
     if (t.surface()) |s| s.attention = false;
-    t.legacy.attention = false;
+    t.ext.notifications.attention = false;
 }
 
 /// Move a tab from one index to another, shifting intermediate tabs.
@@ -707,9 +794,10 @@ pub fn moveTabTo(self: *Window, from: usize, to: usize) void {
     // would otherwise point at the wrong tab after the move.
     self.cancelTabRename();
 
-    _ = moveInPane(container, from, to);
+    if (!moveInPane(container, from, to)) return;
     self.invalidateTabBar();
     self.invalidateSidebar();
+    emit.surfaceReordered(self, ws, container, container.tabs.items[to]);
 }
 
 // ---------------------------------------------------------------------------
@@ -720,7 +808,7 @@ const testing = std.testing;
 
 test "unit: model: insert clamps the index and links the tab to its pane" {
     const gpa = testing.allocator;
-    var tabs: [3]Tab = @splat(.{ .content = .placeholder });
+    var tabs: [3]Tab = @splat(.{ .content = .{ .placeholder = .{} } });
     var pane: Pane = .{};
     defer pane.tabs.deinit(gpa);
 
@@ -735,7 +823,7 @@ test "unit: model: insert clamps the index and links the tab to its pane" {
 
 test "unit: model: remove detaches the tab and keeps the order" {
     const gpa = testing.allocator;
-    var tabs: [3]Tab = @splat(.{ .content = .placeholder });
+    var tabs: [3]Tab = @splat(.{ .content = .{ .placeholder = .{} } });
     var pane: Pane = .{};
     defer pane.tabs.deinit(gpa);
     for (&tabs, 0..) |*t, i| try insert(gpa, &pane, t, i);
@@ -751,7 +839,7 @@ test "unit: model: remove detaches the tab and keeps the order" {
 
 test "unit: model: moveInPane shifts the tabs between and selects the moved tab" {
     const gpa = testing.allocator;
-    var tabs: [4]Tab = @splat(.{ .content = .placeholder });
+    var tabs: [4]Tab = @splat(.{ .content = .{ .placeholder = .{} } });
     var pane: Pane = .{};
     defer pane.tabs.deinit(gpa);
     for (&tabs, 0..) |*t, i| try insert(gpa, &pane, t, i);

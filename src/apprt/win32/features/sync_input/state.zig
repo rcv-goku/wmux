@@ -14,5 +14,10 @@ pub const Workspace = struct {};
 /// Per-pane state (`Pane.ext.sync_input`).
 pub const Pane = struct {};
 
-/// Per-surface state (`Tab.ext.sync_input`).
-pub const Tab = struct {};
+/// Per-surface state (`Tab.ext.sync_input`), moved out of model/Tab.zig
+/// in W0-A3.
+pub const Tab = struct {
+    /// Synchronized input: keys typed into this tab, while it is its
+    /// pane's selected tab, are replayed into the pane's other tabs.
+    synchronized: bool = false,
+};

@@ -2,6 +2,11 @@
 //! One field per feature id (== directory name == manifest entry), sorted,
 //! typed by `<id>/state.zig`. Empty state structs are zero-size. Keep each
 //! field on a single line so union merges stay valid.
+//!
+//! `deinitAll` (end of file) frees the states that declare `deinit`; the
+//! model calls it when a window, workspace, pane or tab is destroyed, and
+//! App.terminate for the app-wide state. The model may import this file
+//! (ADR-1.2), so the call needs no feature internals.
 
 /// App-wide feature state (`App.features.<id>`).
 pub const AppExt = struct {
@@ -372,3 +377,52 @@ pub const TabExt = struct {
     workspace_style: @import("workspace_style/state.zig").Tab = .{},
     workspaces: @import("workspaces/state.zig").Tab = .{},
 };
+
+/// Run `deinit(gpa)` on every feature state of `ext_ptr` (a pointer to an
+/// AppExt, WindowExt, WorkspaceExt, PaneExt or TabExt) whose type declares
+/// one (ADR-1.3), last feature first, and reset it to its default.
+pub fn deinitAll(ext_ptr: anytype, gpa: @import("std").mem.Allocator) void {
+    const T = @typeInfo(@TypeOf(ext_ptr)).pointer.child;
+    const fields = @typeInfo(T).@"struct".fields;
+    comptime var i: usize = fields.len;
+    inline while (i > 0) {
+        i -= 1;
+        const f = fields[i];
+        if (comptime @hasDecl(f.type, "deinit")) {
+            @field(ext_ptr, f.name).deinit(gpa);
+            @field(ext_ptr, f.name) = .{};
+        }
+    }
+}
+
+test "unit: features: ext deinitAll frees the states that declare deinit, last first" {
+    const std = @import("std");
+    const State = struct {
+        n: u8 = 0,
+        var order: [4]u8 = undefined;
+        var len: usize = 0;
+        pub fn deinit(self: *@This(), gpa: std.mem.Allocator) void {
+            _ = gpa;
+            order[len] = '0' + self.n;
+            len += 1;
+        }
+    };
+    const Plain = struct { x: u8 = 9 };
+    const Ext = struct {
+        a: State = .{ .n = 1 },
+        b: Plain = .{},
+        c: State = .{ .n = 3 },
+    };
+    var e: Ext = .{};
+    e.b.x = 4;
+    deinitAll(&e, std.testing.allocator);
+    try std.testing.expectEqualStrings("31", State.order[0..State.len]);
+    // Freed states are back at their defaults; plain ones are untouched.
+    try std.testing.expectEqual(@as(u8, 0), e.a.n);
+    try std.testing.expectEqual(@as(u8, 4), e.b.x);
+    // The real containers are accepted (no state declares deinit yet).
+    var app_ext: AppExt = .{};
+    deinitAll(&app_ext, std.testing.allocator);
+    var tab_ext: TabExt = .{};
+    deinitAll(&tab_ext, std.testing.allocator);
+}

@@ -42,3 +42,9 @@ renderer_mailbox: *renderer.Thread.Mailbox,
 
 /// The mailbox for sending the surface messages.
 surface_mailbox: apprt.surface.Mailbox,
+
+/// Saved scrollback (VT text) to replay into the terminal before the PTY
+/// read thread starts (ARCHITECTURE.md ADR-9.5), from the apprt's
+/// `rt_surface.restoreHistory()`. Borrowed for the duration of
+/// Termio.init. Ignored until W1-7 implements the replay (spike S3).
+restore_history: ?[]const u8 = null,

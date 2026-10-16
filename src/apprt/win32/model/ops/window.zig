@@ -2,19 +2,65 @@
 //! 2): create, select, close and reorder the workspaces of a window. Moved
 //! out of Window.zig in W0-A2. Workspaces are heap objects in
 //! `Window.workspaces` and the selected one is `Window.selected`, so a
-//! close or a reorder never moves a workspace in memory.
+//! close or a reorder never moves a workspace in memory. Every operation
+//! here emits its lifecycle event (window.*, workspace.*; ADR-3.10).
 
 const std = @import("std");
 
 const Window = @import("../../ui/Window.zig");
 const Workspace = @import("../Workspace.zig");
 const arith_logic = @import("../logic/arith.zig");
+const emit = @import("lifecycle_events.zig");
+const features_ext = @import("../../features/ext.zig");
+const ids = @import("../ids.zig");
+const model_registry = @import("../registry.zig");
 const w32 = @import("../../platform/win32.zig");
 
 const log = std.log.scoped(.win32);
 
 const canCreateWorkspace = arith_logic.canCreateWorkspace;
 const closeWorkspaceArith = arith_logic.closeWorkspaceArith;
+
+/// The model part of creating a window (ui/Window.zig init): mint the
+/// window's handle and create, register and select its first workspace.
+/// On failure nothing is left registered.
+pub fn initWindowModel(self: *Window) !void {
+    const gpa = self.app.core_app.alloc;
+    try model_registry.register(&self.app.handles, gpa, self);
+    errdefer model_registry.unregister(self);
+    const first_ws = try Workspace.create(gpa, self);
+    errdefer first_ws.destroy(gpa);
+    try model_registry.register(&self.app.handles, gpa, first_ws);
+    try self.workspaces.append(gpa, first_ws);
+    self.selected = first_ws;
+}
+
+/// The window finished initializing (end of Window.init): `window.created`
+/// and `workspace.created` for its first workspace.
+pub fn windowCreated(self: *Window) void {
+    emit.window(self, "window.created", if (self.is_quick_terminal) "quick_terminal" else "create");
+    if (self.selected) |ws| emit.workspace(self, ws, "workspace.created");
+}
+
+/// The model part of freeing a window (final teardown, after its surfaces
+/// were cleaned up): destroy its workspaces and groups and retire its
+/// handle. Runs once per window (Window.deinit and the WM_DESTROY path
+/// are mutually exclusive). `announce` emits `window.closed` first (false
+/// when Window.init failed before `windowCreated`).
+pub fn freeWindowModel(self: *Window, announce: bool) void {
+    const gpa = self.app.core_app.alloc;
+    // Announced while the window and its workspaces still resolve.
+    if (announce and ids.isRegistered(self.handle)) emit.window(self, "window.closed", "close");
+    features_ext.deinitAll(&self.ext, gpa);
+    self.selected = null;
+    for (self.workspaces.items) |ws| ws.destroy(gpa);
+    self.workspaces.deinit(gpa);
+    self.workspaces = .empty;
+    for (self.groups.items) |group| group.destroy(gpa);
+    self.groups.deinit(gpa);
+    self.groups = .empty;
+    model_registry.unregister(self);
+}
 
 /// Switch to the workspace at the given index. Hides the outgoing
 /// workspace's visible panes BEFORE making the new one active (so two
@@ -54,13 +100,15 @@ pub fn selectWorkspace(self: *Window, idx: usize) void {
         }
     }
 
-    self.selected = self.workspaces.items[idx];
+    const selected_ws = self.workspaces.items[idx];
+    self.selected = selected_ws;
+    defer emit.workspaceSelected(self, selected_ws, old_ws);
 
     // The incoming workspace's focused pane's selected tab is now
     // visible: clear its bell/exited status and attention ring.
     const new_ws = self.activeWorkspace();
     if (new_ws.focusedPaneOrFirst()) |fc| {
-        if (fc.selectedTab()) |tab| tab.legacy.status = .normal;
+        if (fc.selectedTab()) |tab| tab.ext.notifications.status = .normal;
         self.clearTabAttention(fc, fc.selected);
     }
 
@@ -91,10 +139,15 @@ pub fn appendWorkspace(self: *Window) ?usize {
     if (!canCreateWorkspace(self.is_quick_terminal)) return null;
     const alloc = self.app.core_app.alloc;
     const ws = Workspace.create(alloc, self) catch return null;
+    model_registry.register(&self.app.handles, alloc, ws) catch {
+        ws.destroy(alloc);
+        return null;
+    };
     self.workspaces.append(alloc, ws) catch {
         ws.destroy(alloc);
         return null;
     };
+    emit.workspace(self, ws, "workspace.created");
     return self.workspaces.items.len - 1;
 }
 
@@ -218,6 +271,7 @@ pub fn collapseEmptyWorkspaceSlot(self: *Window, idx: usize) void {
     if (idx + 1 != self.workspaces.items.len) return;
     if (idx == self.activeIndex()) return;
     const ws = self.workspaces.pop().?;
+    emit.workspace(self, ws, "workspace.closed");
     ws.destroy(self.app.core_app.alloc);
     self.invalidateSidebar();
 }
@@ -268,6 +322,7 @@ pub fn closeWorkspace(self: *Window, idx: usize) void {
     // by closeWorkspaceArith above).
     const dying = self.workspaces.orderedRemove(idx);
     self.selected = self.workspaces.items[arith.survivors.new_active];
+    emit.workspace(self, dying, "workspace.closed");
     dying.destroy(self.app.core_app.alloc);
 
     // Lay out and focus the survivor. updateTabBarVisibility first (the
@@ -294,4 +349,5 @@ pub fn moveWorkspaceTo(self: *Window, from: usize, to: usize) void {
     self.workspaces.insertAssumeCapacity(to, ws);
 
     self.invalidateSidebar();
+    emit.workspaceReordered(self, ws);
 }

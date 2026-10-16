@@ -74,7 +74,7 @@ pub fn makePane(gpa: Allocator, workspace: ?*Workspace, n: usize) !*Pane {
     errdefer freePane(gpa, pane);
     for (0..n) |_| {
         const tab = try gpa.create(Tab);
-        tab.* = .{ .content = .placeholder, .ref_count = 1 };
+        tab.* = .{ .content = .{ .placeholder = .{} }, .ref_count = 1 };
         ops_surface.insert(gpa, pane, tab, pane.tabCount()) catch |err| {
             gpa.destroy(tab);
             return err;
@@ -186,7 +186,7 @@ test "unit: model: every tab of a fake graph is located in its pane" {
         }
     }
     // A tab of another graph is in none of these workspaces.
-    var stranger: Tab = .{ .content = .placeholder };
+    var stranger: Tab = .{ .content = .{ .placeholder = .{} } };
     try testing.expectEqual(@as(?Workspace.Loc, null), Workspace.locate(g.workspaces.items, &stranger));
     try testing.expectEqual(@as(?*Pane, null), second.findPaneOfTab(&stranger));
     // Placeholder tabs have no surface, so no surface lookup matches.
@@ -236,11 +236,11 @@ test "unit: model: workspace status and attention aggregate over every pane" {
     const ws = try g.addWorkspace(&.{ 2, 2, 2 });
     try testing.expectEqual(Tab.TabStatus.normal, ws.aggregateStatus());
     try testing.expect(!ws.hasAttention());
-    ws.paneAt(2).?.tabs.items[1].legacy.status = .bell;
+    ws.paneAt(2).?.tabs.items[1].ext.notifications.status = .bell;
     try testing.expectEqual(Tab.TabStatus.bell, ws.aggregateStatus());
-    ws.paneAt(0).?.tabs.items[0].legacy.status = .exited;
+    ws.paneAt(0).?.tabs.items[0].ext.notifications.status = .exited;
     try testing.expectEqual(Tab.TabStatus.exited, ws.aggregateStatus());
-    ws.paneAt(1).?.tabs.items[1].legacy.attention = true;
+    ws.paneAt(1).?.tabs.items[1].ext.notifications.attention = true;
     try testing.expect(ws.hasAttention());
 }
 
@@ -252,7 +252,7 @@ test "unit: model: tab state follows the tab through insert, move and remove" {
     defer freePane(gpa, pane);
     for (pane.tabs.items, 0..) |tab, i| {
         var buf: [8]u8 = undefined;
-        tab.legacy.setStatusText(std.fmt.bufPrint(&buf, "t{d}", .{i}) catch unreachable);
+        tab.ext.status.setStatusText(std.fmt.bufPrint(&buf, "t{d}", .{i}) catch unreachable);
     }
     const first = pane.tabs.items[0];
     const last = pane.tabs.items[69];
@@ -262,15 +262,15 @@ test "unit: model: tab state follows the tab through insert, move and remove" {
     try testing.expect(ops_surface.moveInPane(pane, 68, 0));
     try testing.expectEqual(last, pane.tabs.items[0]);
     try testing.expectEqual(first, pane.tabs.items[69]);
-    try testing.expectEqualStrings("t69", pane.tabs.items[0].legacy.statusText());
-    try testing.expectEqualStrings("t0", pane.tabs.items[69].legacy.statusText());
+    try testing.expectEqualStrings("t69", pane.tabs.items[0].ext.status.statusText());
+    try testing.expectEqualStrings("t0", pane.tabs.items[69].ext.status.statusText());
 
     // Remove one from the middle and re-insert it at the front.
     const mid = ops_surface.remove(pane, 35);
     try testing.expectEqual(@as(usize, 69), pane.tabCount());
     try ops_surface.insert(gpa, pane, mid, 0);
     try testing.expectEqual(mid, pane.tabs.items[0]);
-    try testing.expectEqualStrings(mid.legacy.statusText(), pane.tabs.items[0].legacy.statusText());
+    try testing.expectEqualStrings(mid.ext.status.statusText(), pane.tabs.items[0].ext.status.statusText());
     for (pane.tabs.items) |tab| try testing.expectEqual(pane, tab.pane.?);
 }
 

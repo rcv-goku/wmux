@@ -14,6 +14,8 @@ const Allocator = std.mem.Allocator;
 const Tab = @import("Tab.zig");
 const Workspace = @import("Workspace.zig");
 const features_ext = @import("../features/ext.zig");
+const handle_registry = @import("logic/handle_registry.zig");
+const ids = @import("ids.zig");
 const w32 = @import("../platform/win32.zig");
 
 const TabStatus = Tab.TabStatus;
@@ -21,6 +23,13 @@ const TabStatus = Tab.TabStatus;
 /// Reference count for SplitTree ownership. Starts at 0 because
 /// SplitTree.init() calls ref() to take initial ownership.
 ref_count: u32 = 0,
+
+/// Identity (`pane_id`, `pane:N`; ADR-2), minted when the pane joins its
+/// workspace and retired when it is destroyed.
+handle: ids.Handle = ids.no_handle,
+
+/// The registry `handle` is minted in (null while unregistered).
+registry: ?*handle_registry.HandleRegistry = null,
 
 /// The workspace whose split tree holds this pane (null for a pane that
 /// is not in a tree yet, and in the fake model graphs of the tests).
@@ -83,6 +92,8 @@ pub fn ref(self: *Pane, alloc: Allocator) Allocator.Error!*Pane {
 pub fn unref(self: *Pane, alloc: Allocator) void {
     self.ref_count -= 1;
     if (self.ref_count == 0) {
+        if (self.registry) |r| r.retire(self.handle.uuid);
+        features_ext.deinitAll(&self.ext, alloc);
         for (self.tabs.items) |tab| {
             tab.pane = null;
             tab.unref(alloc);
@@ -136,7 +147,7 @@ pub fn indexOf(self: *const Pane, tab: *const Tab) ?usize {
 pub fn aggregateStatus(self: *const Pane) TabStatus {
     var worst: TabStatus = .normal;
     for (self.tabs.items) |tab| {
-        switch (tab.legacy.status) {
+        switch (tab.ext.notifications.status) {
             .exited => return .exited,
             .bell => worst = .bell,
             .normal => {},
@@ -148,7 +159,7 @@ pub fn aggregateStatus(self: *const Pane) TabStatus {
 /// Whether any tab in this pane is flagged for attention.
 pub fn hasAttention(self: *const Pane) bool {
     for (self.tabs.items) |tab| {
-        if (tab.legacy.attention) return true;
+        if (tab.ext.notifications.attention) return true;
     }
     return false;
 }
@@ -172,7 +183,7 @@ fn testPane(tabs: []Tab, ptrs: []*Tab) Pane {
 }
 
 fn placeholderTabs(comptime n: usize) [n]Tab {
-    return @splat(.{ .content = .placeholder });
+    return @splat(.{ .content = .{ .placeholder = .{} } });
 }
 
 test "unit: model: pane create returns the default state" {
@@ -207,10 +218,10 @@ test "unit: model: pane aggregateStatus returns the worst status" {
     const pane = testPane(&tabs, &ptrs);
     try testing.expectEqual(TabStatus.normal, pane.aggregateStatus());
 
-    tabs[1].legacy.status = .bell;
+    tabs[1].ext.notifications.status = .bell;
     try testing.expectEqual(TabStatus.bell, pane.aggregateStatus());
 
-    tabs[2].legacy.status = .exited;
+    tabs[2].ext.notifications.status = .exited;
     try testing.expectEqual(TabStatus.exited, pane.aggregateStatus());
 }
 
@@ -223,12 +234,12 @@ test "unit: model: pane aggregate status exited beats bell" {
     var tabs = placeholderTabs(4);
     var ptrs: [4]*Tab = undefined;
     const pane = testPane(&tabs, &ptrs);
-    tabs[1].legacy.status = .bell;
+    tabs[1].ext.notifications.status = .bell;
     try testing.expectEqual(TabStatus.bell, pane.aggregateStatus());
-    tabs[3].legacy.status = .exited;
+    tabs[3].ext.notifications.status = .exited;
     try testing.expectEqual(TabStatus.exited, pane.aggregateStatus());
-    tabs[3].legacy.status = .normal;
-    tabs[0].legacy.status = .exited;
+    tabs[3].ext.notifications.status = .normal;
+    tabs[0].ext.notifications.status = .exited;
     try testing.expectEqual(TabStatus.exited, pane.aggregateStatus());
 }
 
@@ -238,9 +249,9 @@ test "unit: model: pane aggregate status has no tab cap" {
     var ptrs: [100]*Tab = undefined;
     const pane = testPane(&tabs, &ptrs);
     try testing.expectEqual(TabStatus.normal, pane.aggregateStatus());
-    tabs[99].legacy.status = .bell;
+    tabs[99].ext.notifications.status = .bell;
     try testing.expectEqual(TabStatus.bell, pane.aggregateStatus());
-    tabs[64].legacy.status = .exited;
+    tabs[64].ext.notifications.status = .exited;
     try testing.expectEqual(TabStatus.exited, pane.aggregateStatus());
 }
 
@@ -249,9 +260,9 @@ test "unit: model: pane hasAttention" {
     var ptrs: [2]*Tab = undefined;
     const pane = testPane(&tabs, &ptrs);
     try testing.expect(!pane.hasAttention());
-    tabs[1].legacy.attention = true;
+    tabs[1].ext.notifications.attention = true;
     try testing.expect(pane.hasAttention());
-    tabs[1].legacy.attention = false;
+    tabs[1].ext.notifications.attention = false;
     try testing.expect(!pane.hasAttention());
 }
 
@@ -259,11 +270,11 @@ test "unit: model: pane attention is orthogonal to bell/exited status" {
     var tabs = placeholderTabs(3);
     var ptrs: [3]*Tab = undefined;
     const pane = testPane(&tabs, &ptrs);
-    tabs[0].legacy.status = .exited;
-    tabs[2].legacy.attention = true;
+    tabs[0].ext.notifications.status = .exited;
+    tabs[2].ext.notifications.attention = true;
     try testing.expectEqual(TabStatus.exited, pane.aggregateStatus());
     try testing.expect(pane.hasAttention());
-    tabs[2].legacy.attention = false;
+    tabs[2].ext.notifications.attention = false;
     try testing.expectEqual(TabStatus.exited, pane.aggregateStatus());
     try testing.expect(!pane.hasAttention());
 }
@@ -271,21 +282,21 @@ test "unit: model: pane attention is orthogonal to bell/exited status" {
 test "unit: model: tab progress and log store and clear per tab" {
     var tabs = placeholderTabs(2);
 
-    try testing.expectEqual(@as(?u8, null), tabs[0].legacy.progress);
-    try testing.expect(tabs[0].legacy.log.latest() == null);
+    try testing.expectEqual(@as(?u8, null), tabs[0].ext.status.progress);
+    try testing.expect(tabs[0].ext.status.log.latest() == null);
 
-    tabs[1].legacy.progress = 42;
-    try testing.expectEqual(@as(?u8, 42), tabs[1].legacy.progress);
-    tabs[1].legacy.progress = 100;
-    try testing.expectEqual(@as(?u8, 100), tabs[1].legacy.progress);
-    tabs[1].legacy.progress = null;
-    try testing.expectEqual(@as(?u8, null), tabs[1].legacy.progress);
+    tabs[1].ext.status.progress = 42;
+    try testing.expectEqual(@as(?u8, 42), tabs[1].ext.status.progress);
+    tabs[1].ext.status.progress = 100;
+    try testing.expectEqual(@as(?u8, 100), tabs[1].ext.status.progress);
+    tabs[1].ext.status.progress = null;
+    try testing.expectEqual(@as(?u8, null), tabs[1].ext.status.progress);
 
-    tabs[0].legacy.log.push("line one");
-    tabs[0].legacy.log.push("line two");
-    try testing.expectEqualStrings("line two", tabs[0].legacy.log.latest().?);
-    try testing.expectEqualStrings("line one", tabs[0].legacy.log.at(1).?);
-    try testing.expect(tabs[1].legacy.log.latest() == null);
+    tabs[0].ext.status.log.push("line one");
+    tabs[0].ext.status.log.push("line two");
+    try testing.expectEqualStrings("line two", tabs[0].ext.status.log.latest().?);
+    try testing.expectEqualStrings("line one", tabs[0].ext.status.log.at(1).?);
+    try testing.expect(tabs[1].ext.status.log.latest() == null);
 }
 
 test "unit: model: pane selectedTab is null when empty" {
@@ -315,7 +326,7 @@ test "unit: model: pane indexOf and tabAt agree" {
         try testing.expectEqual(@as(?usize, i), pane.indexOf(&tabs[i]));
         try testing.expectEqual(&tabs[i], pane.tabAt(i).?);
     }
-    var stranger: Tab = .{ .content = .placeholder };
+    var stranger: Tab = .{ .content = .{ .placeholder = .{} } };
     try testing.expectEqual(@as(?usize, null), pane.indexOf(&stranger));
     try testing.expectEqual(@as(?*Tab, null), pane.tabAt(3));
 }
@@ -376,7 +387,7 @@ test "unit: model: pane tab bar visibility rule" {
 
 test "unit: model: pane aggregate status ignores spare list capacity" {
     var tabs = placeholderTabs(1);
-    tabs[0].legacy.status = .exited;
+    tabs[0].ext.notifications.status = .exited;
     var ptrs = [_]*Tab{&tabs[0]};
     // Spare list capacity holding a stale tab pointer is not a tab.
     const pane: Pane = .{ .tabs = .{ .items = ptrs[0..0], .capacity = 1 } };
@@ -393,7 +404,7 @@ test "unit: model: pane aggregate status all-normal stays normal" {
 test "unit: model: pane hasAttention ignores spare list capacity" {
     var tabs = placeholderTabs(2);
     var ptrs = [_]*Tab{ &tabs[0], &tabs[1] };
-    tabs[1].legacy.attention = true;
+    tabs[1].ext.notifications.attention = true;
     // Only the list's items are tabs; the second pointer is spare capacity.
     var pane: Pane = .{ .tabs = .{ .items = ptrs[0..1], .capacity = 2 } };
     try testing.expect(!pane.hasAttention());
@@ -408,11 +419,11 @@ test "unit: model: pane aggregate status at the former 64-tab boundary" {
     var tabs = placeholderTabs(n);
     var ptrs: [n]*Tab = undefined;
     var pane = testPane(&tabs, &ptrs);
-    tabs[n - 1].legacy.status = .exited;
+    tabs[n - 1].ext.notifications.status = .exited;
     try testing.expectEqual(TabStatus.exited, pane.aggregateStatus());
     pane.tabs.items = ptrs[0 .. n - 1];
     try testing.expectEqual(TabStatus.normal, pane.aggregateStatus());
-    tabs[n - 1].legacy.status = .bell;
+    tabs[n - 1].ext.notifications.status = .bell;
     pane.tabs.items = ptrs[0..n];
     try testing.expectEqual(TabStatus.bell, pane.aggregateStatus());
     pane.tabs.items = ptrs[0..0];

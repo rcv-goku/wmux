@@ -6,7 +6,7 @@
 
 const App = @import("../../App.zig");
 const ipc = @import("../../rpc/compat/legacy_json.zig");
-const LegacyCommand = @import("../../rpc/compat/legacy_table.zig").LegacyCommand;
+const LegacyCommand = @import("../../rpc/types.zig").LegacyCommand;
 
 pub const commands = [_]LegacyCommand{
     .{ .cmd = "toggle-right-sidebar", .handler = &ipcToggleRightSidebar },

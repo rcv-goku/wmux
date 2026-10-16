@@ -46,6 +46,12 @@ pub const PostForkError = error{PostForkError};
 /// after the fork.
 const PostForkFn = fn (*Command) PostForkError!void;
 
+/// The job object type of `job`: a HANDLE on Windows, nothing elsewhere.
+pub const Job = if (builtin.os.tag == .windows) ?windows.HANDLE else void;
+
+/// The value of `job` when there is none.
+pub const no_job: Job = if (builtin.os.tag == .windows) null else {};
+
 /// Path to the command to run. This doesn't have to be an absolute path,
 /// because use exec functions that search the PATH, if necessary.
 ///
@@ -100,6 +106,12 @@ rt_post_fork_info: RtPostForkInfo,
 /// `stdin`, `stdout`, and `stderr` will be ignored if set.
 pseudo_console: if (builtin.os.tag == .windows) ?windows.exp.HPCON else void =
     if (builtin.os.tag == .windows) null else {},
+
+/// Windows: the job object the process is created in (a second
+/// PROC_THREAD_ATTRIBUTE_JOB_LIST attribute next to the pseudo console,
+/// added by W1-3; ARCHITECTURE.md ADR-3.9). Borrowed: the caller keeps it
+/// open. Not used yet.
+job: Job = no_job,
 
 /// User data that is sent to the callback. Set with setData and getData
 /// for a more user-friendly API.

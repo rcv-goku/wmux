@@ -7,7 +7,7 @@ const std = @import("std");
 
 const App = @import("../../App.zig");
 const ipc = @import("../../rpc/compat/legacy_json.zig");
-const LegacyCommand = @import("../../rpc/compat/legacy_table.zig").LegacyCommand;
+const LegacyCommand = @import("../../rpc/types.zig").LegacyCommand;
 const targets = @import("../../rpc/compat/legacy_targets.zig");
 
 const IpcError = targets.IpcError;
@@ -37,11 +37,11 @@ fn ipcSyncInput(self: *App, req: *ipc.Request) anyerror!void {
     const tab = container.tabAt(tab_idx) orelse return IpcError.UnknownTab;
 
     if (std.mem.eql(u8, action_str, "toggle")) {
-        tab.legacy.synchronized = !tab.legacy.synchronized;
+        tab.ext.sync_input.synchronized = !tab.ext.sync_input.synchronized;
     } else if (std.mem.eql(u8, action_str, "on")) {
-        tab.legacy.synchronized = true;
+        tab.ext.sync_input.synchronized = true;
     } else if (std.mem.eql(u8, action_str, "off")) {
-        tab.legacy.synchronized = false;
+        tab.ext.sync_input.synchronized = false;
     } else {
         return IpcError.BadAction;
     }

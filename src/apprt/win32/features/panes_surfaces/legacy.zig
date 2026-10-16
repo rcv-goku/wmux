@@ -18,7 +18,7 @@ const App = @import("../../App.zig");
 const Pane = @import("../../model/Pane.zig");
 const SplitTree = @import("../../../../datastruct/split_tree.zig").SplitTree;
 const ipc = @import("../../rpc/compat/legacy_json.zig");
-const LegacyCommand = @import("../../rpc/compat/legacy_table.zig").LegacyCommand;
+const LegacyCommand = @import("../../rpc/types.zig").LegacyCommand;
 const targets = @import("../../rpc/compat/legacy_targets.zig");
 const ops_surface = @import("../../model/ops/surface.zig");
 
@@ -230,8 +230,10 @@ fn ipcSurfaceList(self: *App, req: *ipc.Request) anyerror!void {
                     try targets.ipcWriteJsonText(self, &buf, pane.titleText());
                     try buf.append(alloc, '}');
                 },
-                // Placeholder tabs exist only in the model tests.
-                .placeholder => {},
+                // No web panel or placeholder tab is listed: web panels
+                // arrive with W1-6 (surface.list replaces this command)
+                // and placeholder tabs exist only in the model tests.
+                .web, .placeholder => {},
             }
         }
         pane_idx += 1;

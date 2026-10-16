@@ -1,5 +1,6 @@
 //! Moving tabs between panes and within a pane (ARCHITECTURE.md ADR-1.8
-//! W0-A2 step 2). Moved out of Window.zig in W0-A2.
+//! W0-A2 step 2). Moved out of Window.zig in W0-A2. Breaking a tab out
+//! emits `pane.broken`, an in-pane move `surface.reordered` (ADR-3.10).
 
 const std = @import("std");
 
@@ -8,6 +9,8 @@ const Pane = @import("../Pane.zig");
 const SplitTree = @import("../../../../datastruct/split_tree.zig").SplitTree;
 const Tab = @import("../Tab.zig");
 const Window = @import("../../ui/Window.zig");
+const emit = @import("lifecycle_events.zig");
+const model_registry = @import("../registry.zig");
 const ops_surface = @import("surface.zig");
 
 /// Break a tab out of a multi-tab Pane into a new Pane that becomes a
@@ -27,6 +30,11 @@ pub fn breakPane(self: *Window, tab: *Tab) void {
     // Create the new Pane first so a failure leaves the source intact.
     const new_container = Pane.create(alloc) catch return;
     new_container.tabs.ensureTotalCapacity(alloc, 1) catch {
+        alloc.destroy(new_container);
+        return;
+    };
+    model_registry.register(&self.app.handles, alloc, new_container) catch {
+        new_container.tabs.deinit(alloc);
         alloc.destroy(new_container);
         return;
     };
@@ -58,9 +66,13 @@ pub fn breakPane(self: *Window, tab: *Tab) void {
     ws.syncZoomed();
     old_tree.deinit();
 
-    // The moved tab keeps its title; its legacy per-tab state starts
-    // fresh, as the new pane's default-initialized slot did before W0-A2.
-    tab.legacy = .{};
+    // The moved tab keeps its title; the legacy per-tab state (status
+    // text, progress, log, bell/exited dot, attention, synchronized input)
+    // starts fresh, as the new pane's default-initialized slot did before
+    // W0-A2. Other feature state stays with the tab.
+    tab.ext.status = .{};
+    tab.ext.notifications = .{};
+    tab.ext.sync_input = .{};
 
     const ws_idx = self.workspaceIndex(ws);
     if (ws_idx == self.activeIndex()) {
@@ -71,12 +83,14 @@ pub fn breakPane(self: *Window, tab: *Tab) void {
     } else {
         self.invalidateSidebar();
     }
+    emit.paneCreated(self, ws, new_container, "pane.broken", src_container, "right", "break_pane");
 }
 
 /// Put `tab` back at `index` of `src` after a failed break and free the
 /// unused new pane.
 fn undoBreak(alloc: std.mem.Allocator, src: *Pane, index: usize, new_pane: *Pane, tab: *Tab) void {
     _ = ops_surface.remove(new_pane, 0);
+    model_registry.unregister(new_pane);
     new_pane.tabs.deinit(alloc);
     alloc.destroy(new_pane);
     // Cannot fail: the source list kept the capacity of the removed tab.
@@ -115,4 +129,5 @@ pub fn movePaneToTab(self: *Window, tab: *Tab, target_enum: apprt.action.MovePan
         self.invalidateTabBar();
     }
     self.invalidateSidebar();
+    if (container.indexOf(tab) != src_tab) emit.surfaceReordered(self, loc.ws, container, tab);
 }

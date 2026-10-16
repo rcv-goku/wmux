@@ -14,6 +14,9 @@ const agent_session = @import("features/agents/legacy_store.zig");
 const BrowserPane = @import("web/BrowserPane.zig");
 const Surface = @import("Surface.zig");
 const Window = @import("ui/Window.zig");
+const features_ext = @import("features/ext.zig");
+const features_lifecycle = @import("features/lifecycle.zig");
+const model_registry = @import("model/registry.zig");
 
 // app/ plumbing (ARCHITECTURE.md ADR-1.6).
 const app_clipboard = @import("app/clipboard.zig");
@@ -22,6 +25,7 @@ const app_modal = @import("app/modal.zig");
 const app_tasks = @import("app/tasks.zig");
 const app_timers = @import("app/timers.zig");
 const broadcast_window = @import("app/broadcast_window.zig");
+const contrib = @import("ui/contrib.zig");
 const hooks = @import("app/hooks.zig");
 const message_loop = @import("app/message_loop.zig");
 const perform_action = @import("app/perform_action.zig");
@@ -31,6 +35,8 @@ const RuntimeEnv = @import("app/runtime_env.zig").RuntimeEnv;
 const config_files = @import("settings/legacy_config_files.zig");
 const ipc = @import("rpc/compat/legacy_json.zig");
 const legacy_pipe = @import("rpc/server/legacy_pipe.zig");
+const rpc_server = @import("rpc/server/mod.zig");
+const settings = @import("settings/api.zig");
 const taskbar = @import("platform/taskbar.zig");
 const w32 = @import("platform/win32.zig");
 const web_env = @import("web/env.zig");
@@ -113,6 +119,20 @@ browser_host_class_atom: u16 = 0,
 
 /// List of active Window containers (tabbed windows).
 windows: std.ArrayList(*Window) = .empty,
+
+/// The process-wide handle registry: UUID and ref of every window,
+/// workspace, group, pane and tab (model/registry.zig, ADR-2.2). UI thread
+/// only; outlives every model object.
+handles: model_registry.HandleRegistry = .{},
+
+/// App-wide feature state (`App.features.<id>`, ADR-1.3).
+features: features_ext.AppExt = .{},
+
+/// Whether every feature's `init` succeeded (features/lifecycle.zig). When
+/// one fails, lifecycle.init has already deinitialized the features before
+/// it, so the app runs with no feature initialized: model events reach no
+/// feature (model/events.zig) and terminate runs no feature `deinit`.
+features_initialized: bool = false,
 
 /// Background brush created from the configured background color.
 /// Used by WM_ERASEBKGND to fill exposed areas during resize,
@@ -287,6 +307,11 @@ pub fn init(
     self.clipboard.init(alloc, self.runtime_env.test_mode);
     errdefer self.clipboard.deinit();
 
+    // The settings layers (cmux.json/wmux.json, W1-4) before anything
+    // reads them.
+    try settings.init(self);
+    errdefer settings.deinit(self);
+
     // WMUX_TEST_HIDDEN: refuse every activation on this (UI) thread and
     // keep user32's own top-level windows off-screen, before any window
     // exists (app/foreground.zig, ARCHITECTURE.md ADR-12.3).
@@ -417,10 +442,10 @@ pub fn init(
     // messages; failure only disables those hooks.
     self.broadcast.create(self, hinstance);
 
-    // Start the agent IPC server now that msg_hwnd exists (the pipe
-    // thread posts requests to it). A failure here only disables the
-    // `ghostty +browser` CLI, so log and continue.
-    legacy_pipe.start(self);
+    // Start the control server now that msg_hwnd exists (its pipe
+    // threads post requests to it). A failure here only disables the
+    // pipe, so the server logs and the app continues.
+    rpc_server.start(self);
 
     // Start the periodic sidebar-metadata refresh (git branch / ports /
     // PR). The timer fires on this msg_hwnd; each tick spawns a worker
@@ -432,6 +457,16 @@ pub fn init(
 
     // Check for updates in the background (non-blocking).
     updater.startUpdateCheck(self);
+
+    // Every feature's init, once the app plumbing exists and before the
+    // first window (ADR-1.3). If one fails, lifecycle.init deinitializes
+    // the features before it; the failure is logged and the app starts
+    // without features (`features_initialized` stays false).
+    if (features_lifecycle.init(self)) |_| {
+        self.features_initialized = true;
+    } else |err| {
+        log.err("feature initialization failed err={}", .{err});
+    }
 }
 
 pub fn run(self: *App) !void {
@@ -484,10 +519,7 @@ pub fn terminate(self: *App) void {
     // in msgWndProc it completes before terminate() proceeds
     // (single-threaded UI). sendOk/sendError after stop() is impossible
     // because the GUI thread is here, not in msgWndProc.
-    if (self.ipc_server) |server| {
-        server.stop();
-        self.ipc_server = null;
-    }
+    rpc_server.stop(self);
 
     // Free the agent session store (owned session-id strings). Safe after
     // the IPC server stopped: no pipe-thread callback can still touch it.
@@ -531,6 +563,18 @@ pub fn terminate(self: *App) void {
         self.webview2_env = null;
     }
 
+    // Every window is gone: the features' deinit (ADR-1.3, reverse
+    // manifest order; only when their init succeeded), then the app-wide
+    // feature state. The model objects' destroy paths already retired
+    // their handles and freed their feature state, so the registry can go
+    // too.
+    if (self.features_initialized) {
+        self.features_initialized = false;
+        features_lifecycle.deinit(self);
+    }
+    features_ext.deinitAll(&self.features, alloc);
+    self.handles.deinit(alloc);
+
     if (self.bg_brush) |brush| {
         _ = w32.DeleteObject(@ptrCast(brush));
         self.bg_brush = null;
@@ -556,6 +600,7 @@ pub fn terminate(self: *App) void {
     // Every window is gone: drop the WMUX_TEST_HIDDEN hook (if any).
     app_foreground.uninstallHiddenHooks();
 
+    settings.deinit(self);
     self.config.deinit();
     self.runtime_env.deinit(alloc);
     self.clipboard.deinit();
@@ -1076,7 +1121,7 @@ fn msgWndProc(
     // callback hooks.WM_APP_TRAY: a click on the update notification
     // opens the GitHub releases page, a click on a desktop notification
     // jumps to the surface that produced it).
-    if (hooks.dispatchApp(&hooks.app_hooks, app, msg, wparam, lparam)) |result| return result;
+    if (hooks.dispatchApp(contrib.app_hooks, app, msg, wparam, lparam)) |result| return result;
 
     return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
 }
@@ -1086,28 +1131,6 @@ fn msgWndProc(
 // ---------------------------------------------------------------------------
 
 test {
-    // Pull in the tests of modules App owns but only references by
-    // specific decls (so their `test` blocks would otherwise not be
-    // collected by the unit-test root). Mirrors Window.zig's
-    // `_ = WindowState`.
-    _ = @import("features/meta/probes.zig");
-    _ = agent_session;
-    // The ipc.zig split (W0-A1): keep every moved test collected.
-    _ = ipc;
-    _ = legacy_pipe;
-    _ = @import("features/workspaces/worktree.zig");
-    _ = @import("features/status/log_ring.zig");
-    _ = @import("features/notifications/legacy_ring.zig");
-    // Unreferenced until W1-7 replaces it; imported here so the file at
-    // least keeps parsing (an unimported file is never compiled).
-    _ = @import("features/session/legacy_scrollback.zig");
-    _ = config_files;
-    _ = app_tasks;
-    _ = app_timers;
-    _ = hooks;
-    _ = @import("app/runtime_env.zig");
-    _ = @import("app/paths.zig");
-    _ = app_clipboard;
-    _ = app_foreground;
-    _ = app_modal;
+    // Every unit test of the win32 apprt (ARCHITECTURE.md ADR-12.1).
+    _ = @import("test_index.zig");
 }

@@ -794,6 +794,8 @@ pub const Application = extern struct {
             .edit_workspace_description,
             .toggle_right_sidebar,
             .focus_right_sidebar,
+            // wmux binding actions (Windows apprt only).
+            .wmux_action,
             .toggle_visibility,
             .toggle_background_opacity,
             .cell_size,

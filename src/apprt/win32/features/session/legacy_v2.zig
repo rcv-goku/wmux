@@ -26,6 +26,7 @@ const Window = @import("../../ui/Window.zig");
 const ops_pane = @import("../../model/ops/pane.zig");
 const ops_surface = @import("../../model/ops/surface.zig");
 const ops_window = @import("../../model/ops/window.zig");
+const model_registry = @import("../../model/registry.zig");
 const SplitTree = @import("../../../../datastruct/split_tree.zig").SplitTree;
 const app_paths = @import("../../app/paths.zig");
 const RuntimeEnv = @import("../../app/runtime_env.zig").RuntimeEnv;
@@ -118,7 +119,8 @@ fn containerDataFrom(a: Allocator, container: *const Pane) !PaneContainerData {
             .browser => {
                 td.kind = .browser;
             },
-            .placeholder => {},
+            // The v2 file has no web panels (session v3, W1-7, does).
+            .web, .placeholder => {},
         }
 
         tabs[ti] = td;
@@ -312,7 +314,7 @@ fn restoreV2Workspace(
     // first: it belongs to the old tree, which installTree frees (and
     // focus messages sent while it is torn down must not reach it).
     ws.focused_pane = null;
-    ops_pane.installTree(ws, tree);
+    ops_pane.installRestoredTree(window, ws, tree);
 
     // Set the focused container.
     const active_container = jsonUsize(ws_obj.get("active_container")) orelse 0;
@@ -370,6 +372,10 @@ fn buildLeafTree(
 
     // Create a Pane and populate its tabs (no tab cap since W0-A2).
     const container = Pane.create(alloc) catch return null;
+    model_registry.register(&window.app.handles, alloc, container) catch {
+        alloc.destroy(container);
+        return null;
+    };
     container.workspace = ws;
 
     for (tabs_arr.items) |tab_val| {
@@ -380,7 +386,7 @@ fn buildLeafTree(
 
         const title = jsonString(tab_obj.get("title"));
 
-        const tab = ops_surface.createTerminalTab(window, .tab, null, ws.cwd) catch continue;
+        const tab = ops_surface.createTerminalTab(window, ws, container.handle.uuid, .tab, null, ws.cwd) catch continue;
         ops_surface.initTitle(alloc, tab, title, ops_surface.terminal_default_title) catch {
             tab.unref(alloc);
             continue;
@@ -397,6 +403,7 @@ fn buildLeafTree(
     }
 
     if (container.tabCount() == 0) {
+        model_registry.unregister(container);
         container.tabs.deinit(alloc);
         alloc.destroy(container);
         return null;
@@ -411,6 +418,7 @@ fn buildLeafTree(
         while (container.tabCount() > 0) {
             ops_surface.remove(container, container.tabCount() - 1).unref(alloc);
         }
+        model_registry.unregister(container);
         container.tabs.deinit(alloc);
         alloc.destroy(container);
         return null;

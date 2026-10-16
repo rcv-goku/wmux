@@ -655,10 +655,35 @@ pub const ThreadData = struct {
     }
 };
 
+/// What an apprt adds to a terminal spawn through
+/// `rt_surface.spawnHooks()` (ARCHITECTURE.md ADR-3.9; pre-wired in
+/// W0-A3, filled by W1-3). The core surface passes it to `Config`.
+pub const SpawnHooks = struct {
+    /// Variables set after everything else (the apprt environment, shell
+    /// integration and the `env` configuration), so nothing can override
+    /// them: the protected CMUX_*/WMUX_* terminal environment. Owned;
+    /// `deinit` frees it.
+    protected_env: ?EnvMap = null,
+
+    /// The job object (Windows) the child process is created in
+    /// (Command.job). Borrowed: the apprt keeps it open.
+    job: Command.Job = Command.no_job,
+
+    pub fn deinit(self: *SpawnHooks) void {
+        if (self.protected_env) |*env| env.deinit();
+        self.* = undefined;
+    }
+};
+
 pub const Config = struct {
     command: ?configpkg.Command = null,
     env: EnvMap,
     env_override: configpkg.RepeatableStringMap = .{},
+    /// Applied after `env_override` (ADR-3.9, `SpawnHooks.protected_env`).
+    /// Borrowed for the duration of `init`, which copies it.
+    protected_env: ?*const EnvMap = null,
+    /// The job object (Windows) for the child (`Command.job`).
+    job: Command.Job = Command.no_job,
     shell_integration: configpkg.Config.ShellIntegration = .detect,
     shell_integration_features: configpkg.Config.ShellIntegrationFeatures = .{},
     cursor_blink: ?bool = null,
@@ -685,6 +710,8 @@ const Subprocess = struct {
     screen_size: renderer.ScreenSize,
     pty: ?Pty = null,
     process: ?Process = null,
+    /// Passed to the Command on start (`Config.job`).
+    job: Command.Job = Command.no_job,
 
     rt_pre_exec_info: Command.RtPreExecInfo,
     rt_post_fork_info: Command.RtPostForkInfo,
@@ -924,6 +951,16 @@ const Subprocess = struct {
             );
         }
 
+        // The protected environment goes last, so not even the `env`
+        // configuration above can override it (ADR-3.9).
+        if (cfg.protected_env) |protected| {
+            var it = protected.iterator();
+            while (it.next()) |entry| try env.put(
+                entry.key_ptr.*,
+                entry.value_ptr.*,
+            );
+        }
+
         // Build our args list
         const args: []const [:0]const u8 = execCommand(
             alloc,
@@ -971,6 +1008,7 @@ const Subprocess = struct {
             .env = env,
             .cwd = cwd,
             .args = args,
+            .job = cfg.job,
 
             .rt_pre_exec_info = cfg.rt_pre_exec_info,
             .rt_post_fork_info = cfg.rt_post_fork_info,
@@ -1122,6 +1160,7 @@ const Subprocess = struct {
             .stdout = if (builtin.os.tag == .windows) null else .{ .handle = pty.slave },
             .stderr = if (builtin.os.tag == .windows) null else .{ .handle = pty.slave },
             .pseudo_console = if (builtin.os.tag == .windows) pty.pseudo_console else {},
+            .job = self.job,
             .os_pre_exec = switch (comptime builtin.os.tag) {
                 .windows => null,
                 else => f: {

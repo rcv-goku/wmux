@@ -11,6 +11,7 @@ const Workspace = @This();
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
+const Group = @import("Group.zig");
 const Pane = @import("Pane.zig");
 const SplitTree = @import("../../../datastruct/split_tree.zig").SplitTree;
 const Surface = @import("../Surface.zig");
@@ -18,6 +19,8 @@ const Tab = @import("Tab.zig");
 const Title = @import("Title.zig");
 const Window = @import("../ui/Window.zig");
 const features_ext = @import("../features/ext.zig");
+const handle_registry = @import("logic/handle_registry.zig");
+const ids = @import("ids.zig");
 const titles = @import("logic/titles.zig");
 
 const TabStatus = Tab.TabStatus;
@@ -44,8 +47,18 @@ pub const DESCRIPTION_MAX_UNITS: usize = 256;
 /// renders a marker for the non-none states.
 pub const PrState = enum { none, open, draft, merged, closed };
 
+/// Identity (`workspace_id`, `workspace:N`; ADR-2), minted when the
+/// workspace is created and retired when it is destroyed.
+handle: ids.Handle = ids.no_handle,
+
+/// The registry `handle` is minted in (null while unregistered).
+registry: ?*handle_registry.HandleRegistry = null,
+
 /// The window whose `workspaces` list owns this workspace.
 window: *Window,
+
+/// The workspace group this row belongs to (W4-5), if any.
+group: ?*Group = null,
 
 /// The sidebar row name: a user rename is `title.custom`; an unnamed
 /// workspace shows "Workspace N".
@@ -118,6 +131,8 @@ pub fn create(gpa: Allocator, window: *Window) Allocator.Error!*Workspace {
 /// Tear the workspace down: its split tree (which unrefs every pane and
 /// so every tab), its strings and environment, then the object itself.
 pub fn destroy(self: *Workspace, gpa: Allocator) void {
+    if (self.registry) |r| r.retire(self.handle.uuid);
+    features_ext.deinitAll(&self.ext, gpa);
     self.tree.deinit();
     self.title.deinit(gpa);
     if (self.description) |d| gpa.free(d);
@@ -397,20 +412,20 @@ pub fn hasMetadata(self: *const Workspace) bool {
 pub fn firstStatusText(self: *const Workspace) []const u8 {
     if (self.focused_pane) |fp| {
         if (fp.selectedTab()) |tab| {
-            if (tab.legacy.status_text_len > 0) return tab.legacy.statusText();
+            if (tab.ext.status.status_text_len > 0) return tab.ext.status.statusText();
         }
     }
     var it = self.tree.iterator();
     while (it.next()) |entry| {
         for (entry.view.tabs.items) |tab| {
-            if (tab.legacy.status_text_len > 0) return tab.legacy.statusText();
+            if (tab.ext.status.status_text_len > 0) return tab.ext.status.statusText();
         }
     }
     // focused_pane may not be in the split tree (transient state during
     // init or in unit tests). Check its non-selected tabs.
     if (self.focused_pane) |fp| {
         for (fp.tabs.items) |tab| {
-            if (tab.legacy.status_text_len > 0) return tab.legacy.statusText();
+            if (tab.ext.status.status_text_len > 0) return tab.ext.status.statusText();
         }
     }
     return "";
@@ -420,14 +435,14 @@ pub fn firstStatusText(self: *const Workspace) []const u8 {
 pub fn tabStatusText(self: *const Workspace, idx: usize) []const u8 {
     const pane = self.focusedPaneOrFirst() orelse return "";
     const tab = pane.tabAt(idx) orelse return "";
-    return tab.legacy.statusText();
+    return tab.ext.status.statusText();
 }
 
 /// Set status text for tab `idx` of the focused pane.
 pub fn setTabStatusText(self: *Workspace, idx: usize, text: []const u8) void {
     const pane = self.focusedPaneOrFirst() orelse return;
     const tab = pane.tabAt(idx) orelse return;
-    tab.legacy.setStatusText(text);
+    tab.ext.status.setStatusText(text);
 }
 
 // ---------------------------------------------------------------------------
@@ -451,7 +466,7 @@ test "unit: model: paneAt of an empty workspace returns null" {
 }
 
 test "unit: model: workspace status text via the focused pane" {
-    var tabs: [2]Tab = @splat(.{ .content = .placeholder });
+    var tabs: [2]Tab = @splat(.{ .content = .{ .placeholder = .{} } });
     var ptrs: [2]*Tab = undefined;
     var pane = testPane(&tabs, &ptrs);
     var ws: Workspace = .{ .window = undefined };
@@ -470,7 +485,7 @@ test "unit: model: workspace status text via the focused pane" {
 }
 
 test "unit: model: firstStatusText prefers the focused pane's selected tab" {
-    var tabs: [2]Tab = @splat(.{ .content = .placeholder });
+    var tabs: [2]Tab = @splat(.{ .content = .{ .placeholder = .{} } });
     var ptrs: [2]*Tab = undefined;
     var pane = testPane(&tabs, &ptrs);
     var ws: Workspace = .{ .window = undefined };
@@ -480,15 +495,15 @@ test "unit: model: firstStatusText prefers the focused pane's selected tab" {
     try testing.expectEqualStrings("", ws.firstStatusText());
 
     // Status on non-selected tab (tab 1) → falls back to scanning.
-    tabs[1].legacy.setStatusText("building");
+    tabs[1].ext.status.setStatusText("building");
     try testing.expectEqualStrings("building", ws.firstStatusText());
 
     // Status on the selected tab (tab 0) takes priority.
-    tabs[0].legacy.setStatusText("testing");
+    tabs[0].ext.status.setStatusText("testing");
     try testing.expectEqualStrings("testing", ws.firstStatusText());
 
     // Clear the selected tab → falls back to tab 1.
-    tabs[0].legacy.setStatusText("");
+    tabs[0].ext.status.setStatusText("");
     try testing.expectEqualStrings("building", ws.firstStatusText());
 }
 
@@ -531,7 +546,7 @@ test "unit: model: workspace metadata setters store and report hasMetadata" {
 
     // A per-tab status alone also counts as metadata (the second-line
     // status segment).
-    var tabs: [1]Tab = @splat(.{ .content = .placeholder });
+    var tabs: [1]Tab = @splat(.{ .content = .{ .placeholder = .{} } });
     var ptrs: [1]*Tab = undefined;
     var pane = testPane(&tabs, &ptrs);
     ws.focused_pane = &pane;

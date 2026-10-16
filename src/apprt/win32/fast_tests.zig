@@ -74,7 +74,9 @@ test {
     _ = @import("features/workspace_status/logic/tests.zig");
     _ = @import("features/workspace_style/logic/tests.zig");
     _ = @import("features/workspaces/logic/tests.zig");
+    _ = @import("model/logic/tests.zig");
     _ = @import("ui/gfx/logic/tests.zig");
     _ = @import("ui/sidebar/logic/tests.zig");
+    _ = @import("ui/tabbar/logic/tests.zig");
     _ = @import("web/cdp/logic/tests.zig");
 }

@@ -15,9 +15,12 @@ const internal_os = @import("../../os/main.zig");
 const App = @import("App.zig");
 const Tab = @import("model/Tab.zig");
 const Window = @import("ui/Window.zig");
+const ids = @import("model/ids.zig");
 const app_foreground = @import("app/foreground.zig");
 const app_modal = @import("app/modal.zig");
+const env_identity = @import("features/env_identity/api.zig");
 const menus = @import("ui/menus.zig");
+const session_api = @import("features/session/api.zig");
 const w32 = @import("platform/win32.zig");
 const Scrollbar = @import("ui/overlays/Scrollbar.zig").Scrollbar;
 
@@ -188,6 +191,12 @@ attention: bool = false,
 /// configured default shell.
 spawn_command: ?[]const []const u8 = null,
 
+/// The model identity the terminal is spawned with (window, workspace,
+/// pane, tab and lifecycle UUIDs; ADR-3.9), fixed by the caller before
+/// init because the tab and its pane are linked into the model only
+/// after the child process started. The spawn hooks read it.
+spawn_identity: ids.SpawnIdentity = .{},
+
 /// Initialize a new Surface by creating a Win32 window and WGL context,
 /// then initialize the core terminal surface (fonts, renderer, PTY, IO).
 /// `command` optionally overrides the configured command for this one
@@ -196,6 +205,7 @@ spawn_command: ?[]const []const u8 = null,
 /// overrides the working directory the child shell spawns in (a
 /// workspace bound to a git worktree); the path is copied into the
 /// surface config clone, so the caller's memory may be freed too.
+/// `spawn` is the model identity of the terminal (see `spawn_identity`).
 pub fn init(
     self: *Surface,
     app: *App,
@@ -203,10 +213,12 @@ pub fn init(
     context: apprt.surface.NewSurfaceContext,
     command: ?[]const []const u8,
     cwd: ?[]const u8,
+    spawn: ids.SpawnIdentity,
 ) !void {
     self.* = .{
         .app = app,
         .parent_window = parent,
+        .spawn_identity = spawn,
     };
 
     // Retain an owned deep copy of the command override so splits
@@ -662,7 +674,25 @@ pub fn defaultTermioEnv(self: *const Surface) !std.process.EnvMap {
     // TERM and COLORTERM are set by termio/Exec.zig with platform-aware
     // logic (checking for terminfo, resources_dir, etc.). Do not set them here.
 
+    // The identity feature may adjust the inherited environment (W1-3).
+    try env_identity.adjustDefaultEnv(self, &env);
+
     return env;
+}
+
+/// What this surface's terminal spawn adds (ARCHITECTURE.md ADR-3.9):
+/// the protected CMUX_*/WMUX_* environment, applied after the user's
+/// `env` configuration, and the job object of the child. Called by the
+/// core surface during init; the env_identity feature (W1-3) owns it.
+pub fn spawnHooks(self: *Surface) !termio.Exec.SpawnHooks {
+    return env_identity.spawnHooks(self);
+}
+
+/// Saved scrollback to replay before the shell starts (ADR-9.5), or
+/// null. Called by the core surface during init; the session feature
+/// (W1-7) owns it.
+pub fn restoreHistory(self: *Surface) ?[]const u8 {
+    return session_api.restoreHistory(self);
 }
 
 /// Set the window title. Called from performAction(.set_title).

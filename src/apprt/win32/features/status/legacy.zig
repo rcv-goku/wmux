@@ -8,7 +8,7 @@ const std = @import("std");
 
 const App = @import("../../App.zig");
 const ipc = @import("../../rpc/compat/legacy_json.zig");
-const LegacyCommand = @import("../../rpc/compat/legacy_table.zig").LegacyCommand;
+const LegacyCommand = @import("../../rpc/types.zig").LegacyCommand;
 const targets = @import("../../rpc/compat/legacy_targets.zig");
 const notifications = @import("../notifications/api.zig");
 
@@ -30,7 +30,7 @@ fn ipcSetStatus(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const target = try targets.ipcResolveTab(self, req);
     const text = ipcArgString(req, "text") orelse "";
-    target.container.tabs.items[target.tab_idx].legacy.setStatusText(text);
+    target.container.tabs.items[target.tab_idx].ext.status.setStatusText(text);
     target.window.invalidateSidebar();
     server.sendOk(req.id, null) catch {};
 }
@@ -43,9 +43,9 @@ fn ipcSetProgress(self: *App, req: *ipc.Request) anyerror!void {
     const tab = target.container.tabs.items[target.tab_idx];
     const value = ipc.argI64Named(req, "value") orelse -1;
     if (value < 0) {
-        tab.legacy.progress = null;
+        tab.ext.status.progress = null;
     } else if (value <= 100) {
-        tab.legacy.progress = @intCast(value);
+        tab.ext.status.progress = @intCast(value);
     } else {
         return IpcError.BadProgress;
     }
@@ -61,7 +61,7 @@ fn ipcLog(self: *App, req: *ipc.Request) anyerror!void {
     const text = ipcArgString(req, "text") orelse return IpcError.MissingText;
     const target = try targets.ipcResolveTab(self, req);
     const pane = target.container.tabs.items[target.tab_idx];
-    pane.legacy.log.push(text);
+    pane.ext.status.log.push(text);
 
     // Also surface it in the global notif panel (reuses pushNotif), tied
     // to the addressed tab's pane when it is a terminal.
