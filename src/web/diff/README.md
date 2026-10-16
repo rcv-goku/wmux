@@ -190,8 +190,9 @@ passes the patch again (`panels-diff-session-restore`).
   ranking (basename and contiguous matches first), arrows, Enter jumps.
 - **Find.** Ctrl+F: case-insensitive literal search over the line text of both
   sides of every file (collapsed and deferred files included), up to 9,999
-  matches ("n/m+" when capped). Enter / Shift+Enter or F3 / Shift+F3 cycle;
-  the current match expands its file and gap and is scrolled to the middle.
+  matches ("n/m+" when capped). Enter / Shift+Enter or F3 / Shift+F3 cycle
+  in page order (files as the tree lists them, not patch order); the
+  current match expands its file and gap and is scrolled to the middle.
   Escape closes the innermost overlay: comment composer, Options menu, file
   search, then find.
 - **Keys.** Defaults from Appendix A.5 (`j`/`k`, Ctrl+D/U, Ctrl+N/P, Shift+G,

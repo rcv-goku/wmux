@@ -641,6 +641,78 @@ describe("unit: diff app find and file search", () => {
     assert.equal($$(".dv-find-current").map((x) => x.textContent).join(""), "1.0.1");
   });
 
+  test("unit: diff: find steps through files in the order the page shows them", async () => {
+    // git sorts files by path ("build.zig" < "src/main.zig"); the tree lists directories first.
+    const twoFiles = patch(
+      ["diff --git a/build.zig b/build.zig", "--- a/build.zig", "+++ b/build.zig", "@@ -1 +1 @@", "-foo a", "+foo b"],
+      ["diff --git a/src/main.zig b/src/main.zig", "--- a/src/main.zig", "+++ b/src/main.zig", "@@ -1 +1 @@", "-foo c", "+foo d"],
+    );
+    await startApp({ params: { patch: twoFiles } });
+    assert.deepEqual($$(".dv-file .dv-path").map((p) => p.textContent), ["src/main.zig", "build.zig"]);
+    app.openFind("foo");
+    const visited = [];
+    for (let i = 0; i < 4; i += 1) {
+      const m = app.state.find.matches[app.state.find.index];
+      visited.push(app.state.files[m.fileIndex].path + ":" + m.side);
+      key($("#dv-find-input"), { key: "Enter", code: "Enter", keyCode: 13 });
+    }
+    assert.deepEqual(visited, ["src/main.zig:deletions", "src/main.zig:additions", "build.zig:deletions", "build.zig:additions"]);
+    assert.equal($("#dv-find-count").textContent, "1/4", "wraps to the top file");
+  });
+
+  test("unit: diff: find and file search drop results of a replaced diff", async () => {
+    await startApp();
+    app.openFind("render");
+    assert.equal($("#dv-find-count").textContent, "1/5");
+    const errors = [];
+    const onError = (e) => {
+      errors.push(e.message);
+      e.preventDefault();
+    };
+    window.addEventListener("error", onError);
+    try {
+      host.emit("panel.diff.patch", { patch: "" });
+      await settle();
+      assert.equal(app.state.find.matches.length, 0);
+      assert.equal($("#dv-find-count").textContent, "No results");
+      key($("#dv-find-input"), { key: "Enter", code: "Enter", keyCode: 13 });
+      key($("#dv-find-input"), { key: "F3", code: "F3", keyCode: 114 });
+      await settle();
+    } finally {
+      window.removeEventListener("error", onError);
+    }
+    assert.deepEqual(errors, [], "next / previous match after the diff emptied");
+    app.closeFind();
+    host.emit("panel.diff.patch", { patch: PATCH });
+    await settle();
+    app.openFileSearch();
+    assert.equal($$(".dv-filesearch-item").length, 5);
+    host.emit("panel.diff.patch", { patch: patch("--- a/only.txt", "+++ b/only.txt", "@@ -1 +1 @@", "-a", "+b") });
+    await settle();
+    assert.deepEqual($$(".dv-filesearch-item").map((li) => li.textContent), ["only.txt"]);
+    host.emit("panel.diff.patch", { patch: "" });
+    await settle();
+    assert.equal($("#dv-filesearch-list").textContent, "No matching files");
+  });
+
+  test("unit: diff: the current match keeps its line out of collapsed context", async () => {
+    const far = patch("--- a/w.txt", "+++ b/w.txt", "@@ -1,9 +1,9 @@", " needle", " 2", " 3", " 4", "-a", "+b", " 6", " 7", " 8", " 9");
+    await startApp({ params: { patch: far } });
+    app.setPrefs({ contextLines: 1 });
+    app.openFind("needle");
+    const current = () => $$(".dv-find-current").map((s) => s.textContent).join("");
+    assert.equal(current(), "needle");
+    app.setPrefs({ wordDiffs: false });
+    assert.equal(current(), "needle", "a re-render keeps the match line visible");
+    assert.deepEqual($$(".dv-gap-button").map((g) => g.textContent), ["Show 1 unchanged line", "Show 3 unchanged lines"]);
+    app.setPrefs({ ignoreWhitespace: true });
+    assert.equal(current(), "needle");
+    assert.equal($("#dv-find-count").textContent, "1/1");
+    app.closeFind();
+    app.setPrefs({ wordDiffs: true });
+    assert.deepEqual($$(".dv-gap-button").map((g) => g.textContent), ["Show 3 unchanged lines", "Show 3 unchanged lines"]);
+  });
+
   test("unit: diff: Escape closes overlays innermost first", async () => {
     await startApp();
     app.openFind("render");

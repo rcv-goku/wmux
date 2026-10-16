@@ -256,7 +256,7 @@ export function createApp(options) {
     return state.prefs.expandUnchanged ? Infinity : state.prefs.contextLines;
   }
 
-  /** Line indices per hunk that must stay visible (comments, current match). */
+  /** Line indices per hunk that must stay visible (comments, composer, current find match). */
   function pinnedFor(file) {
     const pins = new Map();
     const add = (h, i) => {
@@ -264,6 +264,8 @@ export function createApp(options) {
       pins.get(h).add(i);
     };
     const hunks = displayHunks(file);
+    const current = state.find.open ? state.find.matches[state.find.index] : null;
+    if (current && current.fileIndex === file.index) add(current.hunkIndex, current.lineIndex);
     const want = new Set();
     for (const c of state.comments.values()) {
       const a = state.anchors.get(c.id);
@@ -345,8 +347,15 @@ export function createApp(options) {
 
   function rerenderBodies() {
     state.hunkCache.clear();
+    // Matches index display lines (ignoreWhitespace changes them): find them
+    // again first, so pinnedFor keeps the current one visible and renderBody
+    // highlights the new set.
+    if (state.find.open) {
+      clearFindHighlights();
+      findMatches(false);
+    }
     for (const file of state.order) renderBody(file);
-    if (state.find.open) runFind(false);
+    if (state.find.open) updateFindCount();
   }
 
   /* ---------------------------------------------------------------------- */
@@ -497,11 +506,15 @@ export function createApp(options) {
       state.status = "empty";
       ui.files.textContent = "";
       state.views.clear();
+      state.hunkCache.clear();
       renderTree();
       updateStats();
       updateToolbar();
       showMessage(t("diff.noFiles"), "empty");
       renderCommentList();
+      // Matches and file search results still point at the old files.
+      if (state.find.open) runFind(false);
+      if (state.fileSearch.open) updateFileSearch();
       return;
     }
     showMessage(t("diff.rendering"));
@@ -518,6 +531,7 @@ export function createApp(options) {
     updateToolbar();
     renderCommentList();
     if (state.find.open && state.find.query) runFind(false);
+    if (state.fileSearch.open) updateFileSearch();
     if (keepTop) {
       const f = fileByPath(keepTop);
       if (f) scrollToFile(f, false);
@@ -1004,10 +1018,14 @@ export function createApp(options) {
     findSpans.clear();
   }
 
-  function runFind(scroll) {
+  /**
+   * Search again and pick the current match: the first one when `scroll`,
+   * else the one at or after the previous current match. Files are searched
+   * in tree order, so next / previous follow the page from top to bottom.
+   */
+  function findMatches(scroll) {
     const f = state.find;
-    clearFindHighlights();
-    const res = searchFiles(state.files, f.query, (file) => displayHunks(file));
+    const res = searchFiles(state.order, f.query, (file) => displayHunks(file));
     const prev = f.matches[f.index];
     f.matches = res.matches;
     f.capped = res.capped;
@@ -1017,6 +1035,12 @@ export function createApp(options) {
       f.index = same;
     }
     if (f.index < 0 && f.matches.length) f.index = 0;
+  }
+
+  function runFind(scroll) {
+    const f = state.find;
+    clearFindHighlights();
+    findMatches(scroll);
     for (const file of state.files) if (f.matches.some((m) => m.fileIndex === file.index)) highlightFindIn(file.index);
     updateFindCount();
     if (scroll && f.index >= 0) goToMatch(f.index);
@@ -1025,9 +1049,9 @@ export function createApp(options) {
   function goToMatch(index) {
     const f = state.find;
     const m = f.matches[index];
-    if (!m) return;
+    const file = m ? fileByIndex(m.fileIndex) : null;
+    if (!file) return;
     f.index = index;
-    const file = fileByIndex(m.fileIndex);
     if (!passes(file)) clearFilter();
     expandFile(file);
     const v = state.views.get(file.index);
