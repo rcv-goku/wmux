@@ -513,6 +513,21 @@ describe("unit: feed app", () => {
     await settle();
     assert.deepEqual(host.calls("panel.open_external").map((m) => m.params.url), ["mailto:dev@example.com"]);
     assert.deepEqual(host.calls("panel.open_in_browser").map((m) => m.params.url), ["https://example.com/y"]);
+
+    // Middle click: routed the same way, never left to the host's new-window default.
+    const middle = (el) => {
+      const e = new window.MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 });
+      el.dispatchEvent(e);
+      return e;
+    };
+    assert.equal(middle(web).defaultPrevented, true);
+    assert.equal(middle(mail).defaultPrevented, true);
+    await settle();
+    assert.deepEqual(host.calls("panel.open_in_browser").map((m) => m.params.url), ["https://example.com/y", "https://example.com/y"]);
+    assert.deepEqual(host.calls("panel.open_external").map((m) => m.params.url), ["mailto:dev@example.com", "mailto:dev@example.com"]);
+    const right = new window.MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 2 });
+    web.dispatchEvent(right);
+    assert.equal(right.defaultPrevented, false, "other buttons are left alone");
   });
 
   test("unit: feed: single single-choice question answers on click", async () => {

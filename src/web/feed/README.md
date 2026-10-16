@@ -114,7 +114,8 @@ decision: <message>". Either way the list reloads.
 - **Plan.** The plan is markdown rendered without raw HTML and sanitized by
   DOMPurify (no images, forms, media, styles, ids or classes; links only
   http(s), opened in a wmux browser tab, and mailto, opened by the OS
-  handler; the page itself never navigates). Plan file and allowed
+  handler, on click and on middle click; the page itself never navigates
+  and never asks the host for a new window). Plan file and allowed
   prompts are listed. Ultraplan / Manual / Auto / Bypass / Deny as offered,
   and "Revise…" opens a feedback box ("Send feedback", Ctrl+Enter).
 - **Question.** Options are buttons; with one single-choice question a click

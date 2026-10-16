@@ -806,6 +806,11 @@ export function createApp(options) {
     listen(doc.body, "click", (e) => {
       if (!onLinkClick(e)) onClick(e);
     });
+    // A middle click on a link would otherwise ask the host for a new
+    // window; route it like a click (as the markdown panel does).
+    listen(doc.body, "auxclick", (e) => {
+      if (e.button === 1) onLinkClick(e);
+    });
     listen(els.list, "dblclick", onDblClick);
     listen(els.list, "input", onInput);
     listen(els.list, "keydown", onListKeydown);
