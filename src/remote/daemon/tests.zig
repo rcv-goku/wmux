@@ -493,6 +493,40 @@ test "unit: remote-daemon: a client that stops reading is dropped after the stal
     };
 }
 
+test "unit: remote-daemon: session.close tells the other clients; attachments are per connection" {
+    const h = try PairHarness.start(testing.allocator, homeCfg("/tmp"));
+    defer h.stop();
+    _ = try h.a.hello(true, timeout);
+    _ = try h.b.hello(false, timeout);
+    const sid = try openSh(&h.a, "shared", 100, 40);
+    _ = try ptyAttach(&h.a, sid, 100, 40);
+    const bat = try h.b.request(.session_attach, msgs.AttachParams{ .session_id = sid, .cols = 90, .rows = 30 }, timeout);
+    const b_aid = str(bat.result, "attachment_id");
+    // session.resize drives the same smallest-wins coordinator.
+    const rz = try h.b.request(.session_resize, msgs.ResizeParams{ .attachment_id = b_aid, .cols = 70, .rows = 50 }, timeout);
+    try testing.expectEqual(@as(i64, 70), int(rz.result, "cols"));
+    try testing.expectEqual(@as(i64, 40), int(rz.result, "rows"));
+    try testing.expectEqual(@as(i64, 2), int(rz.result, "attachments"));
+    // Another connection cannot resize or detach b's attachment.
+    const foreign = try h.a.request(.session_resize, msgs.ResizeParams{ .attachment_id = b_aid, .cols = 10, .rows = 10 }, timeout);
+    try testing.expectEqualStrings("not_found", foreign.code.?);
+    const foreign_detach = try h.a.request(.session_detach, msgs.AttachmentIdParams{ .attachment_id = b_aid }, timeout);
+    try testing.expectEqualStrings("not_found", foreign_detach.code.?);
+
+    // a closes the session: b is told its attachment ended, a is not.
+    const closed = try h.a.request(.session_close, msgs.SessionIdParams{ .session_id = sid }, timeout);
+    try testing.expect(closed.ok);
+    try testing.expectEqualStrings("shared", str(closed.result, "session_id"));
+    const ev = try h.b.waitEvent(msgs.event_pty_detached, timeout);
+    try testing.expectEqualStrings("shared", str(ev.params, "session_id"));
+    try testing.expectEqualStrings(b_aid, str(ev.params, "attachment_id"));
+    try testing.expectEqualStrings("session_closed", str(ev.params, "reason"));
+    try testing.expect((try h.a.request(.ping, .{}, timeout)).ok);
+    for (h.a.events.items) |e| try testing.expect(!std.mem.eql(u8, e.name, msgs.event_pty_detached));
+    const gone = try h.b.request(.session_status, msgs.SessionIdParams{ .session_id = sid }, timeout);
+    try testing.expectEqualStrings("not_found", gone.code.?);
+}
+
 const persistent = @import("persistent.zig");
 
 /// A persistent slot server on a Unix socket under a temporary home.
