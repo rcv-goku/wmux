@@ -17,15 +17,21 @@
  */
 
 const DEV_NULL = "/dev/null";
+const UTF8 = new TextEncoder();
 
-/** Decode a git C-quoted path ("a/\303\244.txt") into a JS string. */
+/**
+ * Decode a git C-quoted path ("a/\303\244.txt") into a JS string. Escapes are
+ * bytes; other characters (raw UTF-8 with core.quotePath=false) are kept
+ * whole, including those outside the BMP.
+ */
 export function unquotePath(text) {
   if (text.length < 2 || text[0] !== '"' || text[text.length - 1] !== '"') return text;
   const bytes = [];
   const body = text.slice(1, -1);
   const simple = { n: 10, t: 9, r: 13, a: 7, b: 8, f: 12, v: 11, '"': 34, "\\": 92 };
   for (let i = 0; i < body.length; i += 1) {
-    const c = body[i];
+    const c = String.fromCodePoint(body.codePointAt(i));
+    if (c.length === 2) i += 1;
     if (c === "\\" && i + 1 < body.length) {
       const n = body[i + 1];
       if (/[0-7]/.test(n)) {
@@ -40,7 +46,7 @@ export function unquotePath(text) {
         continue;
       }
     }
-    for (const b of new TextEncoder().encode(c)) bytes.push(b);
+    for (const b of UTF8.encode(c)) bytes.push(b);
   }
   return new TextDecoder("utf-8", { fatal: false }).decode(new Uint8Array(bytes));
 }

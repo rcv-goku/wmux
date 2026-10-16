@@ -189,6 +189,9 @@ describe("unit: diff parse", () => {
   test("unit: diff: quoted unicode paths and header helpers", () => {
     assert.equal(unquotePath('"a/\\303\\244 \\"q\\".txt"'), 'a/ä "q".txt');
     assert.equal(unquotePath("plain"), "plain");
+    // core.quotePath=false: raw characters (also outside the BMP) next to escapes.
+    assert.equal(unquotePath('"a/tab\\there \u{1F600} é.txt"'), "a/tab\there \u{1F600} é.txt");
+    assert.deepEqual(gitHeaderPaths('"a/\u{1F4C1}\\t.md" "b/\u{1F4C1}\\t.md"'), ["\u{1F4C1}\t.md", "\u{1F4C1}\t.md"]);
     assert.deepEqual(gitHeaderPaths('"a/\\303\\244.txt" "b/\\303\\244.txt"'), ["ä.txt", "ä.txt"]);
     assert.deepEqual(gitHeaderPaths("a/x y.txt b/x y.txt"), ["x y.txt", "x y.txt"]);
     assert.equal(headerPath("/dev/null"), "/dev/null");
