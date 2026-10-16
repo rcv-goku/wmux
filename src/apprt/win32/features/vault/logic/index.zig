@@ -26,6 +26,11 @@ pub const max_block_bytes: usize = 4096;
 pub const max_field_bytes: usize = 4096;
 /// Lines longer than this are skipped as malformed (never parsed).
 pub const max_line_bytes: usize = 16 << 20;
+/// Record timestamps outside years 0000-9999 (what ISO 8601 text can express)
+/// are corrupt and ignored, which keeps the day arithmetic in `sectionFor` and
+/// `writeIso8601` free of overflow.
+pub const min_timestamp_ms: i64 = daysFromCivil(0, 1, 1) * 86_400_000;
+pub const max_timestamp_ms: i64 = daysFromCivil(10000, 1, 1) * 86_400_000 - 1;
 /// Title fallback when a session has no user prompt.
 pub const untitled = "Untitled chat";
 /// Suffix appended to the titles of forked sessions.
@@ -212,12 +217,14 @@ fn getBool(obj: std.json.ObjectMap, key: []const u8) bool {
 
 fn timestampOf(obj: std.json.ObjectMap) ?i64 {
     const v = obj.get("timestamp") orelse return null;
-    return switch (v) {
-        .string => |s| parseIso8601Ms(s),
+    const ts: i64 = switch (v) {
+        .string => |s| parseIso8601Ms(s) orelse return null,
         // Epoch milliseconds (some agents) or seconds (heuristic: < 1e11).
-        .integer => |n| if (n < 100_000_000_000) n * 1000 else n,
-        else => null,
+        .integer => |n| if (n < 100_000_000_000) std.math.mul(i64, n, 1000) catch return null else n,
+        else => return null,
     };
+    if (ts < min_timestamp_ms or ts > max_timestamp_ms) return null;
+    return ts;
 }
 
 /// Concatenated text of a message `content`: a string, or an array of blocks

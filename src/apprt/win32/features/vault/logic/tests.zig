@@ -312,6 +312,33 @@ test "unit: vault: recency sections honor the local day" {
     try testing.expectEqualStrings("Last 7 days", index.Section.last_7_days.label());
 }
 
+test "unit: vault: out-of-range record timestamps are ignored, never overflow" {
+    const bad =
+        \\{"type":"user","sessionId":"t","timestamp":-9223372036854775807,"message":{"role":"user","content":"a"}}
+        \\{"type":"user","sessionId":"t","timestamp":9223372036854775807,"message":{"role":"user","content":"b"}}
+        \\{"type":"user","sessionId":"t","timestamp":253402300800000,"message":{"role":"user","content":"c"}}
+        \\
+    ;
+    var idx = index.Index.init(testing.allocator);
+    defer idx.deinit();
+    const e = try idx.ingest("/p/t.jsonl", "claude", .{ .size = bad.len, .mtime_ms = 7 }, 0, bad, true);
+    try testing.expectEqual(@as(u32, 3), e.session.turns);
+    try testing.expectEqual(@as(i64, 0), e.session.created_ms);
+    try testing.expectEqual(@as(i64, 0), e.session.last_record_ms);
+    try testing.expectEqual(index.Section.older, index.sectionFor(e.session.modifiedMs(), ms("2026-10-16T12:00:00Z"), 840));
+    // Epoch seconds and milliseconds inside the range are still accepted.
+    const good =
+        \\{"type":"user","sessionId":"u","timestamp":1789000000,"message":{"role":"user","content":"secs"}}
+        \\{"type":"user","sessionId":"u","timestamp":1789000000123,"message":{"role":"user","content":"millis"}}
+        \\
+    ;
+    const f = try idx.ingest("/p/u.jsonl", "claude", .{ .size = good.len, .mtime_ms = 7 }, 0, good, true);
+    try testing.expectEqual(@as(i64, 1_789_000_000_000), f.session.created_ms);
+    try testing.expectEqual(@as(i64, 1_789_000_000_123), f.session.last_record_ms);
+    try testing.expectEqual(index.min_timestamp_ms, index.parseIso8601Ms("0000-01-01T00:00:00Z").?);
+    try testing.expectEqual(index.max_timestamp_ms, index.parseIso8601Ms("9999-12-31T23:59:59.999Z").?);
+}
+
 test "unit: vault: path helpers handle both separators" {
     try testing.expectEqualStrings("wmux", index.basename("C:\\src\\wmux\\"));
     try testing.expectEqualStrings("wmux", index.basename("/home/dev/wmux"));
