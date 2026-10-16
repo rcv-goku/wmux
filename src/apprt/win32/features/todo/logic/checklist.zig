@@ -143,6 +143,16 @@ fn trimSpace(s: []const u8) []const u8 {
     return s[start..end];
 }
 
+/// A non-empty run of ASCII digits. `std.fmt.parseUnsigned` alone is not
+/// enough: it skips `_` separators, so "0_1" would resolve to item 1.
+fn isAsciiDigits(s: []const u8) bool {
+    if (s.len == 0) return false;
+    for (s) |ch| {
+        if (!std.ascii.isDigit(ch)) return false;
+    }
+    return true;
+}
+
 /// Writes `Invalid todo item: <x> (expected an item UUID or a 1-based index from `cmux todo list`)`.
 pub fn writeInvalidTarget(w: *std.Io.Writer, target: []const u8) std.Io.Writer.Error!void {
     try w.print("Invalid todo item: {s} (expected an item UUID or a 1-based index from `cmux todo list`)", .{target});
@@ -181,10 +191,11 @@ pub const Checklist = struct {
     pub fn resolve(self: *const Checklist, target: []const u8) TargetError!usize {
         const t = std.mem.trim(u8, target, " \t\r\n");
         if (t.len == 0) return error.InvalidTarget;
-        if (std.fmt.parseUnsigned(usize, t, 10)) |n| {
+        if (isAsciiDigits(t)) {
+            const n = std.fmt.parseUnsigned(usize, t, 10) catch return error.InvalidTarget;
             if (n == 0 or n > self.items.items.len) return error.InvalidTarget;
             return n - 1;
-        } else |_| {}
+        }
         const id = Uuid.parse(t) catch return error.InvalidTarget;
         return self.indexOfId(id) orelse error.InvalidTarget;
     }
@@ -468,6 +479,11 @@ test "unit: todo: resolve accepts 1-based index or uuid and rejects the rest" {
     for ([_][]const u8{ "0", "3", "", "-1", "1.5", "abc", "99999999999999999999999", "{}", "ä" }) |bad| {
         try testing.expectError(error.InvalidTarget, c.resolve(bad));
     }
+    // Digit separators are not indexes ("0_1" is not item 1).
+    for ([_][]const u8{ "0_1", "0_2", "1_", "_1" }) |bad| {
+        try testing.expectError(error.InvalidTarget, c.resolve(bad));
+    }
+    try testing.expectEqual(@as(usize, 1), try c.resolve("02"));
     const missing = testId(9).toText();
     try testing.expectError(error.InvalidTarget, c.resolve(&missing));
 
