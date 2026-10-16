@@ -32,8 +32,13 @@ fn onStopSignal(_: i32) callconv(.c) void {
 
 fn installSignals(ignore_hup: bool) void {
     const ign: posix.Sigaction = .{ .handler = .{ .handler = posix.SIG.IGN }, .mask = posix.sigemptyset(), .flags = 0 };
+    const dfl: posix.Sigaction = .{ .handler = .{ .handler = posix.SIG.DFL }, .mask = posix.sigemptyset(), .flags = 0 };
     const stop: posix.Sigaction = .{ .handler = .{ .handler = onStopSignal }, .mask = posix.sigemptyset(), .flags = 0 };
     posix.sigaction(posix.SIG.PIPE, &ign, null);
+    // SIG_IGN survives exec: inherited, it would make the kernel reap the
+    // shells itself, so pty.exit would lose exit codes and a blocking
+    // waitpid would wait for every child at once.
+    posix.sigaction(posix.SIG.CHLD, &dfl, null);
     posix.sigaction(posix.SIG.TERM, &stop, null);
     posix.sigaction(posix.SIG.INT, &stop, null);
     posix.sigaction(posix.SIG.HUP, if (ignore_hup) &ign else &stop, null);
