@@ -23,9 +23,16 @@ const Allocator = std.mem.Allocator;
 pub const Uuid = proto.uuid.Uuid;
 pub const Color = color.Color;
 
-/// Byte cap for any single text the model shows (G6). Longer input is cut
-/// on a code-point boundary; DirectWrite trims visually long before this.
+/// Byte cap (G6) for the texts the model derives or copies: titles, group
+/// titles, markdown blocks, `RowBuilder.text` lines and tooltips. Longer
+/// input is cut on a code-point boundary; DirectWrite trims visually long
+/// before this. Slices passed to `line`/`lineEx`/`pills`/`chips` are
+/// borrowed as is: they come from feature state, which is capped where it
+/// is stored.
 pub const max_text_bytes: usize = 8 * 1024;
+
+/// Cap for the remote host in "title (host)" (hostnames are <= 253 bytes).
+const max_host_bytes: usize = 255;
 
 /// cmux's accent blue; a status color equal to it draws as the app accent.
 pub const cmux_accent_hex: u24 = 0x4C8DFF;
@@ -241,10 +248,10 @@ pub const RowBuilder = struct {
         try self.items.append(self.arena, .{ .slot = self.slot, .body = .{ .line = l } });
     }
 
-    /// Single-run plain line.
+    /// Single-run plain line (capped at `max_text_bytes`).
     pub fn text(self: *RowBuilder, icon: ?[]const u8, s: []const u8, c: ?ColorSpec) Allocator.Error!void {
         const runs = try self.arena.alloc(Run, 1);
-        runs[0] = .{ .text = s };
+        runs[0] = .{ .text = proto.utf8.truncateUtf8(s, max_text_bytes) };
         try self.lineEx(.{ .icon = icon, .runs = runs, .color = c });
     }
 
@@ -423,17 +430,31 @@ const LinkParse = struct { label: []const u8, url: []const u8, end: usize };
 fn parseLink(ln: []const u8, open: usize) ?LinkParse {
     const close = std.mem.indexOfScalarPos(u8, ln, open + 1, ']') orelse return null;
     if (close + 1 >= ln.len or ln[close + 1] != '(') return null;
-    const end = std.mem.indexOfScalarPos(u8, ln, close + 2, ')') orelse return null;
+    // The destination ends at the ')' that balances its '(', so URLs such
+    // as https://en.wikipedia.org/wiki/Foo_(bar) keep their parentheses.
+    var depth: usize = 0;
+    var end = close + 2;
+    while (end < ln.len) : (end += 1) switch (ln[end]) {
+        '(' => depth += 1,
+        ')' => if (depth == 0) break else {
+            depth -= 1;
+        },
+        else => {},
+    } else return null;
     const url = std.mem.trim(u8, ln[close + 2 .. end], " ");
     if (url.len == 0) return null;
     return .{ .label = ln[open + 1 .. close], .url = url, .end = end + 1 };
 }
 
-/// http(s) and mailto only (no `file:`, `javascript:` or app schemes).
+/// http(s) and mailto only (no `file:`, `javascript:` or app schemes), and
+/// no whitespace or control characters (real URLs percent-encode them).
 pub fn isSafeUrl(url: []const u8) bool {
-    return std.ascii.startsWithIgnoreCase(url, "https://") or
+    const scheme_ok = std.ascii.startsWithIgnoreCase(url, "https://") or
         std.ascii.startsWithIgnoreCase(url, "http://") or
         std.ascii.startsWithIgnoreCase(url, "mailto:");
+    if (!scheme_ok) return false;
+    for (url) |b| if (b <= ' ' or b == 0x7f) return false;
+    return true;
 }
 
 fn flushRun(arena: Allocator, runs: *std.ArrayList(Run), buf: *std.ArrayList(u8), style: RunStyle, link: ?[]const u8) Allocator.Error!void {
@@ -573,7 +594,8 @@ pub const WorkspaceInput = struct {
     /// Expanded "Show more" sections.
     expanded: SlotSet = .{},
     details: Details = .{},
-    /// Latest notification text; becomes the glyph tooltip in compact mode.
+    /// Latest notification body as received (inline markdown allowed); in
+    /// compact mode it becomes the glyph tooltip as stripped plain text.
     notification_preview: ?[]const u8 = null,
 };
 
@@ -768,7 +790,8 @@ const TitleIndex = struct {
         const host = w.host orelse return t;
         if (host.len == 0) return t;
         if ((self.counts.get(t) orelse 0) < 2) return t;
-        return std.fmt.allocPrint(arena, "{s} ({s})", .{ t, host });
+        const joined = try std.fmt.allocPrint(arena, "{s} ({s})", .{ t, proto.utf8.truncateUtf8(host, max_host_bytes) });
+        return proto.utf8.truncateUtf8(joined, max_text_bytes);
     }
 };
 
@@ -822,11 +845,16 @@ fn workspaceRow(arena: Allocator, w: WorkspaceInput, group: ?Uuid, s: Settings, 
     if (s.notification_badge_position == .leading) title.leading.badge = badge_text else title.trailing.badge = badge_text;
     if (s.loading_spinner_position == .leading) title.leading.spinner = spinner else title.trailing.spinner = spinner;
 
-    // In compact mode the latest notification is the glyph's tooltip.
-    if (compact) if (w.notification_preview) |p| if (p.len > 0) {
-        var g = title.glyph orelse Glyph{ .icon = "bell" };
-        g.tooltip = if (g.tooltip) |t| try std.fmt.allocPrint(arena, "{s}\n{s}", .{ p, t }) else p;
-        title.glyph = g;
+    // In compact mode the latest notification is the glyph's tooltip, as
+    // readable plain text (inline markdown stripped, capped).
+    if (compact) if (w.notification_preview) |raw| {
+        const plain = try joinRuns(arena, try parseInlineMarkdown(arena, raw, .strip));
+        const p = std.mem.trim(u8, plain, " \t\r\n");
+        if (p.len > 0) {
+            var g = title.glyph orelse Glyph{ .icon = "bell" };
+            g.tooltip = if (g.tooltip) |t| try std.fmt.allocPrint(arena, "{s}\n{s}", .{ p, t }) else p;
+            title.glyph = g;
+        }
     };
 
     const items = try resolveItems(arena, d, w.expanded, s);
@@ -1176,10 +1204,11 @@ test "unit: sidebar: compact mode moves notification preview into glyph tooltip"
     var b = RowBuilder.init(a);
     b.beginSlot(.notification_preview);
     try b.markdownPlain("**done** in 3s", 12);
+    // The raw notification body: markdown is stripped for the tooltip too.
     const nodes = [_]Node{.{ .workspace = .{
         .id = testId(1),
         .details = b.finish(),
-        .notification_preview = "done in 3s",
+        .notification_preview = "**done** in 3s",
         .status_glyph = .{ .icon = "checkmark", .tooltip = "Idle" },
     } }};
     const normal = try build(a, .{ .nodes = &nodes });
@@ -1256,6 +1285,55 @@ test "unit: sidebar: markdown block prefixes, escapes, unsafe links, malformed i
     try testing.expectEqualStrings("日本 🚀 snake_case_name", uni[0].text);
     const invalid = try parseInlineMarkdown(a, "\xff\xfe *a*", .strip);
     try testing.expectEqualStrings("\xff\xfe a", invalid[0].text);
+}
+
+test "unit: sidebar: link destinations keep balanced parentheses and reject whitespace" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const wiki = try parseInlineMarkdown(a, "see [Foo](https://en.wikipedia.org/wiki/Foo_(bar)) ok", .keep);
+    try testing.expectEqual(@as(usize, 3), wiki.len);
+    try testing.expectEqualStrings("Foo", wiki[1].text);
+    try testing.expectEqualStrings("https://en.wikipedia.org/wiki/Foo_(bar)", wiki[1].link.?);
+    try testing.expectEqualStrings(" ok", wiki[2].text);
+    // Unbalanced destinations are literal text.
+    const open = try parseInlineMarkdown(a, "[x](https://a.example/(b", .keep);
+    for (open) |r| try testing.expect(r.link == null);
+    try testing.expectEqualStrings("[x](https://a.example/(b", try joinRuns(a, open));
+    // A real URL percent-encodes whitespace and control characters.
+    try testing.expect(isSafeUrl("https://a.example/x_(y)?q=1#f"));
+    try testing.expect(!isSafeUrl("https://a b") and !isSafeUrl("https://a\x00b"));
+    try testing.expect(!isSafeUrl("http://a\tb") and !isSafeUrl("https://a\x7f") and !isSafeUrl("mailto:a@b\r\n"));
+    const titled = try parseInlineMarkdown(a, "[x](https://a.example \"title\")", .keep);
+    for (titled) |r| try testing.expect(r.link == null);
+    try testing.expectEqualStrings("x", titled[0].text);
+}
+
+test "unit: sidebar: derived texts stay within the text cap" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const big = try a.alloc(u8, max_text_bytes);
+    @memset(big, 't');
+    const long_host = try a.alloc(u8, 1000);
+    @memset(long_host, 'h');
+    var b = RowBuilder.init(a);
+    b.beginSlot(.log);
+    try b.text(null, try std.mem.concat(a, u8, &.{ big, "tail" }), null);
+    const nodes = [_]Node{
+        .{ .workspace = .{ .id = testId(1), .custom_title = big, .host = "alpha", .details = b.finish() } },
+        .{ .workspace = .{ .id = testId(2), .custom_title = big, .host = long_host } },
+        .{ .workspace = .{ .id = testId(3), .custom_title = "zsh", .host = long_host } },
+        .{ .workspace = .{ .id = testId(4), .custom_title = "zsh", .host = "beta" } },
+    };
+    const rows = try build(a, .{ .nodes = &nodes, .settings = .{ .origin_host_titles = true } });
+    for (rows) |r| try testing.expect(r.body.workspace.title.title.len <= max_text_bytes);
+    try testing.expectEqual(max_text_bytes, rows[0].body.workspace.items[0].body.line.runs[0].text.len);
+    // A garbage host is cut; real hostnames (<= 253 bytes) are not.
+    const t = rows[2].body.workspace.title.title;
+    try testing.expect(std.mem.startsWith(u8, t, "zsh (hhh") and std.mem.endsWith(u8, t, "h)"));
+    try testing.expect(t.len < 300);
+    try testing.expectEqualStrings("zsh (beta)", rows[3].body.workspace.title.title);
 }
 
 test "unit: sidebar: color spec maps the cmux accent sentinel" {
