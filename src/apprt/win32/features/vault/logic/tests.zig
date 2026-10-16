@@ -791,6 +791,52 @@ test "unit: vault: fork error cases" {
     try testing.expect(checkpoints.forkSupported("grok") and !checkpoints.forkSupported("amp"));
 }
 
+/// A Claude assistant record (no newline) whose nesting depth, counting the
+/// record object itself, is `depth`.
+fn nestedRecord(gpa: std.mem.Allocator, depth: usize) ![]u8 {
+    var t: std.ArrayList(u8) = .empty;
+    errdefer t.deinit(gpa);
+    try t.appendSlice(gpa, "{\"type\":\"assistant\",\"sessionId\":\"" ++ claude_id ++ "\",\"x\":");
+    try t.appendNTimes(gpa, '[', depth - 1);
+    try t.appendNTimes(gpa, ']', depth - 1);
+    try t.append(gpa, '}');
+    return t.toOwnedSlice(gpa);
+}
+
+test "unit: vault: records nested too deeply are malformed and fork copies them verbatim" {
+    const gpa = testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    // The limit itself is fine and one more level is malformed; brackets
+    // inside strings (even after an escaped quote) do not count.
+    const at_limit = try nestedRecord(arena, index.max_json_depth);
+    try testing.expectEqual(index.LineKind.assistant, (try index.classifyLine(arena, .claude_code, at_limit)).kind);
+    const past_limit = try nestedRecord(arena, index.max_json_depth + 1);
+    try testing.expectEqual(index.LineKind.malformed, (try index.classifyLine(arena, .claude_code, past_limit)).kind);
+    const in_string = "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"\\\"" ++ ("[{" ** 200) ++ "\"}}";
+    try testing.expectEqual(index.LineKind.user_prompt, (try index.classifyLine(arena, .claude_code, in_string)).kind);
+
+    // A record deeper than std.json.Stringify's checked nesting (256 levels).
+    const deep_line = try std.mem.concat(arena, u8, &.{ try nestedRecord(arena, 300), "\n" });
+    const transcript = try std.mem.concat(arena, u8, &.{ claude_fixture, deep_line });
+    var idx = index.Index.init(gpa);
+    defer idx.deinit();
+    const e = try idx.ingest("/p/" ++ claude_id ++ ".jsonl", "claude", .{ .size = transcript.len, .mtime_ms = 1 }, 0, transcript, true);
+    try testing.expectEqual(@as(u32, 1), e.session.malformed_lines);
+    try testing.expectEqual(@as(u32, 3), e.session.turns);
+    var cp = try checkpoints.captureManual(gpa, .claude_code, transcript, .{ .id = "deep", .now_ms = 0 });
+    defer cp.deinit(gpa);
+    try testing.expectEqual(@as(u64, transcript.len), cp.byte_offset);
+    const new_id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    const out = try checkpoints.fork(gpa, "claude", transcript, &cp, .{ .new_session_id = new_id });
+    defer gpa.free(out);
+    try testing.expect(std.mem.endsWith(u8, out, deep_line));
+    const f = try idx.ingest("/p/" ++ new_id ++ ".jsonl", "claude", .{ .size = out.len, .mtime_ms = 1 }, 0, out, true);
+    try testing.expectEqualStrings(new_id, f.session.id);
+    try testing.expectEqual(@as(u32, 3), f.session.turns);
+}
+
 test "unit: vault: fork file names follow each agent's layout" {
     const gpa = testing.allocator;
     const id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";

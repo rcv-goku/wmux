@@ -26,6 +26,11 @@ pub const max_block_bytes: usize = 4096;
 pub const max_field_bytes: usize = 4096;
 /// Lines longer than this are skipped as malformed (never parsed).
 pub const max_line_bytes: usize = 16 << 20;
+/// Records nesting arrays/objects deeper than this are skipped as malformed.
+/// No agent record comes close, and it keeps the re-serialization in
+/// `checkpoints.fork` within std.json.Stringify's checked nesting limit (256
+/// levels in safe builds).
+pub const max_json_depth: usize = 128;
 /// Record timestamps outside years 0000-9999 (what ISO 8601 text can express)
 /// are corrupt and ignored, which keeps the day arithmetic in `sectionFor` and
 /// `writeIso8601` free of overflow.
@@ -181,11 +186,12 @@ pub const LineInfo = struct {
 };
 
 /// Parses one JSONL line (without the newline). Never fails on bad input:
-/// unparsable lines classify as `.malformed`; only OOM is an error.
+/// unparsable, oversized and too deeply nested lines classify as
+/// `.malformed`; only OOM is an error.
 pub fn classifyLine(arena: Allocator, format: Format, line: []const u8) Allocator.Error!LineInfo {
     const trimmed = std.mem.trim(u8, line, " \t\r");
     if (trimmed.len == 0) return .{ .kind = .other };
-    if (trimmed.len > max_line_bytes) return .{ .kind = .malformed };
+    if (trimmed.len > max_line_bytes or nestingExceeds(trimmed, max_json_depth)) return .{ .kind = .malformed };
     const root = std.json.parseFromSliceLeaky(std.json.Value, arena, trimmed, .{
         .duplicate_field_behavior = .use_last,
     }) catch |err| switch (err) {
@@ -198,6 +204,34 @@ pub fn classifyLine(arena: Allocator, format: Format, line: []const u8) Allocato
         .codex => classifyCodex(arena, root.object),
         .pi => classifyPi(arena, root.object),
     };
+}
+
+/// True when the JSON text `bytes` opens more than `limit` nested arrays or
+/// objects at some point. Brackets inside strings do not count.
+fn nestingExceeds(bytes: []const u8, limit: usize) bool {
+    var depth: usize = 0;
+    var in_string = false;
+    var escaped = false;
+    for (bytes) |c| {
+        if (in_string) {
+            if (escaped) {
+                escaped = false;
+            } else if (c == '\\') {
+                escaped = true;
+            } else if (c == '"') {
+                in_string = false;
+            }
+        } else switch (c) {
+            '"' => in_string = true,
+            '{', '[' => {
+                depth += 1;
+                if (depth > limit) return true;
+            },
+            '}', ']' => depth -|= 1,
+            else => {},
+        }
+    }
+    return false;
 }
 
 fn getStr(obj: std.json.ObjectMap, key: []const u8) ?[]const u8 {
