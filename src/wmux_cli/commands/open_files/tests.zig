@@ -10,6 +10,7 @@ const fake = @import("../../fake.zig");
 const open = @import("open.zig");
 const markdown = @import("markdown.zig");
 const diff = @import("diff.zig");
+const comments = @import("comments.zig");
 
 fn server(_: *fake.Server, req: fake.Request) fake.Action {
     const m = req.method;
@@ -18,7 +19,9 @@ fn server(_: *fake.Server, req: fake.Request) fake.Action {
     if (std.mem.eql(u8, m, "browser.open_split")) return .{ .ok = "{\"surface_ref\":\"surface:8\",\"pane_ref\":\"pane:5\"}" };
     if (std.mem.eql(u8, m, "markdown.open")) return .{ .ok = "{\"surface_ref\":\"surface:9\",\"pane_ref\":\"pane:6\"}" };
     if (std.mem.eql(u8, m, "wmux.diff.open")) return .{ .ok = "{\"surface_ref\":\"surface:10\",\"pane_ref\":\"pane:7\",\"source\":\"stdin\"}" };
-    if (std.mem.eql(u8, m, "comments.list")) return .{ .ok = "{\"comments\":[{\"file\":\"src/a.zig\",\"start_line\":3,\"end_line\":5,\"message\":\"rename\\nthis\"},{\"path\":\"C:\\\\r\\\\b.md\",\"line\":1,\"message\":\"typo \u{e9}\"}]}" };
+    // The first record has cmux's comment schema (what the diff viewer
+    // saves), the second the snake_case spellings.
+    if (std.mem.eql(u8, m, "comments.list")) return .{ .ok = "{\"comments\":[{\"id\":\"6ba7b810-9dad-11d1-80b4-00c04fd430c8\",\"filePath\":\"src/a.zig\",\"side\":\"additions\",\"startLine\":3,\"endLine\":5,\"lineText\":\"x\",\"message\":\"rename\\nthis\",\"submissionText\":\"Review comment\",\"createdAt\":\"2026-10-16T10:00:00Z\",\"updatedAt\":\"2026-10-16T10:00:00Z\"},{\"path\":\"C:\\\\r\\\\b.md\",\"line\":1,\"message\":\"typo \u{e9}\"}]}" };
     if (std.mem.eql(u8, m, "app.launch")) return .{ .ok = "{\"accepted\":true}" };
     return .{ .err = "{\"code\":\"method_not_found\",\"message\":\"Unknown method\"}" };
 }
@@ -411,4 +414,21 @@ test "unit: cli-comments: list resolves the repository and renders anchors" {
     const help = h.run(&.{ "cmux", "comments", "--help" });
     try harness.expectOk(help);
     try harness.expectContains(help.out, "Usage: cmux comments <subcommand> [options]");
+}
+
+test "unit: cli-comments: text from a bare array, single lines and records without an anchor" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const reply = try std.json.parseFromSliceLeaky(std.json.Value, a,
+        \\[{"filePath":"C:\\repo\\src\\b.zig","startLine":7,"endLine":7,"message":"one\tline"},
+        \\ {"filePath":"/repo/docs/c.md","startLine":2,"endLine":9,"message":"range"},
+        \\ {"message":"loose"}]
+    , .{});
+    var aw: std.Io.Writer.Allocating = .init(a);
+    try comments.writeText(&aw.writer, reply);
+    try testing.expectEqualStrings("3 comments\nb.zig:7  one line\nc.md:2-9  range\n  loose\n", aw.written());
+    aw.clearRetainingCapacity();
+    try comments.writeText(&aw.writer, try std.json.parseFromSliceLeaky(std.json.Value, a, "{\"comments\":[]}", .{}));
+    try testing.expectEqualStrings("0 comments\n", aw.written());
 }

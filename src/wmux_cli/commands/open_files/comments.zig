@@ -45,15 +45,24 @@ fn run(ctx: *Ctx) !u8 {
 }
 
 /// A count line, then `<basename>:<start>[-<end>]  <message>` per comment.
+/// Records use cmux's comment schema (`filePath`, `startLine`, `endLine`,
+/// `message`), which the diff viewer writes (`comments.save`); the
+/// snake_case spellings are accepted as well. A bare array reply is a list.
 pub fn writeText(w: *std.Io.Writer, r: std.json.Value) !void {
-    const list: []const std.json.Value = if (util.field(r, "comments")) |c| (if (c == .array) c.array.items else &.{}) else &.{};
+    const list: []const std.json.Value = switch (r) {
+        .array => |a| a.items,
+        else => if (util.field(r, "comments")) |c| (if (c == .array) c.array.items else &.{}) else &.{},
+    };
     try w.print("{d} comment{s}\n", .{ list.len, if (list.len == 1) "" else "s" });
     for (list) |c| {
-        const file = util.fieldStr(c, "file") orelse util.fieldStr(c, "path") orelse "";
+        const file = util.fieldStr(c, "filePath") orelse util.fieldStr(c, "file_path") orelse
+            util.fieldStr(c, "file") orelse util.fieldStr(c, "path") orelse "";
         try w.writeAll(proto.paths.basename(.windows, file));
-        if (util.fieldInt(c, "start_line") orelse util.fieldInt(c, "line")) |s| {
+        const start = util.fieldInt(c, "startLine") orelse util.fieldInt(c, "start_line") orelse util.fieldInt(c, "line");
+        if (start) |s| {
             try w.print(":{d}", .{s});
-            if (util.fieldInt(c, "end_line")) |e| if (e != s) try w.print("-{d}", .{e});
+            const end = util.fieldInt(c, "endLine") orelse util.fieldInt(c, "end_line");
+            if (end) |e| if (e != s) try w.print("-{d}", .{e});
         }
         try w.writeAll("  ");
         const msg = util.fieldStr(c, "message") orelse util.fieldStr(c, "body") orelse "";
