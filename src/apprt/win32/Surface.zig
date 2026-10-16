@@ -13,7 +13,7 @@ const CoreSurface = @import("../../Surface.zig");
 const internal_os = @import("../../os/main.zig");
 
 const App = @import("App.zig");
-const Pane = @import("Pane.zig");
+const Tab = @import("model/Tab.zig");
 const Window = @import("Window.zig");
 const app_foreground = @import("app/foreground.zig");
 const app_modal = @import("app/modal.zig");
@@ -159,13 +159,13 @@ palette_count: u16 = 0,
 /// Indices into palette_entries for the current filter.
 palette_filtered: [palette_entries.len]u16 = undefined,
 
-/// The Pane that wraps this surface in its tab's SplitTree. Set by
-/// Pane.create immediately after Surface.init; valid for the surface's
-/// lifetime (the pane unrefs to zero only when it destroys us). Null
+/// The Tab that wraps this surface (its tab bar slot). Set by
+/// Tab.create immediately after Surface.init; valid for the surface's
+/// lifetime (the tab unrefs to zero only when it destroys us). Null
 /// in the window between Surface.init (which publishes us in the
-/// HWND's GWLP_USERDATA) and Pane.create — message handlers running
+/// HWND's GWLP_USERDATA) and Tab.create — message handlers running
 /// in that gap must not dereference it.
-pane: ?*Pane = null,
+tab: ?*Tab = null,
 
 title: ?[:0]const u8 = null,
 

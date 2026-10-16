@@ -1,6 +1,6 @@
 //! A PaneContainer is a per-pane tab container that lives as a leaf in
 //! the workspace-level SplitTree. It owns a set of tabs (each a single
-//! Pane) and implements the SplitTree view protocol (ref/unref/eql —
+//! Tab) and implements the SplitTree view protocol (ref/unref/eql —
 //! see the doc comment in src/datastruct/split_tree.zig). Splits create
 //! new PaneContainers; tabs live within a single PaneContainer.
 const PaneContainer = @This();
@@ -8,7 +8,7 @@ const PaneContainer = @This();
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const Pane = @import("Pane.zig");
+const Tab = @import("model/Tab.zig");
 const Window = @import("Window.zig");
 const log_ring = @import("features/status/log_ring.zig");
 const w32 = @import("platform/win32.zig");
@@ -27,9 +27,9 @@ tab_count: usize = 0,
 /// Index of the currently visible tab.
 active_tab: usize = 0,
 
-/// Each tab is a single Pane (terminal or browser). No per-tab split
+/// Each tab is a single Tab (terminal or browser). No per-tab split
 /// tree — in the new model, splits are between PaneContainers.
-tabs: [MAX_TABS]*Pane = undefined,
+tabs: [MAX_TABS]*Tab = undefined,
 
 /// UTF-16 title buffers for each tab (for painting the tab bar).
 tab_titles: [MAX_TABS][256]u16 = undefined,
@@ -117,12 +117,12 @@ pub fn ref(self: *PaneContainer, alloc: Allocator) Allocator.Error!*PaneContaine
     return self;
 }
 
-/// Decrement reference count. At zero, unref all owned panes and free.
+/// Decrement reference count. At zero, unref all owned tabs and free.
 pub fn unref(self: *PaneContainer, alloc: Allocator) void {
     self.ref_count -= 1;
     if (self.ref_count == 0) {
-        for (self.tabs[0..self.tab_count]) |pane| {
-            pane.unref(alloc);
+        for (self.tabs[0..self.tab_count]) |tab| {
+            tab.unref(alloc);
         }
         alloc.destroy(self);
     }
@@ -137,14 +137,14 @@ pub fn eql(self: *const PaneContainer, other: *const PaneContainer) bool {
 // Accessors
 // -------------------------------------------------------------------------
 
-/// The active tab's pane HWND, or null if empty.
-pub fn activePaneHwnd(self: *const PaneContainer) ?w32.HWND {
+/// The active tab's content HWND, or null if empty.
+pub fn activeTabHwnd(self: *const PaneContainer) ?w32.HWND {
     if (self.tab_count == 0) return null;
     return self.tabs[self.active_tab].hwnd();
 }
 
-/// The active tab's Pane, or null if empty.
-pub fn activePane(self: *PaneContainer) ?*Pane {
+/// The active Tab, or null if empty.
+pub fn activeTab(self: *PaneContainer) ?*Tab {
     if (self.tab_count == 0) return null;
     return self.tabs[self.active_tab];
 }
@@ -153,7 +153,7 @@ pub fn activePane(self: *PaneContainer) ?*Pane {
 /// with the tabArraysInsertGap/tabArraysRemove/tabArraysSwap helpers
 /// in Window.zig.
 pub fn tabArrays(self: *PaneContainer) struct {
-    *[MAX_TABS]*Pane,
+    *[MAX_TABS]*Tab,
     *[MAX_TABS][256]u16,
     *[MAX_TABS]u16,
     *[MAX_TABS]TabStatus,
@@ -199,7 +199,7 @@ pub fn hasAttention(self: *const PaneContainer) bool {
     return false;
 }
 
-/// Give keyboard focus to the active tab's pane.
+/// Give keyboard focus to the active tab's content.
 pub fn focus(self: *const PaneContainer) void {
     if (self.tab_count > 0) self.tabs[self.active_tab].focus();
 }
@@ -604,22 +604,22 @@ test "unit: PaneContainer hasAttention" {
 
 test "unit: PaneContainer activePane null when empty" {
     var pc: PaneContainer = .{};
-    try testing.expectEqual(@as(?*Pane, null), pc.activePane());
-    try testing.expectEqual(@as(?w32.HWND, null), pc.activePaneHwnd());
+    try testing.expectEqual(@as(?*Tab, null), pc.activeTab());
+    try testing.expectEqual(@as(?w32.HWND, null), pc.activeTabHwnd());
 }
 
 test "unit: PaneContainer activePane returns active tab" {
-    var pane_a: Pane = .{ .content = .{ .terminal = undefined } };
-    var pane_b: Pane = .{ .content = .{ .terminal = undefined } };
+    var pane_a: Tab = .{ .content = .{ .terminal = undefined } };
+    var pane_b: Tab = .{ .content = .{ .terminal = undefined } };
     var pc: PaneContainer = .{};
     pc.tabs[0] = &pane_a;
     pc.tabs[1] = &pane_b;
     pc.tab_count = 2;
     pc.active_tab = 0;
-    try testing.expectEqual(&pane_a, pc.activePane().?);
+    try testing.expectEqual(&pane_a, pc.activeTab().?);
 
     pc.active_tab = 1;
-    try testing.expectEqual(&pane_b, pc.activePane().?);
+    try testing.expectEqual(&pane_b, pc.activeTab().?);
 }
 
 test "unit: PaneContainer focus is noop when empty" {

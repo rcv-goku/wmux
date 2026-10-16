@@ -14,7 +14,7 @@ const FlashOverlay = @import("FlashOverlay.zig").FlashOverlay;
 const BrowserPane = @import("BrowserPane.zig");
 const PaneButtonsMod = @import("PaneButtons.zig");
 const PaneButtons = PaneButtonsMod.PaneButtons;
-const Pane = @import("Pane.zig");
+const Tab = @import("model/Tab.zig");
 const PaneContainer = @import("PaneContainer.zig");
 const RightSidebar = @import("RightSidebar.zig");
 const Sidebar = @import("Sidebar.zig");
@@ -138,7 +138,7 @@ pub const Workspace = struct {
 
     /// Find which PaneContainer owns a given pane by scanning all
     /// containers' tab arrays.
-    pub fn findContainerOf(self: *Workspace, pane: *Pane) ?*PaneContainer {
+    pub fn findContainerOf(self: *Workspace, pane: *Tab) ?*PaneContainer {
         var it = self.split_tree.iterator();
         while (it.next()) |entry| {
             const container = entry.view;
@@ -1105,23 +1105,23 @@ pub fn workspaceIndex(self: *Window, ws: *Workspace) usize {
     return (@intFromPtr(ws) - base) / @sizeOf(Workspace);
 }
 
-/// Returns the currently active Pane, or null if there are no tabs.
-pub fn getActivePane(self: *Window) ?*Pane {
+/// Returns the currently active Tab, or null if there are no tabs.
+pub fn getActiveTab(self: *Window) ?*Tab {
     const ws = self.activeWorkspace();
     const container = ws.focusedContainerOrFirst() orelse return null;
-    return container.activePane();
+    return container.activeTab();
 }
 
 /// Returns the currently active terminal Surface, or null if there are
 /// no tabs or the active pane has no terminal.
 pub fn getActiveSurface(self: *Window) ?*Surface {
-    const pane = self.getActivePane() orelse return null;
+    const pane = self.getActiveTab() orelse return null;
     return pane.surface();
 }
 
 /// Find the workspace+container+tab containing a given pane, scanning
 /// every workspace's PaneContainers.
-pub fn findLoc(self: *Window, pane: *Pane) ?Loc {
+pub fn findLoc(self: *Window, pane: *Tab) ?Loc {
     for (self.workspaces[0..self.workspace_count]) |*ws| {
         var it = ws.split_tree.iterator();
         while (it.next()) |entry| {
@@ -1231,7 +1231,7 @@ pub fn addTabInherit(self: *Window) !*Surface {
     const command: ?[]const []const u8 = blk: {
         const ws = self.activeWorkspace();
         const container = ws.focusedContainerOrFirst() orelse break :blk null;
-        const src = container.activePane() orelse break :blk null;
+        const src = container.activeTab() orelse break :blk null;
         const surface = src.surface() orelse break :blk null;
         break :blk surface.spawn_command;
     };
@@ -1293,7 +1293,7 @@ pub fn addTabWithCommand(
 
     const surface = try alloc.create(Surface);
     try surface.init(self.app, self, .tab, command, ws.working_dir);
-    const pane = Pane.create(alloc, surface) catch |err| {
+    const pane = Tab.create(alloc, surface) catch |err| {
         surface.deinit();
         alloc.destroy(surface);
         return err;
@@ -1393,7 +1393,7 @@ pub fn addTabBackground(
 
     const surface = try alloc.create(Surface);
     try surface.init(self.app, self, .tab, command, ws.working_dir);
-    const pane = Pane.create(alloc, surface) catch |err| {
+    const pane = Tab.create(alloc, surface) catch |err| {
         surface.deinit();
         alloc.destroy(surface);
         return err;
@@ -1443,7 +1443,7 @@ pub fn addTabInheritBackground(self: *Window, ws_idx: usize) !usize {
     const command: ?[]const []const u8 = blk: {
         const ws = &self.workspaces[ws_idx];
         const container = ws.focusedContainerOrFirst() orelse break :blk null;
-        const src = container.activePane() orelse break :blk null;
+        const src = container.activeTab() orelse break :blk null;
         const surface = src.surface() orelse break :blk null;
         break :blk surface.spawn_command;
     };
@@ -1476,7 +1476,7 @@ pub fn addBrowserTab(self: *Window) !void {
 
     const browser = try BrowserPane.create(alloc, self.app, self);
     errdefer browser.destroy(alloc);
-    const browser_pane = try Pane.createBrowser(alloc, browser);
+    const browser_pane = try Tab.createBrowser(alloc, browser);
     _ = browser_pane.ref(alloc) catch |err| {
         alloc.destroy(browser_pane);
         return err;
@@ -1522,7 +1522,7 @@ pub fn addBrowserTab(self: *Window) !void {
 
 /// Close a tab by pane pointer. Removes from the tab list,
 /// deinits the tree, and adjusts the active tab index.
-pub fn closeTab(self: *Window, pane: *Pane) void {
+pub fn closeTab(self: *Window, pane: *Tab) void {
     const loc = self.findLoc(pane) orelse return;
     log.debug("closeTab called for pane={x} tab_count={}", .{ @intFromPtr(pane), loc.container.tab_count });
     // The pane may live in a NON-active workspace (a background shell
@@ -1664,14 +1664,14 @@ pub fn closeTabMode(self: *Window, mode: apprt.action.CloseTabMode, surface: *Su
 
 /// Close a single terminal surface's pane. See closeSplitPane.
 pub fn closeSplitSurface(self: *Window, surface: *Surface) void {
-    const pane = surface.pane orelse return;
+    const pane = surface.tab orelse return;
     self.closeSplitPane(pane);
 }
 
 /// Close a single pane. In the new model, each tab is a single pane
 /// (splits are between PaneContainers, not within tabs), so this just
 /// closes the tab in the owning container.
-pub fn closeSplitPane(self: *Window, pane: *Pane) void {
+pub fn closeSplitPane(self: *Window, pane: *Tab) void {
     const loc = self.findLoc(pane) orelse {
         log.debug("closeSplitPane: pane not found in any container", .{});
         return;
@@ -1683,7 +1683,7 @@ pub fn closeSplitPane(self: *Window, pane: *Pane) void {
 /// Break a tab out of a multi-tab PaneContainer into a new PaneContainer
 /// that becomes a sibling leaf in the workspace split tree. No-op if the
 /// container has only one tab. The pane's HWND/surface is NOT destroyed.
-pub fn breakPane(self: *Window, pane: *Pane) void {
+pub fn breakPane(self: *Window, pane: *Tab) void {
     const alloc = self.app.core_app.alloc;
     const loc = self.findLoc(pane) orelse return;
     const ws = loc.ws;
@@ -1749,7 +1749,7 @@ pub fn breakPane(self: *Window, pane: *Pane) void {
 /// new PaneContainer; `.next_tab`/`.prev_tab` swap the tab position
 /// within the same container (since splits are between PaneContainers,
 /// not within tabs, there is no cross-tab merge).
-pub fn movePaneToTab(self: *Window, pane: *Pane, target_enum: apprt.action.MovePaneTarget) void {
+pub fn movePaneToTab(self: *Window, pane: *Tab, target_enum: apprt.action.MovePaneTarget) void {
     const loc = self.findLoc(pane) orelse return;
     const container = loc.container;
     const src_tab = loc.tab;
@@ -1873,7 +1873,7 @@ pub fn selectWorkspace(self: *Window, idx: usize) void {
     // run it before laying out the new active tab.
     self.updateTabBarVisibility();
     self.layoutSplits();
-    if (self.getActivePane()) |pane| pane.focus();
+    if (self.getActiveTab()) |pane| pane.focus();
     self.updateWindowTitle();
     self.invalidateTabBar();
     self.invalidateSidebar();
@@ -2003,7 +2003,7 @@ fn addFirstTabBackground(self: *Window, ws_idx: usize, command: ?[]const []const
     const alloc = self.app.core_app.alloc;
     const surface = try alloc.create(Surface);
     try surface.init(self.app, self, .tab, command, ws.working_dir);
-    const pane = Pane.create(alloc, surface) catch |err| {
+    const pane = Tab.create(alloc, surface) catch |err| {
         surface.deinit();
         alloc.destroy(surface);
         return err;
@@ -2171,7 +2171,7 @@ pub fn closeWorkspace(self: *Window, idx: usize) void {
         const ws = &self.workspaces[idx];
         var it = ws.split_tree.iterator();
         while (it.next()) |entry| {
-            if (entry.view.activePaneHwnd()) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
+            if (entry.view.activeTabHwnd()) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
         }
     }
 
@@ -2213,7 +2213,7 @@ pub fn closeWorkspace(self: *Window, idx: usize) void {
     // survivor may have a different tab count, changing surfaceRect).
     self.updateTabBarVisibility();
     self.layoutSplits();
-    if (self.getActivePane()) |pane| pane.focus();
+    if (self.getActiveTab()) |pane| pane.focus();
     self.updateWindowTitle();
     self.invalidateTabBar();
     self.invalidateSidebar();
@@ -2270,14 +2270,14 @@ pub fn layoutSplits(self: *Window) void {
         while (it.next()) |entry| {
             entry.view.layout_rect = rect;
             if (entry.handle == zoomed_handle) {
-                if (entry.view.activePaneHwnd()) |h| {
+                if (entry.view.activeTabHwnd()) |h| {
                     const w = @max(rect.right - rect.left, 1);
                     const ht = @max(rect.bottom - rect.top, 1);
                     _ = w32.MoveWindow(h, rect.left, rect.top, @intCast(w), @intCast(ht), 1);
                     _ = w32.ShowWindow(h, w32.SW_SHOW);
                 }
             } else {
-                if (entry.view.activePaneHwnd()) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
+                if (entry.view.activeTabHwnd()) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
             }
         }
         return;
@@ -2314,7 +2314,7 @@ fn layoutNode(self: *Window, tree: SplitTree(PaneContainer), handle: SplitTree(P
                 content_rect.top += bar_h;
             }
 
-            if (container.activePaneHwnd()) |h| {
+            if (container.activeTabHwnd()) |h| {
                 const w = @max(content_rect.right - content_rect.left, 1);
                 const ht = @max(content_rect.bottom - content_rect.top, 1);
                 _ = w32.MoveWindow(h, content_rect.left, content_rect.top, @intCast(w), @intCast(ht), 1);
@@ -2360,7 +2360,7 @@ pub fn updateAttentionRings(self: *Window) void {
     if (tree.zoomed != null) return self.hideAllRings();
 
     const focused_container = ws.focusedContainerOrFirst() orelse return self.hideAllRings();
-    const focused = focused_container.activePane() orelse return self.hideAllRings();
+    const focused = focused_container.activeTab() orelse return self.hideAllRings();
     var next: usize = 0;
     self.attentionRingNode(hwnd, tree, .root, self.surfaceRect(), focused, &next);
 
@@ -2403,13 +2403,13 @@ fn attentionRingNode(
     tree: SplitTree(PaneContainer),
     handle: SplitTree(PaneContainer).Node.Handle,
     rect: w32.RECT,
-    focused: *Pane,
+    focused: *Tab,
     next: *usize,
 ) void {
     if (handle.idx() >= tree.nodes.len) return;
     switch (tree.nodes[handle.idx()]) {
         .leaf => |container| {
-            const pane = container.activePane() orelse return;
+            const pane = container.activeTab() orelse return;
             if (pane == focused) return;
             const surface = pane.surface() orelse return;
             if (!surface.attention) return;
@@ -2462,7 +2462,7 @@ pub fn updatePaneButtons(self: *Window) void {
     if (tree.isEmpty()) return self.hideAllPaneButtons();
 
     const focused_container = ws.focusedContainerOrFirst() orelse return self.hideAllPaneButtons();
-    const focused = focused_container.activePane() orelse return self.hideAllPaneButtons();
+    const focused = focused_container.activeTab() orelse return self.hideAllPaneButtons();
 
     var next: usize = 0;
 
@@ -2506,7 +2506,7 @@ fn paneButtonsAt(self: *Window, idx: usize, hwnd: w32.HWND) ?*PaneButtons {
 /// Position one corner-button overlay around `pane`'s client rect (in
 /// client coords; converted to screen here), binding it to the pane and
 /// this window. `next` is the running count of overlays used this pass.
-fn placePaneButton(self: *Window, hwnd: w32.HWND, pane: *Pane, rect: w32.RECT, next: *usize) void {
+fn placePaneButton(self: *Window, hwnd: w32.HWND, pane: *Tab, rect: w32.RECT, next: *usize) void {
     const pb = self.paneButtonsAt(next.*, hwnd) orelse return;
     var tl = w32.POINT{ .x = rect.left, .y = rect.top };
     var br = w32.POINT{ .x = rect.right, .y = rect.bottom };
@@ -2533,7 +2533,7 @@ fn paneButtonsNode(
     if (handle.idx() >= tree.nodes.len) return;
     switch (tree.nodes[handle.idx()]) {
         .leaf => |container| {
-            const pane = container.activePane() orelse return;
+            const pane = container.activeTab() orelse return;
             self.placePaneButton(hwnd, pane, rect, next);
         },
         .split => |s| {
@@ -2563,7 +2563,7 @@ fn paneButtonsNode(
 /// positioned). All four actions (New Terminal / New Browser / Split Right
 /// / Split Down) operate on the active pane, so the target pane is brought
 /// to the foreground and focused first.
-pub fn onPaneButtonClick(window: *anyopaque, pane: *Pane, action: PaneButtonsMod.Action) void {
+pub fn onPaneButtonClick(window: *anyopaque, pane: *Tab, action: PaneButtonsMod.Action) void {
     const self: *Window = @ptrCast(@alignCast(window));
     if (self.closing) return;
     // Validate the pane still exists in this window (by address) and
@@ -2608,7 +2608,7 @@ fn paintDividers(self: *Window, hdc: w32.HDC) void {
 
 /// Paint a thin accent border in the divider gaps around the focused pane.
 fn paintFocusBorder(self: *Window, hdc: w32.HDC) void {
-    const active = self.getActivePane() orelse return;
+    const active = self.getActiveTab() orelse return;
     const active_hwnd = active.hwnd() orelse return;
     const parent_hwnd = self.hwnd orelse return;
 
@@ -2855,7 +2855,7 @@ fn sidebarDragTarget(self: *const Window, y: i32) usize {
 pub fn newSplit(self: *Window, direction: SplitTree(PaneContainer).Split.Direction) !void {
     const ws = self.activeWorkspace();
     const container = ws.focusedContainerOrFirst() orelse return;
-    const command: ?[]const []const u8 = if (container.activePane()) |p|
+    const command: ?[]const []const u8 = if (container.activeTab()) |p|
         if (p.surface()) |src| src.spawn_command else null
     else
         null;
@@ -2884,7 +2884,7 @@ pub fn newSplitInWorkspace(
     direction: SplitTree(PaneContainer).Split.Direction,
     command: ?[]const []const u8,
     focus: bool,
-) !*Pane {
+) !*Tab {
     if (self.closing) return error.WindowClosing;
     if (ws_idx >= self.workspace_count) return error.NoWindow;
     const ws = &self.workspaces[ws_idx];
@@ -2905,7 +2905,7 @@ pub fn newSplitInWorkspace(
         if (new_surface.hwnd) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
     }
 
-    const new_pane = try Pane.create(alloc, new_surface);
+    const new_pane = try Tab.create(alloc, new_surface);
     _ = new_pane.ref(alloc) catch |err| {
         alloc.destroy(new_pane);
         return err;
@@ -2967,7 +2967,7 @@ pub fn newBrowserSplit(self: *Window, direction: SplitTree(PaneContainer).Split.
 
     const browser = try BrowserPane.create(alloc, self.app, self);
     errdefer browser.destroy(alloc);
-    const browser_pane = try Pane.createBrowser(alloc, browser);
+    const browser_pane = try Tab.createBrowser(alloc, browser);
     _ = browser_pane.ref(alloc) catch |err| {
         alloc.destroy(browser_pane);
         return err;
@@ -3212,13 +3212,13 @@ fn updateWindowTitle(self: *Window) void {
 /// Called when a terminal surface's title changes. Delegates to the
 /// pane variant.
 pub fn onTabTitleChanged(self: *Window, surface: *Surface, title: [:0]const u8) void {
-    const pane = surface.pane orelse return;
+    const pane = surface.tab orelse return;
     self.onPaneTitleChanged(pane, title);
 }
 
 /// Called when a pane's title changes. Updates the stored title
 /// and refreshes the window title bar / tab bar if needed.
-pub fn onPaneTitleChanged(self: *Window, pane: *Pane, title: [:0]const u8) void {
+pub fn onPaneTitleChanged(self: *Window, pane: *Tab, title: [:0]const u8) void {
     const loc = self.findLoc(pane) orelse return;
     const container = loc.container;
     const tab_idx = loc.tab;
@@ -3323,7 +3323,7 @@ fn clearTabAttention(self: *Window, container: *PaneContainer, tab: usize) void 
 /// on first use. Safe to call repeatedly (re-triggers reset the timer).
 pub fn flashFocusedPane(self: *Window) void {
     const hwnd = self.hwnd orelse return;
-    const pane = self.getActivePane() orelse return;
+    const pane = self.getActiveTab() orelse return;
     const pane_hwnd = pane.hwnd() orelse return;
 
     // Get the focused pane's client rect in screen coordinates.
@@ -4874,7 +4874,7 @@ pub fn finishTabRename(self: *Window) void {
     self.invalidateSidebar();
 
     // Return focus to the active pane
-    if (self.getActivePane()) |p| p.focus();
+    if (self.getActiveTab()) |p| p.focus();
 }
 
 /// Cancel inline rename without applying changes.
@@ -4887,7 +4887,7 @@ pub fn cancelTabRename(self: *Window) void {
             _ = w32.DeleteObject(f);
             self.rename_font = null;
         }
-        if (self.getActivePane()) |p| p.focus();
+        if (self.getActiveTab()) |p| p.focus();
     }
 }
 
@@ -5088,7 +5088,7 @@ pub fn windowWndProc(
             const ws = window.activeWorkspace();
             var it = ws.split_tree.iterator();
             while (it.next()) |entry| {
-                const pane = entry.view.activePane() orelse continue;
+                const pane = entry.view.activeTab() orelse continue;
                 switch (pane.content) {
                     .terminal => |s| s.in_live_resize = true,
                     .browser => {},
@@ -5100,7 +5100,7 @@ pub fn windowWndProc(
             const ws = window.activeWorkspace();
             var it = ws.split_tree.iterator();
             while (it.next()) |entry| {
-                const pane = entry.view.activePane() orelse continue;
+                const pane = entry.view.activeTab() orelse continue;
                 switch (pane.content) {
                     .terminal => |s| s.in_live_resize = false,
                     .browser => {},
@@ -5149,7 +5149,7 @@ pub fn windowWndProc(
             // Forward keyboard focus to the active child pane.
             // Without this, keyboard input stays on the parent and
             // is never delivered to the content.
-            if (window.getActivePane()) |p| p.focus();
+            if (window.getActiveTab()) |p| p.focus();
             return 0;
         },
         w32.WM_ERASEBKGND => return 1,

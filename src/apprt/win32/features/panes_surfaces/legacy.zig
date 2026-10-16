@@ -205,7 +205,7 @@ fn ipcSurfaceList(self: *App, req: *ipc.Request) anyerror!void {
     while (tree_it.next()) |tree_entry| {
         const container = tree_entry.view;
         const is_focused_container = if (focused_container) |fc| container == fc else false;
-        const active_pane = container.activePane();
+        const active_pane = container.activeTab();
         for (container.tabs[0..container.tab_count], 0..) |pane, t| {
             if (!first) try buf.append(alloc, ',');
             first = false;
@@ -252,7 +252,7 @@ fn ipcSurfaceFocus(self: *App, req: *ipc.Request) anyerror!void {
             ws.focused_container = loc.container;
         }
         loc.window.selectTabIndex(loc.tab_idx);
-        (loc.surface.pane orelse return IpcError.UnknownSurface).focus();
+        (loc.surface.tab orelse return IpcError.UnknownSurface).focus();
         server.sendOk(req.id, null) catch {};
         return;
     }
@@ -322,7 +322,7 @@ fn ipcNewSplit(self: *App, req: *ipc.Request) anyerror!void {
     const explicit: ?[]const []const u8 = if (argv.items.len > 0) argv.items else null;
     const command: ?[]const []const u8 = explicit orelse blk: {
         const src_container = target.ws.focusedContainerOrFirst() orelse break :blk null;
-        const src_pane = src_container.activePane() orelse break :blk null;
+        const src_pane = src_container.activeTab() orelse break :blk null;
         const src = src_pane.surface() orelse break :blk null;
         break :blk src.spawn_command;
     };

@@ -21,7 +21,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const App = @import("App.zig");
-const Pane = @import("Pane.zig");
+const Tab = @import("model/Tab.zig");
 const PaneContainer = @import("PaneContainer.zig");
 const Surface = @import("Surface.zig");
 const Window = @import("Window.zig");
@@ -390,7 +390,7 @@ fn buildLeafTree(
             continue;
         };
 
-        const pane = Pane.create(alloc, surface) catch {
+        const pane = Tab.create(alloc, surface) catch {
             surface.deinit();
             alloc.destroy(surface);
             continue;

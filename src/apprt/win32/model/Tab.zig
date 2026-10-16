@@ -1,22 +1,23 @@
-//! A Pane is the unit of content held by a tab's SplitTree leaf. It is
-//! a heap-allocated, reference-counted wrapper implementing the
-//! SplitTree view protocol (ref/unref/eql — see the doc comment in
-//! src/datastruct/split_tree.zig). Content is either a terminal
-//! Surface or a WebView2 BrowserPane.
-const Pane = @This();
+//! A Tab is one tab of a split-tree leaf (a cmux "surface"): the unit of
+//! content shown in one tab bar slot. It is a heap-allocated,
+//! reference-counted wrapper implementing the view protocol of
+//! src/datastruct/split_tree.zig (ref/unref/eql). Content is either a
+//! terminal Surface or a WebView2 BrowserPane. Formerly `Pane` (renamed
+//! in W0-A2, ARCHITECTURE.md ADR-1.8).
+const Tab = @This();
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const BrowserPane = @import("BrowserPane.zig");
-const Surface = @import("Surface.zig");
-const w32 = @import("platform/win32.zig");
+const BrowserPane = @import("../BrowserPane.zig");
+const Surface = @import("../Surface.zig");
+const w32 = @import("../platform/win32.zig");
 
 /// Reference count for SplitTree ownership. Starts at 0 because
 /// SplitTree.init() calls ref() to take initial ownership.
 ref_count: u32 = 0,
 
-/// What this pane displays.
+/// What this tab displays.
 content: Content,
 
 pub const Content = union(enum) {
@@ -24,27 +25,27 @@ pub const Content = union(enum) {
     browser: *BrowserPane,
 };
 
-/// Allocate a pane wrapping a terminal surface and set the surface's
+/// Allocate a tab wrapping a terminal surface and set the surface's
 /// back-pointer. The caller owns the allocation until a SplitTree
-/// ref()s the pane.
-pub fn create(alloc: Allocator, surface_ptr: *Surface) Allocator.Error!*Pane {
-    const pane = try alloc.create(Pane);
-    pane.* = .{ .content = .{ .terminal = surface_ptr } };
-    surface_ptr.pane = pane;
-    return pane;
+/// ref()s the tab.
+pub fn create(alloc: Allocator, surface_ptr: *Surface) Allocator.Error!*Tab {
+    const tab = try alloc.create(Tab);
+    tab.* = .{ .content = .{ .terminal = surface_ptr } };
+    surface_ptr.tab = tab;
+    return tab;
 }
 
-/// Allocate a pane wrapping a browser and set the browser's
+/// Allocate a tab wrapping a browser and set the browser's
 /// back-pointer. Same ownership contract as create().
-pub fn createBrowser(alloc: Allocator, browser: *BrowserPane) Allocator.Error!*Pane {
-    const pane = try alloc.create(Pane);
-    pane.* = .{ .content = .{ .browser = browser } };
-    browser.pane = pane;
-    return pane;
+pub fn createBrowser(alloc: Allocator, browser: *BrowserPane) Allocator.Error!*Tab {
+    const tab = try alloc.create(Tab);
+    tab.* = .{ .content = .{ .browser = browser } };
+    browser.tab = tab;
+    return tab;
 }
 
 /// SplitTree view protocol: increment reference count.
-pub fn ref(self: *Pane, alloc: Allocator) Allocator.Error!*Pane {
+pub fn ref(self: *Tab, alloc: Allocator) Allocator.Error!*Tab {
     _ = alloc;
     self.ref_count += 1;
     return self;
@@ -56,13 +57,13 @@ pub fn ref(self: *Pane, alloc: Allocator) Allocator.Error!*Pane {
 const UnrefAction = enum { keep, hide_zombie, destroy };
 
 /// The unref state machine. `remaining` is the post-decrement count.
-/// A browser pane can outlive its trees while async WebView2 creation
+/// A browser tab can outlive its trees while async WebView2 creation
 /// holds an in-flight ref; if an unref took it out of every tab of its
 /// window (tab closed mid-creation), its host HWND must hide so the
 /// zombie can't keep painting, eating mouse input, or taking focus.
 /// Transient unrefs during tree rebuilds (split/resize/equalize) leave
-/// the pane findable in a tree and keep it untouched, as do all
-/// non-final unrefs of terminal panes.
+/// the tab findable in a tree and keep it untouched, as do all
+/// non-final unrefs of terminal tabs.
 fn unrefAction(
     remaining: u32,
     kind: std.meta.Tag(Content),
@@ -76,8 +77,8 @@ fn unrefAction(
 }
 
 /// SplitTree view protocol: decrement reference count. At zero the
-/// content is torn down and the pane itself is freed.
-pub fn unref(self: *Pane, alloc: Allocator) void {
+/// content is torn down and the tab itself is freed.
+pub fn unref(self: *Tab, alloc: Allocator) void {
     self.ref_count -= 1;
     const action = switch (self.content) {
         .terminal => unrefAction(self.ref_count, .terminal, true),
@@ -116,12 +117,12 @@ pub fn unref(self: *Pane, alloc: Allocator) void {
 }
 
 /// SplitTree view protocol: identity comparison.
-pub fn eql(self: *const Pane, other: *const Pane) bool {
+pub fn eql(self: *const Tab, other: *const Tab) bool {
     return self == other;
 }
 
 /// The content's HWND, if it has one.
-pub fn hwnd(self: *const Pane) ?w32.HWND {
+pub fn hwnd(self: *const Tab) ?w32.HWND {
     return switch (self.content) {
         .terminal => |surface_ptr| surface_ptr.hwnd,
         .browser => |browser| browser.host_hwnd,
@@ -129,12 +130,12 @@ pub fn hwnd(self: *const Pane) ?w32.HWND {
 }
 
 /// Give keyboard focus to the content.
-pub fn focus(self: *const Pane) void {
+pub fn focus(self: *const Tab) void {
     if (self.hwnd()) |h| _ = w32.SetFocus(h);
 }
 
 /// The terminal surface, or null for non-terminal content.
-pub fn surface(self: *const Pane) ?*Surface {
+pub fn surface(self: *const Tab) ?*Surface {
     return switch (self.content) {
         .terminal => |surface_ptr| surface_ptr,
         .browser => null,
@@ -208,18 +209,18 @@ test "unit: pane ref counts up and returns self" {
     // apprt.gtk reference) into the test build, which then collects
     // gtk's refAllDecls test and fails on the absent GTK modules. The
     // unref decision rules are covered through unrefAction above.
-    var pane: Pane = .{ .content = .{ .terminal = undefined } };
-    try testing.expectEqual(@as(u32, 0), pane.ref_count);
-    const p = try pane.ref(testing.allocator);
-    try testing.expectEqual(&pane, p);
-    try testing.expectEqual(@as(u32, 1), pane.ref_count);
-    _ = try pane.ref(testing.allocator);
-    try testing.expectEqual(@as(u32, 2), pane.ref_count);
+    var tab: Tab = .{ .content = .{ .terminal = undefined } };
+    try testing.expectEqual(@as(u32, 0), tab.ref_count);
+    const p = try tab.ref(testing.allocator);
+    try testing.expectEqual(&tab, p);
+    try testing.expectEqual(@as(u32, 1), tab.ref_count);
+    _ = try tab.ref(testing.allocator);
+    try testing.expectEqual(@as(u32, 2), tab.ref_count);
 }
 
 test "unit: pane eql is identity" {
-    var a: Pane = .{ .content = .{ .terminal = undefined } };
-    var b: Pane = .{ .content = .{ .terminal = undefined } };
+    var a: Tab = .{ .content = .{ .terminal = undefined } };
+    var b: Tab = .{ .content = .{ .terminal = undefined } };
     try testing.expect(a.eql(&a));
     try testing.expect(!a.eql(&b));
 }

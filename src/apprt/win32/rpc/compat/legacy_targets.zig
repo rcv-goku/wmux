@@ -10,7 +10,7 @@
 const std = @import("std");
 
 const App = @import("../../App.zig");
-const Pane = @import("../../Pane.zig");
+const Tab = @import("../../model/Tab.zig");
 const PaneContainer = @import("../../PaneContainer.zig");
 const Surface = @import("../../Surface.zig");
 const Window = @import("../../Window.zig");
@@ -166,8 +166,8 @@ pub fn ipcFindSurfaceById(self: *App, want: u64) ?SurfaceLoc {
 
 /// The stable surface id of a terminal pane, or null if it is a browser
 /// or its core is not yet initialized (no id assigned).
-pub fn ipcSurfaceId(pane: *Pane) ?u64 {
-    const surface = pane.surface() orelse return null;
+pub fn ipcSurfaceId(tab: *Tab) ?u64 {
+    const surface = tab.surface() orelse return null;
     if (!surface.core_surface_initialized) return null;
     return surface.core_surface.id;
 }

@@ -81,7 +81,7 @@ fn ipcOpen(self: *App, req: *ipc.Request) anyerror!void {
     }
 
     // The just-created pane is the window's active pane.
-    const pane = window.getActivePane() orelse return IpcError.NoWindow;
+    const pane = window.getActiveTab() orelse return IpcError.NoWindow;
     const browser = switch (pane.content) {
         .browser => |b| b,
         .terminal => return IpcError.NoWindow,

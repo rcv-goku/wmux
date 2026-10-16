@@ -1024,8 +1024,8 @@ fn surfaceWndProc(
             // a pane in a tab slot that doesn't own it.
             const win = surface.parent_window;
             if (!win.closing) {
-                if (surface.pane) |pane| {
-                    if (win.findLoc(pane)) |loc| {
+                if (surface.tab) |tab| {
+                    if (win.findLoc(tab)) |loc| {
                         loc.ws.focused_container = loc.container;
                     }
                 }
