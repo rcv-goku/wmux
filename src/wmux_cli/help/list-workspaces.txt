@@ -11,5 +11,6 @@ Legacy alias of "cmux workspace list".
 
 Options:
   --window <id|ref|index>   Window to list
-  --json                    Print the result as JSON (environment variables
-                            are never included)
+  --json                    Print the result as JSON; workspace UUIDs stay
+                            unless --id-format is given (environment
+                            variables are never included)

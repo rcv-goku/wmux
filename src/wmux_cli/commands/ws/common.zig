@@ -179,6 +179,17 @@ pub fn writeJsonResult(ctx: *Ctx, v: std.json.Value) !void {
     try output.writeResult(ctx.arena, ctx.out, v, ctx.parsed.globals.id_format);
 }
 
+/// `--json` for workspace inspection (`workspace list`, `list-workspaces`,
+/// `current-workspace`): without an explicit `--id-format`, workspace UUIDs
+/// (`id` next to a ref, `workspace_id`) stay next to their refs, as cmux
+/// keeps them for scripts that compare with `CMUX_WORKSPACE_ID`. These
+/// results carry no other bare `id`/`ref` pair.
+pub fn writeWorkspaceInspectionJson(ctx: *Ctx, v: std.json.Value) !void {
+    if (ctx.parsed.globals.id_format_explicit) return writeJsonResult(ctx, v);
+    const keep: idformat.Options = .{ .preserve_ids = &.{ "", "workspace" } };
+    try output.writeJson(ctx.out, try idformat.apply(ctx.arena, v, ctx.parsed.globals.id_format, keep));
+}
+
 /// Calls `method` and prints the JSON result, or cmux's v2 summary: `OK`
 /// followed by the handle of each of `kinds` (`workspace`, `window`) that
 /// the result names.

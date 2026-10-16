@@ -115,7 +115,7 @@ fn runList(ctx: *Ctx, args: []const []const u8, u: []const u8) !u8 {
         .ok => |v| v,
     };
     if (ctx.json()) {
-        try common.writeJsonResult(ctx, v);
+        try common.writeWorkspaceInspectionJson(ctx, v);
         return output.exit.ok;
     }
     const items = common.list(v, "workspaces") orelse &.{};
@@ -127,15 +127,18 @@ fn runList(ctx: *Ctx, args: []const []const u8, u: []const u8) !u8 {
     return output.exit.ok;
 }
 
-/// `* workspace:2  <title>  [ssh:connected]  [selected]`: the remote tag
-/// only for remote workspaces, `*` and `[selected]` for the selected one.
+/// cmux's row `* workspace:2  <title>  [ssh:connected]  [selected]`: `*`
+/// and `[selected]` mark the selected workspace, an empty title is left
+/// out, and the `[<transport>:<state>]` tag shows only for an enabled
+/// remote (every row carries `remote`; a local one has `enabled: false`).
 fn writeListLine(ctx: *Ctx, w: std.json.Value) !void {
     const selected = common.boolean(w, "selected");
-    const handle = (try common.handleText(ctx, w, "workspace")) orelse "?";
-    try ctx.out.print("{s}{s}  {s}", .{ if (selected) "* " else "  ", handle, common.str(w, "title") orelse "" });
+    try ctx.out.print("{s}{s}", .{ if (selected) "* " else "  ", try common.rowHandle(ctx, w, "workspace") });
+    const title = common.str(w, "title") orelse "";
+    if (title.len > 0) try ctx.out.print("  {s}", .{title});
     const remote = common.field(w, "remote");
-    if (common.str(remote, "state")) |state| {
-        try ctx.out.print("  [{s}:{s}]", .{ common.str(remote, "transport") orelse "ssh", state });
+    if (common.boolean(remote, "enabled")) {
+        try ctx.out.print("  [{s}:{s}]", .{ common.str(remote, "transport") orelse "remote", common.str(remote, "state") orelse "unknown" });
     }
     if (selected) try ctx.out.writeAll("  [selected]");
     try ctx.out.writeByte('\n');
@@ -153,7 +156,7 @@ fn runCurrent(ctx: *Ctx) !u8 {
         .ok => |v| v,
     };
     if (ctx.json()) {
-        try common.writeJsonResult(ctx, v);
+        try common.writeWorkspaceInspectionJson(ctx, v);
         return output.exit.ok;
     }
     const handle = (try common.handleText(ctx, v, "workspace")) orelse return ctx.runtimeError("No workspace selected", .{});
@@ -292,11 +295,17 @@ test "unit: cli-workspace: offline help for every workspace command" {
     try testing.expectEqual(@as(usize, 0), h.fp.connects);
 }
 
+// cmux's workspace.list rows: every row has `remote`, local ones with
+// `enabled: false`.
 const workspaces_json =
     \\{"window_id":"6F1D2C3B-0000-4000-8000-000000000001","window_ref":"window:1","workspaces":[
-    \\{"id":"9B690000-0000-4000-8000-000000000001","ref":"workspace:1","index":0,"title":"api","custom_title":null,"pinned":true,"selected":false},
-    \\{"id":"9B690000-0000-4000-8000-000000000002","ref":"workspace:2","index":1,"title":"build été 🚀","custom_title":"build","selected":true,"remote":{"transport":"ssh","state":"connected"}},
-    \\{"id":"9B690000-0000-4000-8000-000000000005","ref":"workspace:5","index":2,"title":"","selected":false,"remote":{"transport":"mosh","state":"reconnecting"}}]}
+    \\{"id":"9B690000-0000-4000-8000-000000000001","ref":"workspace:1","index":0,"title":"api","custom_title":null,"pinned":true,"selected":false,
+    \\"remote":{"enabled":false,"state":"disconnected","connected":false}},
+    \\{"id":"9B690000-0000-4000-8000-000000000002","ref":"workspace:2","index":1,"title":"build été 🚀","custom_title":"build","selected":true,
+    \\"remote":{"enabled":true,"transport":"ssh","state":"connected","connected":true}},
+    \\{"id":"9B690000-0000-4000-8000-000000000005","ref":"workspace:5","index":2,"title":"","selected":false,
+    \\"remote":{"enabled":true,"transport":"mosh","state":"reconnecting"}},
+    \\{"id":"9B690000-0000-4000-8000-000000000006","ref":"workspace:6","index":3,"title":"tagless","selected":false,"remote":{"enabled":true}}]}
 ;
 
 test "unit: cli-workspace: list-workspaces and workspace list text, json and empty" {
@@ -314,10 +323,22 @@ test "unit: cli-workspace: list-workspaces and workspace list text, json and emp
     try h.expectLast("workspace.list", "{\"window_id\":\"window:2\"}");
     _ = try testkit.expectOk(&h, &.{ "--window", "0", "list-workspaces" });
     try h.expectLast("workspace.list", "{\"window_id\":0}");
+    // --json alone keeps the workspace UUIDs (cmux), an explicit
+    // --id-format formats them like everything else.
     const js = try testkit.expectOk(&h, &.{ "workspace", "list", "--json" });
     try testkit.expectGolden(h.alloc(), "workspace-list-json.txt", js);
+    try testing.expectEqualStrings(js, try testkit.expectOk(&h, &.{ "--json", "list-workspaces" }));
+    const refs = try testkit.expectOk(&h, &.{ "workspace", "list", "--json", "--id-format", "refs" });
+    try testing.expect(std.mem.indexOf(u8, refs, "\"id\"") == null);
+    try testing.expect(std.mem.indexOf(u8, refs, "\"ref\": \"workspace:6\"") != null);
+    const uuids = try testkit.expectOk(&h, &.{ "workspace", "list", "--json", "--id-format", "uuids" });
+    try testing.expect(std.mem.indexOf(u8, uuids, "\"ref\"") == null);
+    try testing.expect(std.mem.indexOf(u8, uuids, "\"window_id\": \"6F1D2C3B-0000-4000-8000-000000000001\"") != null);
     h.ok("workspace.list", "{\"workspaces\":[]}");
     try testing.expectEqualStrings("No workspaces\n", try testkit.expectOk(&h, &.{ "workspace", "list" }));
+    // Rows without handles or remote status still print.
+    h.ok("workspace.list", "{\"workspaces\":[{\"title\":\"bare\"},{\"workspace_ref\":\"workspace:9\",\"selected\":true,\"remote\":null}]}");
+    try testing.expectEqualStrings("  ?  bare\n* workspace:9  [selected]\n", try testkit.expectOk(&h, &.{ "workspace", "list" }));
     try testkit.expectUsage(&h, &.{ "workspace", "list", "x" }, "unexpected argument 'x'");
     try testkit.expectUsage(&h, &.{ "list-workspaces", "--window", "pane:1" }, "Invalid window handle: pane:1 (expected UUID, ref like window:1, or index)");
 }
@@ -351,6 +372,9 @@ test "unit: cli-workspace: current-workspace prints the selected handle" {
     try h.expectLast("workspace.current", "{}");
     try testing.expectEqualStrings("9B690000-0000-4000-8000-000000000002\n", try testkit.expectOk(&h, &.{ "current-workspace", "--id-format", "uuids", "--window", "window:1" }));
     try h.expectLast("workspace.current", "{\"window_id\":\"window:1\"}");
+    // --json keeps the workspace UUID unless --id-format is given.
+    try testing.expectEqualStrings("{\n  \"workspace_id\": \"9B690000-0000-4000-8000-000000000002\",\n  \"workspace_ref\": \"workspace:2\",\n  \"window_ref\": \"window:1\"\n}\n", try testkit.expectOk(&h, &.{ "current-workspace", "--json" }));
+    try testing.expectEqualStrings("{\n  \"workspace_ref\": \"workspace:2\",\n  \"window_ref\": \"window:1\"\n}\n", try testkit.expectOk(&h, &.{ "current-workspace", "--json", "--id-format", "refs" }));
     h.ok("workspace.current", "{\"workspace_id\":null}");
     const r = h.run(&.{"current-workspace"});
     try testing.expectEqual(@as(u8, 1), r.code);

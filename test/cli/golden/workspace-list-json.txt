@@ -2,32 +2,53 @@
   "window_ref": "window:1",
   "workspaces": [
     {
+      "id": "9B690000-0000-4000-8000-000000000001",
       "ref": "workspace:1",
       "index": 0,
       "title": "api",
       "custom_title": null,
       "pinned": true,
-      "selected": false
+      "selected": false,
+      "remote": {
+        "enabled": false,
+        "state": "disconnected",
+        "connected": false
+      }
     },
     {
+      "id": "9B690000-0000-4000-8000-000000000002",
       "ref": "workspace:2",
       "index": 1,
       "title": "build été 🚀",
       "custom_title": "build",
       "selected": true,
       "remote": {
+        "enabled": true,
         "transport": "ssh",
-        "state": "connected"
+        "state": "connected",
+        "connected": true
       }
     },
     {
+      "id": "9B690000-0000-4000-8000-000000000005",
       "ref": "workspace:5",
       "index": 2,
       "title": "",
       "selected": false,
       "remote": {
+        "enabled": true,
         "transport": "mosh",
         "state": "reconnecting"
+      }
+    },
+    {
+      "id": "9B690000-0000-4000-8000-000000000006",
+      "ref": "workspace:6",
+      "index": 3,
+      "title": "tagless",
+      "selected": false,
+      "remote": {
+        "enabled": true
       }
     }
   ]
