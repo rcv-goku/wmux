@@ -1,0 +1,6 @@
+Usage: cmux shortcuts
+
+Open the Settings window to Keyboard Shortcuts.
+
+Same as 'cmux settings shortcuts'; starts wmux when needed. 'cmux welcome'
+prints the default shortcuts without the app.

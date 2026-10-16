@@ -1,0 +1,17 @@
+Usage: cmux restore-session [--from <channel|path>] [--export <path> [--force]]
+
+Without flags, reopen the previously saved session (starts wmux if needed).
+
+  --from <channel|path>   Open another install's saved session (a channel such
+                          as stable, nightly, debug:<tag>, or a bundle id; full
+                          trust) or an exported file (untrusted) as additional
+                          windows. Values with a path separator, a leading ~ or
+                          ., or a .json suffix are files; a channel name wins
+                          over a same-named file (use ./nightly for the file).
+  --export <path>         Write this install's saved session to a file.
+  --force                 With --export: overwrite an existing file.
+
+--from and --export need a running app and never start it. From an untrusted
+file, layout, working directories, text scrollback and http(s) browser tabs
+are restored; custom resume commands are held back for manual restore, and
+SSH/cloud connections and workspace environment variables are dropped.

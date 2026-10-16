@@ -1,0 +1,20 @@
+Usage: cmux layout <save|list|get|open|delete> [args]
+
+Saved workspace layouts (layouts.json in the wmux config directory).
+
+Commands:
+  save <name> [--workspace <id|ref|index>] [--overwrite] [--description <text>]
+                                Capture a workspace's splits, working
+                                directories, commands and browser URLs; prints
+                                'OK layout=<name> unsupported=<n>'
+  list                          Print NAME, PANES, SURFACES and DESCRIPTION
+                                (tab-separated), or 'No saved layouts'
+  get <name>                    Print the saved layout as JSON
+  open <name> [--cwd <dir>] [--focus <true|false>]
+                                Create a workspace from it (--cwd replaces the
+                                base directory; focus defaults to false)
+  delete <name>                 Remove it; prints 'OK deleted=true'
+
+Names match case-insensitively. save refuses an existing name unless
+--overwrite is given (duplicateName); unknown names fail with notFound and an
+unreadable layouts.json with corruptFile. --json prints the reply.

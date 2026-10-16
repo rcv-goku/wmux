@@ -1,0 +1,20 @@
+Usage: cmux themes [list|set <name>|clear]
+
+List, set or clear the Ghostty theme wmux uses. Works without a running app;
+when wmux is running it reloads its configuration.
+
+  themes | themes list          Print 'Current light:', 'Current dark:',
+                                'Config:' and 'Source:', then every theme with
+                                [light]/[dark] badges
+  themes set <theme>            Use one theme for light and dark appearance
+  themes set --light <theme>    Set the light half (keeps the dark one)
+  themes set --dark <theme>     Set the dark half (keeps the light one)
+  themes clear                  Remove the wmux theme override so the theme in
+                                your Ghostty config applies again
+
+Themes come from INSTALL\share\ghostty\themes, the Ghostty themes directories
+(~/.config/ghostty/themes, %LOCALAPPDATA%\ghostty\themes) and the wmux config
+directory's themes folder; names match case-insensitively. set writes
+'theme = light:X,dark:Y' into the wmux overlay config.ghostty and prints
+'OK light=X dark=Y config=<path> reload=requested'. --json prints the result.
+The light or dark half follows app.appearance.

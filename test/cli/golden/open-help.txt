@@ -1,0 +1,28 @@
+Usage: cmux open <path-or-url>... [--workspace <id|ref|index>] [--surface <id|ref|index>] [--pane <id|ref|index>] [--window <id|ref|index>] [--focus <true|false>] [--no-focus] [--json] [--]
+
+Open files, directories or URLs in wmux (starts wmux when needed).
+
+  http(s) URLs                  Open in a browser split
+  directories                   Open a new workspace there
+  .html / .htm files            Open as file:// pages in a browser split
+  other files                   Open in preview tabs
+
+HTML files open in browser splits without focusing by default. Markdown files
+open in markdown preview tabs; other files open in file preview tabs. Multiple
+files open as tabs in the same target pane.
+
+Paths may start with ~, are relative to the current directory, and may end in
+:line or :line:col. A relative path that does not exist there is looked up
+from the root of the git repository containing the current directory. A
+missing path fails before anything opens.
+
+Files and web pages take focus only when run interactively; run by an agent
+or script they open in the background. --focus <true|false> and --no-focus
+override (CMUX_FOCUS_NEW=1|0 changes the default).
+
+Targets default to the caller's workspace (CMUX_WORKSPACE_ID, unless --window
+is given) and surface (CMUX_SURFACE_ID, unless --workspace, --pane or
+--window is given).
+
+Prints 'OK files=<n> surface=<h> pane=<h> urls=<n> workspaces=<n>' without
+the zero counts; --json prints {opened: [{kind, payload, path|url}]}.

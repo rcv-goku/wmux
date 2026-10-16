@@ -1,0 +1,6 @@
+wmux.json: /t/cfg/wmux.json: OK (2 keys)
+cmux.json: /t/xdg/cmux/cmux.json: 1 error
+  1:24: error: $.app.appearance: "neon" is not one of: system, light, dark
+  1:33: warning: $.nope: unknown key
+config doctor: 1 error
+Reload after editing: cmux reload-config

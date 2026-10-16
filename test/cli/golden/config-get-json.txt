@@ -1,0 +1,9 @@
+{
+  "path": "app.appearance",
+  "file": "/t/cfg/wmux.json",
+  "value": "dark",
+  "configured": true,
+  "source": "wmux.json",
+  "default": "system",
+  "locked": false
+}

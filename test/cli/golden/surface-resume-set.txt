@@ -1,0 +1,2 @@
+OK
+Approval required: approve this command from the terminal context menu or Settings > Terminal > Resume Commands before it resumes automatically.

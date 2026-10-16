@@ -1,0 +1,4 @@
+wmux.json: /t/cfg/wmux.json: OK (2 keys)
+cmux.json: /t/xdg/cmux/cmux.json: not found
+config doctor: OK
+Reload after editing: cmux reload-config

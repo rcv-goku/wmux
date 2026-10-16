@@ -1,0 +1,18 @@
+settings: Settings in wmux.json, its schema and the config files
+Docs:
+  docs/wmux/features/settings.md
+  docs/wmux/cli/config.md
+Config files:
+  /t/cfg/wmux.json  (primary)
+  /t/xdg/cmux/cmux.json  (cmux compatibility, read-only)
+  /t/cfg/config.ghostty  (wmux overlay for terminal settings)
+  %LOCALAPPDATA%\ghostty\config.ghostty  (related Ghostty config)
+Schema: share\wmux\schema\wmux.schema.json next to wmux.exe
+Before editing by hand, copy wmux.json to a timestamped .bak file.
+After editing: cmux reload-config
+Commands:
+  cmux config path
+  cmux config doctor
+  cmux config get <key>
+  cmux config set <key> <value>
+  cmux reload-config

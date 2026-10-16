@@ -1,0 +1,8 @@
+Current light: nord
+Current dark: dracula
+Config: /t/cfg/config.ghostty
+Source: /t/cfg/config.ghostty
+Catppuccin Mocha
+dracula [dark]
+Mine é
+nord [light]
