@@ -45,11 +45,14 @@ pub fn main() u8 {
     const gpa = gpa_state.allocator();
     const argv = std.process.argsAlloc(gpa) catch return 1;
     defer std.process.argsFree(gpa, argv);
+    // Streaming, not positional: a positional writer pwrite()s from offset 0,
+    // which clobbers earlier content when stdout/stderr is a regular file
+    // (`{ ...; wmuxd-remote status; } > f`, or daemon.log for the server).
     var out_buf: [4096]u8 = undefined;
-    var out_w = std.fs.File.stdout().writer(&out_buf);
+    var out_w = std.fs.File.stdout().writerStreaming(&out_buf);
     const out = &out_w.interface;
     var err_buf: [1024]u8 = undefined;
-    var err_w = std.fs.File.stderr().writer(&err_buf);
+    var err_w = std.fs.File.stderr().writerStreaming(&err_buf);
     const errw = &err_w.interface;
     const code = run(gpa, argv, out, errw);
     out.flush() catch {};
