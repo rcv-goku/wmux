@@ -28,6 +28,19 @@ fn checkAllWindow(ctx: *Ctx, usage: []const u8, o: Opts) bool {
     return true;
 }
 
+/// `system.top` and `system.memory` may take up to their 30 s server
+/// budget; the client waits a little longer, so the app's own budget error
+/// arrives instead of a client timeout (the default response timeout is
+/// 15 s).
+pub const diagnostics_timeout_ms = 35_000;
+
+/// Connects and raises the response timeout to at least `ms` for this
+/// invocation. Null after the connection error was printed (exit 1).
+fn connectWithTimeout(ctx: *Ctx, ms: u32) !?void {
+    const client = (try ctx.connect()) orelse return null;
+    client.opts.response_timeout_ms = @max(client.opts.response_timeout_ms, ms);
+}
+
 /// all_windows, window_id, workspace_id (no caller defaults: the scope is
 /// the current window) and the caller.
 fn scopeParams(ctx: *Ctx, p: *Params, o: Opts) !bool {
@@ -301,6 +314,7 @@ pub fn runTop(ctx: *Ctx) !u8 {
     if (!try scopeParams(ctx, &p, o)) return output.exit.usage;
     if (o.has("--processes")) try p.boolean("include_processes", true);
     try ps.addCaller(ctx, &p);
+    (try connectWithTimeout(ctx, diagnostics_timeout_ms)) orelse return output.exit.runtime;
     const out = (try ctx.call("system.top", try p.json(ctx.arena))) orelse return output.exit.runtime;
     switch (out) {
         .ok => |ok| {
@@ -407,6 +421,7 @@ pub fn runMemory(ctx: *Ctx) !u8 {
         try p.int("top_group_limit", n);
     }
     try ps.addCaller(ctx, &p);
+    (try connectWithTimeout(ctx, diagnostics_timeout_ms)) orelse return output.exit.runtime;
     const out = (try ctx.call("system.memory", try p.json(ctx.arena))) orelse return output.exit.runtime;
     switch (out) {
         .ok => |ok| {
@@ -550,8 +565,7 @@ pub fn runShot(ctx: *Ctx) !u8 {
         try p.str("out", abs);
     }
     if (ps.windowText(ctx, o)) |w| if (!try ps.putHandle(ctx, &p, "window", .window, w)) return output.exit.usage;
-    const client = (try ctx.connect()) orelse return output.exit.runtime;
-    client.opts.response_timeout_ms = @max(client.opts.response_timeout_ms, shot_timeout_ms);
+    (try connectWithTimeout(ctx, shot_timeout_ms)) orelse return output.exit.runtime;
     return ps.callRender(ctx, "window.screenshot", &p, renderShot);
 }
 
@@ -670,6 +684,11 @@ test "unit: cli-ps: top params, tree and tsv layouts, sorting and old apps" {
     const old = h.run(&.{ "wmux", "top" });
     try testing.expectEqual(@as(u8, 1), old.code);
     try testing.expectEqualStrings("wmux top requires a running wmux build that supports process diagnostics\n", old.err);
+    // The app's 30 s budget: the client waits past it (not the default 15 s).
+    h.reply("system.top", .stall);
+    const slow = h.run(&.{ "cmux", "top" });
+    try testing.expectEqual(@as(u8, 1), slow.code);
+    try pt.expectContains(slow.err, "timed out after 35s waiting for a response to system.top");
     h.clearRequests();
     try pt.expectUsage(h.run(&.{ "cmux", "top", "--sort", "name" }), "--sort must be cpu, mem or proc");
     try pt.expectUsage(h.run(&.{ "cmux", "top", "--sort", "none" }), "--sort must be cpu, mem or proc");
@@ -696,6 +715,11 @@ test "unit: cli-ps: memory separates the app from terminal children" {
     try testing.expectEqualStrings("App footprint:        -\nTerminal children:    -\n", h.run(&.{ "cmux", "memory" }).out);
     h.reply("system.memory", .{ .err = "{\"code\":\"method_not_found\",\"message\":\"Unknown method\"}" });
     try testing.expectEqualStrings("cmux memory requires a running cmux build that supports process diagnostics\n", h.run(&.{ "cmux", "memory" }).err);
+    h.reply("system.memory", .stall);
+    try pt.expectContains(h.run(&.{ "cmux", "memory" }).err, "timed out after 35s waiting for a response to system.memory");
+    // A longer configured timeout is kept.
+    h.setEnv("WMUX_CLI_RESPONSE_TIMEOUT_SEC", "60");
+    try pt.expectContains(h.run(&.{ "cmux", "memory" }).err, "timed out after 60s waiting for a response to system.memory");
     try pt.expectUsage(h.run(&.{ "cmux", "memory", "--limit", "0" }), "--limit must be a positive integer");
     try pt.expectUsage(h.run(&.{ "cmux", "memory", "--workspace", "" }), "Workspace handle is blank");
 }
@@ -731,6 +755,11 @@ test "unit: cli-ps: shot params, validation and text output" {
     // Hostile numbers never trap the renderer.
     h.ok("window.screenshot", "{\"width\":1e300,\"height\":-1e300,\"bytes\":\"x\",\"path\":\"p\\u001b\"}");
     try testing.expectEqualStrings("9223372036854775807x-9223372036854775808 0 p \n", h.run(&.{ "cmux", "shot" }).out);
+    // cmux's 45 s client timeout for window.screenshot.
+    h.reply("window.screenshot", .stall);
+    const slow = h.run(&.{ "cmux", "shot" });
+    try testing.expectEqual(@as(u8, 1), slow.code);
+    try pt.expectContains(slow.err, "timed out after 45s waiting for a response to window.screenshot");
 }
 
 test "unit: cli-ps: identify output golden" {
