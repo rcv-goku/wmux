@@ -8,9 +8,11 @@
 //! another user or denied by its DACL is a permanent conflict and fails at
 //! once. Other socket commands fail fast with the discovery error.
 //!
-//! `cmux <path>` sends `app.launch {intent:"open", argv, cwd, paths}` over
-//! the launch pipe (`<control>-launch`), which needs no control-socket
-//! access.
+//! `cmux <path>` sends `app.launch {intent:"open", argv, cwd, paths, focus,
+//! foreground_grant}` over the launch pipe (`<control>-launch`), which needs
+//! no control-socket access. An interactive (focusing) request first calls
+//! `AllowSetForegroundWindow(server_pid)` and then sets `foreground_grant`
+//! (ADR-3.11, ADR-4.6).
 
 const std = @import("std");
 const proto = @import("wmux_proto");
@@ -129,6 +131,8 @@ pub const LaunchRequest = struct {
     paths: []const []const u8 = &.{},
     uri: ?[]const u8 = null,
     focus: bool = false,
+    /// Set by `sendLaunch` once `AllowSetForegroundWindow(server_pid)` ran.
+    foreground_grant: bool = false,
 };
 
 pub fn paramsJson(arena: Allocator, req: LaunchRequest) Allocator.Error![]const u8 {
@@ -139,6 +143,7 @@ pub fn paramsJson(arena: Allocator, req: LaunchRequest) Allocator.Error![]const 
         .paths = req.paths,
         .uri = req.uri,
         .focus = req.focus,
+        .foreground_grant = req.foreground_grant,
     }, .{});
 }
 
@@ -185,11 +190,16 @@ pub fn sendLaunch(ctx: *command.Ctx, req: LaunchRequest) !u8 {
             backoff = @min(backoff * 2, max_backoff_ms);
         }
     };
-    if (req.focus) if (transport.serverPid()) |pid| platform.allowForeground(pid);
+    var sent = req;
+    sent.foreground_grant = false;
+    if (req.focus) if (transport.serverPid()) |pid| {
+        platform.allowForeground(pid);
+        sent.foreground_grant = true;
+    };
     var c = client_mod.Client.init(arena, platform, .{ .path = path, .response_timeout_ms = client_mod.responseTimeoutMs(ctx.env) });
     defer c.deinit();
     c.adopt(transport);
-    const out = try c.call(arena, "app.launch", try paramsJson(arena, req), .{});
+    const out = try c.call(arena, "app.launch", try paramsJson(arena, sent), .{});
     switch (out) {
         .ok => |ok| {
             if (ctx.json()) try output.writeJson(ctx.out, ok.result);
@@ -258,7 +268,7 @@ test "unit: cli-launch: params json and absolute paths" {
     defer arena_state.deinit();
     const a = arena_state.allocator();
     const js = try paramsJson(a, .{ .intent = .open, .argv = &.{"x.md"}, .cwd = "C:\\w", .paths = &.{"C:\\w\\x.md"} });
-    try testing.expectEqualStrings("{\"intent\":\"open\",\"argv\":[\"x.md\"],\"cwd\":\"C:\\\\w\",\"paths\":[\"C:\\\\w\\\\x.md\"],\"uri\":null,\"focus\":false}", js);
+    try testing.expectEqualStrings("{\"intent\":\"open\",\"argv\":[\"x.md\"],\"cwd\":\"C:\\\\w\",\"paths\":[\"C:\\\\w\\\\x.md\"],\"uri\":null,\"focus\":false,\"foreground_grant\":false}", js);
     try testing.expectEqualStrings("D:\\a", try absolutize(a, "C:\\w", "D:\\a"));
     try testing.expectEqualStrings("\\\\srv\\share", try absolutize(a, "C:\\w", "\\\\srv\\share"));
     try testing.expectEqualStrings("rel", try absolutize(a, null, "rel"));
@@ -425,6 +435,8 @@ test "unit: cli-launch: open paths over the launch pipe, starting wmux first" {
     try testing.expectEqualStrings("app.launch", req.method);
     try testing.expectEqualStrings("open", req.params.object.get("intent").?.string);
     try testing.expect(req.params.object.get("focus").?.bool);
+    // AllowSetForegroundWindow ran, so the request carries the grant.
+    try testing.expect(req.params.object.get("foreground_grant").?.bool);
     try testing.expectEqual(@as(usize, 1), t.fp.foreground_grants.items.len);
     // No capability prefix on the launch pipe.
     try testing.expectEqual(@as(?[]const u8, null), req.capability);
@@ -442,6 +454,7 @@ test "unit: cli-launch: an agent caller opens in the background" {
     try t.fp.addServer(try pipe_name.launchName(a, t.controlPath()), &server);
     try testing.expectEqual(@as(u8, 0), try openPaths(&t.ctx, &.{"C:\\x"}));
     try testing.expect(!server.requests.items[0].params.object.get("focus").?.bool);
+    try testing.expect(!server.requests.items[0].params.object.get("foreground_grant").?.bool);
     try testing.expectEqual(@as(usize, 0), t.fp.foreground_grants.items.len);
     try testing.expectEqual(@as(usize, 0), t.fp.spawned.items.len);
 }
