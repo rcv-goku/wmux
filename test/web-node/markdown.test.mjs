@@ -952,6 +952,11 @@ describe("unit: markdown app", () => {
     // Palette commands arrive as panel.markdown.command.
     host.emit("panel.markdown.command", { action: "markdownZoomIn" });
     assert.equal(content.getAttribute("data-font-size"), "19");
+    host.emit("panel.markdown.command", { action: "wmux.markdownTogglePreview" });
+    assert.equal(doc.getElementById("mdv-editor").hidden, false);
+    host.emit("panel.markdown.command", { action: "toString" });
+    host.emit("panel.markdown.command", { action: "wmux.markdownTogglePreview" });
+    assert.equal(doc.getElementById("mdv-content").hidden, false);
   });
 
   test("unit: markdown: typography popover applies, resets and saves defaults", async () => {

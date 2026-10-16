@@ -862,8 +862,8 @@ export function createApp(options) {
       else closeFind();
     },
     saveFilePreview: () => save(),
-    markdownTogglePreview: () => setMode(state.mode === "text" ? "preview" : "text"),
-    markdownRefresh: () => reload("reload"),
+    "wmux.markdownTogglePreview": () => setMode(state.mode === "text" ? "preview" : "text"),
+    "wmux.markdownRefresh": () => reload("reload"),
   };
   for (const id of SCROLL_ACTIONS) actions[id] = () => scrollBy(id);
 

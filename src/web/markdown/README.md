@@ -84,7 +84,7 @@ The page sets the tab title with `panel.set_title {title: <basename>}`.
 |---|---|---|
 | `panel.markdown.file_changed` | `{status: "changed" \| "deleted" \| "unavailable", text?, encoding?}` | `changed` with `text` renders it, without `text` the page calls `panel.read_file` (only the newest read is applied). `deleted` / `unavailable` show "File unavailable" until the next `changed`. Scroll position and the find needle survive re-renders. A dirty TextEdit buffer is never replaced |
 | `panel.markdown.settings` | settings object (same shapes as `panel.init.settings`) | new defaults: every value a viewer has not customized follows them |
-| `panel.markdown.command` | `{action}` | run a panel action from the palette or a native shortcut: `markdownZoomIn`, `markdownZoomOut`, `markdownZoomReset`, `find`, `findNext`, `findPrevious`, `hideFind`, `saveFilePreview`, the `diffViewerScroll*` ids, and the wmux-only `markdownTogglePreview` and `markdownRefresh` |
+| `panel.markdown.command` | `{action}` | run a panel action from the palette or a native shortcut: `markdownZoomIn`, `markdownZoomOut`, `markdownZoomReset`, `find`, `findNext`, `findPrevious`, `hideFind`, `saveFilePreview`, the `diffViewerScroll*` ids, and the wmux-only `wmux.markdownTogglePreview` (preview/TextEdit) and `wmux.markdownRefresh` |
 | `panel.markdown.find` | `{query}` | open the find bar pre-filled (global search hit) |
 | `theme`, `keymap`, `panel.key_sequence` | shared | handled by `_shared/` |
 
