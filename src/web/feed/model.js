@@ -221,10 +221,42 @@ export function isPending(item) {
   return item.status === "pending";
 }
 
-/** A card the user can act on: a pending decision, or a stop card without a reply. */
+/**
+ * A card the user can act on: a pending decision, or a stop card without a
+ * reply that is still the newest of its agent context (`superseded` is set
+ * by the app from supersededStops()).
+ */
 export function isActionable(item) {
   if (isDecision(item)) return isPending(item);
-  return item.kind === "stop" && !item.resolution && item.status !== "expired" && item.status !== "timedOut";
+  return item.kind === "stop" && !item.superseded && !item.resolution && item.status !== "expired" && item.status !== "timedOut";
+}
+
+/** Agent context of an item (source + session), as workstreams() groups them. */
+function contextKey(item) {
+  return item.source + "\u0000" + (item.session_id || "");
+}
+
+/**
+ * Ids of the stop items whose agent went on: a newer item from the same agent
+ * context exists. A reply typed on such a card would land in whatever that
+ * terminal shows now (a new turn, a permission prompt, a shell after the
+ * session ended). Notifications do not count: an idle agent posts "waiting
+ * for your input" reminders while it still waits for the reply.
+ * @returns {Set<string>}
+ */
+export function supersededStops(items) {
+  const newest = new Map();
+  for (const it of items) {
+    if (it.kind === "notification") continue;
+    const key = contextKey(it);
+    const at = newest.get(key);
+    if (at === undefined || it.created_at_ms > at) newest.set(key, it.created_at_ms);
+  }
+  const out = new Set();
+  for (const it of items) {
+    if (it.kind === "stop" && newest.get(contextKey(it)) > it.created_at_ms) out.add(it.id);
+  }
+  return out;
 }
 
 /**
@@ -385,7 +417,7 @@ export function relativeTime(ms, nowMs) {
 export function workstreams(items) {
   const map = new Map();
   for (const it of items) {
-    const key = it.source + "\u0000" + (it.session_id || "");
+    const key = contextKey(it);
     let w = map.get(key);
     if (!w) {
       w = { key, source: it.source, session_id: it.session_id, workspace_id: null, surface_id: null, item_count: 0, pending_count: 0, last_activity_ms: 0, latest: it };

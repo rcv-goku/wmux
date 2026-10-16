@@ -271,6 +271,25 @@ describe("unit: feed model", () => {
     assert.equal(ws[0].pending_count, 1, "like query.zig: only status pending counts");
   });
 
+  test("unit: feed: a stop card is superseded once its agent goes on", () => {
+    const stop = (n, extra) => item(n, "stop", { hook_event_name: "Stop", ...extra });
+    const items = model.itemsFrom([
+      stop(10), // an older turn of sess-1
+      item(8, "prompt", { text: "next" }), // sess-1 went on
+      stop(6), // the newest stop of sess-1
+      item(5, "notification", { title: "Claude is waiting for your input" }), // idle reminder
+      stop(9, { session_id: "sess-2" }), // another agent context
+      stop(7, { source: "codex" }),
+    ]);
+    assert.deepEqual(Array.from(model.supersededStops(items)), [uuid(10)]);
+    const byId = (id) => items.find((it) => it.id === id);
+    assert.equal(model.isActionable({ ...byId(uuid(10)), superseded: true }), false);
+    assert.equal(model.isActionable(byId(uuid(6))), true);
+    const ended = model.itemsFrom([stop(6), item(4, "sessionEnd")]);
+    assert.deepEqual(Array.from(model.supersededStops(ended)), [uuid(6)], "after the session ended the reply would reach a shell");
+    assert.equal(model.supersededStops([]).size, 0);
+  });
+
   test("unit: feed: plan markdown is sanitized and links are kept safe", () => {
     const render = createMarkdownRenderer({ markdownit, purify, document: doc });
     const div = doc.createElement("div");
@@ -711,6 +730,46 @@ describe("unit: feed app", () => {
     assert.equal(done.querySelector(".feed-badge").textContent, "Sent");
     assert.equal(done.querySelector(".feed-sent").textContent, "continue with tests");
     assert.equal(done.querySelector('[data-field="reply"]'), null);
+  });
+
+  test("unit: feed: only the newest stop card of an agent offers the reply", async () => {
+    const stop = (n) => item(n, "stop", { hook_event_name: "Stop" });
+    const h = await startApp({
+      params: { filter: "activity" },
+      items: [item(5, "notification", { title: "Claude is waiting for your input" }), stop(6), item(8, "prompt", { text: "go on" }), stop(10)],
+    });
+    const old = cardById(uuid(10));
+    assert.equal(old.querySelector('[data-field="reply"]'), null, "the stop card of an earlier turn has no reply box");
+    assert.equal(old.classList.contains("feed-actionable"), false);
+    assert.equal(await app.replyStop(uuid(10), "typed into a busy agent"), false);
+    const latest = cardById(uuid(6));
+    assert.ok(latest.querySelector('[data-field="reply"]'), "an idle reminder does not end the wait");
+    assert.ok(latest.classList.contains("feed-actionable"));
+
+    // The agent goes on (the user typed in its terminal): the box goes away.
+    type(latest.querySelector('[data-field="reply"]'), "half a reply");
+    h.setItems([item(1, "toolUse", { tool_name: "Bash", hook_event_name: "PreToolUse" }), ...h.items]);
+    host.emit("cmux.event", { name: "feed.item.received" });
+    await sleep(60);
+    await settle();
+    assert.equal(cardById(uuid(6)).querySelector('[data-field="reply"]'), null);
+    assert.equal(await app.replyStop(uuid(6), "half a reply"), false);
+    assert.equal(host.calls("panel.feed.stop_reply").length, 0, "nothing reached native");
+  });
+
+  test("unit: feed: a sent stop reply stays on its card when the agent goes on", async () => {
+    const h = await startApp({ params: { filter: "activity" }, items: [item(2, "stop", { hook_event_name: "Stop" })] });
+    type(cardById(uuid(2)).querySelector('[data-field="reply"]'), "continue with tests");
+    click(window, btn(cardById(uuid(2)), "stop-reply"));
+    await settle();
+    assert.equal(host.calls("panel.feed.stop_reply").length, 1);
+    h.setItems([item(1, "prompt", { text: "continue with tests" }), ...h.items]);
+    host.emit("cmux.event", { name: "feed.item.received" });
+    await sleep(60);
+    await settle();
+    const card = cardById(uuid(2));
+    assert.equal(card.querySelector(".feed-sent").textContent, "continue with tests");
+    assert.equal(card.querySelector(".feed-badge").textContent, "Sent");
   });
 
   test("unit: feed: double click, the jump button and Enter jump to the agent", async () => {

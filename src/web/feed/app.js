@@ -31,6 +31,7 @@ import {
   normalizeItem,
   partition,
   sourceDisplayName,
+  supersededStops,
   workstreams,
 } from "./model.js";
 import { t } from "./strings.js";
@@ -151,14 +152,19 @@ export function createApp(options) {
 
   /* ------------------------------------------------------------- rendering */
 
-  /** Items with answers given here applied until native reports them closed. */
+  /**
+   * Items with answers given here applied until native reports them closed,
+   * and stop items whose agent went on marked `superseded` (no reply box).
+   */
   function effectiveItems() {
-    if (state.localResolved.size === 0) return state.items;
+    const stale = supersededStops(state.items);
+    if (state.localResolved.size === 0 && stale.size === 0) return state.items;
     return state.items.map((it) => {
+      let out = it;
       const r = state.localResolved.get(it.id);
-      if (!r) return it;
-      if (it.kind === "stop") return it.resolution ? it : { ...it, resolution: r };
-      return isPending(it) ? { ...it, status: "resolved", resolution: r } : it;
+      if (r && it.kind === "stop") out = it.resolution ? it : { ...it, resolution: r };
+      else if (r && isPending(it)) out = { ...it, status: "resolved", resolution: r };
+      return stale.has(it.id) ? { ...out, superseded: true } : out;
     });
   }
 
@@ -556,6 +562,9 @@ export function createApp(options) {
     const item = find(id);
     const body = typeof text === "string" ? text.trim() : "";
     if (!item || item.kind !== "stop" || !body) return Promise.resolve(false);
+    // The agent went on since this stop: the text would be typed into its
+    // terminal as it is now, not as a reply to this turn.
+    if (supersededStops(state.items).has(id)) return Promise.resolve(false);
     const params = { id, text: body };
     for (const key of ["request_id", "session_id", "workspace_id", "surface_id"]) if (item[key]) params[key] = item[key];
     if (item.source) params.source = item.source;
