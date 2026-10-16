@@ -84,31 +84,31 @@ pub fn workspaceReordered(win: *Window, moved: *Workspace) void {
     ev.workspace_id = moved.handle.uuid;
     var sfa = std.heap.stackFallback(32 * @sizeOf(Uuid), win.app.core_app.alloc);
     const gpa = sfa.get();
+    // Both lists back the payload, so they are freed only after `emit`.
     const order: ?[]Uuid = gpa.alloc(Uuid, win.workspaces.items.len) catch null;
     defer if (order) |o| gpa.free(o);
+    var pinned_count: usize = 0;
+    for (win.workspaces.items) |w| {
+        if (w.pinned) pinned_count += 1;
+    }
+    // The pinned workspaces, in order (none before W4-5 adds pinning).
+    const pinned_ids: ?[]Uuid = gpa.alloc(Uuid, pinned_count) catch null;
+    defer if (pinned_ids) |p| gpa.free(p);
     const moved_ids = [_]Uuid{moved.handle.uuid};
     var value: events.WorkspaceReorderedPayload = undefined;
-    if (order) |o| {
-        var pinned: usize = 0;
+    if (order != null and pinned_ids != null) {
+        const o = order.?;
+        const p = pinned_ids.?;
+        var n: usize = 0;
         for (win.workspaces.items, 0..) |w, i| {
             o[i] = w.handle.uuid;
-            if (w.pinned) pinned += 1;
+            if (!w.pinned) continue;
+            p[n] = w.handle.uuid;
+            n += 1;
         }
-        // The pinned workspaces, in order (none before W4-5 adds pinning).
-        const pinned_ids: ?[]Uuid = gpa.alloc(Uuid, pinned) catch null;
-        defer if (pinned_ids) |p| gpa.free(p);
-        if (pinned_ids) |p| {
-            var n: usize = 0;
-            for (win.workspaces.items) |w| {
-                if (!w.pinned) continue;
-                p[n] = w.handle.uuid;
-                n += 1;
-            }
-            value = .{ .workspace_ids = o, .moved_workspace_ids = &moved_ids, .pinned_workspace_ids = p, .count = o.len };
-            ev.payload = Payload.of(events.WorkspaceReorderedPayload, &value);
-        }
-    }
-    if (ev.payload == null) log.warn("workspace.reordered without payload (out of memory)", .{});
+        value = .{ .workspace_ids = o, .moved_workspace_ids = &moved_ids, .pinned_workspace_ids = p, .count = o.len };
+        ev.payload = Payload.of(events.WorkspaceReorderedPayload, &value);
+    } else log.warn("workspace.reordered without payload (out of memory)", .{});
     events.emit(win.app, ev);
 }
 
