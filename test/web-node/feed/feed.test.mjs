@@ -408,6 +408,34 @@ describe("unit: feed app", () => {
     assert.deepEqual(host.calls("panel.state_changed").at(-1).params.state, { v: 1, filter: "activity" });
   });
 
+  test("unit: feed: cards do not repeat the native digest their body already shows", async () => {
+    // Titles and details as model.zig fromEvent fills them.
+    const todos = [{ content: "a", status: "completed", active_form: "" }, { content: "b", status: "pending", active_form: "" }, { content: "c", status: "pending", active_form: "" }];
+    const db = { question: "Which DB?", header: "", multi_select: false, options: [{ label: "pg", description: "" }] };
+    await startApp({
+      params: { filter: "activity" },
+      items: [
+        item(1, "todos", { title: "Tasks", detail: "2 open, 1 done", todos }),
+        question(2, [db], { title: "Claude question", detail: "Which DB?" }),
+        plan(3, { title: "Claude plan ready", detail: "# Plan" }),
+        question(4, [db], { title: "Claude question", detail: "Which DB?", status: "resolved", options: [], resolution: { selections: ["pg"], badge: "Submitted" } }),
+        question(5, [db], { title: "Claude question", detail: "Which DB?", request_id: undefined }),
+        item(6, "stop", { hook_event_name: "Stop", title: "Claude finished — reply to continue", detail: "All tests pass." }),
+      ],
+    });
+    const count = (card, text) => card.textContent.split(text).length - 1;
+    const todo = cardById(uuid(1));
+    assert.equal(todo.querySelector(".feed-card-detail"), null);
+    assert.equal(count(todo, "2 open, 1 done"), 1, "the todo summary appears once");
+    assert.equal(cardById(uuid(2)).querySelector(".feed-card-detail"), null);
+    assert.equal(count(cardById(uuid(2)), "Which DB?"), 1, "a pending question shows its text once");
+    assert.equal(count(cardById(uuid(5)), "Which DB?"), 1, "also without a request id");
+    assert.equal(cardById(uuid(3)).querySelector(".feed-card-detail"), null, "the plan box shows the plan");
+    assert.ok(cardById(uuid(3)).querySelector(".feed-plan h1"));
+    assert.equal(cardById(uuid(4)).querySelector(".feed-card-detail").textContent, "Which DB?", "an answered question keeps it as context");
+    assert.equal(cardById(uuid(6)).querySelector(".feed-card-detail").textContent, "All tests pass.");
+  });
+
   test("unit: feed: plan card renders sanitized markdown and sends modes and feedback", async () => {
     await startApp({ items: [plan(1)] });
     const card = cards()[0];

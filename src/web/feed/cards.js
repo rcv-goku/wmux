@@ -78,13 +78,23 @@ export function createCards(deps) {
     return h;
   }
 
-  /** Title and context lines shared by every kind. */
+  /**
+   * Title and context lines shared by every kind. Native fills `detail` with
+   * a one-line digest (model.zig fromEvent); it is left out where the card
+   * body shows the same text in full.
+   */
   function summary(item, card) {
     const source = sourceDisplayName(item.source);
     let title = item.title;
     let detail = item.detail;
     if (item.kind === "stop") title = t("feed.stop.title", { source });
-    if (item.kind === "todos") title = t("feed.todos.title");
+    if (item.kind === "todos") {
+      title = t("feed.todos.title");
+      detail = ""; // native's English todo summary; the body has the translated one
+    }
+    // Pending questions list every question; a pending plan shows its text.
+    if (item.kind === "question" && isPending(item) && item.questions.some((q) => q.question)) detail = "";
+    if (item.kind === "exitPlan" && isPending(item) && item.plan && item.plan.text) detail = "";
     if (item.kind === "prompt") {
       const text = item.text !== null ? item.text : item.detail || item.title;
       title = t("feed.context.you", { text: firstLine(text) || text });
