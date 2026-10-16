@@ -13,4 +13,8 @@ or print the config file locations.
 Targets: account, app, themes, terminal, networking, computers, devices,
 sidebar-appearance, custom-sidebars, automation, browser, browser-import,
 global-hotkey, keyboard-shortcuts (shortcuts), workspace-colors, cmux-json
-(json), reset.
+(json, wmux-json), reset, and windows (the Windows section: CLI tools,
+notifications, default shell, Explorer integration).
+
+Run from a terminal, Settings comes to the front; run by an agent or a
+script, it opens without taking the foreground.

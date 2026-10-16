@@ -463,6 +463,12 @@ test "unit: cli-settings: open targets, shortcuts and argument errors" {
     try testing.expectEqualStrings("{\"target\":\"cmux-json\",\"activate\":true}", h.last().params_json);
     _ = h.run(&.{ "cmux", "settings", "open", "browser-import" });
     try testing.expectEqualStrings("browser-import", harness.param(h.last(), "target").?.string);
+    // wmux additions: the Windows-only section (ADR-5.8) and wmux-json.
+    try harness.expectOk(h.run(&.{ "cmux", "settings", "windows" }));
+    try testing.expectEqualStrings("{\"target\":\"windows\",\"activate\":true}", h.last().params_json);
+    _ = h.run(&.{ "cmux", "settings", "open", "wmux-json" });
+    try testing.expectEqualStrings("cmux-json", harness.param(h.last(), "target").?.string);
+    try testing.expectEqual(@as(usize, 0), h.fp.foreground_grants.items.len);
     const sc = h.run(&.{ "cmux", "shortcuts" });
     try testing.expectEqualStrings("OK\n", sc.out);
     try testing.expectEqualStrings("{\"target\":\"keyboard-shortcuts\",\"activate\":true}", h.last().params_json);
@@ -478,4 +484,45 @@ test "unit: cli-settings: open targets, shortcuts and argument errors" {
     try harness.expectContains(help.out, "Usage: cmux shortcuts\n\nOpen the Settings window to Keyboard Shortcuts.");
     try harness.expectGolden(h.alloc(), "settings-help.txt", h.run(&.{ "cmux", "settings", "--help" }).out);
     try harness.expectGolden(h.alloc(), "themes-help.txt", h.run(&.{ "cmux", "themes", "--help" }).out);
+}
+
+test "unit: cli-settings: an interactive caller grants wmux the foreground; agents do not" {
+    var f: Fixture = undefined;
+    f.init();
+    defer f.deinit();
+    const h = &f.h;
+    h.serve(server);
+    h.fp.interactive = true;
+    try harness.expectOk(h.run(&.{ "cmux", "shortcuts" }));
+    try testing.expectEqualStrings("{\"target\":\"keyboard-shortcuts\",\"activate\":true,\"focus\":true,\"foreground_grant\":true}", h.last().params_json);
+    try testing.expectEqualSlices(u32, &.{4242}, h.fp.foreground_grants.items);
+    try harness.expectOk(h.run(&.{ "cmux", "settings" }));
+    try testing.expectEqualStrings("{\"activate\":true,\"focus\":true,\"foreground_grant\":true}", h.last().params_json);
+    // The offline forms never connect, so they never grant.
+    const before = h.fp.foreground_grants.items.len;
+    try harness.expectOk(h.run(&.{ "cmux", "settings", "path" }));
+    try testing.expectEqual(before, h.fp.foreground_grants.items.len);
+    // A coding agent's run opens Settings without taking the foreground.
+    h.setEnv("CLAUDECODE", "1");
+    try harness.expectOk(h.run(&.{ "cmux", "settings", "app" }));
+    try testing.expectEqualStrings("{\"target\":\"app\",\"activate\":true}", h.last().params_json);
+    try testing.expectEqual(before, h.fp.foreground_grants.items.len);
+}
+
+test "unit: cli-settings: the grant opens an explicit socket first so the server PID is known" {
+    var f: Fixture = undefined;
+    f.init();
+    defer f.deinit();
+    const h = &f.h;
+    h.serve(server);
+    h.fp.interactive = true;
+    // An explicit path is never probed by discovery; the grant opens it.
+    const hash = proto.pipe_name.sidHash8(harness.test_sid);
+    const control = try proto.pipe_name.controlName(h.alloc(), "stable", &hash, 1);
+    try harness.expectOk(h.run(&.{ "cmux", "--socket", control, "settings", "terminal" }));
+    try testing.expectEqualStrings("{\"target\":\"terminal\",\"activate\":true,\"focus\":true,\"foreground_grant\":true}", h.last().params_json);
+    try testing.expectEqualSlices(u32, &.{4242}, h.fp.foreground_grants.items);
+    // An explicit pipe that does not exist: no grant; the request reports it.
+    try harness.expectFail(h.run(&.{ "cmux", "--socket", "\\\\.\\pipe\\nope", "settings" }), 1, "");
+    try testing.expectEqual(@as(usize, 1), h.fp.foreground_grants.items.len);
 }

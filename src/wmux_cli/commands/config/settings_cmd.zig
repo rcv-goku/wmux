@@ -17,18 +17,21 @@ pub const shortcuts_usage = "Usage: cmux shortcuts";
 pub const settings_spec: CommandSpec = .{ .name = "settings", .group = .customize, .usage = settings_usage, .help = @embedFile("../../help/settings.txt"), .socket = .launch_if_needed, .run = runSettings };
 pub const shortcuts_spec: CommandSpec = .{ .name = "shortcuts", .group = .customize, .usage = shortcuts_usage, .help = @embedFile("../../help/shortcuts.txt"), .socket = .launch_if_needed, .run = runShortcuts };
 
-/// cmux Settings targets (`shortcuts` and `json` are aliases).
+/// cmux Settings targets (`shortcuts` and `json` are aliases), then the wmux
+/// additions: the Windows-only `windows` section (ADR-5.8) and `wmux-json`
+/// (an alias of `cmux-json`: the JSON page edits wmux.json).
 pub const targets = [_][]const u8{
     "account",          "app",            "themes",             "terminal",           "networking",
     "computers",        "devices",        "sidebar-appearance", "custom-sidebars",    "automation",
     "browser",          "browser-import", "global-hotkey",      "keyboard-shortcuts", "shortcuts",
-    "workspace-colors", "cmux-json",      "json",               "reset",
+    "workspace-colors", "cmux-json",      "json",               "reset",              "windows",
+    "wmux-json",
 };
 
 /// The canonical target for `name`, or null when unknown.
 pub fn canonicalTarget(name: []const u8) ?[]const u8 {
     if (std.mem.eql(u8, name, "shortcuts")) return "keyboard-shortcuts";
-    if (std.mem.eql(u8, name, "json")) return "cmux-json";
+    if (std.mem.eql(u8, name, "json") or std.mem.eql(u8, name, "wmux-json")) return "cmux-json";
     for (targets) |t| if (std.mem.eql(u8, t, name)) return t;
     return null;
 }
@@ -56,9 +59,13 @@ fn runShortcuts(ctx: *Ctx) !u8 {
 }
 
 /// Opening Settings is an explicit UI request, so it activates the window.
+/// On Windows the app may only take the foreground with a grant from the
+/// foreground process: an interactive caller gives it (ADR-3.11), while
+/// agents and scripts open Settings without moving the foreground.
 fn open(ctx: *Ctx, target: ?[]const u8) !u8 {
     var params = util.Params.init(ctx.arena);
     try params.optStr("target", target);
     try params.boolean("activate", true);
+    if (!try util.grantForeground(ctx, &params)) return output.exit.runtime;
     return util.callSimple(ctx, "settings.open", &params, "OK");
 }
