@@ -6,7 +6,6 @@ const std = @import("std");
 
 const AttentionRing = @import("AttentionRing.zig").AttentionRing;
 const FlashOverlay = @import("FlashOverlay.zig").FlashOverlay;
-const Pane = @import("../../model/Pane.zig");
 const PaneButtonsMod = @import("PaneButtons.zig");
 const PaneButtons = PaneButtonsMod.PaneButtons;
 const Tab = @import("../../model/Tab.zig");
@@ -41,7 +40,7 @@ pub fn updateAttentionRings(self: *Window) void {
     // (model/layout.zig).
     var sfa = std.heap.stackFallback(layout.stack_bytes, self.app.core_app.alloc);
     const gpa = sfa.get();
-    var lay = layout.compute(Pane, gpa, tree, self.surfaceRect(), self.scale) catch return self.hideAllRings();
+    var lay = layout.computeLayout(gpa, tree, self.surfaceRect(), self.scale) catch return self.hideAllRings();
     defer lay.deinit(gpa);
 
     var next: usize = 0;
@@ -121,7 +120,7 @@ pub fn updatePaneButtons(self: *Window) void {
         // (model/layout.zig).
         var sfa = std.heap.stackFallback(layout.stack_bytes, self.app.core_app.alloc);
         const gpa = sfa.get();
-        var lay = layout.compute(Pane, gpa, tree, self.surfaceRect(), self.scale) catch return self.hideAllPaneButtons();
+        var lay = layout.computeLayout(gpa, tree, self.surfaceRect(), self.scale) catch return self.hideAllPaneButtons();
         defer lay.deinit(gpa);
         for (lay.leaves) |leaf| {
             const tab = leaf.view.selectedTab() orelse continue;

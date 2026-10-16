@@ -218,9 +218,9 @@ pub fn surfaceRect(self: *const Window) w32.RECT {
 /// Lay out the active workspace's split tree over `rect` (model/layout.zig)
 /// with `gpa` (callers pass a stack-fallback allocator); deinit the result
 /// with the same allocator. Null on allocation failure.
-fn computeActiveLayout(self: *Window, gpa: std.mem.Allocator, rect: w32.RECT) ?layout.Layout(Pane) {
+fn computeActiveLayout(self: *Window, gpa: std.mem.Allocator, rect: w32.RECT) ?layout.LayoutResult(Pane) {
     const ws = self.activeWorkspace();
-    return layout.compute(Pane, gpa, &ws.tree, rect, self.scale) catch null;
+    return layout.computeLayout(gpa, &ws.tree, rect, self.scale) catch null;
 }
 
 /// Layout split panes for the active workspace.

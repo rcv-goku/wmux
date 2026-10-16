@@ -1,10 +1,12 @@
 //! Pane layout of a workspace split tree (ARCHITECTURE.md ADR-1.8 W0-A2
-//! step 3). One pass computes the rect of every tree node, the leaf (pane)
-//! rects and the divider geometry; pane layout, the attention rings, the
-//! pane buttons, divider paint, divider hit-testing, divider drag and the
-//! keyboard split resize all consume the same result, so they can never
-//! disagree. Generic over the tree's view type so the unit tests run on a
-//! plain test view (the real one is model/Pane.zig).
+//! step 3: `computeLayout(tree, rect, scale) LayoutResult`). One pass
+//! computes the rect of every tree node, the leaf (pane) rects and the
+//! divider geometry; pane layout, the attention rings, the pane buttons,
+//! divider paint, divider hit-testing, divider drag and the keyboard split
+//! resize all consume the same result, so they can never disagree. Generic
+//! over the tree's view type so the unit tests run on a plain test view
+//! (the real one is model/Pane.zig); the result is heap-allocated by the
+//! caller's allocator because the tree has no size cap (G7).
 //!
 //! Geometry (unchanged from the former per-consumer walks): a split at
 //! ratio r over a node rect W wide puts its divider line at
@@ -43,8 +45,8 @@ pub fn lineWidth(scale: f32) i32 {
     return @max(@as(i32, @intFromFloat(@round(1.0 * scale))), 1);
 }
 
-/// The computed layout of a SplitTree(V).
-pub fn Layout(comptime V: type) type {
+/// The computed layout of a SplitTree(V) (computeLayout).
+pub fn LayoutResult(comptime V: type) type {
     return struct {
         const Self = @This();
         const Tree = SplitTree(V);
@@ -146,16 +148,31 @@ pub fn Layout(comptime V: type) type {
     };
 }
 
-/// Lay out `tree` over `rect` at `scale`. The result is owned by the
-/// caller (deinit with the same allocator). An empty tree has no nodes.
-pub fn compute(
-    comptime V: type,
+/// The view type of `TreePtr`, a pointer to a SplitTree(V) (`*SplitTree(V)`
+/// or `*const SplitTree(V)`).
+fn TreeView(comptime TreePtr: type) type {
+    const info = @typeInfo(TreePtr);
+    if (info == .pointer and info.pointer.size == .one) {
+        const Tree = info.pointer.child;
+        if (@typeInfo(Tree) == .@"struct" and @hasDecl(Tree, "View") and Tree == SplitTree(Tree.View)) {
+            return Tree.View;
+        }
+    }
+    @compileError("computeLayout: expected a pointer to a SplitTree, got " ++ @typeName(TreePtr));
+}
+
+/// Lay out `tree` (a pointer to a SplitTree(V)) over `rect` at `scale`.
+/// The result is owned by the caller: deinit it with the same allocator
+/// (the UI passes a stack-fallback allocator, see `stack_bytes`). An empty
+/// tree has no nodes.
+pub fn computeLayout(
     gpa: Allocator,
-    tree: *const SplitTree(V),
+    tree: anytype,
     rect: Rect,
     scale: f32,
-) Allocator.Error!Layout(V) {
-    const L = Layout(V);
+) Allocator.Error!LayoutResult(TreeView(@TypeOf(tree))) {
+    const V = TreeView(@TypeOf(tree));
+    const L = LayoutResult(V);
     const n = tree.nodes.len;
     const node_rects = try gpa.alloc(Rect, n);
     errdefer gpa.free(node_rects);
@@ -192,7 +209,7 @@ pub fn compute(
 fn Walk(comptime V: type) type {
     return struct {
         const Self = @This();
-        const L = Layout(V);
+        const L = LayoutResult(V);
 
         tree: *const SplitTree(V),
         out: *L,
@@ -303,7 +320,7 @@ const TestView = struct {
 };
 
 const TestTree = SplitTree(TestView);
-const TestLayout = Layout(TestView);
+const TestLayout = LayoutResult(TestView);
 
 fn rectEq(want: Rect, got: Rect) !void {
     try testing.expectEqual(want.left, got.left);
@@ -333,7 +350,7 @@ const full: Rect = .{ .left = 0, .top = 0, .right = 1000, .bottom = 600 };
 
 test "unit: model: layout of an empty tree has no nodes" {
     const tree: TestTree = .empty;
-    var lay = try compute(TestView, testing.allocator, &tree, full, 1.0);
+    var lay = try computeLayout(testing.allocator, &tree, full, 1.0);
     defer lay.deinit(testing.allocator);
     try testing.expectEqual(@as(usize, 0), lay.leaves.len);
     try testing.expectEqual(@as(usize, 0), lay.dividers.len);
@@ -344,7 +361,7 @@ test "unit: model: layout of one pane covers the whole rect" {
     var a: TestView = .{ .id = 1 };
     var tree = try TestTree.init(testing.allocator, &a);
     defer tree.deinit();
-    var lay = try compute(TestView, testing.allocator, &tree, full, 1.0);
+    var lay = try computeLayout(testing.allocator, &tree, full, 1.0);
     defer lay.deinit(testing.allocator);
     try testing.expectEqual(@as(usize, 1), lay.leaves.len);
     try testing.expectEqual(&a, lay.leaves[0].view);
@@ -360,7 +377,7 @@ test "unit: model: layout splits with the gap around the divider line" {
     try splitRoot(&tree, &b, .right, .root);
 
     // scale 1: gap 5 = 2 before the line and 3 after it.
-    var lay = try compute(TestView, testing.allocator, &tree, full, 1.0);
+    var lay = try computeLayout(testing.allocator, &tree, full, 1.0);
     defer lay.deinit(testing.allocator);
     try testing.expectEqual(@as(usize, 2), lay.leaves.len);
     try testing.expectEqual(&a, lay.leaves[0].view);
@@ -373,7 +390,7 @@ test "unit: model: layout splits with the gap around the divider line" {
     try rectEq(full, lay.dividers[0].node_rect);
 
     // scale 2: gap 10, band 6.
-    var lay2 = try compute(TestView, testing.allocator, &tree, full, 2.0);
+    var lay2 = try computeLayout(testing.allocator, &tree, full, 2.0);
     defer lay2.deinit(testing.allocator);
     try testing.expectEqual(@as(i32, 495), lay2.leaves[0].rect.right);
     try testing.expectEqual(@as(i32, 505), lay2.leaves[1].rect.left);
@@ -391,7 +408,7 @@ test "unit: model: layout of nested splits gives each divider its own node rect"
     try splitRoot(&tree, &b, .right, .root);
     try splitRoot(&tree, &c, .down, findLeaf(&tree, &b));
 
-    var lay = try compute(TestView, testing.allocator, &tree, full, 1.0);
+    var lay = try computeLayout(testing.allocator, &tree, full, 1.0);
     defer lay.deinit(testing.allocator);
     try testing.expectEqual(@as(usize, 3), lay.leaves.len);
     try testing.expectEqual(@as(usize, 2), lay.dividers.len);

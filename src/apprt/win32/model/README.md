@@ -17,9 +17,10 @@ the event bus and moves the legacy per-tab state into feature ext state.
   (the HWND-less content of the fake graphs).
 - `Title.zig`: user rename (`custom`) over the automatic title (`auto`),
   heap UTF-8/WTF-8.
-- `layout.zig`: `compute` lays out a split tree once (node rects, leaf
-  rects, dividers); pane layout, divider paint/hit-test/drag, keyboard
-  resize, attention rings and pane buttons all use it.
+- `layout.zig`: `computeLayout` lays out a split tree once into a
+  `LayoutResult` (node rects, leaf rects, dividers); pane layout, divider
+  paint/hit-test/drag, keyboard resize, attention rings and pane buttons
+  all use it.
 - `ops/*.zig`: the mutators. Core tab operations take explicit targets
   (`surface.insert`, the one way a tab enters a pane; `remove`,
   `moveInPane`, `selectInPane`, `closeTabAt`); the "focused pane"

@@ -262,7 +262,7 @@ pub fn resizeSplit(self: *Window, rs: apprt.action.ResizeSplit) void {
 
     var sfa = std.heap.stackFallback(pane_layout.stack_bytes, self.app.core_app.alloc);
     const gpa = sfa.get();
-    var lay = pane_layout.compute(Pane, gpa, &ws.tree, self.surfaceRect(), self.scale) catch return;
+    var lay = pane_layout.computeLayout(gpa, &ws.tree, self.surfaceRect(), self.scale) catch return;
     defer lay.deinit(gpa);
     const split = lay.parentSplit(&ws.tree, handle, split_layout) orelse return;
     const ratio = ws.tree.nodes[split.idx()].split.ratio;

@@ -197,7 +197,7 @@ test "unit: model: layout leaves are the panes in pane index order" {
     var g = Graph.init(testing.allocator);
     defer g.deinit();
     const ws = try g.addWorkspace(&.{ 1, 1, 1, 1 });
-    var lay = try layout.compute(Pane, testing.allocator, &ws.tree, .{ .left = 0, .top = 0, .right = 800, .bottom = 400 }, 1.0);
+    var lay = try layout.computeLayout(testing.allocator, &ws.tree, .{ .left = 0, .top = 0, .right = 800, .bottom = 400 }, 1.0);
     defer lay.deinit(testing.allocator);
     try testing.expectEqual(@as(usize, 4), lay.leaves.len);
     try testing.expectEqual(@as(usize, 3), lay.dividers.len);
