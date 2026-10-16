@@ -47,6 +47,29 @@ pub const Lane = enum {
     pub fn jsonStringify(self: Lane, jws: anytype) !void {
         try jws.write(self.wireName());
     }
+
+    /// Inverse of `jsonStringify`: std.json would otherwise match tag names
+    /// and reject `"needs-attention"`. Only wire-name strings are accepted.
+    pub fn jsonParse(gpa: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) std.json.ParseError(@TypeOf(source.*))!Lane {
+        const token = try source.nextAllocMax(gpa, .alloc_if_needed, options.max_value_len.?);
+        defer switch (token) {
+            .allocated_number, .allocated_string => |s| gpa.free(s),
+            else => {},
+        };
+        return switch (token) {
+            inline .string, .allocated_string => |s| parse(s) orelse error.InvalidEnumTag,
+            else => error.UnexpectedToken,
+        };
+    }
+
+    pub fn jsonParseFromValue(gpa: std.mem.Allocator, source: std.json.Value, options: std.json.ParseOptions) std.json.ParseFromValueError!Lane {
+        _ = gpa;
+        _ = options;
+        return switch (source) {
+            .string => |s| parse(s) orelse error.InvalidEnumTag,
+            else => error.UnexpectedToken,
+        };
+    }
 };
 
 /// Agent lifecycle state as published by the `agents` feature (ADR-10.4).
@@ -411,6 +434,36 @@ test "unit: workspace_status: json payload keys" {
     const parsed = try std.json.parseFromSlice(Override, gpa, "{\"status\":\"done\",\"inferred_at_override\":\"todo\"}", .{});
     defer parsed.deinit();
     try testing.expectEqual(Override{ .status = .done, .inferred_at_override = .todo }, parsed.value);
+}
+
+test "unit: workspace_status: every lane round-trips through std.json by wire name" {
+    const gpa = testing.allocator;
+    inline for (std.meta.fields(Lane)) |f| {
+        const l: Lane = @enumFromInt(f.value);
+        const o: Override = .{ .status = l, .inferred_at_override = l.next() };
+        const json = try std.json.Stringify.valueAlloc(gpa, o, .{});
+        defer gpa.free(json);
+        const parsed = try std.json.parseFromSlice(Override, gpa, json, .{});
+        defer parsed.deinit();
+        try testing.expectEqual(o, parsed.value);
+        const tree = try std.json.parseFromSlice(std.json.Value, gpa, json, .{});
+        defer tree.deinit();
+        const from_value = try std.json.parseFromValue(Override, gpa, tree.value, .{});
+        defer from_value.deinit();
+        try testing.expectEqual(o, from_value.value);
+    }
+    // A persisted Status keeps a needs-attention pin.
+    const status: Status = .{ .override = .{ .status = .needs_attention, .inferred_at_override = .working }, .hidden = true };
+    const json = try std.json.Stringify.valueAlloc(gpa, status, .{});
+    defer gpa.free(json);
+    const back = try std.json.parseFromSlice(Status, gpa, json, .{});
+    defer back.deinit();
+    try testing.expectEqual(status, back.value);
+    // Tag spellings and enum numbers are not wire names.
+    try testing.expectError(error.InvalidEnumTag, std.json.parseFromSlice(Lane, gpa, "\"needs_attention\"", .{}));
+    try testing.expectError(error.UnexpectedToken, std.json.parseFromSlice(Lane, gpa, "2", .{}));
+    try testing.expectError(error.InvalidEnumTag, std.json.parseFromValue(Lane, gpa, .{ .string = "auto" }, .{}));
+    try testing.expectError(error.UnexpectedToken, std.json.parseFromValue(Lane, gpa, .{ .integer = 2 }, .{}));
 }
 
 test "unit: workspace_status: subcommand parsing and error strings" {
