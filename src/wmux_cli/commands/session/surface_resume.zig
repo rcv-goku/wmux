@@ -103,6 +103,16 @@ pub fn bindingText(r: std.json.Value) []const u8 {
     return util.fieldStr(b, "command") orelse "null";
 }
 
+/// The default `cwd` of a binding: `$PWD` when it is an absolute native path
+/// (it keeps the shell's logical spelling), else the process cwd. Git Bash
+/// exports `PWD` in MSYS form (`/c/Users/...`), which is not a Windows path,
+/// so on Windows that spelling falls back to the process cwd (the same
+/// directory, which MSYS sets for native children).
+fn callerCwd(ctx: *Ctx) ?[]const u8 {
+    if (ctx.env.getNonEmpty("PWD")) |pwd| if (util.isAbsolute(pwd)) return pwd;
+    return ctx.platform.cwd(ctx.arena);
+}
+
 fn checkpointOf(flags: util.Flags) ?[]const u8 {
     // --checkpoint-id wins over --checkpoint (cmux).
     return flags.get("--checkpoint-id") orelse flags.get("--checkpoint");
@@ -129,7 +139,7 @@ fn runSet(ctx: *Ctx, args: []const []const u8) !u8 {
     try params.optStr("kind", flags.get("--kind"));
     try params.optStr("checkpoint_id", checkpointOf(flags));
     try params.str("source", flags.get("--source") orelse "cli");
-    const cwd = if (flags.get("--cwd")) |c| try util.resolvePath(ctx, c) else ctx.env.getNonEmpty("PWD") orelse ctx.platform.cwd(ctx.arena);
+    const cwd = if (flags.get("--cwd")) |c| try util.resolvePath(ctx, c) else callerCwd(ctx);
     try params.optStr("cwd", cwd);
     if (shell) |s| {
         try params.str("command", s);

@@ -1,6 +1,7 @@
 //! Tests of the `session` family: restore-session and surface resume.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const testing = std.testing;
 const harness = @import("../cli_misc/harness.zig");
 const fake = @import("../../fake.zig");
@@ -143,6 +144,33 @@ test "unit: cli-surface-resume: set with --shell and with -- argv" {
     try testing.expectEqualStrings(harness.p(h.alloc(), &.{ harness.root, "work", "proj" }), r2.params.object.get("cwd").?.string);
     try testing.expectEqualStrings("claude --resume 'it'\\''s \u{e9}'", r2.params.object.get("command").?.string);
     try testing.expectEqualStrings("{\"argv\":[\"claude\",\"--resume\",\"it's \u{e9}\"]}", try std.json.Stringify.valueAlloc(h.alloc(), r2.params.object.get("launch_command").?, .{}));
+}
+
+test "unit: cli-surface-resume: set takes $PWD only when it is a native absolute path" {
+    // A native absolute PWD (the shell's logical spelling) wins over the
+    // process cwd on every host.
+    {
+        var h: harness.Harness = undefined;
+        h.init();
+        defer h.deinit();
+        h.serve(echo);
+        const logical = harness.p(h.alloc(), &.{ harness.root, "logical" });
+        h.setEnv("PWD", logical);
+        try harness.expectOk(h.run(&.{ "cmux", "surface-resume", "set", "--surface", "surface:1", "--shell", "make" }));
+        try testing.expectEqualStrings(logical, h.last().params.object.get("cwd").?.string);
+    }
+    // Git Bash exports PWD in MSYS form, which is not a Windows path: there
+    // the process cwd is sent instead.
+    {
+        var h: harness.Harness = undefined;
+        h.init();
+        defer h.deinit();
+        h.serve(echo);
+        h.setEnv("PWD", "/c/Users/me/proj");
+        try harness.expectOk(h.run(&.{ "cmux", "surface-resume", "set", "--surface", "surface:1", "--shell", "make" }));
+        const want = if (builtin.os.tag == .windows) harness.p(h.alloc(), &.{ harness.root, "work" }) else "/c/Users/me/proj";
+        try testing.expectEqualStrings(want, h.last().params.object.get("cwd").?.string);
+    }
 }
 
 test "unit: cli-surface-resume: set and clear validation, clear guards" {
