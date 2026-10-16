@@ -188,7 +188,7 @@ fn runSelect(ctx: *Ctx, args: []const []const u8, u: []const u8, name: []const u
         return common.usage(ctx, u, "{s} requires a workspace (<id|ref|index> or --workspace)", .{name});
     };
     var p = Params.init(ctx.arena);
-    if (try common.putHandle(ctx, &p, u, "workspace_id", .workspace, ws)) |c| return c;
+    if (try common.putExplicitWorkspace(ctx, &p, u, "workspace_id", ws, common.windowText(ctx, o) != null)) |c| return c;
     if (try common.putWindow(ctx, &p, u, o)) |c| return c;
     return common.simple(ctx, "workspace.select", &p);
 }
@@ -554,6 +554,43 @@ test "unit: cli-workspace: select, close and rename in legacy and namespace form
     _ = try testkit.expectOk(&h, &.{ "rename-workspace", "--window", "window:2", "new" });
     try h.expectLast("workspace.rename", "{\"window_id\":\"window:2\",\"title\":\"new\"}");
     try testkit.expectUsage(&h, &.{ "close-workspace", "--window", "window:2" }, "close-workspace requires a workspace (<id|ref|index> or --workspace)");
+}
+
+test "unit: cli-workspace: a blank workspace handle means the caller's workspace or fails closed" {
+    var h: testkit.Harness = undefined;
+    try h.init();
+    defer h.deinit();
+    for ([_][]const u8{ "workspace.close", "workspace.select", "workspace.rename", "workspace.move_to_window" }) |m| h.ok(m, "{}");
+    const msg = "No workspace selected: --workspace was blank and CMUX_WORKSPACE_ID is unset";
+    // Without a caller workspace a blank handle never reaches the server
+    // (cmux: `--workspace "${CMUX_WORKSPACE_ID:-}"` outside a terminal).
+    try testkit.expectUsage(&h, &.{ "close-workspace", "--workspace", "" }, msg);
+    try testkit.expectUsage(&h, &.{ "select-workspace", "--workspace", " " }, msg);
+    try testkit.expectUsage(&h, &.{ "workspace", "close", "" }, msg);
+    try testkit.expectUsage(&h, &.{ "workspace", "env", "--workspace=" }, msg);
+    try testkit.expectUsage(&h, &.{ "workspace", "status", "--workspace", "" }, msg);
+    try testkit.expectUsage(&h, &.{ "workspace", "reconnect", "" }, msg);
+    try testkit.expectUsage(&h, &.{ "workspace-action", "pin", "--workspace", "" }, msg);
+    try testkit.expectUsage(&h, &.{ "reorder-workspace", "--workspace", "", "--index", "0" }, msg);
+    try testkit.expectUsage(&h, &.{ "move-workspace-to-window", "--workspace", "", "--window", "1" }, msg);
+    // Inside a terminal it is the caller's workspace...
+    h.setEnv("CMUX_WORKSPACE_ID", "CALLER-UUID");
+    _ = try testkit.expectOk(&h, &.{ "close-workspace", "--workspace", "" });
+    try h.expectLast("workspace.close", "{\"workspace_id\":\"CALLER-UUID\"}");
+    _ = try testkit.expectOk(&h, &.{ "workspace", "select", "\t" });
+    try h.expectLast("workspace.select", "{\"workspace_id\":\"CALLER-UUID\"}");
+    _ = try testkit.expectOk(&h, &.{ "rename-workspace", "--workspace=", "T" });
+    try h.expectLast("workspace.rename", "{\"workspace_id\":\"CALLER-UUID\",\"title\":\"T\"}");
+    // (move-workspace-to-window's --window is the destination, not a scope.)
+    _ = try testkit.expectOk(&h, &.{ "move-workspace-to-window", "--workspace", "", "--window", "1" });
+    try h.expectLast("workspace.move_to_window", "{\"workspace_id\":\"CALLER-UUID\",\"window_id\":1}");
+    // ...unless a window was named: CMUX_WORKSPACE_ID applies only without one.
+    try testkit.expectUsage(&h, &.{ "close-workspace", "--workspace", "", "--window", "window:1" }, msg);
+    try testkit.expectUsage(&h, &.{ "--window", "window:1", "select-workspace", "--workspace", "" }, msg);
+    try testkit.expectUsage(&h, &.{ "--window", "window:1", "workspace", "env", "" }, msg);
+    // Other blank handles keep cmux's per-kind message.
+    try testkit.expectUsage(&h, &.{ "close-workspace", "--workspace", "workspace:1", "--window", "" }, "Window handle is blank");
+    try testkit.expectUsage(&h, &.{ "reorder-workspace", "--before", " " }, "Workspace handle is blank");
 }
 
 test "unit: cli-workspace: next, previous and last window" {

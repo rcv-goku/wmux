@@ -109,11 +109,26 @@ pub fn putWindow(ctx: *Ctx, p: *Params, usage_line: []const u8, o: opts.Opts) !?
     return putHandle(ctx, p, usage_line, "window_id", .window, w);
 }
 
+/// An explicit workspace handle (positional or `--workspace`) stored under
+/// `key`. A blank value falls back to `CMUX_WORKSPACE_ID` when no window was
+/// named, else fails with cmux's message (ADR-4.6); anything else is
+/// validated like any handle.
+pub fn putExplicitWorkspace(ctx: *Ctx, p: *Params, usage_line: []const u8, key: []const u8, text: []const u8, window_given: bool) !?u8 {
+    if (std.mem.trim(u8, text, " \t\r\n").len == 0) {
+        if (!window_given) if (callerWorkspace(ctx)) |ws| {
+            try p.str(key, ws);
+            return null;
+        };
+        return usage(ctx, usage_line, "{s}", .{proto.errors.msg.no_workspace_selected});
+    }
+    return putHandle(ctx, p, usage_line, key, .workspace, text);
+}
+
 /// Workspace target (ADR-4.6): `explicit` (positional or `--workspace`),
 /// else `CMUX_WORKSPACE_ID` when no window was named, else nothing (the
 /// server uses the window's selected workspace).
 pub fn putWorkspaceTarget(ctx: *Ctx, p: *Params, usage_line: []const u8, explicit: ?[]const u8, window_given: bool) !?u8 {
-    if (explicit) |e| return putHandle(ctx, p, usage_line, "workspace_id", .workspace, e);
+    if (explicit) |e| return putExplicitWorkspace(ctx, p, usage_line, "workspace_id", e, window_given);
     if (window_given) return null;
     if (callerWorkspace(ctx)) |ws| try p.str("workspace_id", ws);
     return null;

@@ -218,8 +218,9 @@ fn runDelete(ctx: *Ctx, args: []const []const u8, v: *const Verb, prefix: []cons
 
 /// `--workspace`, else the caller's workspace; usage error when neither.
 fn putMember(ctx: *Ctx, o: common.opts.Opts, v: *const Verb, prefix: []const u8, p: *Params) !?u8 {
-    if (o.get("--workspace")) |ws| return common.putHandle(ctx, p, v.usage, "workspace_id", .workspace, ws);
-    const caller = common.callerWorkspace(ctx) orelse
+    const window_given = ctx.parsed.globals.window != null;
+    if (o.get("--workspace")) |ws| return common.putExplicitWorkspace(ctx, p, v.usage, "workspace_id", ws, window_given);
+    const caller = (if (window_given) null else common.callerWorkspace(ctx)) orelse
         return common.usage(ctx, v.usage, "{s} {s} requires --workspace <id|ref|index>", .{ prefix, v.name });
     try p.str("workspace_id", caller);
     return null;
@@ -428,6 +429,7 @@ test "unit: cli-workspace-group: membership verbs default to the caller's worksp
     defer h.deinit();
     h.ok("workspace.group.add", "{}");
     h.ok("workspace.group.remove", "{}");
+    h.ok("workspace.group.set_anchor", "{}");
     try testkit.expectUsage(&h, &.{ "workspace-group", "add", "--group", "workspace_group:1" }, "workspace-group add requires --workspace <id|ref|index>");
     try testkit.expectUsage(&h, &.{ "workspace", "group", "remove" }, "workspace group remove requires --workspace <id|ref|index>");
     h.setEnv("CMUX_WORKSPACE_ID", "CALLER-UUID");
@@ -435,6 +437,15 @@ test "unit: cli-workspace-group: membership verbs default to the caller's worksp
     try h.expectLast("workspace.group.add", "{\"group_id\":\"workspace_group:1\",\"workspace_id\":\"CALLER-UUID\"}");
     _ = try testkit.expectOk(&h, &.{ "workspace-group", "remove" });
     try h.expectLast("workspace.group.remove", "{\"workspace_id\":\"CALLER-UUID\"}");
+    // A blank --workspace is the caller's workspace too (ADR-4.6)...
+    _ = try testkit.expectOk(&h, &.{ "workspace-group", "set-anchor", "--group", "workspace_group:1", "--workspace", "" });
+    try h.expectLast("workspace.group.set_anchor", "{\"group_id\":\"workspace_group:1\",\"workspace_id\":\"CALLER-UUID\"}");
+    // ...but naming a window drops the caller default.
+    const msg = "No workspace selected: --workspace was blank and CMUX_WORKSPACE_ID is unset";
+    try testkit.expectUsage(&h, &.{ "--window", "window:1", "workspace-group", "remove", "--workspace", " " }, msg);
+    try testkit.expectUsage(&h, &.{ "--window", "window:1", "workspace", "group", "remove" }, "workspace group remove requires --workspace <id|ref|index>");
+    h.unsetEnv("CMUX_WORKSPACE_ID");
+    try testkit.expectUsage(&h, &.{ "workspace-group", "add", "--group", "workspace_group:1", "--workspace=" }, msg);
 }
 
 test "unit: cli-workspace-group: usage errors" {
