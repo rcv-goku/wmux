@@ -41,6 +41,9 @@ pub const Harness = struct {
     aliases: std.ArrayList(Alias),
     writes: usize,
     fail_writes: bool,
+    /// What `util.fs.stdinIsTerminal` reports. It is independent of
+    /// `fp.interactive`, which also requires a console stdout.
+    stdin_tty: bool,
 
     pub const Alias = struct { from: []const u8, to: []const u8 };
 
@@ -59,6 +62,7 @@ pub const Harness = struct {
         self.aliases = .empty;
         self.writes = 0;
         self.fail_writes = false;
+        self.stdin_tty = false;
         self.setEnv("WMUX_CHANNEL", "stable");
         util.fs = .{ .ptr = self, .vtable = &mem_vtable };
     }
@@ -142,7 +146,11 @@ pub const Harness = struct {
         return self.server.requests.items.len;
     }
 
-    const mem_vtable: util.Fs.VTable = .{ .writeFile = memWrite, .listDir = memList, .isDir = memIsDir, .fileId = memFileId };
+    const mem_vtable: util.Fs.VTable = .{ .writeFile = memWrite, .listDir = memList, .isDir = memIsDir, .fileId = memFileId, .stdinIsTerminal = memStdinIsTerminal };
+
+    fn memStdinIsTerminal(ptr: ?*anyopaque) bool {
+        return self_(ptr).stdin_tty;
+    }
 
     /// A hash of the path after lexical normalization and the alias table;
     /// null for paths the fake does not know (they cannot be opened).

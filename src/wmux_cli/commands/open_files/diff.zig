@@ -128,7 +128,10 @@ fn run(ctx: *Ctx) !u8 {
         try params.optStr("base", base);
         try params.optStr("session", session);
     } else {
-        if (ctx.platform.isInteractive()) return util.usageFail(ctx, usage, "{s}", .{no_input_message});
+        // cmux tests stdin alone. With a terminal stdin and stdout redirected
+        // (`cmux diff > out`, `$r = cmux diff`), reading would wait for
+        // console input.
+        if (util.fs.stdinIsTerminal()) return util.usageFail(ctx, usage, "{s}", .{no_input_message});
         if (try readStdinPatch(ctx, &params)) |code| return code;
     }
     try params.optStr("title", flags.get("--title"));

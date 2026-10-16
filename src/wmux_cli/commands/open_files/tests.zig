@@ -325,9 +325,18 @@ test "unit: cli-diff: usage errors" {
     try harness.expectFail(h.run(&.{ "cmux", "diff", "--staged", "--font-size", "97" }), 2, "--font-size");
     try harness.expectFail(h.run(&.{ "cmux", "diff", "--staged", "--layout", "side" }), 2, "--layout must be split or unified");
     try harness.expectFail(h.run(&.{ "cmux", "diff" }), 2, diff.no_input_message);
+    // A terminal stdin refuses without reading, even with stdout redirected
+    // (fp.interactive stays false). Typed text would otherwise be taken as
+    // the patch.
+    h.stdin_tty = true;
+    h.fp.stdin = "diff --git a/x b/x\n";
+    try harness.expectFail(h.run(&.{ "cmux", "diff" }), 2, diff.no_input_message);
     h.fp.interactive = true;
     try harness.expectFail(h.run(&.{ "cmux", "diff" }), 2, diff.no_input_message);
     try testing.expectEqual(@as(usize, 0), h.requestCount());
+    h.stdin_tty = false;
+    h.fp.interactive = false;
+    h.fp.stdin = null;
     try harness.expectFail(h.run(&.{ "cmux", "diff", "missing.patch" }), 1, "diff: cannot read patch file");
     const help = h.run(&.{ "cmux", "diff", "--help" });
     try harness.expectOk(help);

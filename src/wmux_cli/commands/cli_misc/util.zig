@@ -3,8 +3,8 @@
 //! error wording, caller-context selector defaults (ADR-4.6), JSON params
 //! building, one-call request/print helpers, handle text for `OK ...` lines
 //! and a file-system hook for the writes, directory listings, directory
-//! checks and file identities the `Platform` abstraction does not offer yet
-//! (see out/REPORT.md).
+//! checks, file identities and the stdin terminal check that the `Platform`
+//! abstraction does not offer yet (see out/REPORT.md).
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -369,9 +369,9 @@ pub const WriteError = error{ WriteFailed, OutOfMemory };
 /// `subst` drives).
 pub const FileId = struct { volume: u64, index: u64 };
 
-/// Writes, directory listings, directory checks and file identities (reads
-/// go through `Platform.readFile`). Tests swap in an in-memory
-/// implementation.
+/// Writes, directory listings, directory checks, file identities and the
+/// stdin terminal check (reads go through `Platform.readFile`). Tests swap
+/// in an in-memory implementation.
 pub const Fs = struct {
     ptr: ?*anyopaque = null,
     vtable: *const VTable,
@@ -385,10 +385,19 @@ pub const Fs = struct {
         /// The identity of `path`, or null when it cannot be opened or the
         /// file system has no stable file ids.
         fileId: *const fn (ptr: ?*anyopaque, path: []const u8) ?FileId,
+        /// Whether stdin is a terminal: a console, or on Windows also an
+        /// MSYS/Cygwin pty (Git Bash in mintty). This is cmux's "TTY stdin"
+        /// test. `Platform.isInteractive` does not answer it, because it
+        /// also requires stdout to be a console.
+        stdinIsTerminal: *const fn (ptr: ?*anyopaque) bool,
     };
 
     pub fn fileId(f: Fs, path: []const u8) ?FileId {
         return f.vtable.fileId(f.ptr, path);
+    }
+
+    pub fn stdinIsTerminal(f: Fs) bool {
+        return f.vtable.stdinIsTerminal(f.ptr);
     }
 
     pub fn writeFile(f: Fs, arena: Allocator, path: []const u8, bytes: []const u8) WriteError!void {
@@ -407,7 +416,14 @@ pub const Fs = struct {
 /// The process-wide hook (tests replace it and restore `native_fs`).
 pub var fs: Fs = native_fs;
 
-pub const native_fs: Fs = .{ .vtable = &.{ .writeFile = nativeWrite, .listDir = nativeList, .isDir = nativeIsDir, .fileId = nativeFileId } };
+pub const native_fs: Fs = .{ .vtable = &.{ .writeFile = nativeWrite, .listDir = nativeList, .isDir = nativeIsDir, .fileId = nativeFileId, .stdinIsTerminal = nativeStdinIsTerminal } };
+
+/// On Windows `isTty` accepts a console handle or a pipe named like an
+/// MSYS/Cygwin pty (`\msys-<hash>-pty0-from-master`). Shell pipelines
+/// (`...-pipe-<n>`), files and NUL are not terminals.
+fn nativeStdinIsTerminal(_: ?*anyopaque) bool {
+    return std.fs.File.stdin().isTty();
+}
 
 fn nativeFileId(_: ?*anyopaque, path: []const u8) ?FileId {
     var file = std.fs.cwd().openFile(path, .{}) catch {
