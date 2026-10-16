@@ -1,0 +1,30 @@
+Usage: cmux surface-resume <show|set|clear> [flags]
+       cmux surface resume show [--json] [flags]
+       cmux surface resume set [flags] -- <argv...>
+
+Read or change the restart command bound to a terminal surface. wmux stores
+it in the session and offers it when the surface is restored. Also spelled
+'cmux surface resume ...'.
+
+Commands:
+  show | get                    Print the bound command, 'No resume binding',
+                                or 'null' when the command is private (default)
+  set (--shell <command> | -- <argv...>)
+                                Bind a command (--shell takes one complete
+                                command string; -- also stores the argv)
+  clear                         Remove the binding; prints OK cleared=<bool>
+
+Selectors (default: CMUX_SURFACE_ID / CMUX_WORKSPACE_ID):
+  --workspace <id|ref|index>  --surface <id|ref|index>  --window <id|ref|index>
+
+set flags:
+  --name <name>  --kind <kind>  --source <source> (default: cli)
+  --checkpoint <id> | --checkpoint-id <id> (--checkpoint-id wins)
+  --cwd <path> (default: $PWD or the current directory)
+
+clear flags:
+  --checkpoint <id> | --checkpoint-id <id>  --source <source>
+                                Only clear a binding with this checkpoint/source
+
+--json prints the reply, including resume_binding and the surface and
+workspace ids. A new binding may need approval before it resumes on its own.
