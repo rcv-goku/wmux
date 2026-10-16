@@ -110,9 +110,12 @@ pub const Event = struct {
 };
 
 /// Publish `ev` after the mutation it describes (UI thread): every
-/// feature's `onEvent`, in manifest order.
+/// feature's `onEvent`, in manifest order. Nothing is delivered while the
+/// features are not initialized (`App.features_initialized`: a failed
+/// feature init, or after their deinit in App.terminate).
 pub fn emit(app: *App, ev: Event) void {
     if (builtin.mode == .Debug) std.debug.assert(ev.isValid());
+    if (!app.features_initialized) return;
     lifecycle.onEvent(app, &ev);
 }
 

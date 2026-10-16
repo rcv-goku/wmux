@@ -85,6 +85,7 @@ test "unit: model: group ops mint, rename and retire group handles" {
     core.alloc = testing.allocator;
     var app: App = undefined;
     app.core_app = &core;
+    app.features_initialized = true;
     app.handles = .{};
     defer app.handles.deinit(testing.allocator);
     var win: Window = undefined;

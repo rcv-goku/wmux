@@ -128,6 +128,12 @@ handles: model_registry.HandleRegistry = .{},
 /// App-wide feature state (`App.features.<id>`, ADR-1.3).
 features: features_ext.AppExt = .{},
 
+/// Whether every feature's `init` succeeded (features/lifecycle.zig). When
+/// one fails, lifecycle.init has already deinitialized the features before
+/// it, so the app runs with no feature initialized: model events reach no
+/// feature (model/events.zig) and terminate runs no feature `deinit`.
+features_initialized: bool = false,
+
 /// Background brush created from the configured background color.
 /// Used by WM_ERASEBKGND to fill exposed areas during resize,
 /// matching the terminal background so the flash is invisible.
@@ -453,12 +459,14 @@ pub fn init(
     updater.startUpdateCheck(self);
 
     // Every feature's init, once the app plumbing exists and before the
-    // first window (ADR-1.3). A failing feature is logged and left out
-    // (lifecycle.init has already deinitialized the ones before it);
-    // the app still starts.
-    features_lifecycle.init(self) catch |err| {
+    // first window (ADR-1.3). If one fails, lifecycle.init deinitializes
+    // the features before it; the failure is logged and the app starts
+    // without features (`features_initialized` stays false).
+    if (features_lifecycle.init(self)) |_| {
+        self.features_initialized = true;
+    } else |err| {
         log.err("feature initialization failed err={}", .{err});
-    };
+    }
 }
 
 pub fn run(self: *App) !void {
@@ -556,10 +564,14 @@ pub fn terminate(self: *App) void {
     }
 
     // Every window is gone: the features' deinit (ADR-1.3, reverse
-    // manifest order), then the app-wide feature state. The model objects'
-    // destroy paths already retired their handles and freed their feature
-    // state, so the registry can go too.
-    features_lifecycle.deinit(self);
+    // manifest order; only when their init succeeded), then the app-wide
+    // feature state. The model objects' destroy paths already retired
+    // their handles and freed their feature state, so the registry can go
+    // too.
+    if (self.features_initialized) {
+        self.features_initialized = false;
+        features_lifecycle.deinit(self);
+    }
     features_ext.deinitAll(&self.features, alloc);
     self.handles.deinit(alloc);
 
