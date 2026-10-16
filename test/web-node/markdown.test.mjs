@@ -129,7 +129,9 @@ const { createApp } = await importWeb("markdown/app.js");
 const { createRenderer, slugify, createSlugger, extractFrontmatter } = await importWeb("markdown/render.js");
 const { classifyLink, classifyImage, looksLikeMarkdownPath, basename } = await importWeb("markdown/links.js");
 const { createFind, MAX_MATCHES } = await importWeb("markdown/find.js");
-const { createDiagrams } = await importWeb("markdown/diagrams.js");
+const { createDiagrams, loadScriptOnce, isMermaidApi, DIAGRAM_FONT_FAMILY, DIAGRAM_FONT_SIZE } = await importWeb(
+  "markdown/diagrams.js",
+);
 const typo = await importWeb("markdown/typography.js");
 const { scrollTarget, DEFAULT_KEYMAP } = await importWeb("markdown/keymap.js");
 
@@ -671,14 +673,22 @@ describe("unit: markdown diagrams", () => {
   test("unit: markdown: mermaid loads lazily once, renders SVG and shows inline errors", async () => {
     let loads = 0;
     const renders = [];
+    const containers = [];
     const mermaid = {
       initialized: null,
       initialize(cfg) {
         this.initialized = cfg;
       },
-      async render(id, text) {
+      async render(id, text, container) {
         renders.push(id);
-        if (!text.includes("-->")) throw new Error("Parse error on line 1:\nExpecting arrow");
+        containers.push(container);
+        if (!text.includes("-->")) {
+          // Like mermaid, leave the temporary element behind on a parse error.
+          const leftover = doc.createElement("div");
+          leftover.id = "d" + id;
+          container.append(leftover);
+          throw new Error("Parse error on line 1:\nExpecting arrow");
+        }
         return {
           svg: `<svg id="${id}" xmlns="http://www.w3.org/2000/svg"><style>#${id} .node{fill:red}</style><g class="node" style="opacity: 0.5"><text>A</text></g><script>alert(1)</script></svg>`,
         };
@@ -703,6 +713,20 @@ describe("unit: markdown diagrams", () => {
     assert.equal(loads, 1);
     assert.equal(mermaid.initialized.securityLevel, "strict");
     assert.equal(mermaid.initialized.theme, "default");
+    // The CSP blocks mermaid's <style> during layout: it renders in a container
+    // that carries the diagram font, so labels are measured in the font they are
+    // drawn in (verified in WebView2: without it, labels overflow by 12-17%).
+    assert.equal(mermaid.initialized.fontFamily, DIAGRAM_FONT_FAMILY);
+    assert.deepEqual(mermaid.initialized.themeVariables, { fontFamily: DIAGRAM_FONT_FAMILY, fontSize: DIAGRAM_FONT_SIZE });
+    assert.equal(containers.length, 2);
+    const scratch = containers[0];
+    assert.equal(containers[1], scratch, "one measuring container");
+    assert.ok(scratch.isConnected && !root.contains(scratch), "laid out, outside the document content");
+    assert.match(scratch.style.fontFamily, /trebuchet ms/i);
+    assert.equal(scratch.style.fontSize, DIAGRAM_FONT_SIZE);
+    assert.equal(scratch.style.visibility, "hidden");
+    assert.equal(scratch.getAttribute("aria-hidden"), "true");
+    assert.equal(scratch.children.length, 0, "leftovers of the failed render are removed");
     const [ok, bad] = root.querySelectorAll(".wmux-mermaid");
     assert.equal(ok.getAttribute("data-state"), "rendered");
     const svg = ok.querySelector(".wmux-diagram-output svg");
@@ -727,6 +751,48 @@ describe("unit: markdown diagrams", () => {
     const root = renderToDiv("```mermaid\ngraph TD; A-->B\n```").div;
     await diagrams.render(root);
     assert.equal(root.querySelector(".wmux-diagram-error").textContent, "Mermaid error: Failed to load mermaid");
+  });
+
+  test("unit: markdown: a mermaid that fails to initialize shows the error box", async () => {
+    const diagrams = createDiagrams({
+      document: doc,
+      purify,
+      loadMermaid: async () => ({
+        initialize() {
+          throw new Error("bad config");
+        },
+        async render() {
+          return { svg: "<svg></svg>" };
+        },
+      }),
+    });
+    const root = renderToDiv("```mermaid\ngraph TD; A-->B\n```").div;
+    assert.equal(await diagrams.render(root), 1);
+    assert.equal(root.querySelector(".wmux-mermaid").getAttribute("data-state"), "error");
+    assert.equal(root.querySelector(".wmux-diagram-error").textContent, "Mermaid error: bad config");
+    diagrams.dispose();
+  });
+
+  test("unit: markdown: a document element named mermaid is not mistaken for the library", async () => {
+    const clobber = doc.createElement("div");
+    clobber.id = "mermaid";
+    doc.body.append(clobber);
+    const src = "../_vendor/test-only/clobber-check.js";
+    try {
+      assert.equal(window.mermaid, clobber, "named access: the element shows up as window.mermaid");
+      assert.equal(isMermaidApi(clobber), false);
+      const loading = loadScriptOnce(doc, src, "mermaid", isMermaidApi);
+      const script = doc.head.querySelector(`script[src="${src}"]`);
+      assert.ok(script, "the library is requested instead of trusting the element");
+      const api = { initialize() {}, async render() {} };
+      window.mermaid = api; // what the vendored IIFE does when it runs
+      script.dispatchEvent(new window.Event("load"));
+      assert.equal(await loading, api);
+      script.remove();
+    } finally {
+      delete window.mermaid;
+      clobber.remove();
+    }
   });
 
   test("unit: markdown: vendored mermaid parses valid and rejects malformed diagrams", async () => {

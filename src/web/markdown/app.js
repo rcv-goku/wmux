@@ -1168,7 +1168,7 @@ export function createApp(options) {
       }
     }
     for (const id of Array.from(timers)) cancel(id);
-    diagrams.reset();
+    diagrams.dispose();
   }
 
   const api = {

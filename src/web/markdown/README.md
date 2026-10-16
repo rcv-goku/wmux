@@ -108,7 +108,12 @@ can report `display_mode` in `file.open` replies from it.
   `pre.wmux-source` and render into `.wmux-diagram-output` with
   `securityLevel: "strict"` and a theme that follows the light/dark scheme.
   Errors show "Mermaid error: <message>" inline. Mermaid's `<style>` and
-  `style=""` output are re-applied through the CSSOM (CSP).
+  `style=""` output are re-applied through the CSSOM (CSP). The CSP also
+  blocks that `<style>` while mermaid lays the diagram out, so mermaid renders
+  in an off-screen container that carries the diagram font (Trebuchet MS
+  16px, also passed to mermaid as `fontFamily`/`themeVariables`): labels are
+  measured in the font they are drawn in. A diagram that changes the font
+  through an init directive is still measured in the default font.
 - **Images.** Relative paths are resolved against `base_url`; a path that
   climbs above its root goes to `panel.markdown.resolve_image` instead of
   being clamped to a different file. URLs that would leave the host are not

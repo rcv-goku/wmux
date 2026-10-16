@@ -9,7 +9,10 @@
  * CSP: the panel allows no inline styles. Mermaid's SVG carries a <style>
  * element and style="" attributes, which the browser would ignore; both are
  * re-applied through the CSSOM (a constructed stylesheet and element.style),
- * which the CSP does not restrict.
+ * which the CSP does not restrict. While mermaid lays a diagram out, its
+ * <style> is blocked as well, so text would be measured in the page font and
+ * drawn in the diagram font (clipped labels). Mermaid therefore renders into
+ * an off-screen container that carries the diagram font through the CSSOM.
  */
 import { t } from "./strings.js";
 
@@ -19,17 +22,36 @@ export const MERMAID_SRC = "../_vendor/mermaid@11.17.2/mermaid.min.js";
 /** Longest diagram source handed to mermaid. */
 export const MAX_DIAGRAM_SOURCE = 50000;
 
+/**
+ * Font diagrams are drawn and measured in: mermaid's theme default, passed to
+ * mermaid explicitly so its CSS and the measuring container cannot drift apart.
+ */
+export const DIAGRAM_FONT_FAMILY = '"trebuchet ms", verdana, arial, sans-serif';
+export const DIAGRAM_FONT_SIZE = "16px";
+
 const scriptLoads = new Map();
+
+/**
+ * Whether a value is the mermaid API. window.mermaid can also be an element
+ * of the rendered document with id or name "mermaid" (named access).
+ */
+export function isMermaidApi(value) {
+  return Boolean(value) && typeof value.render === "function" && typeof value.initialize === "function";
+}
 
 /**
  * Load a classic script once per document and resolve with `globalThis[name]`.
  * @param {Document} doc
  * @param {string} src same-origin URL
  * @param {string} globalName
+ * @param {(value: unknown) => boolean} [isLoaded] whether the global is the
+ *   library (default: truthy). Pass a real check where documents can define
+ *   elements named like the global.
  */
-export function loadScriptOnce(doc, src, globalName) {
+export function loadScriptOnce(doc, src, globalName, isLoaded) {
   const view = doc.defaultView || globalThis;
-  if (view[globalName]) return Promise.resolve(view[globalName]);
+  const loaded = isLoaded || Boolean;
+  if (loaded(view[globalName])) return Promise.resolve(view[globalName]);
   const key = src + "|" + globalName;
   if (scriptLoads.has(key)) return scriptLoads.get(key);
   const promise = new Promise((resolve, reject) => {
@@ -37,7 +59,7 @@ export function loadScriptOnce(doc, src, globalName) {
     script.src = src;
     script.async = true;
     script.addEventListener("load", () => {
-      if (view[globalName]) resolve(view[globalName]);
+      if (loaded(view[globalName])) resolve(view[globalName]);
       else reject(new Error(globalName + " did not load"));
     });
     script.addEventListener("error", () => reject(new Error("Failed to load " + src)));
@@ -55,11 +77,12 @@ export function loadScriptOnce(doc, src, globalName) {
 export function createDiagrams(deps) {
   const doc = deps.document;
   const purify = deps.purify;
-  const loadMermaid = deps.loadMermaid || (() => loadScriptOnce(doc, MERMAID_SRC, "mermaid"));
+  const loadMermaid = deps.loadMermaid || (() => loadScriptOnce(doc, MERMAID_SRC, "mermaid", isMermaidApi));
   const scheme = deps.scheme || (() => "dark");
   let counter = 0;
   let initializedTheme = null;
   let adoptedSheets = [];
+  let scratch = null;
 
   function errorBox(library, message) {
     const box = doc.createElement("div");
@@ -67,6 +90,45 @@ export function createDiagrams(deps) {
     box.setAttribute("role", "alert");
     box.textContent = t("markdown.diagram.error", { library, message });
     return box;
+  }
+
+  function failAll(blocks, err) {
+    const message = String((err && err.message) || err);
+    for (const block of blocks) {
+      const output = block.querySelector(".wmux-diagram-output");
+      if (output) output.replaceChildren(errorBox("Mermaid", message));
+      block.setAttribute("data-state", "error");
+    }
+  }
+
+  /** Laid-out but invisible element that mermaid renders and measures text in. */
+  function scratchContainer() {
+    if (scratch && scratch.isConnected) return scratch;
+    scratch = doc.createElement("div");
+    scratch.className = "mdv-diagram-scratch";
+    scratch.setAttribute("aria-hidden", "true");
+    for (const [name, value] of [
+      ["position", "absolute"],
+      ["left", "-10000px"],
+      ["top", "0"],
+      ["visibility", "hidden"],
+      ["font-family", DIAGRAM_FONT_FAMILY],
+      ["font-size", DIAGRAM_FONT_SIZE],
+    ]) {
+      scratch.style.setProperty(name, value);
+    }
+    doc.body.append(scratch);
+    return scratch;
+  }
+
+  /** Remove what mermaid left behind for one render (it does when parsing fails). */
+  function removeLeftovers(id, container) {
+    const ids = new Set([id, "d" + id, "i" + id]);
+    for (const parent of [container, doc.body]) {
+      for (const el of Array.from(parent.children)) {
+        if (ids.has(el.id)) el.remove();
+      }
+    }
   }
 
   /** Move <style> text into a constructed stylesheet and style="" into element.style. */
@@ -114,8 +176,9 @@ export function createDiagrams(deps) {
     }
     counter += 1;
     const id = "wmux-mermaid-" + counter;
+    const container = scratchContainer();
     try {
-      const result = await mermaid.render(id, text);
+      const result = await mermaid.render(id, text, container);
       const svg = typeof result === "string" ? result : result && result.svg;
       if (typeof svg !== "string") throw new Error("no SVG produced");
       const fragment = purify.sanitize(svg, {
@@ -131,10 +194,7 @@ export function createDiagrams(deps) {
       output.replaceChildren(errorBox("Mermaid", message.split("\n")[0].slice(0, 500)));
       block.setAttribute("data-state", "error");
     } finally {
-      // Mermaid leaves its scratch elements (children of <body>) behind when parsing fails.
-      for (const leftover of [doc.getElementById(id), doc.getElementById("d" + id)]) {
-        if (leftover && leftover.parentNode === doc.body) leftover.remove();
-      }
+      removeLeftovers(id, container);
     }
   }
 
@@ -154,21 +214,24 @@ export function createDiagrams(deps) {
     try {
       mermaid = await loadMermaid();
     } catch (err) {
-      for (const block of blocks) {
-        const output = block.querySelector(".wmux-diagram-output");
-        if (output) output.replaceChildren(errorBox("Mermaid", String((err && err.message) || err)));
-        block.setAttribute("data-state", "error");
-      }
+      failAll(blocks, err);
       return blocks.length;
     }
     const theme = scheme() === "light" ? "default" : "dark";
     if (initializedTheme !== theme) {
-      mermaid.initialize({
-        startOnLoad: false,
-        securityLevel: "strict",
-        theme,
-        suppressErrorRendering: true,
-      });
+      try {
+        mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: "strict",
+          theme,
+          suppressErrorRendering: true,
+          fontFamily: DIAGRAM_FONT_FAMILY,
+          themeVariables: { fontFamily: DIAGRAM_FONT_FAMILY, fontSize: DIAGRAM_FONT_SIZE },
+        });
+      } catch (err) {
+        failAll(blocks, err);
+        return blocks.length;
+      }
       initializedTheme = theme;
     }
     for (const block of blocks) {
@@ -178,5 +241,12 @@ export function createDiagrams(deps) {
     return blocks.length;
   }
 
-  return { render, reset };
+  /** reset() plus removing the measuring container (the panel is going away). */
+  function dispose() {
+    reset();
+    if (scratch) scratch.remove();
+    scratch = null;
+  }
+
+  return { render, reset, dispose };
 }
