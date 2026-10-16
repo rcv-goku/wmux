@@ -276,6 +276,19 @@ describe("unit: feed model", () => {
     assert.equal(render("x".repeat(300000)), null);
     assert.equal(createMarkdownRenderer(null)("x"), null);
   });
+
+  test("unit: feed: numbered plan steps keep their numbers after a code block", () => {
+    const render = createMarkdownRenderer({ markdownit, purify, document: doc });
+    const div = doc.createElement("div");
+    div.append(render("1. Step one\n\n```\ncode\n```\n\n2. Step two\n3. Step three\n\n[bad](javascript:alert(1)) [ok](https://ok.example/)"));
+    const lists = div.querySelectorAll("ol");
+    assert.equal(lists.length, 2);
+    assert.equal(lists[0].getAttribute("start"), null);
+    assert.equal(lists[1].getAttribute("start"), "2", "the second list continues at 2");
+    const hrefs = Array.from(div.querySelectorAll("a"), (a) => a.getAttribute("href"));
+    assert.ok(hrefs.includes("https://ok.example/"));
+    assert.ok(hrefs.every((h) => h === null || /^https:/.test(h)), "links keep the strict scheme list");
+  });
 });
 
 /* ------------------------------------------------------------------------ */

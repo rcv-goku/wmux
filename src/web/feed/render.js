@@ -13,6 +13,11 @@ const PURIFY_CONFIG = {
   FORBID_TAGS: ["img", "style", "form", "input", "button", "textarea", "select", "iframe", "object", "embed", "video", "audio", "picture", "source", "svg", "math", "link", "meta", "base", "template"],
   FORBID_ATTR: ["style", "srcset", "target", "ping", "id", "class"],
   ALLOWED_URI_REGEXP: /^(?:https?:|mailto:)/i,
+  // DOMPurify tests every attribute that is not "URI safe" against
+  // ALLOWED_URI_REGEXP, so the strict scheme list above would also drop
+  // markdown-it's <ol start="2"> and numbered plan steps would restart at 1
+  // after a code block. `start` is a plain number, never a URL.
+  ADD_URI_SAFE_ATTR: ["start"],
 };
 
 /**
