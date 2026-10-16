@@ -111,12 +111,40 @@ export function createShortcutsView(ctx) {
     return model.loading;
   }
 
+  /** The keys button of an action's row in the current list, or null. */
+  function keysButtonFor(id) {
+    if (!listEl) return null;
+    for (const row of listEl.querySelectorAll(".set-sc-row")) {
+      if (row.dataset.action === id) return row.querySelector(".set-sc-keys");
+    }
+    return null;
+  }
+
+  /** Show an action's bindings (or "Listening…") on its keys button. */
+  function fillKeys(button, action, listening) {
+    button.replaceChildren();
+    button.setAttribute("aria-pressed", listening ? "true" : "false");
+    button.setAttribute("aria-label", t("settings.shortcuts.recordLabel", { action: action.title }));
+    if (listening) button.textContent = t("settings.shortcuts.listening");
+    else if (action.keys.length === 0)
+      button.append(el(doc, "span", { class: "wmux-muted", text: t("settings.shortcuts.none") }));
+    else for (const k of action.keys) button.append(el(doc, "kbd", { class: "set-kbd", text: displayBinding(k) }));
+  }
+
   function stopRecording() {
     if (!recording) return;
     const r = recording;
     recording = null;
     r.stop();
-    if (r.id === "detect" && model.detect === "") model.detect = null;
+    if (r.id === "detect") {
+      if (model.detect === "") model.detect = null;
+      return;
+    }
+    // Put the bindings back in place (no repaint, so a click that ended the
+    // recording still reaches its target).
+    const action = model.actions.find((a) => a.id === r.id);
+    const button = keysButtonFor(r.id);
+    if (action && button) fillKeys(button, action, false);
   }
 
   function replaceAction(updated) {
@@ -182,17 +210,15 @@ export function createShortcutsView(ctx) {
 
   function startRecording(action, button) {
     stopRecording();
-    button.textContent = t("settings.shortcuts.listening");
-    button.setAttribute("aria-pressed", "true");
+    fillKeys(button, action, true);
     const stop = startRecorder(doc, keys, {
+      // The row may be repainted while listening: follow its current button.
+      owner: () => keysButtonFor(action.id),
       onStroke(stroke) {
         stopRecording();
         record(action, [stroke]);
       },
-      onCancel() {
-        stopRecording();
-        paintList();
-      },
+      onCancel: stopRecording,
     });
     recording = { id: action.id, stop };
   }
@@ -314,24 +340,13 @@ export function createShortcutsView(ctx) {
     text.append(...messagesFor(action));
 
     const ctl = el(doc, "div", { class: "set-row-control set-sc-control" });
-    const isRec = recording && recording.id === action.id;
-    const keysBtn = el(doc, "button", {
-      type: "button",
-      class: "set-sc-keys",
-      "aria-label": t("settings.shortcuts.recordLabel", { action: action.title }),
-      "aria-pressed": isRec ? "true" : "false",
-      disabled: readOnly,
-    });
-    if (isRec) keysBtn.textContent = t("settings.shortcuts.listening");
-    else if (action.keys.length === 0)
-      keysBtn.append(el(doc, "span", { class: "wmux-muted", text: t("settings.shortcuts.none") }));
-    else for (const k of action.keys) keysBtn.append(el(doc, "kbd", { class: "set-kbd", text: displayBinding(k) }));
+    const isRec = Boolean(recording && recording.id === action.id);
+    const keysBtn = el(doc, "button", { type: "button", class: "set-sc-keys", disabled: readOnly });
+    fillKeys(keysBtn, action, isRec);
     keysBtn.title = t("settings.shortcuts.record");
     keysBtn.addEventListener("click", () => {
-      if (recording && recording.id === action.id) {
-        stopRecording();
-        paintList();
-      } else startRecording(action, keysBtn);
+      if (recording && recording.id === action.id) stopRecording();
+      else startRecording(action, keysBtn);
     });
     ctl.append(keysBtn);
     if (!readOnly) {

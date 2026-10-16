@@ -12,7 +12,7 @@
 import { wmux as defaultBridge } from "../_shared/wmux-bridge.js";
 import { installKeys } from "../_shared/keys.js";
 import { applyStrings } from "../_shared/strings.js";
-import { createControl, el, uniqueId } from "./controls.js";
+import { cancelRecorders, createControl, el, uniqueId } from "./controls.js";
 import { normalizeEffective, rowState } from "./effective.js";
 import {
   deepEqual,
@@ -595,6 +595,8 @@ export function createApp(options) {
 
   function render() {
     if (!state.loaded) return;
+    // A recorder must not outlive the row it records for.
+    cancelRecorders();
     for (const set of rows.values()) set.clear();
     renderNav();
     const view = queryTokens(state.query).length ? renderSearch() : renderSection(state.section);
@@ -721,6 +723,7 @@ export function createApp(options) {
 
   function destroy() {
     shortcuts.stopRecording();
+    cancelRecorders();
     closeConfirm(false);
     if (statusTimer) clearTimeout(statusTimer);
     statusTimer = null;

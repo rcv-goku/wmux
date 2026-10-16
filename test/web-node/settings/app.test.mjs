@@ -382,6 +382,31 @@ describe("unit: persistence-settings-window: typed controls", () => {
     edit(rowEl("wmux.quickTerminal.hotkey").querySelector("input"), "cmd+k");
     assert.equal(errorText("wmux.quickTerminal.hotkey"), "Not a valid shortcut.");
   });
+
+  test("unit: persistence-settings-window: the hotkey recorder stops on outside clicks and re-renders", async () => {
+    const { app, store } = await startSettings();
+    app.navigate("globalHotkey");
+    const button = () => rowEl("wmux.quickTerminal.hotkey").querySelector(".set-strokes button");
+    button().click();
+    assert.equal(button().textContent, "Listening…");
+    $("#set-search").dispatchEvent(new window.MouseEvent("mousedown", { bubbles: true }));
+    assert.equal(button().textContent, "Press shortcut…");
+    assert.equal(button().hasAttribute("aria-pressed"), false);
+    assert.deepEqual(host.calls("panel.key_capture").at(-1).params, { on: false });
+    const typed = keydown({ key: "s", code: "KeyS", keyCode: 83 }, $("#set-search"));
+    assert.equal(typed.defaultPrevented, false, "typing reaches the search field");
+    await flush();
+    assert.equal(host.calls("wmux.settings.set").length, 0);
+    // A deep link while listening (`wmux settings terminal`) re-renders: the recorder ends.
+    button().click();
+    assert.deepEqual(host.calls("panel.key_capture").at(-1).params, { on: true });
+    host.emit("wmux.settings.navigate", { target: "terminal" });
+    assert.deepEqual(host.calls("panel.key_capture").at(-1).params, { on: false });
+    assert.equal(keydown({ key: "s", code: "KeyS", keyCode: 83 }, doc.body).defaultPrevented, false);
+    await flush();
+    assert.equal(host.calls("wmux.settings.set").length, 0);
+    assert.equal(store.wmux["wmux.quickTerminal.hotkey"], undefined);
+  });
 });
 
 describe("unit: persistence-settings-reset-all: Reset All", () => {

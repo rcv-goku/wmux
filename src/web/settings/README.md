@@ -117,9 +117,12 @@ keep the current section and show "“x” is not available on Windows."
   title and keywords (`scrollback` finds the Terminal rows). Results are
   grouped by section with `<mark>` highlights; the nav shows match counts and
   dims sections without matches. Ctrl+F focuses the field, Escape clears it.
-- **Shortcuts.** Click a binding to record one stroke (Escape cancels, focus
-  loss cancels). Checks: a modifier is required except for F-keys, mouse
-  buttons and viewer actions ("Shortcuts must include Ctrl, Alt or Shift");
+- **Shortcuts.** Click a binding to record one stroke. Escape, a click or
+  focus move outside the button, leaving the window or a re-render (deep
+  link, schema change) cancels; a recorder never keeps capturing keys for a
+  row that is gone (same for `strokes` rows). Checks: a modifier is required
+  except for F-keys, mouse buttons and viewer actions ("Shortcuts must
+  include Ctrl, Alt or Shift");
   Win and Alt+Tab / Ctrl+Esc / Ctrl+Shift+Esc / Ctrl+Alt+Delete / Alt+Esc are
   "reserved by Windows"; Alt+Space, Alt+F4, Ctrl+Alt+Tab and F1 warn;
   numbered actions need 1-9 and store digit 1; conflicts with an action in an

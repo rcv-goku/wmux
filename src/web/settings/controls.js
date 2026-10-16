@@ -333,6 +333,7 @@ function strokesControl(doc, field, id, onCommit, onError, keys) {
     record.textContent = t("settings.shortcuts.listening");
     record.setAttribute("aria-pressed", "true");
     stop = startRecorder(doc, keys, {
+      owner: record,
       onStroke(stroke) {
         end();
         onCommit(stroke);
@@ -354,34 +355,78 @@ function strokesControl(doc, field, id, onCommit, onError, keys) {
   };
 }
 
+/** Cancel functions of the recorders that are listening (see cancelRecorders). */
+const activeRecorders = new Set();
+
 /**
  * Capture the next stroke on `doc` (capture phase, so nothing else sees it).
  * Escape without modifiers cancels; modifier-only presses are ignored.
  * Calls keys.startCapture() so native's KeyRouter skips this panel.
- * Returns a stop function.
+ * `owner` (an element, or a function returning the current one) is the
+ * control showing "Listening…": a click or a focus move outside it cancels,
+ * and once it has left the document the next key cancels without being
+ * consumed, so a stale recorder never swallows typing or saves it.
+ * Window blur cancels too. Returns a stop function.
  */
-export function startRecorder(doc, keys, { onStroke, onCancel }) {
+export function startRecorder(doc, keys, { onStroke, onCancel, owner }) {
   const release = keys && typeof keys.startCapture === "function" ? keys.startCapture() : () => {};
   const view = doc.defaultView;
+  const hasOwner = owner !== undefined && owner !== null;
+  const ownerEl = () => (typeof owner === "function" ? owner() : owner) || null;
+  let stopped = false;
   const onKey = (e) => {
     if (e.type !== "keydown") return;
+    if (hasOwner) {
+      const o = ownerEl();
+      if (!o || !o.isConnected) {
+        cancel(); // re-rendered away: the key belongs to whatever has focus now
+        return;
+      }
+    }
     e.preventDefault();
     e.stopPropagation();
     if (e.key === "Escape" && !e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey) {
-      onCancel();
+      cancel();
       return;
     }
     const stroke = strokeFromKeyboardEvent(e);
     if (stroke) onStroke(stroke);
   };
-  const onBlur = () => onCancel();
-  doc.addEventListener("keydown", onKey, true);
-  if (view) view.addEventListener("blur", onBlur);
-  return () => {
+  const onOutside = (e) => {
+    const o = ownerEl();
+    if (!o || typeof o.contains !== "function" || !(e.target && o.contains(e.target))) cancel();
+  };
+  const onBlur = () => cancel();
+  function stop() {
+    if (stopped) return;
+    stopped = true;
+    activeRecorders.delete(cancel);
     doc.removeEventListener("keydown", onKey, true);
+    if (hasOwner) {
+      doc.removeEventListener("mousedown", onOutside, true);
+      doc.removeEventListener("focusin", onOutside, true);
+    }
     if (view) view.removeEventListener("blur", onBlur);
     release();
-  };
+  }
+  function cancel() {
+    if (stopped) return;
+    onCancel();
+    stop(); // in case onCancel did not call the stop function
+  }
+  activeRecorders.add(cancel);
+  doc.addEventListener("keydown", onKey, true);
+  if (hasOwner) {
+    doc.addEventListener("mousedown", onOutside, true);
+    doc.addEventListener("focusin", onOutside, true);
+  }
+  if (view) view.addEventListener("blur", onBlur);
+  return stop;
+}
+
+/** Cancel every listening recorder (the page is about to re-render its rows). */
+export function cancelRecorders() {
+  for (const cancel of Array.from(activeRecorders)) cancel();
 }
 
 /**

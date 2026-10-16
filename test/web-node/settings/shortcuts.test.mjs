@@ -230,6 +230,37 @@ describe("unit: core-shortcuts-settings-ui: recorder", () => {
     assert.deepEqual(host.calls("panel.key_capture").at(-1).params, { on: false });
   });
 
+  test("unit: core-shortcuts-settings-ui: a click elsewhere cancels recording; another row takes over", async () => {
+    const { sc } = await open();
+    const keysBtn = (id) => row(id).querySelector(".set-sc-keys");
+    keysBtn("diffViewerScrollDown").click();
+    assert.equal(keysBtn("diffViewerScrollDown").textContent, "Listening…");
+    const search = $("#set-sc-search");
+    search.dispatchEvent(new window.MouseEvent("mousedown", { bubbles: true }));
+    search.focus();
+    assert.deepEqual(keysOf("diffViewerScrollDown"), ["J"]);
+    assert.equal(keysBtn("diffViewerScrollDown").getAttribute("aria-pressed"), "false");
+    assert.deepEqual(host.calls("panel.key_capture").at(-1).params, { on: false });
+    assert.equal(keydown({ key: "n", code: "KeyN", keyCode: 78 }, search).defaultPrevented, false);
+    await flush();
+    assert.equal(host.calls("wmux.shortcuts.set").length, 0, "typing in the search never binds a bare-key action");
+    assert.equal(sc.wmux.diffViewerScrollDown, undefined);
+    // Clicking another row's binding ends the first recorder: one row listens at a time.
+    keysBtn("splitRight").click();
+    keysBtn("newSurface").dispatchEvent(new window.MouseEvent("mousedown", { bubbles: true }));
+    keysBtn("newSurface").click();
+    assert.deepEqual(
+      $$(".set-sc-keys[aria-pressed='true']").map((b) => b.closest(".set-sc-row").dataset.action),
+      ["newSurface"],
+    );
+    assert.deepEqual(keysOf("splitRight"), ["Ctrl+Shift+D"]);
+    // Clicking the listening button again stops it.
+    keysBtn("newSurface").dispatchEvent(new window.MouseEvent("mousedown", { bubbles: true }));
+    keysBtn("newSurface").click();
+    assert.deepEqual($$(".set-sc-keys[aria-pressed='true']"), []);
+    assert.deepEqual(host.calls("panel.key_capture").at(-1).params, { on: false });
+  });
+
   test("unit: core-shortcuts-settings-ui: unbind turns into Restore; restore brings the shortcut back", async () => {
     const { sc } = await open();
     row("splitRight").querySelector(".set-sc-unbind").click();
