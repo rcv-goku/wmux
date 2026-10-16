@@ -10,8 +10,8 @@ Options:
   -S, --signal                  Signal <name> instead of waiting
   --timeout <seconds>           Give up after this long (default: 30)
 
-Signals are marker files in a private per-user directory (%TEMP%\wmux-wait-for
-on Windows).
+Signals are marker files in the per-user state directory, STATE\wait-for
+(%LOCALAPPDATA%\wmux\<channel>\wait-for unless WMUX_STATE_DIR is set).
 
 Examples:
   cmux wait-for build-done --timeout 120

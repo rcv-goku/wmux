@@ -19,11 +19,12 @@
 //!   command proceed (cmux "Draft Guard").
 //! - `read-screen`/`capture-pane` print `surface.read_text` text;
 //!   `read-selection` prints the selection with its context lines.
-//! - `wait-for` latches signals in marker files; each signal is consumed
-//!   by exactly one waiter.
+//! - `wait-for` keeps its markers in `STATE\wait-for` (ADR-10.8); each
+//!   signal is consumed by exactly one waiter.
 
 const std = @import("std");
 const builtin = @import("builtin");
+const proto = @import("wmux_proto");
 const command = @import("../command.zig");
 const CommandSpec = command.CommandSpec;
 const Ctx = command.Ctx;
@@ -391,17 +392,13 @@ pub fn markerName(arena: Allocator, name: []const u8) Allocator.Error![]const u8
 pub const signal_busy_ms = 2000;
 pub const signal_retry_ms = 5;
 
-/// The private per-user marker directory: `WMUX_WAIT_FOR_DIR` when set,
-/// else `%TEMP%\wmux-wait-for` (Windows) or `$TMPDIR/wmux-wait-for-<uid>`.
+/// The per-user marker directory `STATE\wait-for` (ARCHITECTURE Appendix
+/// G.1, ADR-10.8): `%WMUX_STATE_DIR%\wait-for`, else
+/// `%LOCALAPPDATA%\wmux\<channel>\wait-for` (the XDG state directory on
+/// POSIX). Null when no base directory is known.
 pub fn waitDir(ctx: *Ctx) !?[]const u8 {
-    if (ctx.env.getNonEmpty("WMUX_WAIT_FOR_DIR")) |d| return d;
-    if (builtin.os.tag == .windows) {
-        const tmp = ctx.env.first(&.{ "TEMP", "TMP" }) orelse return null;
-        return try std.fs.path.join(ctx.arena, &.{ tmp, "wmux-wait-for" });
-    }
-    const tmp = ctx.env.getNonEmpty("TMPDIR") orelse "/tmp";
-    const leaf = try std.fmt.allocPrint(ctx.arena, "wmux-wait-for-{d}", .{std.posix.getuid()});
-    return try std.fs.path.join(ctx.arena, &.{ tmp, leaf });
+    const state = (try proto.paths.stateDir(ctx.arena, ctx.env, .native, ctx.channel)) orelse return null;
+    return try proto.paths.join(ctx.arena, .native, &.{ state, proto.paths.dirs.wait_for });
 }
 
 pub const WaitStore = struct {
@@ -502,7 +499,7 @@ fn runWaitFor(ctx: *Ctx) !u8 {
         if (!(s >= 0) or s > 86_400 * 365) return ps.usageWithLine(ctx, wait_usage, "--timeout must be a number of seconds", .{});
         timeout_ms = @intFromFloat(s * 1000);
     }
-    const path = (try waitDir(ctx)) orelse return ctx.runtimeError("wait-for: no temporary directory (TEMP is unset)", .{});
+    const path = (try waitDir(ctx)) orelse return ctx.runtimeError("wait-for: no state directory (set WMUX_STATE_DIR)", .{});
     var store = WaitStore.open(path) catch |err| return switch (err) {
         error.NotPrivate => ctx.runtimeError("wait-for: {s} is not a private directory of this user", .{path}),
         error.Unavailable => ctx.runtimeError("wait-for: cannot use {s}", .{path}),
@@ -804,9 +801,12 @@ test "unit: cli-ps: wait-for signals are latched, consumed once, and time out" {
     var h: Harness = undefined;
     try h.init();
     defer h.deinit();
-    const dir = try std.fs.path.join(h.alloc(), &.{ try tmp.dir.realpathAlloc(h.alloc(), "."), "w" });
-    h.setEnv("WMUX_WAIT_FOR_DIR", dir);
+    const state = try std.fs.path.join(h.alloc(), &.{ try tmp.dir.realpathAlloc(h.alloc(), "."), "state" });
+    h.setEnv("WMUX_STATE_DIR", state);
+    // The markers live in STATE\wait-for (Appendix G.1).
+    const dir = try std.fs.path.join(h.alloc(), &.{ state, "wait-for" });
     try pt.expectOk(h.run(&.{ "cmux", "wait-for", "-S", "job" }));
+    try std.fs.cwd().access(try std.fs.path.join(h.alloc(), &.{ dir, "am9i.sig" }), .{});
     try pt.expectOk(h.run(&.{ "cmux", "wait-for", "-S", "job" }));
     const start = h.fp.clock;
     try pt.expectOk(h.run(&.{ "cmux", "wait-for", "job" }));
@@ -838,6 +838,25 @@ test "unit: cli-ps: wait-for signals are latched, consumed once, and time out" {
     const long = try h.alloc().alloc(u8, max_wait_name_bytes + 1);
     @memset(long, 'n');
     try pt.expectUsage(h.run(&.{ "cmux", "wait-for", long }), "wait-for name is longer than 180 bytes");
+}
+
+test "unit: cli-ps: wait-for defaults to the channel's state directory" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var h: Harness = undefined;
+    try h.init();
+    defer h.deinit();
+    // Without a state directory there is nowhere to keep markers.
+    const none = h.run(&.{ "cmux", "wait-for", "-S", "x" });
+    try testing.expectEqual(@as(u8, 1), none.code);
+    try testing.expectEqualStrings("cmux: wait-for: no state directory (set WMUX_STATE_DIR)\n", none.err);
+    // STATE = %LOCALAPPDATA%\wmux\<channel> (the XDG state home on POSIX).
+    const base = try tmp.dir.realpathAlloc(h.alloc(), ".");
+    h.setEnv(if (builtin.os.tag == .windows) "LOCALAPPDATA" else "XDG_STATE_HOME", base);
+    try pt.expectOk(h.run(&.{ "cmux", "wait-for", "-S", "x" }));
+    try tmp.dir.access(try std.fs.path.join(h.alloc(), &.{ "wmux", "stable", "wait-for", "eA.sig" }), .{});
+    try pt.expectOk(h.run(&.{ "cmux", "wait-for", "x", "--timeout", "0" }));
+    try testing.expectError(error.FileNotFound, tmp.dir.access(try std.fs.path.join(h.alloc(), &.{ "wmux", "stable", "wait-for", "eA.sig" }), .{}));
 }
 
 test "unit: cli-ps: wait-for gives each signal to exactly one of several racing waiters" {
