@@ -320,20 +320,21 @@ fn showAt(self: *Window, site: MenuSite, ctx: *Context, x: i32, y: i32) void {
 /// click was not on a tab.
 pub fn showTabContextMenu(self: *Window, clicked_tab: ?usize, x: i32, y: i32) void {
     if (self.closing) return;
-    const ws = self.activeWorkspace();
-    const pane = ws.focusedPaneOrFirst();
     var ctx: Context = .{
         .app = self.app,
         .window = self,
         .client_x = x,
         .client_y = y,
-        .workspace = ws,
-        .pane = pane,
     };
+    // Only the `tab` menu has targets (the clicked tab and its pane);
+    // the blank strip's New Tab acts on whatever pane is active.
     var site: MenuSite = .tab_bar_blank;
     if (clicked_tab) |i| {
-        if (pane) |p| {
-            if (p.tabAt(i)) |tab| {
+        const ws = self.activeWorkspace();
+        if (ws.focusedPaneOrFirst()) |pane| {
+            if (pane.tabAt(i)) |tab| {
+                ctx.workspace = ws;
+                ctx.pane = pane;
                 ctx.tab = tab;
                 site = .tab;
             }
