@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; frame-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types 'none'">
+    <meta name="referrer" content="no-referrer">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Task Manager</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="../_shared/base.css">
+    <link rel="stylesheet" href="task-manager.css">
+    <script type="module" src="task-manager.js"></script>
+  </head>
+  <body>
+    <header class="tm-header">
+      <h1 class="tm-title" data-i18n="tm.title">Task Manager</h1>
+      <span id="tm-refreshing" class="tm-refreshing" role="status" hidden><span class="tm-spinner" aria-hidden="true"></span><span data-i18n="tm.refreshing">Refreshing…</span></span>
+      <span class="tm-spacer"></span>
+      <label class="tm-toggle"><input type="checkbox" id="tm-processes"> <span data-i18n="tm.processes">Processes</span></label>
+      <button type="button" id="tm-refresh" data-i18n="tm.refresh">Refresh</button>
+    </header>
+
+    <div id="tm-banner" class="tm-banner" role="alert" hidden></div>
+
+    <section id="tm-cards" class="tm-cards" aria-label="Summary">
+      <div class="tm-card"><span class="tm-card-label" data-i18n="tm.card.cpu">CPU</span><span class="tm-card-value" id="tm-card-cpu">—</span></div>
+      <div class="tm-card"><span class="tm-card-label" data-i18n="tm.card.memory">Memory</span><span class="tm-card-value" id="tm-card-memory">—</span></div>
+      <div class="tm-card"><span class="tm-card-label" data-i18n="tm.card.app">App Footprint</span><span class="tm-card-value" id="tm-card-app">—</span></div>
+      <div class="tm-card"><span class="tm-card-label" data-i18n="tm.card.child">Child RSS</span><span class="tm-card-value" id="tm-card-child">—</span></div>
+      <div class="tm-card"><span class="tm-card-label" data-i18n="tm.card.processes">Processes</span><span class="tm-card-value" id="tm-card-processes">—</span></div>
+      <div class="tm-card"><span class="tm-card-label" data-i18n="tm.card.updated">Updated</span><span class="tm-card-value" id="tm-card-updated">—</span></div>
+    </section>
+
+    <section id="tm-state" class="tm-state" aria-live="polite">
+      <h2 id="tm-state-title" data-i18n="tm.state.loading">Loading resource usage</h2>
+      <p id="tm-state-body" hidden></p>
+    </section>
+
+    <main id="tm-main" class="tm-main" hidden>
+      <section class="tm-section" aria-labelledby="tm-h-agents">
+        <h2 id="tm-h-agents" data-i18n="tm.section.agents">Coding Agents</h2>
+        <table class="tm-table" id="tm-agents" data-section="agents"><thead></thead><tbody></tbody></table>
+        <p class="tm-none" id="tm-agents-none" hidden data-i18n="tm.section.noAgents">No coding agents running.</p>
+      </section>
+      <section class="tm-section" aria-labelledby="tm-h-programs">
+        <h2 id="tm-h-programs" data-i18n="tm.section.programs">Program Totals</h2>
+        <table class="tm-table" id="tm-programs" data-section="programs"><thead></thead><tbody></tbody></table>
+        <p class="tm-none" id="tm-programs-none" hidden data-i18n="tm.section.noPrograms">No processes.</p>
+      </section>
+      <section class="tm-section" aria-labelledby="tm-h-child">
+        <h2 id="tm-h-child" data-i18n="tm.section.child">Child Process RSS</h2>
+        <table class="tm-table" id="tm-child" data-section="child"><thead></thead><tbody></tbody></table>
+        <p class="tm-none" id="tm-child-none" hidden data-i18n="tm.section.noChild">No child processes.</p>
+      </section>
+      <section class="tm-section" aria-labelledby="tm-h-tree">
+        <h2 id="tm-h-tree" data-i18n="tm.section.hierarchy">Hierarchy</h2>
+        <table class="tm-table tm-tree" id="tm-tree" data-section="tree" role="treegrid" aria-labelledby="tm-h-tree"><thead></thead><tbody></tbody></table>
+      </section>
+    </main>
+
+    <div id="tm-menu" class="tm-menu" role="menu" aria-label="Row actions" data-i18n-attr="aria-label:tm.menu.label" hidden>
+      <button type="button" class="tm-menu-item" role="menuitem" tabindex="-1" data-action="workspace" data-i18n="tm.menu.workspace">View Workspace</button>
+      <button type="button" class="tm-menu-item" role="menuitem" tabindex="-1" data-action="terminal" data-i18n="tm.menu.terminal">View Terminal</button>
+      <div class="tm-menu-separator" role="separator"></div>
+      <button type="button" class="tm-menu-item" role="menuitem" tabindex="-1" data-action="kill" data-i18n="tm.menu.kill">Kill Process...</button>
+    </div>
+
+    <div id="tm-confirm" class="tm-confirm" role="alertdialog" aria-modal="true" aria-labelledby="tm-confirm-title" aria-describedby="tm-confirm-text" hidden>
+      <div class="tm-confirm-box">
+        <h2 id="tm-confirm-title" data-i18n="tm.kill.title">Kill process?</h2>
+        <p id="tm-confirm-text"></p>
+        <div class="tm-confirm-actions">
+          <button type="button" id="tm-confirm-cancel" data-i18n="tm.kill.cancel">Cancel</button>
+          <button type="button" id="tm-confirm-ok" class="tm-danger" data-i18n="tm.kill.ok">Kill</button>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
