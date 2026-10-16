@@ -77,6 +77,28 @@ test "unit: browser-cli: open uses the caller workspace and never focuses by def
     try t.expectUsage(&.{ "open", "--focus", "yes" }, "--focus must be true or false");
 }
 
+test "unit: browser-cli: view verb targets fail closed with cmux messages" {
+    var t = T.init();
+    defer t.deinit();
+    try t.expectUsage(&.{ "zoom", "in", "--workspace", "bogus!" }, "Invalid workspace handle: bogus! (expected UUID, ref like workspace:1, or index)");
+    try t.expectUsage(&.{ "--workspace", "surface:3", "zoom", "in" }, "Invalid workspace handle: surface:3 (expected UUID, ref like workspace:1, or index)");
+    try t.expectUsage(&.{ "devtools", "toggle", "--window", "pane:1" }, "Invalid window handle: pane:1 (expected UUID, ref like window:1, or index)");
+    try t.expectUsage(&.{ "open", "--surface", "  " }, "Surface handle is blank");
+    t.base.global_window = "nope!";
+    try t.expectUsage(&.{"design-mode"}, "Invalid window handle: nope! (expected UUID, ref like window:1, or index)");
+    t.base.global_window = null;
+    // Valid handles are sent trimmed.
+    try t.expectCall(&.{ "--workspace", " workspace:2 ", "focus-mode", "toggle" }, "browser.focus_mode.set", "{\"workspace_id\":\"workspace:2\",\"mode\":\"toggle\"}");
+    try t.expectCall(&.{ "open", "--window", " 1 " }, "browser.open_split", "{\"window_id\":\"1\",\"focus\":false}");
+    // A blank --workspace falls back to the caller's workspace, and fails
+    // with cmux's message when there is none (or --window rules it out).
+    try t.expectCall(&.{ "zoom", "reset", "--workspace", " " }, "browser.zoom.set", "{\"workspace_id\":\"WS-CALLER\",\"action\":\"reset\"}");
+    try t.expectUsage(&.{ "open", "--workspace", "", "--window", "window:1" }, "No workspace selected: --workspace was blank and CMUX_WORKSPACE_ID is unset");
+    t.base.caller_workspace = null;
+    try t.expectUsage(&.{ "open", "--workspace", "" }, "No workspace selected: --workspace was blank and CMUX_WORKSPACE_ID is unset");
+    try t.expectCall(&.{"open"}, "browser.open_split", "{\"focus\":false}");
+}
+
 test "unit: browser-cli: surface verbs require a surface and never retarget" {
     var t = T.init();
     defer t.deinit();

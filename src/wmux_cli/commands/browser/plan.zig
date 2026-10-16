@@ -199,11 +199,22 @@ pub const C = struct {
     }
 
     /// Optional surface, else the workspace (`--workspace`, else the
-    /// caller's workspace unless `--window` is given) and window.
+    /// caller's workspace unless `--window` is given) and window. Handles
+    /// fail closed with cmux's messages before anything is sent (ADR-4.6);
+    /// a blank `--workspace` falls back to the caller's workspace.
     pub fn viewTarget(c: *C, o: Opts, p: *P) Error!void {
         if (try c.surface(o)) |s| try p.str("surface_id", s);
-        const window = o.get("--window") orelse c.in.window orelse c.in.global_window;
-        const ws = o.get("--workspace") orelse c.in.workspace orelse if (window == null) c.in.caller_workspace else null;
+        const window: ?[]const u8 = if (o.get("--window") orelse c.in.window orelse c.in.global_window) |w|
+            try g.checkHandle(c.arena, .window, w, c.diag)
+        else
+            null;
+        var ws: ?[]const u8 = null;
+        if (o.get("--workspace") orelse c.in.workspace) |w| {
+            if (std.mem.trim(u8, w, " \t\r\n").len == 0) {
+                ws = (if (window == null) c.in.caller_workspace else null) orelse
+                    return c.usage("{s}", .{proto.errors.msg.no_workspace_selected});
+            } else ws = try g.checkHandle(c.arena, .workspace, w, c.diag);
+        } else if (window == null) ws = c.in.caller_workspace;
         try p.optStr("workspace_id", ws);
         try p.optStr("window_id", window);
     }

@@ -385,6 +385,27 @@ test "unit: browser-cli: availability never rewrites a wmux.json it cannot read"
     try testing.expectEqualStrings("enabled\n", h.run(&.{ "cmux", "browser-status" }).out);
 }
 
+test "unit: browser-cli: view verb handles are checked before connecting" {
+    var h: Harness = undefined;
+    try live(&h);
+    defer h.deinit();
+    const bad = h.run(&.{ "cmux", "browser", "open", "https://x.dev", "--workspace", "bogus!" });
+    try testing.expectEqual(@as(u8, 2), bad.code);
+    try testing.expectEqualStrings("cmux: Invalid workspace handle: bogus! (expected UUID, ref like workspace:1, or index)\n", bad.err);
+    const blank = h.run(&.{ "cmux", "open-browser", "--workspace", " " });
+    try testing.expectEqual(@as(u8, 2), blank.code);
+    try testing.expectEqualStrings("cmux: No workspace selected: --workspace was blank and CMUX_WORKSPACE_ID is unset\n", blank.err);
+    const win = h.run(&.{ "cmux", "--window", "workspace:1", "browser", "zoom", "in" });
+    try testing.expectEqual(@as(u8, 2), win.code);
+    try testing.expectEqualStrings("cmux: Invalid window handle: workspace:1 (expected UUID, ref like window:1, or index)\n", win.err);
+    try testing.expectEqual(@as(usize, 0), h.fp.connects);
+    // With a caller workspace, a blank --workspace targets it.
+    h.setEnv("CMUX_WORKSPACE_ID", "WS-UUID");
+    const ok_run = h.run(&.{ "cmux", "browser", "open", "--workspace", "" });
+    try testing.expectEqual(@as(u8, 0), ok_run.code);
+    try h.expectRequest("browser.open_split", "{\"workspace_id\":\"WS-UUID\",\"focus\":false}");
+}
+
 test "unit: browser-cli: offline help, docs and skill (goldens)" {
     var h: Harness = undefined;
     try h.init(fake.pingHandler);

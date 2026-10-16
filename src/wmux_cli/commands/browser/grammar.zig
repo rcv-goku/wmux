@@ -204,13 +204,19 @@ pub const Target = struct {
     window: ?[]const u8 = null,
 };
 
-/// A validated surface handle (trimmed) or a usage error with cmux's text.
-pub fn checkSurface(arena: Allocator, text: []const u8, diag: *Diag) Error![]const u8 {
-    _ = handles.parseHandle(.surface, text) catch |err| {
-        diag.message = try selectors.cliMessage(arena, selectors.cliProblemFor(err), .surface, std.mem.trim(u8, text, " \t\r\n"));
+/// A validated handle of `kind` (trimmed) or a usage error with cmux's text.
+pub fn checkHandle(arena: Allocator, kind: handles.Kind, text: []const u8, diag: *Diag) Error![]const u8 {
+    const t = std.mem.trim(u8, text, " \t\r\n");
+    _ = handles.parseHandle(kind, t) catch |err| {
+        diag.message = try selectors.cliMessage(arena, selectors.cliProblemFor(err), kind, t);
         return error.Usage;
     };
-    return std.mem.trim(u8, text, " \t\r\n");
+    return t;
+}
+
+/// A validated surface handle (trimmed) or a usage error with cmux's text.
+pub fn checkSurface(arena: Allocator, text: []const u8, diag: *Diag) Error![]const u8 {
+    return checkHandle(arena, .surface, text, diag);
 }
 
 /// Splits `browser` arguments into the target and the verb's arguments.
