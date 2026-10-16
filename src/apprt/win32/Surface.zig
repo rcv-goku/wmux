@@ -18,7 +18,9 @@ const Window = @import("ui/Window.zig");
 const ids = @import("model/ids.zig");
 const app_foreground = @import("app/foreground.zig");
 const app_modal = @import("app/modal.zig");
+const env_identity = @import("features/env_identity/api.zig");
 const menus = @import("ui/menus.zig");
+const session_api = @import("features/session/api.zig");
 const w32 = @import("platform/win32.zig");
 const Scrollbar = @import("ui/overlays/Scrollbar.zig").Scrollbar;
 
@@ -672,7 +674,25 @@ pub fn defaultTermioEnv(self: *const Surface) !std.process.EnvMap {
     // TERM and COLORTERM are set by termio/Exec.zig with platform-aware
     // logic (checking for terminfo, resources_dir, etc.). Do not set them here.
 
+    // The identity feature may adjust the inherited environment (W1-3).
+    try env_identity.adjustDefaultEnv(self, &env);
+
     return env;
+}
+
+/// What this surface's terminal spawn adds (ARCHITECTURE.md ADR-3.9):
+/// the protected CMUX_*/WMUX_* environment, applied after the user's
+/// `env` configuration, and the job object of the child. Called by the
+/// core surface during init; the env_identity feature (W1-3) owns it.
+pub fn spawnHooks(self: *Surface) !termio.Exec.SpawnHooks {
+    return env_identity.spawnHooks(self);
+}
+
+/// Saved scrollback to replay before the shell starts (ADR-9.5), or
+/// null. Called by the core surface during init; the session feature
+/// (W1-7) owns it.
+pub fn restoreHistory(self: *Surface) ?[]const u8 {
+    return session_api.restoreHistory(self);
 }
 
 /// Set the window title. Called from performAction(.set_title).
