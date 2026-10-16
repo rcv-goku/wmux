@@ -1,0 +1,13 @@
+Usage: cmux memory [--json]
+
+Report the app's own memory footprint (and that of its WebView2 helper
+processes) next to the combined memory of everything started in its
+terminals, each process tree added up. Keeping the figures apart shows
+whether growth comes from the app or from a program running inside it. The
+heaviest workspaces and surfaces are listed after the totals.
+
+Options:
+  --all                         Every window
+  --workspace <id|ref|index>    Only this workspace
+  --limit <n>                   How many of the heaviest groups to list
+  --json                        Print the full response

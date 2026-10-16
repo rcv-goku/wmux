@@ -1,0 +1,11 @@
+{
+  "ok": true,
+  "file": "/t/cfg/wmux.json",
+  "paths": [
+    {
+      "path": "sidebar.showPorts",
+      "changed": true,
+      "value": false
+    }
+  ]
+}

@@ -149,7 +149,7 @@ pub const entries = [_]Entry{
     .{ .name = "canvas", .group = .customize, .usage = "Usage: cmux canvas <info|mode|set-frame|align|reveal|overview|zoom|join|break|select-tab|set-viewport|new-pane>", .summary = "Canvas layout commands" },
     .{ .name = "events", .group = .automation, .usage = "Usage: cmux events [options]", .summary = "Stream events as newline-delimited JSON" },
     .{ .name = "layout", .group = .automation, .usage = "Usage: cmux layout <save|list|get|open|delete> [args]", .summary = "Saved workspace layouts" },
-    .{ .name = "todo", .group = .automation, .usage = "Usage: cmux todo <add|list|check|uncheck|start|edit|rm|clear|set|open> [args]", .summary = "Per-workspace checklist" },
+    .{ .name = "todo", .group = .automation, .usage = "Usage: cmux todo <add|list|check|uncheck|start|edit|rm|move|clear|set|open> [args]", .summary = "Per-workspace checklist" },
     .{ .name = "feed", .group = .automation, .usage = "Usage: cmux feed tui [--opentui|--legacy]", .summary = "Feed TUI and history (also: feed clear)" },
     .{ .name = "vault", .group = .automation, .usage = "Usage: cmux vault <subcommand> [options]", .summary = "Agent session index" },
     .{ .name = "automation", .group = .automation, .usage = "Usage: cmux automation <list|show|test|enable|disable|logs|reload> [args]", .summary = "Config-backed event rules" },

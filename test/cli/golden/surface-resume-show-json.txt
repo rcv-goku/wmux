@@ -1,0 +1,8 @@
+{
+  "surface_ref": "surface:1",
+  "resume_binding": {
+    "kind": "tmux",
+    "command": "tmux attach -t work",
+    "checkpointId": "work"
+  }
+}

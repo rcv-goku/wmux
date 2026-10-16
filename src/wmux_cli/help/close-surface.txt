@@ -1,0 +1,10 @@
+Usage: cmux close-surface [--surface <id|ref|index>]
+
+Close a surface.
+
+Options:
+  --surface <id|ref|index>      Surface to close (alias --panel; default:
+                                $CMUX_SURFACE_ID)
+  --workspace <id|ref|index>    Workspace context (default: $CMUX_WORKSPACE_ID)
+  --window <id|ref|index>       Window context for refs and indexes
+  --json                        Print the full response

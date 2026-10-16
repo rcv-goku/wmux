@@ -1,0 +1,8 @@
+Usage: cmux last-pane
+
+Focus the previously focused pane.
+
+Options:
+  --workspace <id|ref|index>    Workspace context (default: $CMUX_WORKSPACE_ID)
+  --window <id|ref|index>       Window context for refs and indexes
+  --json                        Print the full response

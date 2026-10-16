@@ -2,7 +2,9 @@
 //! help, version, guide (--skill), docs, welcome, ping, capabilities, rpc,
 //! socket-status (W1-2); identify, tree (W2-2); top, memory (W5a); sudo (W7).
 //! `identify` ships with W1-2 as a plain JSON print so the version-skew
-//! diagnosis and scripts have it; W2-2 may extend it.
+//! diagnosis and scripts have it; WP CLI-fam-ps adds its `--workspace`,
+//! `--surface`, `--window` and `--no-caller` flags and the `tree`, `top`,
+//! `memory` and `shot`/`screenshot` commands (inspect.zig).
 
 const std = @import("std");
 const proto = @import("wmux_proto");
@@ -18,6 +20,7 @@ const welcome = @import("../welcome.zig");
 const socket_status = @import("../socket_status.zig");
 const discovery = @import("../discovery.zig");
 const brand_mod = @import("../brand.zig");
+const inspect = @import("inspect.zig");
 
 /// `CommandSpec` entries (ADR-4.9).
 pub const commands = [_]CommandSpec{
@@ -31,6 +34,10 @@ pub const commands = [_]CommandSpec{
     .{ .name = "capabilities", .group = .diagnostics, .usage = "Usage: cmux capabilities", .help = @embedFile("../help/capabilities.txt"), .run = runCapabilities },
     .{ .name = "rpc", .group = .diagnostics, .usage = "Usage: cmux rpc <method> [json-params]", .help = @embedFile("../help/rpc.txt"), .run = runRpc },
     .{ .name = "identify", .group = .inspect, .usage = "Usage: cmux identify", .help = @embedFile("../help/identify.txt"), .run = runIdentify },
+    .{ .name = "tree", .group = .inspect, .usage = inspect.tree_usage, .help = @embedFile("../help/tree.txt"), .run = inspect.runTree },
+    .{ .name = "top", .group = .inspect, .usage = inspect.top_usage, .help = @embedFile("../help/top.txt"), .run = inspect.runTop },
+    .{ .name = "memory", .group = .inspect, .usage = inspect.memory_usage, .help = @embedFile("../help/memory.txt"), .run = inspect.runMemory },
+    .{ .name = "shot", .aliases = &.{"screenshot"}, .group = .inspect, .usage = inspect.shot_usage, .help = @embedFile("../help/shot.txt"), .run = inspect.runShot },
 };
 
 /// Max params read from stdin by `rpc -` (the server's line cap).
@@ -167,8 +174,13 @@ pub fn callerParams(ctx: *Ctx) !?[]const u8 {
 }
 
 fn runIdentify(ctx: *Ctx) !u8 {
-    if (noArgs(ctx, "Usage: cmux identify")) |code| return code;
-    const out = (try ctx.call("system.identify", try callerParams(ctx))) orelse return output.exit.runtime;
+    const params = if (ctx.args().len == 0 and ctx.parsed.globals.window == null)
+        try callerParams(ctx)
+    else blk: {
+        const p = (try inspect.identifyParams(ctx)) orelse return output.exit.usage;
+        break :blk try p.json(ctx.arena);
+    };
+    const out = (try ctx.call("system.identify", params)) orelse return output.exit.runtime;
     switch (out) {
         .ok => |ok| {
             try output.writeResult(ctx.arena, ctx.out, ok.result, ctx.parsed.globals.id_format);

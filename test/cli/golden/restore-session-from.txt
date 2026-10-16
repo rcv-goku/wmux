@@ -1,0 +1,3 @@
+OK /t/s.json
+Held back automatic resume in 1 terminal(s) from this file. Review their commands and resume them manually.
+Opened 2 workspace(s) without the file's SSH/cloud connection and environment variables.

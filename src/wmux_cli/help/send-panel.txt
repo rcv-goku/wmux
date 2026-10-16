@@ -1,0 +1,14 @@
+Usage: cmux send-panel [--panel <id|ref|index>] [--force] <text>
+
+The older, panel-addressed form of send: --panel is required, and escapes,
+the draft guard and --force work as they do for send.
+
+Options:
+  --panel <id|ref|index>        Target surface (required)
+  --workspace <id|ref|index>    Workspace context (default: $CMUX_WORKSPACE_ID)
+  --window <id|ref|index>       Window context for refs and indexes
+  --force                       Skip the draft guard
+  --json                        Print the full response
+
+Example:
+  cmux send-panel --panel surface:2 "echo hello\n"

@@ -1,0 +1,10 @@
+Usage: cmux list-pane-surfaces [--pane <id|ref|index>]
+
+List the surfaces of a pane, one per line:
+  * surface:4  <title>  [selected]
+
+Options:
+  --pane <id|ref|index>         Pane (default: the focused pane)
+  --workspace <id|ref|index>    Workspace (default: $CMUX_WORKSPACE_ID)
+  --window <id|ref|index>       Window context for refs and indexes
+  --json                        Print the full response

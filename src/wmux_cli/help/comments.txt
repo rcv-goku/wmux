@@ -1,0 +1,10 @@
+Usage: cmux comments <subcommand> [options]
+       cmux comments list|ls [--repo <path>] [--all] [--json]
+
+List the review comments saved from the diff viewer for one git repository
+(default: the repository containing the current directory). Read-only.
+
+By default only pending comments are listed; --all also includes comments
+already delivered to an agent through a TextBox submission. Prints a count
+line, then one line per comment with its anchor (<file>:<start>[-<end>]) and
+message; --json prints the reply.

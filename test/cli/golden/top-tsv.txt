@@ -1,0 +1,9 @@
+kind	handle	name	cpu_percent	rss_bytes	process_count
+surface	surface:2	cargo	95.5	300000000	5
+window	window:1		12.3	524288000	9
+workspace	workspace:1	api	12.0	400000000	7
+pane	pane:1		2.0	1000	2
+app		wmux	1.5	125829120	3
+surface	surface:1	zsh	0.5	512	1
+process	4242	zsh x	0.5	512	
+process	4243	sleep	0.0	100	

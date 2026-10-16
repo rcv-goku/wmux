@@ -1,0 +1,19 @@
+Usage: cmux send-key [--surface <id|ref|index>] [--force] <key>
+
+Press a single key, or a key chord, in a terminal surface. The app checks
+the name; an unknown one is an invalid_params error.
+
+Keys (case-insensitive): enter/return, tab, escape/esc, backspace,
+delete/del/forward_delete, space, up/arrow_up, down, left, right, home, end,
+pageup/page_up, pagedown/page_down, shift+tab/backtab, ctrl-c/sigint,
+ctrl-d/eof, ctrl-f, ctrl-z/sigtstp, ctrl-\/sigquit, and chords
+<mod>[+-]<key> with mods ctrl/control, shift, alt/opt/option and
+cmd/command/super and a key a-z or a named key (ctrl+r, alt-left).
+
+Options:
+  --surface <id|ref|index>      Target surface (default: $CMUX_SURFACE_ID)
+  --workspace <id|ref|index>    Workspace context (default: $CMUX_WORKSPACE_ID)
+  --window <id|ref|index>       Window context for refs and indexes
+  --force                       Send even while an agent is asking a
+                                question or for a permission
+  --json                        Print the full response

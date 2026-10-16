@@ -201,7 +201,7 @@ Customize:
 Automation:
   events [options]                            Stream events as newline-delimited JSON
   layout <save|list|get|open|delete> [args]   Saved workspace layouts
-  todo <add|list|check|uncheck|start|edit|rm|clear|set|open> [args]
+  todo <add|list|check|uncheck|start|edit|rm|move|clear|set|open> [args]
                                               Per-workspace checklist
   feed tui [--opentui|--legacy]               Feed TUI and history (also: feed clear)
   vault <sessions|search|checkpoints|checkpoint|fork> [options]

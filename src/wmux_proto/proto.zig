@@ -16,6 +16,7 @@ pub const jsonc = @import("jsonc.zig");
 pub const keymap_presets = @import("keymap_presets.zig");
 pub const paths = @import("paths.zig");
 pub const pipe_name = @import("pipe_name.zig");
+pub const remote = @import("remote/remote.zig");
 pub const selectors = @import("selectors.zig");
 pub const shell_quote = @import("shell_quote.zig");
 pub const strokes = @import("strokes.zig");
@@ -48,6 +49,7 @@ test {
     _ = keymap_presets;
     _ = paths;
     _ = pipe_name;
+    _ = remote;
     _ = selectors;
     _ = shell_quote;
     _ = strokes;

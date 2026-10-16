@@ -1,0 +1,1 @@
+OK cleared config=/t/cfg/config.ghostty reload=requested

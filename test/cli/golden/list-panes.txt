@@ -1,0 +1,3 @@
+  pane:1  [1 surface]
+* pane:2  [3 surfaces]  [focused]
+  pane:5  [0 surfaces]  [dock:workspace]

@@ -1,0 +1,10 @@
+Usage: cmux list-panels [--workspace <id|ref|index>]
+
+List all surfaces of a workspace across its panes (the older, flat listing),
+one per line:
+  * surface:4  pane:2  terminal  <title>  [focused]
+
+Options:
+  --workspace <id|ref|index>    Workspace (default: $CMUX_WORKSPACE_ID)
+  --window <id|ref|index>       Window context for refs and indexes
+  --json                        Print the full response

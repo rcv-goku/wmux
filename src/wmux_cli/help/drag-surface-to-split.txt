@@ -1,0 +1,12 @@
+Usage: cmux drag-surface-to-split --surface <id|ref|index> <left|right|up|down>
+
+Give a surface a split of its own on one side, exactly as dropping its tab
+on that edge of a pane does.
+
+Options:
+  --surface <id|ref|index>      Surface to move (required; alias --panel)
+  <left|right|up|down>          Pane edge (required)
+  --workspace <id|ref|index>    Workspace context (default: $CMUX_WORKSPACE_ID)
+  --window <id|ref|index>       Window context for refs and indexes
+  --focus <true|false>          Focus the surface (default: false)
+  --json                        Print the full response

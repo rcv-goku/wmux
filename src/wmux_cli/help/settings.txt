@@ -1,0 +1,20 @@
+Usage: cmux settings [open [target]|path|docs|<target>]
+
+Open the Settings window (starts wmux when needed), optionally at a section,
+or print the config file locations.
+
+  settings                      Open Settings
+  settings open [target]        Open Settings at a section
+  settings <target>             Same as 'settings open <target>'
+  settings path                 Print the config files, schema, backup reminder
+                                and reload command (works offline)
+  settings docs                 Same output as 'cmux docs settings'
+
+Targets: account, app, themes, terminal, networking, computers, devices,
+sidebar-appearance, custom-sidebars, automation, browser, browser-import,
+global-hotkey, keyboard-shortcuts (shortcuts), workspace-colors, cmux-json
+(json, wmux-json), reset, and windows (the Windows section: CLI tools,
+notifications, default shell, Explorer integration).
+
+Run from a terminal, Settings comes to the front; run by an agent or a
+script, it opens without taking the foreground.

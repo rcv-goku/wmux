@@ -1,0 +1,17 @@
+Usage: cmux capture-pane [--workspace <id|ref|index>] [--surface <id|ref|index>] [--window <id|ref|index>] [--scrollback] [--lines <n>]
+
+tmux-style capture of terminal text (alias over read-screen without
+--selection). The surface defaults to $CMUX_SURFACE_ID when neither
+--workspace nor --window is given.
+
+Options:
+  --surface <id|ref|index>      Surface to read
+  --workspace <id|ref|index>    Workspace context (default: $CMUX_WORKSPACE_ID)
+  --window <id|ref|index>       Window context for refs and indexes
+  --scrollback                  Include the scrollback history
+  --lines <n>                   Only the last n lines (n > 0; implies
+                                --scrollback)
+  --json                        Print the full response
+
+Example:
+  cmux capture-pane --surface surface:1 --scrollback --lines 200

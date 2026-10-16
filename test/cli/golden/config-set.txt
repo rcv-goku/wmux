@@ -1,0 +1,2 @@
+OK app.appearance = "dark"
+path: /t/cfg/wmux.json

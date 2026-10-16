@@ -1,0 +1,9 @@
+Usage: cmux focus-pane --pane <id|ref|index>
+
+Focus a pane (the pane handle may also be given positionally).
+
+Options:
+  --pane <id|ref|index>         Pane to focus (required)
+  --workspace <id|ref|index>    Workspace context (default: $CMUX_WORKSPACE_ID)
+  --window <id|ref|index>       Window context for refs and indexes
+  --json                        Print the full response

@@ -1,0 +1,12 @@
+Usage: cmux read-selection [--surface <id|ref|index>] [--json]
+
+Show what is selected in a surface (terminal, file preview, Markdown view or
+browser): first whichever context lines apply (Kind:, File:, Lines:, URL:),
+then the text itself. When nothing is selected the output is
+"Has selection: false" and the exit code is still 0.
+
+Options:
+  --surface <id|ref|index>      Surface to read (default: $CMUX_SURFACE_ID)
+  --workspace <id|ref|index>    Workspace context (default: $CMUX_WORKSPACE_ID)
+  --window <id|ref|index>       Window context for refs and indexes
+  --json                        Print the full response

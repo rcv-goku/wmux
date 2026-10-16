@@ -1,0 +1,17 @@
+Usage: cmux new-pane [--type <terminal|browser>] [--command <text>]
+
+Add a pane holding a terminal or a browser beside the focused pane.
+
+Options:
+  --type <terminal|browser>     Content of the new pane (default: terminal)
+  --direction <left|right|up|down>
+                                Side of the new pane (default: right)
+  --placement <workspace|dock>  Where the pane goes (default: workspace)
+  --workspace <id|ref|index>    Workspace (default: $CMUX_WORKSPACE_ID)
+  --window <id|ref|index>       Window context for refs and indexes
+  --url <url>                   Page for a browser pane
+  --profile <name|uuid>         Browser profile for a browser pane
+  --command <text>              Type <text> plus Enter into the new shell
+                                (terminal panes only)
+  --focus <true|false>          Focus the new pane (default: false)
+  --json                        Print the full response

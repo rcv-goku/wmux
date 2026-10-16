@@ -1,0 +1,34 @@
+Usage: cmux config <doctor|check|validate|path|paths|docs|documentation|reload|get|set|unset|toggle|cycle|preset|sidebar-font-size|surface-tab-bar-font-size>
+
+Validate, read or change wmux.json. Everything except 'reload' works without
+a running app; the app applies file changes through its file watcher.
+
+  doctor | check | validate [--path <file>]... [--scope global|project] [--json]
+                    Check JSONC syntax and the schema (paths, types, enums,
+                    bounds, scope) of wmux.json, the shared cmux.json and the
+                    project file; exit 1 on any error
+  path | paths      Print the config files, schema, backup reminder and
+                    reload command
+  docs | documentation
+                    Same as 'cmux docs settings'
+  reload            Ask the running app to reload (same as 'cmux reload-config')
+  get <path>        Print the effective value, marked '(default)' or
+                    '(from <source>)' unless wmux.json sets it; --json gives
+                    {path, file, value, configured, source, default, locked}
+  set <path> <value>
+                    Store a value (JSON, or a string when it is not JSON)
+  unset <path>      Remove a value so the next layer or the default applies
+  toggle <path>     Flip a boolean setting from its effective value
+  cycle <path> <v1> [v2...]
+                    Move to the value after the current one (wrapping; an
+                    unlisted current value moves to the first)
+  preset <name>     Apply settingPresets.<name> in one write
+  sidebar-font-size [points], surface-tab-bar-font-size [points]
+                    Read or set sidebar.fontSize / surfaceTabBar.fontSize
+
+Mutations take --file wmux|cmux (default wmux: the shared cmux.json is only
+written when asked), validate the whole file before writing, keep comments,
+key order and unrelated keys, and print 'OK <path> = <json>', 'OK <path>
+unset' or 'OK unchanged', then 'path: <file>'. --json gives {ok, file,
+paths: [{path, changed, value?}]}. Paths split on every '.', so keys that
+contain '.' cannot be addressed; settings managed by policy are refused.

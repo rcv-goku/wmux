@@ -1,5 +1,12 @@
 Usage: cmux identify
 
 Print the connected app's identity (app, version, build, pipe path, install
-path, bundle identifier) and the caller's context as JSON. The caller is
-taken from CMUX_WORKSPACE_ID and CMUX_SURFACE_ID when they are set.
+path, bundle identifier), the focused window, workspace, pane and surface,
+and the caller's context as JSON (always JSON; --id-format applies). The
+caller is taken from CMUX_WORKSPACE_ID and CMUX_SURFACE_ID when they are set.
+
+Options:
+  --workspace <id|ref|index>    Caller workspace instead of $CMUX_WORKSPACE_ID
+  --surface <id|ref|index>      Caller surface instead of $CMUX_SURFACE_ID
+  --window <id|ref|index>       Window context for refs and indexes
+  --no-caller                   Send no caller context

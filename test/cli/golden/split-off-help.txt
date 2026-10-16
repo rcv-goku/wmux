@@ -1,0 +1,12 @@
+Usage: cmux split-off --surface <id|ref|index> <left|right|up|down>
+
+Give an existing surface its own new pane beside the one it is in. Focus
+stays where it is unless --focus true is given.
+
+Options:
+  --surface <id|ref|index>      Surface to split off (required; alias --panel)
+  <left|right|up|down>          Side of the new split (required)
+  --workspace <id|ref|index>    Workspace context (default: $CMUX_WORKSPACE_ID)
+  --window <id|ref|index>       Window context for refs and indexes
+  --focus <true|false>          Focus the surface (default: false)
+  --json                        Print the full response
