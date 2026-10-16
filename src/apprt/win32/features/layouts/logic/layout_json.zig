@@ -979,18 +979,26 @@ fn trimTrailingSeps(style: paths.Style, p: []const u8) []const u8 {
 }
 
 /// `cwd` relative to `base` when inside it (null when equal), else as is.
+/// The result always resolves back to `cwd` through `resolveCwd`: doubled
+/// separators after the base are dropped (a leading one would read as an
+/// absolute path), and a first component named "~" gets a "./" prefix (it
+/// would read as the home directory).
 pub fn relativeCwd(arena: Allocator, style: paths.Style, base: ?[]const u8, cwd: ?[]const u8) Allocator.Error!?[]const u8 {
     const c = cwd orelse return null;
     const b_raw = base orelse return c;
     const b = trimTrailingSeps(style, b_raw);
     const ct = trimTrailingSeps(style, c);
     if (pathEql(style, b, ct)) return null;
-    if (ct.len > b.len and pathEql(style, ct[0..b.len], b)) {
-        if (isSep(style, ct[b.len])) return try arena.dupe(u8, ct[b.len + 1 ..]);
-        // Base is a root such as "/" or "C:\".
-        if (b.len > 0 and isSep(style, b[b.len - 1])) return try arena.dupe(u8, ct[b.len..]);
-    }
-    return c;
+    if (ct.len <= b.len or !pathEql(style, ct[0..b.len], b)) return c;
+    // The prefix must end on a path boundary: a separator follows it, or
+    // the base is a root such as "/" or "C:\".
+    if (!isSep(style, ct[b.len]) and !(b.len > 0 and isSep(style, b[b.len - 1]))) return c;
+    var rest = ct[b.len..];
+    while (rest.len > 0 and isSep(style, rest[0])) rest = rest[1..];
+    if (rest.len == 0) return null;
+    if (rest[0] == '~' and (rest.len == 1 or isSep(style, rest[1])))
+        return try std.fmt.allocPrint(arena, ".{c}{s}", .{ style.sep(), rest });
+    return try arena.dupe(u8, rest);
 }
 
 fn envDelta(arena: Allocator, style: paths.Style, base: []const EnvVar, tab: []const EnvVar) Allocator.Error![]const EnvVar {
@@ -1418,6 +1426,29 @@ test "unit: layouts: relativeCwd handles roots and prefixes that are not path bo
     try testing.expect((try relativeCwd(a, .posix, "/w/", "/w")) == null);
     try testing.expect((try relativeCwd(a, .posix, "/w", null)) == null);
     try testing.expectEqualStrings("/x", (try relativeCwd(a, .posix, null, "/x")).?);
+}
+
+test "unit: layouts: relativeCwd results resolve back to the captured directory" {
+    var ar = testArena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const cases = [_]struct { paths.Style, []const u8, []const u8, []const u8, []const u8 }{
+        // style, base, captured cwd, relative value, where re-opening lands
+        .{ .posix, "/w", "/w//x", "x", "/w/x" },
+        .{ .posix, "/", "//etc", "etc", "/etc" },
+        .{ .posix, "/w", "/w/~/x", "./~/x", "/w/~/x" },
+        .{ .posix, "/w", "/w/~", "./~", "/w/~" },
+        .{ .posix, "/w", "/w/~x", "~x", "/w/~x" },
+        .{ .windows, "C:\\w", "C:\\w\\\\x", "x", "C:\\w\\x" },
+        .{ .windows, "C:\\w", "c:/w/~", ".\\~", "C:\\w\\~" },
+    };
+    for (cases) |c| {
+        const rel = (try relativeCwd(a, c[0], c[1], c[2])).?;
+        try testing.expectEqualStrings(c[3], rel);
+        // Not an absolute path and not the home directory.
+        const back = (try resolveCwd(a, c[0], c[1], "/home/u", rel)).?;
+        try testing.expectEqualStrings(c[4], back);
+    }
 }
 
 test "unit: layouts: huge layouts parse and count" {
