@@ -218,8 +218,11 @@ pub const Action = enum(u8) {
     open_link,
     toggle_expand,
     toggle_group,
-    /// Wrapped text with links: resolve the run under the cursor with the
-    /// DirectWrite layout's hit test, then `row_model.runAtOffset`.
+    /// Text whose links layout cannot place exactly (wrapped lines, styled
+    /// runs, line breaks): hit-test the DirectWrite layout, convert the
+    /// UTF-16 position with `utf16_map.utf8Offset`, then look the link up
+    /// with `row_model.runAtOffset`. A run without a link selects the row,
+    /// like a click on the row background.
     text_links,
 };
 
