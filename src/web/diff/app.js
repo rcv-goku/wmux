@@ -33,6 +33,7 @@ import {
   normalizeFilter,
   totals,
   treeOrder,
+  utf8Length,
   STATUS_LETTERS,
 } from "./files.js";
 import { cycle, searchFiles } from "./find.js";
@@ -48,6 +49,9 @@ const UNSUPPORTED_CODES = new Set(["method_not_found", "not_supported", "forbidd
 const STATUS_MS = 2500;
 const STATE_DEBOUNCE_MS = 400;
 const MAX_STATE_COLLAPSED = 200;
+/** Session state budgets (JSON, UTF-8 bytes): collapsed paths, and top_file / find each. */
+const STATE_COLLAPSED_BYTES = 32 * 1024;
+const STATE_STRING_BYTES = 8 * 1024;
 const MAX_FILE_SEARCH_RESULTS = 50;
 /** Only per-panel data hosts may be fetched (ADR-6.4). */
 const PATCH_URL_RE = /^https:\/\/[a-z0-9-]+\.wmux\.example\//i;
@@ -58,6 +62,11 @@ function errorMessage(err) {
 
 function errorCode(err) {
   return err && typeof err.code === "string" ? err.code : "";
+}
+
+/** UTF-8 size of a string once JSON-encoded (how the bridge measures state). */
+function jsonBytes(s) {
+  return utf8Length(JSON.stringify(s));
 }
 
 /**
@@ -1555,14 +1564,28 @@ export function createApp(options) {
   /* ---------------------------------------------------------------------- */
 
   let stateTimer = 0;
+  /**
+   * The bridge rejects panel.state_changed above 64 KiB, and then nothing is
+   * kept at all; every unbounded part has its own budget (UTF-8 bytes of its
+   * JSON) so the snapshot always fits.
+   */
   function stateSnapshot() {
+    const collapsed = [];
+    let bytes = 0;
+    for (const p of state.collapsed) {
+      bytes += jsonBytes(p) + 1;
+      if (collapsed.length >= MAX_STATE_COLLAPSED || bytes > STATE_COLLAPSED_BYTES) break;
+      collapsed.push(p);
+    }
+    const top = topFilePath();
+    const find = state.find.open ? state.find.query : "";
     return {
       v: 1,
       prefs: { ...state.prefs },
       files_visible: state.filesVisible,
-      top_file: topFilePath(),
-      collapsed: Array.from(state.collapsed).slice(0, MAX_STATE_COLLAPSED),
-      find: state.find.open ? state.find.query : "",
+      top_file: top !== null && jsonBytes(top) <= STATE_STRING_BYTES ? top : null,
+      collapsed,
+      find: jsonBytes(find) <= STATE_STRING_BYTES ? find : "",
     };
   }
 

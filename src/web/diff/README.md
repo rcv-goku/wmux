@@ -138,6 +138,9 @@ the page's find bar.
 
 `{v: 1, prefs: {...}, files_visible, top_file: "<path>", collapsed: [path, ...]
 (at most 200), find: "<query>"}`, debounced 400 ms and flushed on `pagehide`.
+The snapshot always fits the 64 KiB `panel.state_changed` cap: `collapsed`
+stops at 32 KiB of encoded paths, and a `top_file` or `find` above 8 KiB is
+left out (`null` / `""`).
 On restore the viewer's own `prefs` win over everything else, the files
 sidebar, collapsed files, find query and scroll position (by file) come back.
 The diff itself is not in the state: native re-validates its manifest and

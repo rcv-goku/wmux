@@ -940,6 +940,24 @@ describe("unit: diff app session", () => {
     assert.equal($("#dv-find-input").value, "answer");
   });
 
+  test("unit: diff: session state stays under the 64 KiB bridge cap", async () => {
+    await startApp();
+    for (let i = 0; i < 200; i += 1) app.state.collapsed.add("very/long/directory/name/".repeat(20) + "file" + i + ".js");
+    app.openFind("x".repeat(10000));
+    const before = host.calls("panel.state_changed").length;
+    window.dispatchEvent(new window.Event("pagehide"));
+    assert.equal(host.calls("panel.state_changed").length, before + 1, "state was posted, not rejected");
+    const state = lastCall("panel.state_changed").params.state;
+    assert.ok(Buffer.byteLength(JSON.stringify(state)) <= 65536);
+    assert.ok(state.collapsed.length > 0 && state.collapsed.length < 200, String(state.collapsed.length));
+    assert.equal(state.find, "", "an oversized query is dropped");
+    assert.equal(state.prefs.layout, "unified");
+    app.closeFind();
+    app.state.collapsed.clear();
+    app.state.collapsed.add("é/ü.txt");
+    assert.deepEqual(app.stateSnapshot().collapsed, ["é/ü.txt"], "short paths are kept as they are");
+  });
+
   test("unit: diff: outside wmux the page says so", async () => {
     freshDom();
     const offline = createApp({ document: doc, libs, bridge: { available: false, on: () => () => {}, context: null, panel: {} } });
