@@ -500,7 +500,7 @@ pub fn normalize(agent: Agent, arg: []const u8, p: *const Payload) ?Normalized {
                 // Factory sends Notification(idle_prompt) instead of Stop
                 // when the user cancels a turn.
                 n.event = .stop;
-            } else if (notificationKind(agent, p)) |k| {
+            } else if (notificationKind(agent, native, p)) |k| {
                 n.input_kind = k;
             } else {
                 n.informational = true;
@@ -542,11 +542,15 @@ fn isErrorStatus(s: []const u8) bool {
 
 /// Needs-input reason of a Notification payload: Claude's
 /// `notification_type`, else the classifier's cue words. Null for
-/// notifications that do not wait on the user: Kimi Code 2.x
-/// Notification (background task status) and the informational
-/// `notification_type` values of Claude/Copilot.
-fn notificationKind(agent: Agent, p: *const Payload) ?InputKind {
-    if (agent == .kimi) return null;
+/// notifications that do not wait on the user: the informational
+/// `notification_type` values of Claude/Copilot, and a Kimi Notification
+/// without a needs-input type. Kimi Code 2.x sends Notification only for
+/// background task status (its approval signal is PermissionRequest);
+/// legacy kimi-cli 1.x has no PermissionRequest and reports approvals as
+/// Notification `permission_prompt`. `native` is the event the payload
+/// names: a Kimi StopFailure that cmux routes through the `notification`
+/// subcommand is not a status report and keeps the classifier.
+fn notificationKind(agent: Agent, native: ?[]const u8, p: *const Payload) ?InputKind {
     if (p.notification_type) |t| {
         if (std.mem.eql(u8, t, "permission_prompt")) return .permission;
         if (std.mem.eql(u8, t, "idle_prompt")) return .waiting;
@@ -560,6 +564,10 @@ fn notificationKind(agent: Agent, p: *const Payload) ?InputKind {
             "quota_auto_resume_disabled",
         };
         for (informational) |w| if (std.mem.eql(u8, t, w)) return null;
+    }
+    if (agent == .kimi) {
+        const is_notification = if (native) |nv| canonicalEql(nv, "notification") else true;
+        if (is_notification) return null;
     }
     const msg = p.message orelse p.title orelse return .waiting;
     var toks: Tokens = .init(msg);

@@ -985,6 +985,49 @@ test "unit: agents: informational notifications do not need input" {
     try testing.expectEqualStrings("needsInput", normalize.storeLifecycle(url.n.?, false).?);
 }
 
+test "unit: agents: kimi notifications are informational only when they report task status" {
+    // Kimi Code 2.x Notification reports a background task status change;
+    // its approval signal is PermissionRequest. A `?` in the title must not
+    // turn it into a question.
+    var task = try normalizeFixture(.kimi, "notification",
+        \\{"hook_event_name":"Notification","session_id":"s","agent_id":"main","sink":"context",
+        \\ "notification_type":"task.completed","title":"Build finished?","body":"ok","severity":"info"}
+    );
+    defer task.p.deinit();
+    try testing.expect(task.n.?.informational);
+    try testing.expect(task.n.?.input_kind == null);
+    try testing.expect(!task.n.?.is_subagent);
+    try testing.expect(normalize.storeLifecycle(task.n.?, false) == null);
+
+    // Legacy kimi-cli 1.x has no PermissionRequest: an approval prompt is a
+    // Notification of type permission_prompt, and it needs input.
+    var legacy = try normalizeFixture(.kimi, "notification",
+        \\{"hook_event_name":"Notification","session_id":"s","sink":"desktop",
+        \\ "notification_type":"permission_prompt","title":"Approval needed","severity":"warning"}
+    );
+    defer legacy.p.deinit();
+    try testing.expect(!legacy.n.?.informational);
+    try testing.expectEqual(normalize.InputKind.permission, legacy.n.?.input_kind.?);
+    try testing.expectEqualStrings("needsInput", normalize.storeLifecycle(legacy.n.?, false).?);
+
+    // cmux routes Kimi StopFailure through the `notification` subcommand. The
+    // turn is over, so the store must not stay `running` as it would for an
+    // informational event, and the notification still reads as an error.
+    var failed = try normalizeFixture(.kimi, "notification",
+        \\{"hook_event_name":"StopFailure","session_id":"s","error_type":"rate_limit","error_message":"Rate limited"}
+    );
+    defer failed.p.deinit();
+    try testing.expectEqual(Event.notification, failed.n.?.event);
+    try testing.expect(!failed.n.?.informational);
+    try testing.expect(failed.n.?.input_kind != null);
+    try testing.expectEqualStrings("needsInput", normalize.storeLifecycle(failed.n.?, false).?);
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const f = (try normalize.format(arena.allocator(), failed.n.?, .{ .payload = &failed.p })).?;
+    try testing.expectEqualStrings("Error", f.subtitle);
+    try testing.expectEqualStrings("Rate limited", f.body);
+}
+
 test "unit: agents: factory cancel notification and hermes failed turn are stops" {
     var f = try normalizeFixture(.factory, "notification", "{\"notification_type\":\"idle_prompt\",\"session_id\":\"d\"}");
     defer f.p.deinit();
