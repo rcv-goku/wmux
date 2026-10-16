@@ -270,6 +270,39 @@ test "unit: cli-config: a config file that exists but cannot be read is reported
     try testing.expectEqual(big.len, h.file(f.overlay).?.len);
 }
 
+test "unit: cli-config: a file with only a BOM, comments and blank lines is empty" {
+    var f: Fixture = undefined;
+    f.init();
+    defer f.deinit();
+    const h = &f.h;
+    const a = h.alloc();
+    // What Windows PowerShell 5.1 writes for `Set-Content -Encoding UTF8`.
+    h.addFile(f.wmux_json, "\xEF\xBB\xBF\r\n");
+    try testing.expectEqualStrings("\"system\"  (default)\n", h.run(&.{ "cmux", "config", "get", "app.appearance" }).out);
+    const doc = h.run(&.{ "cmux", "config", "doctor" });
+    try harness.expectOk(doc);
+    try harness.expectContains(doc.out, try std.fmt.allocPrint(a, "wmux.json: {s}: OK (0 keys)\n", .{f.wmux_json}));
+    // set keeps the BOM (json_edit) and the result reads back.
+    try harness.expectOk(h.run(&.{ "cmux", "config", "set", "app.appearance", "dark" }));
+    try testing.expect(std.mem.startsWith(u8, h.file(f.wmux_json).?, "\xEF\xBB\xBF{"));
+    try testing.expectEqualStrings("\"dark\"\n", h.run(&.{ "cmux", "config", "get", "app.appearance" }).out);
+
+    // A comment-only file (a template header): reads, doctor and a preset.
+    h.setFile(f.wmux_json, "// wmux settings\n/* none yet */\n");
+    try testing.expectEqualStrings("\"system\"  (default)\n", h.run(&.{ "cmux", "config", "get", "app.appearance" }).out);
+    try harness.expectOk(h.run(&.{ "cmux", "config", "doctor", "--json" }));
+    h.addFile(f.cmux_json, "{\"settingPresets\": {\"dark\": {\"app\": {\"appearance\": \"dark\"}}}}");
+    const pre = h.run(&.{ "cmux", "config", "preset", "dark" });
+    try harness.expectOk(pre);
+    try harness.expectContains(pre.out, "OK app.appearance = \"dark\"\n");
+    try harness.expectContains(h.file(f.wmux_json).?, "// wmux settings");
+    // An unterminated comment is still a syntax error.
+    h.setFile(f.wmux_json, "/* open");
+    try harness.expectFail(h.run(&.{ "cmux", "config", "get", "app.appearance" }), 1, "does not parse");
+    try testing.expect(files.isBlank(""));
+    try testing.expect(!files.isBlank("{}"));
+}
+
 test "unit: cli-config: the global files are not project files and explicit files get an inferred scope" {
     var f: Fixture = undefined;
     f.init();

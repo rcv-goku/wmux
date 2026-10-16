@@ -171,8 +171,9 @@ fn mutate(ctx: *Ctx, verb: []const u8, which: files.Which, edits: []const Edit, 
             const r = json_edit.merge(ctx.arena, text, m.patch, &diag) catch |err|
                 return editFailed(ctx, verb, file, m.label, err, diag);
             text = r.text;
-            // Both texts parse: merge parsed `before` and wrote valid JSON.
-            const old_root = jsonc.parseInto(ctx.arena, before, .{}, null) catch |err| return editFailed(ctx, verb, file, "", err, .{});
+            // Both texts parse: merge parsed `before` (or took a blank file
+            // as an empty object) and wrote valid JSON.
+            const old_root = jsonc.parseInto(ctx.arena, if (files.isBlank(before)) "{}" else before, .{}, null) catch |err| return editFailed(ctx, verb, file, "", err, .{});
             const new_root = jsonc.parseInto(ctx.arena, text, .{}, null) catch |err| return editFailed(ctx, verb, file, "", err, .{});
             for (edits, 0..) |e, i| {
                 const old = old_root.getDotted(e.path);

@@ -93,6 +93,16 @@ pub const Harness = struct {
         self.fp.addFile(path, bytes) catch unreachable;
     }
 
+    /// Replaces the bytes of an existing fake file, else adds it (`addFile`
+    /// on an existing path adds a second entry that reads never see).
+    pub fn setFile(self: *Harness, path: []const u8, bytes: []const u8) void {
+        for (self.fp.files.items) |*f| if (std.mem.eql(u8, f.path, path)) {
+            f.bytes = bytes;
+            return;
+        };
+        self.addFile(path, bytes);
+    }
+
     pub fn addDir(self: *Harness, path: []const u8) void {
         self.dirs.append(self.alloc(), path) catch unreachable;
         // Directories exist for `Platform.pathExists`.

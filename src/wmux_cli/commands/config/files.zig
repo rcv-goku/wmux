@@ -123,6 +123,17 @@ pub fn read(ctx: *Ctx, path: []const u8) ?[]const u8 {
     return ctx.platform.readFile(ctx.arena, path, max_file_bytes);
 }
 
+/// True for a file with no JSON value: nothing but whitespace, comments and
+/// a UTF-8 byte order mark (Windows PowerShell 5.1 writes one even for an
+/// empty file). `json_edit` gives such a file a fresh root object, so reads
+/// and `config doctor` treat it as empty instead of as a syntax error.
+pub fn isBlank(src: []const u8) bool {
+    var t = jsonc.Tokenizer.init(src, true);
+    // An unterminated comment is not blank: the parser reports it.
+    const first = t.next() orelse return false;
+    return first.tag == .eof;
+}
+
 /// A parsed config file.
 pub const Parsed = struct {
     path: []const u8,
@@ -136,7 +147,7 @@ pub const ParseFailure = struct { path: []const u8, diag: jsonc.Diagnostic };
 pub fn parseFile(ctx: *Ctx, path: ?[]const u8, failure: *?ParseFailure) !?Parsed {
     const p = path orelse return null;
     const src = read(ctx, p) orelse return null;
-    if (std.mem.trim(u8, src, " \t\r\n").len == 0) return null;
+    if (isBlank(src)) return null;
     var diag: jsonc.Diagnostic = .{};
     const root = jsonc.parseInto(ctx.arena, src, .{}, &diag) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,

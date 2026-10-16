@@ -86,7 +86,7 @@ fn check(ctx: *Ctx, loc: files.Locations, label: []const u8, path: []const u8, s
         return f;
     };
     f.bytes = src.len;
-    if (std.mem.trim(u8, src, " \t\r\n").len == 0) {
+    if (files.isBlank(src)) {
         f.message = "empty";
         return f;
     }
