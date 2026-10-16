@@ -300,16 +300,41 @@ test "unit: feed: huge text fields are capped on code-point boundaries" {
     try testing.expect(it.detail.len <= model.caps.detail);
 }
 
-test "unit: feed: oversized tool input is dropped, not cut" {
+test "unit: feed: long non-ASCII agent names are capped on code-point boundaries" {
     var json: std.ArrayList(u8) = .empty;
     defer json.deinit(gpa);
-    try json.appendSlice(gpa, "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"a.txt\",\"content\":\"");
-    try json.appendNTimes(gpa, 'x', model.caps.tool_input + 1);
-    try json.appendSlice(gpa, "\"}}");
+    try json.appendSlice(gpa, "{\"hook_event_name\":\"Stop\",\"_source\":\"AGENT");
+    for (0..40) |_| try json.appendSlice(gpa, "\u{20AC}");
+    try json.appendSlice(gpa, "\"}");
     const it = try itemFrom(json.items, opts());
     defer it.destroy();
-    try testing.expect(it.tool_input_json == null);
-    try testing.expectEqualStrings("a.txt", it.detail);
+    try testing.expect(it.source.len <= 64);
+    try testing.expect(std.unicode.utf8ValidateSlice(it.source));
+    try testing.expect(std.mem.startsWith(u8, it.source, "agent\u{20AC}"));
+    try testing.expect(std.mem.indexOf(u8, it.title, " finished \u{2014} reply to continue") != null);
+}
+
+test "unit: feed: oversized tool input is dropped, not cut" {
+    const head = "{\"hook_event_name\":\"PermissionRequest\",\"tool_name\":\"Write\",\"tool_input\":";
+    const pre = "{\"file_path\":\"a.txt\",\"content\":\"";
+    const post = "\"}";
+    // Serialized input exactly at the cap is kept; one byte more is dropped.
+    for ([_]usize{ 0, 1 }) |extra| {
+        var json: std.ArrayList(u8) = .empty;
+        defer json.deinit(gpa);
+        try json.appendSlice(gpa, head ++ pre);
+        try json.appendNTimes(gpa, 'x', model.caps.tool_input - pre.len - post.len + extra);
+        try json.appendSlice(gpa, post ++ "}");
+        const it = try itemFrom(json.items, opts());
+        defer it.destroy();
+        try testing.expectEqual(model.Kind.permission_request, it.kind);
+        if (extra == 0) {
+            try testing.expectEqual(model.caps.tool_input, it.tool_input_json.?.len);
+        } else {
+            try testing.expect(it.tool_input_json == null);
+        }
+        try testing.expectEqualStrings("a.txt", it.detail);
+    }
 }
 
 test "unit: feed: resolve validates kind, supported mode and pending state" {
@@ -453,6 +478,133 @@ test "unit: feed: source display names and telemetry-only sources" {
     try testing.expect(model.isTelemetryOnlySource("codex"));
     try testing.expect(model.isTelemetryOnlySource("Codex"));
     try testing.expect(!model.isTelemetryOnlySource("claude"));
+}
+
+test "unit: feed: agent name prefers the bridge stamp over a native source key" {
+    {
+        // Claude's SessionStart input has its own `source` (startup|resume|clear|compact).
+        const it = try itemFrom("{\"hook_event_name\":\"SessionStart\",\"source\":\"startup\",\"_source\":\"Claude\",\"session_id\":\"s\"}", opts());
+        defer it.destroy();
+        try testing.expectEqualStrings("claude", it.source);
+        try testing.expectEqualStrings("startup", it.detail);
+    }
+    {
+        const it = try itemFrom("{\"hook_event_name\":\"SessionStart\",\"source\":\"resume\"}", .{ .id = t_id, .now_ms = 0, .source = "claude" });
+        defer it.destroy();
+        try testing.expectEqualStrings("claude", it.source);
+        try testing.expectEqualStrings("resume", it.detail);
+    }
+    {
+        // cmux-shaped frame: `source` names the agent and nothing is stamped.
+        const it = try itemFrom("{\"hook_event_name\":\"SessionStart\",\"source\":\"opencode\"}", opts());
+        defer it.destroy();
+        try testing.expectEqualStrings("opencode", it.source);
+        try testing.expectEqualStrings("", it.detail);
+    }
+    {
+        // A stamp that repeats `source` is not a start reason.
+        const it = try itemFrom("{\"hook_event_name\":\"SessionStart\",\"source\":\"claude\",\"_source\":\"claude\"}", opts());
+        defer it.destroy();
+        try testing.expectEqualStrings("", it.detail);
+    }
+}
+
+test "unit: feed: codex permission hooks are telemetry unless the push blocks" {
+    const json = "{\"hook_event_name\":\"PermissionRequest\",\"source\":\"codex\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"ls -la\"}}";
+    {
+        const it = try itemFrom(json, opts());
+        defer it.destroy();
+        try testing.expectEqual(model.Kind.tool_use, it.kind);
+        try testing.expectEqual(model.Status.info, it.status);
+        try testing.expectEqualStrings("Bash", it.title);
+        try testing.expectEqualStrings("ls -la", it.detail);
+        try testing.expectEqualStrings("PermissionRequest", it.hook_event_name);
+        try testing.expect((try model.bannerText(gpa, it)) == null);
+        try testing.expectError(error.NotPending, it.resolve(.{ .permission = .once }, 1));
+    }
+    {
+        // codex-teams app-server bridge: a real decision.
+        var o = opts();
+        o.blocking = true;
+        const it = try itemFrom(json, o);
+        defer it.destroy();
+        try testing.expectEqual(model.Kind.permission_request, it.kind);
+        try testing.expectEqual(model.Status.pending, it.status);
+    }
+    {
+        // Nothing waits for a non-blocking push, whatever the agent.
+        var o = opts();
+        o.blocking = false;
+        const it = try itemFrom("{\"hook_event_name\":\"PermissionRequest\",\"source\":\"claude\",\"tool_name\":\"AskUserQuestion\"}", o);
+        defer it.destroy();
+        try testing.expectEqual(model.Kind.tool_use, it.kind);
+        try testing.expect(it.questions.len == 0);
+    }
+}
+
+test "unit: feed: a waiting pre-tool hook becomes an answerable permission request" {
+    // Gemini's Feed trigger is its pre-tool hook (BeforeTool).
+    const json = "{\"hook_event_name\":\"BeforeTool\",\"source\":\"gemini\",\"tool_name\":\"run_shell_command\",\"tool_input\":{\"command\":\"rm -r out\"}}";
+    {
+        var o = opts();
+        o.blocking = true;
+        const it = try itemFrom(json, o);
+        defer it.destroy();
+        try testing.expectEqual(model.Kind.permission_request, it.kind);
+        try testing.expectEqual(model.Status.pending, it.status);
+        try testing.expectEqualStrings("run_shell_command", it.title);
+        try testing.expectEqualStrings("rm -r out", it.detail);
+        try testing.expect(it.tool_input_json != null);
+        try testing.expect(it.permission_modes.has(.once) and it.permission_modes.has(.deny));
+        try testing.expect(!it.permission_modes.has(.bypass));
+        const b = (try model.bannerText(gpa, it)).?;
+        defer gpa.free(b.title);
+        defer gpa.free(b.body);
+        try testing.expectEqualStrings("Gemini permission", b.title);
+        try testing.expectEqualStrings("run_shell_command needs approval", b.body);
+    }
+    {
+        // Unknown blocking keeps the event-name classification.
+        const it = try itemFrom(json, opts());
+        defer it.destroy();
+        try testing.expectEqual(model.Kind.tool_use, it.kind);
+    }
+    {
+        // Plans and questions stay what they are; todo writes need an answer too.
+        var o = opts();
+        o.blocking = true;
+        const plan = try itemFrom("{\"hook_event_name\":\"PreToolUse\",\"source\":\"copilot\",\"tool_name\":\"ExitPlanMode\"}", o);
+        defer plan.destroy();
+        try testing.expectEqual(model.Kind.exit_plan, plan.kind);
+        const todo = try itemFrom("{\"hook_event_name\":\"PreToolUse\",\"source\":\"qoder\",\"tool_name\":\"TodoWrite\",\"tool_input\":{\"todos\":[]}}", o);
+        defer todo.destroy();
+        try testing.expectEqual(model.Kind.permission_request, todo.kind);
+        // Lifecycle events are never promoted.
+        const stop = try itemFrom("{\"hook_event_name\":\"Stop\",\"source\":\"kimi\"}", o);
+        defer stop.destroy();
+        try testing.expectEqual(model.Kind.stop, stop.kind);
+    }
+    {
+        // Claude's PreToolUse telemetry for AskUserQuestion is no second card
+        // next to the waiting PermissionRequest.
+        var o = opts();
+        o.blocking = false;
+        const it = try itemFrom("{\"hook_event_name\":\"PreToolUse\",\"source\":\"claude\",\"tool_name\":\"AskUserQuestion\",\"tool_input\":{\"question\":\"Q\"}}", o);
+        defer it.destroy();
+        try testing.expectEqual(model.Kind.tool_use, it.kind);
+        try testing.expect(it.tool_input_json == null);
+    }
+}
+
+test "unit: feed: raw tool input is kept for decisions only" {
+    const it = try itemFrom("{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"a.txt\",\"content\":\"body\"}}", opts());
+    defer it.destroy();
+    try testing.expectEqual(model.Kind.tool_use, it.kind);
+    try testing.expect(it.tool_input_json == null);
+    try testing.expectEqualStrings("a.txt", it.detail);
+    const res = try itemFrom("{\"hook_event_name\":\"PostToolUse\",\"tool_name\":\"Write\",\"tool_input\":{\"content\":\"body\"},\"tool_response\":{}}", opts());
+    defer res.destroy();
+    try testing.expect(res.tool_input_json == null);
 }
 
 test "unit: feed: fromEvent survives allocation failure at every point" {

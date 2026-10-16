@@ -27,7 +27,7 @@ fn add(s: *store.Store, n: u32, json: []const u8) !*model.Item {
 }
 
 /// 1 perm(claude,s1,ws_a) pending, 2 tool use, 3 plan(claude,s1) resolved,
-/// 4 question(cursor,s2,ws_b) pending, 5 stop(claude,s1), 6 perm(codex) expired.
+/// 4 question(cursor,s2,ws_b) pending, 5 stop(claude,s1), 6 perm(grok) expired.
 fn fixture(s: *store.Store) !void {
     _ = try add(s, 1, "{\"hook_event_name\":\"PermissionRequest\",\"source\":\"claude\",\"session_id\":\"s1\",\"tool_name\":\"Bash\",\"workspace_id\":\"" ++ ws_a ++ "\"}");
     _ = try add(s, 2, "{\"hook_event_name\":\"PreToolUse\",\"source\":\"claude\",\"session_id\":\"s1\",\"tool_name\":\"Read\"}");
@@ -35,7 +35,7 @@ fn fixture(s: *store.Store) !void {
     try plan.resolve(.{ .exit_plan = .{ .mode = .auto_accept } }, 3500);
     _ = try add(s, 4, "{\"hook_event_name\":\"PermissionRequest\",\"source\":\"cursor\",\"session_id\":\"s2\",\"tool_name\":\"AskUserQuestion\",\"surface_id\":\"" ++ ws_b ++ "\",\"workspace_id\":\"" ++ ws_b ++ "\",\"tool_input\":{\"questions\":[{\"question\":\"Q\",\"options\":[{\"label\":\"one\"},{\"label\":\"two\"}]}]}}");
     _ = try add(s, 5, "{\"hook_event_name\":\"Stop\",\"source\":\"claude\",\"session_id\":\"s1\"}");
-    const cx = try add(s, 6, "{\"hook_event_name\":\"PermissionRequest\",\"source\":\"codex\",\"tool_name\":\"Bash\"}");
+    const cx = try add(s, 6, "{\"hook_event_name\":\"PermissionRequest\",\"source\":\"grok\",\"tool_name\":\"Bash\"}");
     cx.close(.expired, 6500);
 }
 
@@ -230,6 +230,22 @@ test "unit: feed: actionable partitions pending and resolved decisions" {
     try testing.expectEqualStrings("auto", act.resolved[1].resolution.?.badge());
 }
 
+test "unit: feed: codex permission telemetry never lands under Actionable" {
+    var s = store.Store.init(gpa, 10);
+    defer s.deinit();
+    _ = try add(&s, 1, "{\"hook_event_name\":\"PermissionRequest\",\"source\":\"codex\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"ls\"}}");
+    _ = try add(&s, 2, "{\"hook_event_name\":\"PreToolUse\",\"source\":\"codex\",\"tool_name\":\"AskUserQuestion\"}");
+    const act = try query.actionable(gpa, s.items());
+    defer act.deinit(gpa);
+    try testing.expectEqual(@as(usize, 0), act.pending.len + act.resolved.len);
+    const page = try query.select(gpa, s.items(), .{ .pending_only = true });
+    defer page.deinit(gpa);
+    try testing.expectEqual(@as(usize, 0), page.items.len);
+    const tools = try query.select(gpa, s.items(), .{ .kinds = &.{.tool_use} });
+    defer tools.deinit(gpa);
+    try testing.expectEqual(@as(usize, 2), tools.items.len);
+}
+
 test "unit: feed: workstreams group by source and session" {
     var s = store.Store.init(gpa, 100);
     defer s.deinit();
@@ -237,8 +253,8 @@ test "unit: feed: workstreams group by source and session" {
     const w = try query.workstreams(gpa, s.items());
     defer gpa.free(w);
     try testing.expectEqual(@as(usize, 3), w.len);
-    // codex (expired at 6500) is the most recently active.
-    try testing.expectEqualStrings("codex", w[0].source);
+    // grok (expired at 6500) is the most recently active.
+    try testing.expectEqualStrings("grok", w[0].source);
     try testing.expect(w[0].session_id == null);
     try testing.expectEqualStrings("claude", w[1].source);
     try testing.expectEqualStrings("s1", w[1].session_id.?);

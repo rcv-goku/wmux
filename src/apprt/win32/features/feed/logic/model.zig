@@ -18,8 +18,9 @@ pub const caps = struct {
     /// Prompt echo, assistant message, notification body, plan text.
     pub const text: usize = 64 * 1024;
     pub const short: usize = 1024;
-    /// Raw `tool_input` kept for reply builders (Claude's AskUserQuestion
-    /// answer echoes the original input). Matches `max_prompt_length`.
+    /// Raw `tool_input` of decision items, kept for reply builders (Claude's
+    /// AskUserQuestion answer echoes the original input). Activity rows do
+    /// not keep it. Matches `max_prompt_length`.
     pub const tool_input: usize = @intCast(proto.events_catalog.max_prompt_length);
 };
 
@@ -505,7 +506,9 @@ pub fn sourceDisplayName(source: []const u8) []const u8 {
 }
 
 /// Sources whose permission hooks are non-blocking telemetry (Codex keeps
-/// its own approval UI; codex-teams bridges arrive with `blocking = true`).
+/// its own approval UI). `fromEvent` records their decision-shaped events as
+/// activity unless the caller passes `FromEventOptions.blocking = true` (the
+/// codex-teams app-server bridge).
 pub fn isTelemetryOnlySource(source: []const u8) bool {
     return std.ascii.eqlIgnoreCase(source, "codex");
 }
@@ -572,10 +575,21 @@ pub const FromEventOptions = struct {
     now_ms: i64,
     /// `feed.push` top-level `request_id`; wins over the event's own.
     request_id: ?[]const u8 = null,
-    /// `--source` when the event lacks `source`/`_source`.
+    /// `--source`. The agent name is the event's `_source` (the bridge's
+    /// stamp), else this, else the event's bare `source`, which comes last
+    /// because it can be agent data (Claude's SessionStart `source` is
+    /// startup|resume|clear|compact).
     source: ?[]const u8 = null,
     /// `--event` when the event lacks `hook_event_name`.
     event_name: ?[]const u8 = null,
+    /// Whether the hook waits for a Feed decision (`wait_timeout_seconds`
+    /// > 0). A waiting pre-tool event (PreToolUse is the Feed trigger of
+    /// Gemini, Grok, Copilot and others) becomes a permission request; a
+    /// non-waiting permission, plan or question event becomes TOOL USE
+    /// activity, never a card nobody could answer. Null keeps the event-name
+    /// classification, except that telemetry-only sources
+    /// (`isTelemetryOnlySource`) count as non-waiting.
+    blocking: ?bool = null,
 };
 
 pub const FromEventError = error{ OutOfMemory, InvalidEvent, MissingHookEventName };
@@ -662,14 +676,24 @@ pub fn fromEvent(gpa: Allocator, ev: Value, opts: FromEventOptions) FromEventErr
     const event_name = getStrAny(obj, &.{"hook_event_name"}) orelse opts.event_name orelse return error.MissingHookEventName;
     if (event_name.len == 0) return error.MissingHookEventName;
     const tool_name = getStrAny(obj, &.{ "tool_name", "tool" });
-    const kind = classify(event_name, tool_name);
+    const flag_source: ?[]const u8 = if (opts.source) |s| (if (s.len > 0) s else null) else null;
+    const stamped_source = getStrAny(obj, &.{"_source"}) orelse flag_source;
+    const native_source = getStrAny(obj, &.{"source"});
+    const source = stamped_source orelse native_source orelse "unknown";
+    var kind = classify(event_name, tool_name);
+    const blocking: ?bool = if (opts.blocking) |b| b else if (isTelemetryOnlySource(source)) false else null;
+    if (blocking) |b| {
+        if (b) {
+            if (kind == .tool_use or kind == .todos) kind = .permission_request;
+        } else if (kind.isDecision()) kind = .tool_use;
+    }
 
     const item = try Item.create(gpa, opts.id, kind, opts.now_ms);
     errdefer item.destroy();
     const a = item.allocator();
 
     item.hook_event_name = try a.dupe(u8, utf8.truncateUtf8(event_name, caps.short));
-    item.source = try lowerDupe(a, getStrAny(obj, &.{ "source", "_source" }) orelse opts.source orelse "unknown");
+    item.source = try lowerDupe(a, source);
     item.tool_name = if (tool_name) |t| try a.dupe(u8, utf8.truncateUtf8(t, caps.short)) else null;
     const rid = opts.request_id orelse getStrAny(obj, &.{ "request_id", "_opencode_request_id" });
     item.request_id = if (rid) |r| try a.dupe(u8, utf8.truncateUtf8(r, caps.short)) else null;
@@ -680,12 +704,16 @@ pub fn fromEvent(gpa: Allocator, ev: Value, opts: FromEventOptions) FromEventErr
     item.pid = getPid(obj);
 
     const input = getObj(obj, "tool_input");
-    if (obj.get("tool_input")) |ti| {
-        var aw: std.Io.Writer.Allocating = .init(gpa);
-        defer aw.deinit();
-        std.json.Stringify.value(ti, .{}, &aw.writer) catch return error.OutOfMemory;
-        // Larger inputs are dropped rather than cut (cut JSON is useless).
-        if (aw.written().len <= caps.tool_input) item.tool_input_json = try a.dupe(u8, aw.written());
+    // Only decisions keep the raw input (reply builders); activity rows would
+    // pile up file contents in memory and in workstream.jsonl.
+    if (kind.isDecision()) {
+        if (obj.get("tool_input")) |ti| {
+            var aw: std.Io.Writer.Allocating = .init(gpa);
+            defer aw.deinit();
+            std.json.Stringify.value(ti, .{}, &aw.writer) catch return error.OutOfMemory;
+            // Larger inputs are dropped rather than cut (cut JSON is useless).
+            if (aw.written().len <= caps.tool_input) item.tool_input_json = try a.dupe(u8, aw.written());
+        }
     }
 
     const name = sourceDisplayName(item.source);
@@ -747,7 +775,7 @@ pub fn fromEvent(gpa: Allocator, ev: Value, opts: FromEventOptions) FromEventErr
         },
         .session_start => {
             item.title = "Session started";
-            item.detail = try capDupe(a, getStrAny(obj, &.{"source_detail"}) orelse "", caps.detail);
+            item.detail = try capDupe(a, getStrAny(obj, &.{"source_detail"}) orelse startReason(stamped_source, native_source) orelse "", caps.detail);
         },
         .session_end => {
             item.title = "Session ended";
@@ -760,6 +788,14 @@ pub fn fromEvent(gpa: Allocator, ev: Value, opts: FromEventOptions) FromEventErr
         },
     }
     return item;
+}
+
+/// A bare `source` next to a stamped agent name is the agent's own start
+/// reason (Claude: startup|resume|clear|compact).
+fn startReason(stamped: ?[]const u8, native: ?[]const u8) ?[]const u8 {
+    const s = stamped orelse return null;
+    const n = native orelse return null;
+    return if (std.ascii.eqlIgnoreCase(s, n)) null else n;
 }
 
 /// One-line summary of a tool input (command, path, url, ...).
