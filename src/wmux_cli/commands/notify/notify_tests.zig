@@ -200,6 +200,39 @@ test "unit: cli-notify: created_at formats" {
     try testing.expectEqualStrings("1970-01-01T00:00:00Z2025-10-16T08:00:00Z2000-02-29T00:00:00Z1970-01-01T00:00:00Z", aw.written());
 }
 
+test "unit: cli-notify: created_at beyond year 9999 clamps instead of overflowing" {
+    // std.time.epoch counts years in a u16: an app that sends nanoseconds
+    // or garbage must not crash list-notifications.
+    var aw: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer aw.deinit();
+    const last = "9999-12-31T23:59:59Z";
+    try notify.writeCreatedAt(&aw.writer, .{ .integer = std.math.maxInt(i64) });
+    try testing.expectEqualStrings(last, aw.written());
+    aw.clearRetainingCapacity();
+    try notify.writeCreatedAt(&aw.writer, .{ .integer = 1_760_601_600_123_456_789 });
+    try testing.expectEqualStrings(last, aw.written());
+    aw.clearRetainingCapacity();
+    try notify.writeCreatedAt(&aw.writer, .{ .float = 1e15 });
+    try testing.expectEqualStrings(last, aw.written());
+    aw.clearRetainingCapacity();
+    try notify.writeCreatedAt(&aw.writer, .{ .integer = std.math.minInt(i64) });
+    try testing.expectEqualStrings("1970-01-01T00:00:00Z", aw.written());
+    aw.clearRetainingCapacity();
+    try notify.writeIso8601(&aw.writer, std.math.maxInt(i64));
+    try notify.writeIso8601(&aw.writer, notify.max_iso8601_secs);
+    try notify.writeIso8601(&aw.writer, notify.max_iso8601_secs + 1);
+    try testing.expectEqualStrings(last ++ last ++ last, aw.written());
+    // A list with such a record still prints every line.
+    var h: Harness = undefined;
+    try h.init(struct {
+        fn f(_: *fake.Server, _: fake.Request) fake.Action {
+            return .{ .ok = "{\"notifications\":[{\"id\":\"" ++ nid ++ "\",\"workspace_id\":\"" ++ ws_uuid ++ "\",\"title\":\"t\",\"created_at\":9223372036854775807,\"is_read\":false}]}" };
+        }
+    }.f);
+    defer h.deinit();
+    try kit.expectResult(h.run(&.{ "cmux", "list-notifications" }), 0, "0:" ++ nid ++ "|" ++ ws_uuid ++ "|none|unread|t|||" ++ last ++ "|\n", "");
+}
+
 test "unit: cli-notify: notification ids accept the handle prefix in any case" {
     try testing.expect(notify.parseNotificationId(nid) != null);
     try testing.expect(notify.parseNotificationId("notification:" ++ nid) != null);
