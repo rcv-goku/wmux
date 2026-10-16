@@ -5,6 +5,7 @@
 const std = @import("std");
 const proto = @import("wmux_proto");
 const idformat = proto.idformat;
+const utf8 = proto.utf8;
 const Writer = std.Io.Writer;
 const Allocator = std.mem.Allocator;
 const Render = @import("plan.zig").Render;
@@ -87,19 +88,28 @@ fn line(w: *Writer, s: []const u8) Writer.Error!void {
 }
 
 /// `OK`, then the post-action snapshot or its error (stderr).
-pub fn writeOk(w: *Writer, err: *Writer, result: std.json.Value) Writer.Error!void {
+pub fn writeOk(arena: Allocator, w: *Writer, err: *Writer, result: std.json.Value) (Writer.Error || Allocator.Error)!void {
     try w.writeAll("OK\n");
-    try writePostAction(w, err, result);
+    try writePostAction(arena, w, err, result);
 }
 
-fn writePostAction(w: *Writer, err: *Writer, result: std.json.Value) Writer.Error!void {
+/// One line of printable text (error output convention, ADR-4.7): page
+/// text inside an error must not reach the terminal as control sequences.
+fn writeSanitized(arena: Allocator, w: *Writer, s: []const u8, cap: usize) (Writer.Error || Allocator.Error)!void {
+    const clean = try utf8.sanitizePrintableAlloc(arena, s);
+    const t = utf8.truncateUtf8(clean, cap);
+    try w.writeAll(t);
+    if (t.len < clean.len) try w.writeAll("\u{2026}");
+}
+
+fn writePostAction(arena: Allocator, w: *Writer, err: *Writer, result: std.json.Value) (Writer.Error || Allocator.Error)!void {
     if (str(result, "post_action_snapshot")) |s| {
         if (s.len > 0) try line(w, s);
     } else if (field(result, "post_action_snapshot_error")) |e| {
         try err.writeAll("snapshot_after failed: ");
-        try err.writeAll(str(e, "code") orelse "error");
+        try writeSanitized(arena, err, str(e, "code") orelse "error", 64);
         try err.writeAll(": ");
-        try err.writeAll(str(e, "message") orelse "(no message)");
+        try writeSanitized(arena, err, str(e, "message") orelse "(no message)", 4096);
         try err.writeByte('\n');
     }
 }
@@ -224,7 +234,7 @@ fn writeImported(w: *Writer, result: std.json.Value) Writer.Error!void {
 /// prints after placing the file).
 pub fn write(arena: Allocator, w: *Writer, err: *Writer, render: Render, result: std.json.Value, opts: Options) (Writer.Error || Allocator.Error)!void {
     switch (render) {
-        .ok, .screenshot => try writeOk(w, err, result),
+        .ok, .screenshot => try writeOk(arena, w, err, result),
         .url => try line(w, str(result, "url") orelse ""),
         .focused => try writeBoolField(w, result, "focused"),
         .bool_value => try writeBoolField(w, result, "value"),
@@ -314,6 +324,13 @@ test "unit: browser-cli: snapshot text, empty page hint and post-action output" 
     );
     try testing.expectEqualStrings("OK\n- document \"x\"\n", try renderAlloc(a, .ok, "{\"post_action_snapshot\":\"- document \\\"x\\\"\"}", .{}));
     try testing.expectEqualStrings("OK\nsnapshot_after failed: js_error: boom\n", try renderAlloc(a, .ok, "{\"post_action_snapshot_error\":{\"code\":\"js_error\",\"message\":\"boom\"}}", .{}));
+    // Page text in the error cannot smuggle terminal control sequences or
+    // extra lines onto stderr (OSC 52, CSI, BEL, newlines, bidi overrides).
+    try testing.expectEqualStrings(
+        "OK\nsnapshot_after failed: js_error: boom]52;c;eA== [2Jnext\n",
+        try renderAlloc(a, .ok, "{\"post_action_snapshot_error\":{\"code\":\"js_error\\u001b\",\"message\":\"boom\\u001b]52;c;eA==\\u0007\\n\\u001b[2J\\u202enext\"}}", .{}),
+    );
+    try testing.expectEqualStrings("OK\nsnapshot_after failed: error: (no message)\n", try renderAlloc(a, .ok, "{\"post_action_snapshot_error\":{\"code\":7}}", .{}));
 }
 
 test "unit: browser-cli: open placement line honors id-format" {
