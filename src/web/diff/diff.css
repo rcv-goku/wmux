@@ -148,7 +148,7 @@ body {
   background-color: var(--wmux-hover);
 }
 
-.dv-menu button[aria-checked="true"]::before {
+.dv-menu button[aria-pressed="true"]::before {
   content: "✓ ";
 }
 
@@ -754,4 +754,36 @@ body {
   font-family: var(--wmux-font-mono);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/*
+ * Windows contrast themes (forced colors) drop backgrounds and box shadows:
+ * the add/delete bars and backgrounds, word and find highlights and the line
+ * selection would all vanish. Keep the +/- column whatever the indicator
+ * style, underline changed words, and draw hits and the selection with
+ * system colors (hit spans hold only text, so no theme color leaks in).
+ */
+@media (forced-colors: active) {
+  .dv-sign {
+    display: inline;
+  }
+
+  .dv-word {
+    text-decoration: underline;
+  }
+
+  .dv-find-hit {
+    forced-color-adjust: none;
+    background-color: Highlight;
+    color: HighlightText;
+  }
+
+  .dv-find-hit.dv-find-current {
+    outline: 2px solid CanvasText;
+  }
+
+  .dv-code.dv-selected {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
 }

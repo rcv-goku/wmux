@@ -25,42 +25,42 @@
       </div>
       <span id="dv-status" class="dv-status" role="status" aria-live="polite"></span>
       <div class="dv-toolbar-group">
-        <button type="button" id="dv-files-toggle" class="dv-overflowable" aria-pressed="true">Hide files</button>
+        <button type="button" id="dv-files-toggle" class="dv-overflowable" aria-expanded="true" aria-controls="dv-sidebar">Hide files</button>
         <button type="button" id="dv-layout" class="dv-overflowable">Switch to split diff</button>
-        <button type="button" id="dv-search-toggle" class="dv-overflowable" aria-pressed="false">Show file search</button>
+        <button type="button" id="dv-search-toggle" class="dv-overflowable" aria-expanded="false" aria-controls="dv-filesearch">Show file search</button>
         <button type="button" id="dv-expand-all" class="dv-overflowable">Collapse all diffs</button>
         <button type="button" id="dv-refresh" class="dv-overflowable" data-i18n="diff.refresh">Refresh</button>
         <button type="button" id="dv-copy-apply" class="dv-overflowable" data-i18n="diff.copyApply">Copy git apply command</button>
         <button type="button" id="dv-comments-toggle" aria-pressed="false" aria-controls="dv-comments">Comments</button>
-        <button type="button" id="dv-options" aria-haspopup="menu" aria-expanded="false" aria-controls="dv-options-menu" data-i18n="diff.options">Options</button>
+        <button type="button" id="dv-options" aria-expanded="false" aria-controls="dv-options-menu" data-i18n="diff.options">Options</button>
       </div>
     </header>
 
-    <div id="dv-options-menu" class="dv-menu" role="menu" aria-label="Options" data-i18n-attr="aria-label:diff.options" hidden>
+    <div id="dv-options-menu" class="dv-menu" role="group" aria-label="Options" data-i18n-attr="aria-label:diff.options" hidden>
       <div class="dv-menu-overflow">
-        <button type="button" role="menuitem" data-menu="layout"></button>
-        <button type="button" role="menuitem" data-menu="files"></button>
-        <button type="button" role="menuitem" data-menu="search"></button>
-        <button type="button" role="menuitem" data-menu="expand-all"></button>
-        <button type="button" role="menuitem" data-menu="refresh" data-i18n="diff.refresh">Refresh</button>
-        <button type="button" role="menuitem" data-menu="copy-apply" data-i18n="diff.copyApply">Copy git apply command</button>
+        <button type="button" data-menu="layout"></button>
+        <button type="button" data-menu="files"></button>
+        <button type="button" data-menu="search"></button>
+        <button type="button" data-menu="expand-all"></button>
+        <button type="button" data-menu="refresh" data-i18n="diff.refresh">Refresh</button>
+        <button type="button" data-menu="copy-apply" data-i18n="diff.copyApply">Copy git apply command</button>
         <hr class="dv-menu-sep">
       </div>
-      <button type="button" role="menuitem" data-menu="wordWrap"></button>
-      <button type="button" role="menuitem" data-menu="wordDiffs"></button>
-      <button type="button" role="menuitem" data-menu="lineNumbers"></button>
-      <button type="button" role="menuitem" data-menu="showBackgrounds"></button>
-      <button type="button" role="menuitem" data-menu="expandUnchanged"></button>
-      <button type="button" role="menuitem" data-menu="ignoreWhitespace"></button>
+      <button type="button" data-menu="wordWrap"></button>
+      <button type="button" data-menu="wordDiffs"></button>
+      <button type="button" data-menu="lineNumbers"></button>
+      <button type="button" data-menu="showBackgrounds"></button>
+      <button type="button" data-menu="expandUnchanged"></button>
+      <button type="button" data-menu="ignoreWhitespace"></button>
       <label class="dv-menu-field">
         <span data-i18n="diff.contextLines">Context lines</span>
         <input id="dv-context-lines" type="number" min="0" max="100" step="1" inputmode="numeric">
       </label>
       <div class="dv-menu-group" role="group" aria-labelledby="dv-indicator-label">
         <span id="dv-indicator-label" class="dv-menu-label" data-i18n="diff.indicatorStyle">Indicator style</span>
-        <button type="button" role="menuitemradio" data-indicator="bars" data-i18n="diff.indicator.bars">Bars</button>
-        <button type="button" role="menuitemradio" data-indicator="classic" data-i18n="diff.indicator.classic">Classic</button>
-        <button type="button" role="menuitemradio" data-indicator="none" data-i18n="diff.indicator.none">None</button>
+        <button type="button" aria-pressed="false" data-indicator="bars" data-i18n="diff.indicator.bars">Bars</button>
+        <button type="button" aria-pressed="false" data-indicator="classic" data-i18n="diff.indicator.classic">Classic</button>
+        <button type="button" aria-pressed="false" data-indicator="none" data-i18n="diff.indicator.none">None</button>
       </div>
     </div>
 
@@ -88,9 +88,9 @@
             <label><input type="checkbox" data-status="deleted" checked><span data-i18n="diff.status.deleted">Deleted</span></label>
             <label><input type="checkbox" data-status="renamed" checked><span data-i18n="diff.status.renamed">Renamed</span></label>
           </div>
-          <button type="button" id="dv-hide-viewed" aria-pressed="false">Hide viewed files</button>
+          <button type="button" id="dv-hide-viewed" data-i18n="diff.filter.hideViewed">Hide viewed files</button>
         </div>
-        <ul id="dv-tree" class="dv-tree" role="tree" aria-label="Changed files" data-i18n-attr="aria-label:diff.changedFiles"></ul>
+        <ul id="dv-tree" class="dv-tree" aria-label="Changed files" data-i18n-attr="aria-label:diff.changedFiles"></ul>
         <div id="dv-filter-empty" class="dv-filter-empty" hidden>
           <p data-i18n="diff.filter.empty">No files match the filter.</p>
           <button type="button" id="dv-filter-clear" data-i18n="diff.filter.clear">Clear filter</button>

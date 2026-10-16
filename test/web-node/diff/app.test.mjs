@@ -257,11 +257,40 @@ describe("unit: diff app rendering", () => {
     assert.equal($('[data-menu="lineNumbers"]').textContent, "Show line numbers");
     click($('[data-indicator="classic"]'));
     assert.equal(doc.documentElement.dataset.dvIndicators, "classic");
-    assert.equal($('[data-indicator="classic"]').getAttribute("aria-checked"), "true");
+    assert.equal($('[data-indicator="classic"]').getAttribute("aria-pressed"), "true");
     click($('[data-menu="wordWrap"]'));
     assert.ok(doc.documentElement.classList.contains("dv-wrap"));
     await startApp({ params: { prefs: store.prefs } });
     assert.ok(doc.documentElement.classList.contains("dv-no-line-numbers"), "hidden line numbers persist");
+  });
+
+  test("unit: diff: toolbar, Options and file list use honest ARIA states", async () => {
+    await startApp();
+    // No ARIA menu or tree: neither implements the arrow-key model those roles promise.
+    assert.equal($$('[role="menu"], [role^="menuitem"], [role="tree"], [role="treeitem"]').length, 0);
+    // Action-labeled toggles carry no pressed/checked state next to the flipped label.
+    for (const id of ["wordWrap", "wordDiffs", "lineNumbers", "showBackgrounds", "expandUnchanged", "ignoreWhitespace"]) {
+      const item = $(`[data-menu="${id}"]`);
+      assert.equal(item.hasAttribute("aria-checked") || item.hasAttribute("aria-pressed"), false, id);
+    }
+    assert.equal($("#dv-hide-viewed").hasAttribute("aria-pressed"), false);
+    assert.deepEqual(
+      $$("[data-indicator]").map((b) => [b.dataset.indicator, b.getAttribute("aria-pressed")]),
+      [["bars", "true"], ["classic", "false"], ["none", "false"]],
+    );
+    assert.equal($("#dv-files-toggle").getAttribute("aria-expanded"), "true");
+    click($("#dv-files-toggle"));
+    assert.equal($("#dv-files-toggle").getAttribute("aria-expanded"), "false");
+    assert.equal($("#dv-search-toggle").getAttribute("aria-expanded"), "false");
+    app.openFileSearch();
+    assert.equal($("#dv-search-toggle").getAttribute("aria-expanded"), "true");
+    app.closeFileSearch();
+    // Opening the popover moves focus into it; a command hands focus back to its button.
+    click($("#dv-options"));
+    assert.ok($("#dv-options-menu").contains(doc.activeElement));
+    click($('[data-menu="wordWrap"]'));
+    assert.equal($("#dv-options-menu").hidden, true);
+    assert.equal(doc.activeElement, $("#dv-options"));
   });
 
   test("unit: diff: word diffs, ignore whitespace and context lines re-render", async () => {

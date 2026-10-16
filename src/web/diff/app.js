@@ -364,23 +364,24 @@ export function createApp(options) {
     const filesLabel = state.filesVisible ? t("diff.hideFiles") : t("diff.showFiles");
     const searchLabel = state.fileSearch.open ? t("diff.hideFileSearch") : t("diff.showFileSearch");
     const expandLabel = allExpanded() ? t("diff.collapseAll") : t("diff.expandAll");
+    // Buttons whose label names the action ("Hide files", "Enable word wrap")
+    // carry no pressed or checked state: a state next to a flipped label reads
+    // backwards ("✓ Hide line numbers" while they are shown). The panels they
+    // show report aria-expanded; the indicator choice is aria-pressed.
     ui.layout.textContent = layoutLabel;
     ui.filesToggle.textContent = filesLabel;
-    ui.filesToggle.setAttribute("aria-pressed", String(state.filesVisible));
+    ui.filesToggle.setAttribute("aria-expanded", String(state.filesVisible));
     ui.searchToggle.textContent = searchLabel;
-    ui.searchToggle.setAttribute("aria-pressed", String(state.fileSearch.open));
+    ui.searchToggle.setAttribute("aria-expanded", String(state.fileSearch.open));
     ui.expandAll.textContent = expandLabel;
     const labels = { layout: layoutLabel, files: filesLabel, search: searchLabel, "expand-all": expandLabel };
     for (const item of ui.menu.querySelectorAll("[data-menu]")) {
       const id = item.dataset.menu;
       if (labels[id]) item.textContent = labels[id];
-      if (PREF_LABELS[id]) {
-        item.textContent = t(PREF_LABELS[id][p[id] ? 0 : 1]);
-        item.setAttribute("aria-checked", String(!!p[id]));
-      }
+      if (PREF_LABELS[id]) item.textContent = t(PREF_LABELS[id][p[id] ? 0 : 1]);
     }
     for (const item of ui.menu.querySelectorAll("[data-indicator]")) {
-      item.setAttribute("aria-checked", String(item.dataset.indicator === p.diffIndicators));
+      item.setAttribute("aria-pressed", String(item.dataset.indicator === p.diffIndicators));
     }
     if (doc.activeElement !== ui.contextLines) ui.contextLines.value = String(p.contextLines);
     ui.contextLines.disabled = !!p.expandUnchanged;
@@ -644,9 +645,11 @@ export function createApp(options) {
     if (bridge.available) bridge.panel.setTitle(state.title).catch(() => {});
   }
 
+  // The file list is nested lists of buttons (Tab moves between files). It
+  // has no ARIA tree roles: a tree promises arrow-key navigation and
+  // focusable items, which this list does not implement.
   function treeFileItem(file) {
     const li = doc.createElement("li");
-    li.setAttribute("role", "treeitem");
     li.className = "dv-tree-item";
     li.dataset.file = String(file.index);
     const button = doc.createElement("button");
@@ -677,14 +680,11 @@ export function createApp(options) {
     const items = [];
     for (const dir of node.dirs) {
       const li = doc.createElement("li");
-      li.setAttribute("role", "treeitem");
-      li.setAttribute("aria-expanded", "true");
       li.className = "dv-tree-dir";
       const label = doc.createElement("span");
       label.className = "dv-tree-dirname";
       label.textContent = dir.name;
       const group = doc.createElement("ul");
-      group.setAttribute("role", "group");
       group.append(...treeNode(dir));
       li.append(label, group);
       items.push(li);
@@ -720,7 +720,6 @@ export function createApp(options) {
     ui.filterEmpty.hidden = !empty;
     ui.filesEmpty.hidden = !empty;
     ui.hideViewed.textContent = state.filter.hideViewed ? t("diff.filter.showViewed") : t("diff.filter.hideViewed");
-    ui.hideViewed.setAttribute("aria-pressed", String(state.filter.hideViewed));
     ui.sidebarTitle.textContent = filterActive(state.filter) ? t("diff.files") : t("diff.changedFiles");
   }
 
@@ -1453,7 +1452,10 @@ export function createApp(options) {
     ui.menu.hidden = false;
     ui.options.setAttribute("aria-expanded", "true");
     updateToolbar();
-    const first = ui.menu.querySelector("[role^=menuitem]:not([hidden])");
+    // The toolbar overflow items at the top are display: none in wide panes;
+    // focus the first control that is rendered (jsdom has no layout: first).
+    const items = Array.from(ui.menu.querySelectorAll("button, input"));
+    const first = items.find((el) => el.getClientRects().length > 0) || items[0];
     if (first) first.focus();
   }
 
@@ -1694,7 +1696,10 @@ export function createApp(options) {
       if (!item) return;
       if (item.dataset.indicator) setPrefs({ diffIndicators: item.dataset.indicator });
       else {
+        // Hiding the focused item would drop focus to <body>; keep it on the
+        // menu button (commands that open a field move it there themselves).
         closeMenu();
+        ui.options.focus();
         menuCommand(item.dataset.menu);
       }
     });

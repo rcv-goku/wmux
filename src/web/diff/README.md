@@ -213,7 +213,14 @@ passes the patch again (`panels-diff-session-restore`).
   `--wmux-danger`), the font is the terminal font, the size is
   `params.font_size` pt; highlight.js switches GitHub light/dark with the
   scheme. Narrow panes (< 760 px) move the secondary toolbar buttons into the
-  Options menu.
+  Options menu. Windows contrast themes (forced colors) drop backgrounds, so
+  there the +/- column is always shown, changed words are underlined and find
+  hits and the line selection use system colors.
+- **Accessibility.** The Options popover and the file list are plain buttons
+  in a group and nested lists (Tab order), not ARIA menu / tree widgets.
+  Buttons whose label names the action ("Hide files", "Enable word wrap")
+  carry no pressed state; the file and search toggles report `aria-expanded`
+  and the indicator choice `aria-pressed`.
 
 ## CSP
 
