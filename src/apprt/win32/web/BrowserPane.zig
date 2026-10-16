@@ -15,11 +15,11 @@ const BrowserPane = @This();
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const App = @import("App.zig");
-const Tab = @import("model/Tab.zig");
-const Window = @import("Window.zig");
-const w32 = @import("platform/win32.zig");
-const wv2 = @import("platform/webview2.zig");
+const App = @import("../App.zig");
+const Tab = @import("../model/Tab.zig");
+const Window = @import("../Window.zig");
+const w32 = @import("../platform/win32.zig");
+const wv2 = @import("../platform/webview2.zig");
 
 const log = std.log.scoped(.win32);
 

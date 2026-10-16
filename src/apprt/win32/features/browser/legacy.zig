@@ -9,7 +9,7 @@
 const std = @import("std");
 
 const App = @import("../../App.zig");
-const BrowserPane = @import("../../BrowserPane.zig");
+const BrowserPane = @import("../../web/BrowserPane.zig");
 const ipc = @import("../../rpc/compat/legacy_json.zig");
 const LegacyCommand = @import("../../rpc/compat/legacy_table.zig").LegacyCommand;
 const targets = @import("../../rpc/compat/legacy_targets.zig");

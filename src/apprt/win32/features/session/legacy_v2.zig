@@ -20,15 +20,15 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const App = @import("App.zig");
-const Tab = @import("model/Tab.zig");
-const Pane = @import("model/Pane.zig");
-const Surface = @import("Surface.zig");
-const Window = @import("Window.zig");
-const SplitTree = @import("../../datastruct/split_tree.zig").SplitTree;
-const app_paths = @import("app/paths.zig");
-const RuntimeEnv = @import("app/runtime_env.zig").RuntimeEnv;
-const w32 = @import("platform/win32.zig");
+const App = @import("../../App.zig");
+const Tab = @import("../../model/Tab.zig");
+const Pane = @import("../../model/Pane.zig");
+const Surface = @import("../../Surface.zig");
+const Window = @import("../../Window.zig");
+const SplitTree = @import("../../../../datastruct/split_tree.zig").SplitTree;
+const app_paths = @import("../../app/paths.zig");
+const RuntimeEnv = @import("../../app/runtime_env.zig").RuntimeEnv;
+const w32 = @import("../../platform/win32.zig");
 
 const log = std.log.scoped(.win32);
 

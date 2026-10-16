@@ -11,7 +11,7 @@
 const std = @import("std");
 
 const App = @import("../App.zig");
-const BrowserPane = @import("../BrowserPane.zig");
+const BrowserPane = @import("../web/BrowserPane.zig");
 const Surface = @import("../Surface.zig");
 const w32 = @import("../platform/win32.zig");
 

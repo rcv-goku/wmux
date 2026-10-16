@@ -10,8 +10,8 @@ const Config = configpkg.Config;
 const CoreApp = @import("../../App.zig");
 const input = @import("../../input.zig");
 
-const agent_session = @import("agent_session.zig");
-const BrowserPane = @import("BrowserPane.zig");
+const agent_session = @import("features/agents/legacy_store.zig");
+const BrowserPane = @import("web/BrowserPane.zig");
 const Surface = @import("Surface.zig");
 const Window = @import("Window.zig");
 
