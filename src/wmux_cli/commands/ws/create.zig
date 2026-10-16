@@ -85,7 +85,9 @@ fn focusValue(o: common.opts.Opts) error{Invalid}!bool {
     return v;
 }
 
-pub fn run(ctx: *Ctx, args: []const []const u8, u: []const u8) !u8 {
+/// `honor_json`: `workspace create --json` prints the result; the legacy
+/// `new-workspace` prints its OK line even with `--json`, as cmux does.
+pub fn run(ctx: *Ctx, args: []const []const u8, u: []const u8, honor_json: bool) !u8 {
     var code: u8 = 0;
     const o = (try common.parseOpts(ctx, u, args, &create_defs, &code)) orelse return code;
     if (o.positionals.len > 0) return common.usage(ctx, u, "unexpected argument '{s}'", .{o.positionals[0]});
@@ -127,7 +129,7 @@ pub fn run(ctx: *Ctx, args: []const []const u8, u: []const u8) !u8 {
     if (try envSet(ctx, u, o, &env)) |c| return c;
     if (env) |*set| try p.value("workspace_env", try set.toJson(ctx.arena));
     if (try common.putWindow(ctx, &p, u, o)) |c| return c;
-    try p.boolean("focus", focusValue(o) catch return common.usage(ctx, u, "--focus must be true or false", .{}));
+    try p.boolean("focus", focusValue(o) catch return common.usage(ctx, u, "--focus must be true|false", .{}));
     if (o.get("--group")) |g| {
         if (try common.putHandle(ctx, &p, u, "group_id", .workspace_group, g)) |c| return c;
     }
@@ -140,7 +142,13 @@ pub fn run(ctx: *Ctx, args: []const []const u8, u: []const u8) !u8 {
         if (!o.has("--group")) return common.usage(ctx, u, "--group-reference requires --group", .{});
         if (try common.putHandle(ctx, &p, u, "group_reference_workspace_id", .workspace, v)) |c| return c;
     }
-    return common.created(ctx, "workspace.create", &p, "workspace");
+    switch (try common.request(ctx, "workspace.create", &p)) {
+        .code => |c| return c,
+        .ok => |v| {
+            if (honor_json and ctx.json()) try common.writeJsonResult(ctx, v) else try common.writeCreated(ctx, v, "workspace");
+            return output.exit.ok;
+        },
+    }
 }
 
 /// `--env-file` files in order, then `--env` (which overrides) into

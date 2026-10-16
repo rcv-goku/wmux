@@ -62,8 +62,9 @@ pub fn runStatus(ctx: *Ctx, args: []const []const u8, u: []const u8) !u8 {
 
 /// The three status lines.
 pub fn writeStatus(w: *std.Io.Writer, v: std.json.Value) !void {
-    const inferred = common.str(v, "inferred") orelse "none";
-    try w.print("{s}\ninferred: {s}\n", .{ common.str(v, "effective") orelse "none", inferred });
+    // cmux reads a missing lane as "todo".
+    const inferred = common.str(v, "inferred") orelse "todo";
+    try w.print("{s}\ninferred: {s}\n", .{ common.str(v, "effective") orelse "todo", inferred });
     const ov = common.field(v, "override");
     if (common.str(ov, "status")) |s| {
         const at = common.str(ov, "inferred_at_override") orelse inferred;

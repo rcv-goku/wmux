@@ -8,7 +8,8 @@ Subcommands:
   list [--window <id|ref|index>]
       One line per workspace: "* workspace:2  <title>  [ssh:connected]  [selected]"
   create [new-workspace flags]
-      Same flags as "cmux new-workspace"; prints "OK <workspace>"
+      Same flags as "cmux new-workspace"; prints "OK <workspace>", or the
+      result with --json
   env [<id|ref|index> | --workspace <id|ref|index>] [--mask]
       The workspace's environment variables as KEY=VALUE lines sorted by
       name; --mask hides the values

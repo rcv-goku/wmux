@@ -218,16 +218,17 @@ pub fn created(ctx: *Ctx, method: []const u8, p: *const Params, prefix: []const 
     switch (try request(ctx, method, p)) {
         .code => |c| return c,
         .ok => |v| {
-            if (ctx.json()) {
-                try writeJsonResult(ctx, v);
-                return output.exit.ok;
-            }
-            try ctx.out.writeAll("OK");
-            if (try handleText(ctx, v, prefix)) |t| try ctx.out.print(" {s}", .{t});
-            try ctx.out.writeByte('\n');
+            if (ctx.json()) try writeJsonResult(ctx, v) else try writeCreated(ctx, v, prefix);
             return output.exit.ok;
         },
     }
+}
+
+/// `OK <handle>` of the created `prefix` object (`OK` when `v` names none).
+pub fn writeCreated(ctx: *Ctx, v: std.json.Value, prefix: []const u8) !void {
+    try ctx.out.writeAll("OK");
+    if (try handleText(ctx, v, prefix)) |t| try ctx.out.print(" {s}", .{t});
+    try ctx.out.writeByte('\n');
 }
 
 // ----- result access -----

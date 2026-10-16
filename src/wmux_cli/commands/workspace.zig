@@ -77,7 +77,7 @@ fn runNamespace(ctx: *Ctx) !u8 {
     const rest = a[1..];
     const eql = std.mem.eql;
     if (eql(u8, sub, "list")) return runList(ctx, rest, u_ns_list);
-    if (eql(u8, sub, "create")) return create.run(ctx, rest, u_ns_create);
+    if (eql(u8, sub, "create")) return create.run(ctx, rest, u_ns_create, true);
     if (eql(u8, sub, "env")) return create.runEnv(ctx, rest, u_ns_env);
     if (eql(u8, sub, "close")) return runClose(ctx, rest, u_ns_close, "workspace close", .namespace);
     if (eql(u8, sub, "rename")) return runRenameNs(ctx, rest);
@@ -94,7 +94,7 @@ fn runListLegacy(ctx: *Ctx) !u8 {
 }
 
 fn runNewLegacy(ctx: *Ctx) !u8 {
-    return create.run(ctx, ctx.args(), u_new);
+    return create.run(ctx, ctx.args(), u_new, false);
 }
 
 fn runSelectLegacy(ctx: *Ctx) !u8 {
@@ -431,7 +431,9 @@ test "unit: cli-workspace: new-workspace maps every flag onto workspace.create" 
     // A bare --focus (the `+workspace new --focus` spelling) means true.
     _ = try testkit.expectOk(&h, &.{ "new-workspace", "--focus" });
     try h.expectLast("workspace.create", "{\"focus\":true}");
-    _ = try testkit.expectOk(&h, &.{ "new-workspace", "--name", "N", "--focus", "--json" });
+    // The legacy verb prints its OK line even with --json (cmux; JSON is
+    // `workspace create --json`, below).
+    try testing.expectEqualStrings("OK workspace:7\n", try testkit.expectOk(&h, &.{ "new-workspace", "--name", "N", "--focus", "--json" }));
     try h.expectLast("workspace.create", "{\"title\":\"N\",\"focus\":true}");
     _ = try testkit.expectOk(&h, &.{ "+workspace", "new", "--focus", "--name", "N" });
     try h.expectLast("workspace.create", "{\"title\":\"N\",\"focus\":true}");
@@ -459,8 +461,8 @@ test "unit: cli-workspace: new-workspace usage errors" {
     try testkit.expectUsage(&h, &.{ "new-workspace", "--command" }, "--command requires a value");
     try testkit.expectUsage(&h, &.{ "new-workspace", "--name", "" }, "--name requires a non-empty value");
     try testkit.expectUsage(&h, &.{ "new-workspace", "--cwd=" }, "--cwd requires a non-empty value");
-    try testkit.expectUsage(&h, &.{ "new-workspace", "--focus", "maybe" }, "--focus must be true or false");
-    try testkit.expectUsage(&h, &.{ "new-workspace", "--focus=" }, "--focus must be true or false");
+    try testkit.expectUsage(&h, &.{ "new-workspace", "--focus", "maybe" }, "--focus must be true|false");
+    try testkit.expectUsage(&h, &.{ "new-workspace", "--focus=" }, "--focus must be true|false");
     try testkit.expectUsage(&h, &.{ "new-workspace", "--layout", "{bad" }, "--layout is not valid JSON");
     try testkit.expectUsage(&h, &.{ "new-workspace", "--layout", " " }, "--layout requires a non-empty value");
     try testkit.expectUsage(&h, &.{ "new-workspace", "--group-placement", "top" }, "--group-placement requires --group");
@@ -917,6 +919,10 @@ test "unit: cli-workspace: workspace status get, set, cycle and errors" {
     try h.expectLast("workspace.status.get", "{\"workspace_id\":\"CALLER-UUID\"}");
     const js = try testkit.expectOk(&h, &.{ "workspace", "status", "--json" });
     try testing.expect(std.mem.indexOf(u8, js, "\"inferred_at_override\": \"working\"") != null);
+    // Missing lanes read as "todo" (cmux); an override without its own
+    // inferred lane names the current one.
+    h.ok("workspace.status.get", "{\"override\":{\"status\":\"review\"}}");
+    try testing.expectEqualStrings("todo\ninferred: todo\noverride: review (auto-clears when inferred moves off todo)\n", try testkit.expectOk(&h, &.{ "workspace", "status" }));
     try testkit.expectUsage(&h, &.{ "workspace", "status", "bogus" }, "Unknown workspace status subcommand: bogus. Try: cmux workspace status [set <lane|auto> | cycle]");
     try testkit.expectUsage(&h, &.{ "workspace", "status", "set" }, "workspace status set requires a lane: todo, working, needs-attention, review, done, auto, none");
     try testkit.expectUsage(&h, &.{ "workspace", "status", "set", "Done" }, "Invalid workspace status 'Done'. Expected one of: todo, working, needs-attention, review, done, auto, none");
