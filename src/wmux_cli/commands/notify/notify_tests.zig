@@ -382,6 +382,25 @@ test "unit: cli-notify: clear-notifications scopes" {
     try kit.expectResult(h.run(&.{ "cmux", "clear-notifications", "--all" }), 2, "", "cmux: clear-notifications: unexpected arguments: --all\n");
 }
 
+test "unit: cli-notify: a blank --workspace is the caller's workspace only when no window is named" {
+    var h: Harness = undefined;
+    try h.init(notifyHandler);
+    defer h.deinit();
+    h.setEnv("CMUX_WORKSPACE_ID", ws_uuid);
+    try kit.expectResult(h.run(&.{ "cmux", "clear-notifications", "--workspace", " " }), 0, "OK\n", "");
+    try testing.expectEqualStrings("{\"workspace_id\":\"" ++ ws_uuid ++ "\"}", params(&h));
+    _ = h.run(&.{ "cmux", "mark-notification-read", "--workspace", "", "--surface", "surface:2" });
+    try testing.expectEqualStrings("{\"workspace_id\":\"" ++ ws_uuid ++ "\",\"surface_id\":\"surface:2\"}", params(&h));
+    // The caller's workspace may live in another window: fail closed.
+    const n = h.requestCount();
+    const msg = "cmux: No workspace selected: --workspace was blank and CMUX_WORKSPACE_ID is unset\n";
+    try kit.expectResult(h.run(&.{ "cmux", "clear-notifications", "--workspace", "", "--window", "window:1" }), 2, "", msg);
+    try kit.expectResult(h.run(&.{ "cmux", "--window", "window:1", "notify", "--workspace", "\t" }), 2, "", msg);
+    try kit.expectResult(h.run(&.{ "cmux", "mark-notification-read", "--workspace", "", "--window", "window:1" }), 2, "", msg);
+    try kit.expectResult(h.run(&.{ "cmux", "set-status", "k", "v", "--workspace", " ", "--window", "window:2" }), 2, "", msg);
+    try testing.expectEqual(n, h.requestCount());
+}
+
 test "unit: cli-notify: app focus overrides" {
     var h: Harness = undefined;
     try h.init(notifyHandler);

@@ -247,9 +247,11 @@ pub fn resolveTarget(ctx: *Ctx, s: Scanned, rules: TargetRules, code: *u8) ?Targ
     }
     if (ws) |w| {
         if (std.mem.trim(u8, w, " \t\r\n").len == 0) {
-            // A blank --workspace falls back to the caller's workspace.
-            t.workspace = envWorkspace(ctx) orelse {
-                code.* = ctx.usageError("No workspace selected: --workspace was blank and CMUX_WORKSPACE_ID is unset", .{});
+            // A blank --workspace is the caller's workspace. Like every
+            // caller default (ADR-4.6) that applies only when no window is
+            // named; otherwise the selection fails closed.
+            t.workspace = (if (win == null) envWorkspace(ctx) else null) orelse {
+                code.* = ctx.usageError("{s}", .{proto.errors.msg.no_workspace_selected});
                 return null;
             };
         } else {
