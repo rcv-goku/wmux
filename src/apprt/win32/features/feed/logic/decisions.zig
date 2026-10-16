@@ -159,8 +159,10 @@ pub const Decisions = struct {
         const deadline: ?i64 = if (park) r.now_ms + r.timeout_ms else null;
         if (self.map.get(r.request_id)) |p| switch (p.state) {
             .waiting => {
-                // Copied before the overwrite (a conditional-expression
-                // initializer aliased the field under ReleaseSafe).
+                // Keep this explicit copy. Zig 0.15.2's LLVM backend
+                // miscompiles `const replaced = if (park) p.waiter else null;`
+                // so that it reads the new value after the write below. All
+                // Windows builds use LLVM, Debug included.
                 var replaced: ?Waiter = null;
                 if (park) {
                     replaced = p.waiter;
