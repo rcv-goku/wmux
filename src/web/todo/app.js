@@ -364,10 +364,9 @@ export function createApp(options) {
       return true;
     } catch (err) {
       if (state.destroyed) return false;
-      if (GONE_CODES.has(errorCode(err)) && method !== "workspace.todo.remove") {
-        setUnavailable();
-        return false;
-      }
+      // not_found can name the item (an agent or the CLI removed it meanwhile)
+      // as well as the workspace: the re-read switches to the unavailable state
+      // only when the workspace itself is gone.
       showError(t("todo.error.failed", { message: errorMessage(err) }));
       await refresh();
       return false;
@@ -433,6 +432,8 @@ export function createApp(options) {
     const ok = await confirm(t("todo.clear.confirm", { total: state.items.length }));
     if (!ok) return false;
     state.editingId = null;
+    // The Clear button hides with the last item: keep the keyboard in the add row.
+    if (state.available) ui.addInput.focus();
     return mutate("workspace.todo.clear", {}, () => []);
   }
 
@@ -611,15 +612,29 @@ export function createApp(options) {
     e.stopPropagation();
   }
 
+  /** aria-modal: keep focus and the screen reader inside the open confirmation. */
+  function setBackgroundInert(on) {
+    for (const el of Array.from(doc.body.children)) if (el !== ui.confirm) el.toggleAttribute("inert", on);
+  }
+
   function confirm(text) {
     if (state.confirmResolve) state.confirmResolve(false);
+    const opener = doc.activeElement;
     ui.confirmText.textContent = text;
     ui.confirm.hidden = false;
+    setBackgroundInert(true);
     ui.confirmCancel.focus();
     return new Promise((resolve) => {
       state.confirmResolve = (ok) => {
         state.confirmResolve = null;
         ui.confirm.hidden = true;
+        setBackgroundInert(false);
+        // Hand focus back to what opened the dialog (not <body>).
+        if (!state.destroyed) {
+          const back = opener && opener !== doc.body && opener.isConnected && !opener.closest("[hidden]");
+          if (back) opener.focus();
+          else if (state.available) ui.list.focus();
+        }
         resolve(ok);
       };
     });
@@ -698,6 +713,8 @@ export function createApp(options) {
       return;
     }
     const plain = !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey;
+    // A button inside a row (the paperclip) keeps Return for its own activation.
+    const onButton = e.target !== ui.list && Boolean(e.target.closest && e.target.closest("button"));
     if ((e.key === "ArrowDown" || e.key === "ArrowUp") && plain) {
       moveHighlight(e.key === "ArrowDown" ? 1 : -1);
     } else if ((e.key === "ArrowDown" || e.key === "ArrowUp") && e.altKey && !e.ctrlKey && !e.metaKey) {
@@ -710,6 +727,7 @@ export function createApp(options) {
       const order = displayOrder(state.items);
       if (order.length) highlight(state.items[order[e.key === "Home" ? 0 : order.length - 1]].id, true);
     } else if (e.key === "Enter" && plain && !e.isComposing) {
+      if (onButton) return;
       if (state.highlightId) toggleItem(state.highlightId);
     } else if (e.key === "F2" && plain) {
       if (state.highlightId) startEdit(state.highlightId);

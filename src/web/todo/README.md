@@ -68,7 +68,10 @@ omits it and native should use the panel's own workspace. A reply carrying a
 checklist is applied directly, anything else triggers `workspace.todo.list`.
 Mutations update the page first (optimistic); on an error the page shows
 "Could not update the checklist: <message>" and re-reads the list.
-`not_found` / `workspace_not_found` switch to the unavailable state.
+`not_found` / `workspace_not_found` from `workspace.todo.list` switch to the
+unavailable state. A mutation failing with them only triggers that re-read,
+because `not_found` can also name an item that an agent or the CLI removed
+meanwhile.
 
 Panel-local methods (`panel.todo.*`, handled by the kind's `on_message`; cmux
 has no names for these):
@@ -113,8 +116,9 @@ Payloads whose `workspace_id` names another workspace are ignored.
 ## Behavior notes
 
 - **Keyboard** (list focused, not editing): Up/Down move the highlight
-  (clamped), Home/End jump, Return toggles, F2 edits, Shift+F10 or the menu key
-  opens the context menu, Alt+Up/Down reorder. `toggleChecklistItemComplete`
+  (clamped), Home/End jump, Return toggles (Return on a row's paperclip button
+  opens its menu instead), F2 edits, Shift+F10 or the menu key opens the
+  context menu, Alt+Up/Down reorder. `toggleChecklistItemComplete`
   (Ctrl+Enter) toggles the highlighted item, also from the add row. While
   editing it commits first, then toggles the edited item.
 - **Mouse**: click selects, clicking the selected item starts editing, and
@@ -126,7 +130,9 @@ Payloads whose `workspace_id` names another workspace are ignored.
   name with Open and Remove Attachment. Menus close on Escape or an outside
   click; Up/Down/Home/End move inside them.
 - **Clear**: the header `Clear` button (shown when there are items) asks
-  "Remove all N checklist items?" first; Escape cancels.
+  "Remove all N checklist items?" first; Escape cancels. The dialog is modal
+  (the page behind it is `inert`); Cancel returns focus to what opened it, and
+  after clearing focus moves to the add row.
 - **Background**: opaque window color (`--wmux-surface`).
 
 ## CSP

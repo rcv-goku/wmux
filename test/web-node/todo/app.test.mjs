@@ -128,6 +128,22 @@ describe("unit: todo pane basics", () => {
     assert.doesNotMatch(page.html, /<script(?![^>]*src=)|style="|<style|\son[a-z]+=/i);
   });
 
+  test("unit: todo: every data-i18n key in index.html is in strings.js with the same text", async () => {
+    const { STRINGS } = await importWeb("todo/strings.js");
+    const tpl = new window.DOMParser().parseFromString(page.html, "text/html");
+    const keyed = tpl.querySelectorAll("[data-i18n]");
+    assert.ok(keyed.length > 0);
+    for (const el of keyed) {
+      assert.equal(el.textContent.trim(), STRINGS[el.dataset.i18n], el.dataset.i18n);
+    }
+    for (const el of tpl.querySelectorAll("[data-i18n-attr]")) {
+      for (const pair of el.dataset.i18nAttr.split(";")) {
+        const [attr, k] = pair.split(":").map((s) => s.trim());
+        assert.equal(el.getAttribute(attr), STRINGS[k], `${attr}:${k}`);
+      }
+    }
+  });
+
   test("unit: todo: start lists the workspace, sets the title and arms the add field", async () => {
     await startApp({
       items: [item("write test"), item("lint", { state: "completed" }), item("build", { origin: "agent" })],
@@ -357,7 +373,10 @@ describe("unit: todo pane interaction", () => {
     // Really leaving the editor still commits it.
     doc.querySelector(".todo-editor").dispatchEvent(focusout());
     await settle();
-    assert.deepEqual(host.calls("workspace.todo.edit").map((c) => c.params.text), ["draft"]);
+    assert.deepEqual(
+      host.calls("workspace.todo.edit").map((c) => c.params.text),
+      ["draft"],
+    );
     assert.equal(app.editingId, null);
     assert.equal(store.items[0].text, "draft");
   });
@@ -467,6 +486,25 @@ describe("unit: todo pane attachments, live updates and states", () => {
     assert.equal(store.items[0].attachments.length, 1);
   });
 
+  test("unit: todo: Return on a row's paperclip activates it instead of toggling the item", async () => {
+    await startApp({ items: [item("shot"), item("other")] });
+    const list = $("todo-list");
+    list.focus();
+    key(window, list, { key: "ArrowDown" });
+    const clip = rows()[0].querySelector(".todo-attach");
+    clip.focus();
+    const ev = key(window, clip, { key: "Enter" });
+    await settle();
+    assert.equal(ev.defaultPrevented, false, "the button keeps its Return activation");
+    assert.equal(host.calls("workspace.todo.set_state").length, 0);
+    assert.equal(store.items[0].state, "pending");
+    // Return on the list itself still toggles.
+    list.focus();
+    key(window, list, { key: "Enter" });
+    await settle();
+    assert.equal(store.items[0].state, "completed");
+  });
+
   test("unit: todo: live updates apply pushed lists and re-read on bare change events", async () => {
     await startApp({ items: [item("a")] });
     store.items.push(item("from agent", { origin: "agent" }));
@@ -534,6 +572,59 @@ describe("unit: todo pane attachments, live updates and states", () => {
     assert.equal(host.calls("workspace.todo.clear").length, 1);
     assert.equal(rows().length, 0);
     assert.equal($("todo-empty").hidden, false);
+  });
+
+  test("unit: todo: the Clear confirmation is modal and gives focus back", async () => {
+    await startApp({ items: [item("a"), item("b")] });
+    $("todo-clear").focus();
+    click(window, $("todo-clear"));
+    assert.equal(doc.activeElement, $("todo-confirm-cancel"));
+    const others = Array.from(doc.body.children).filter((el) => el !== $("todo-confirm"));
+    assert.ok(
+      others.every((el) => el.hasAttribute("inert")),
+      "the page behind the dialog is inert",
+    );
+    key(window, $("todo-confirm-cancel"), { key: "Escape" });
+    await settle();
+    assert.equal(doc.querySelectorAll("[inert]").length, 0);
+    assert.equal(doc.activeElement, $("todo-clear"), "Cancel returns to the Clear button");
+    click(window, $("todo-clear"));
+    click(window, $("todo-confirm-ok"));
+    await settle();
+    assert.equal(rows().length, 0);
+    assert.equal($("todo-clear").hidden, true);
+    assert.equal(doc.activeElement, $("todo-add-input"), "after clearing, the add row has focus");
+  });
+
+  test("unit: todo: not_found for an item removed meanwhile keeps the pane", async () => {
+    let workspaceGone = false;
+    await startApp({
+      items: [item("a"), item("b")],
+      handlers: {
+        // An agent removed the item a moment ago.
+        "workspace.todo.set_state": () => {
+          throw hostError("not_found", "Invalid todo item");
+        },
+        "workspace.todo.list": () => {
+          if (workspaceGone) throw hostError("not_found", "Workspace not found");
+          return listReply();
+        },
+      },
+    });
+    store.items.splice(0, 1);
+    const before = host.calls("workspace.todo.list").length;
+    await app.toggleItem(rows()[0].dataset.id);
+    await settle();
+    assert.equal(app.available, true, "the workspace is still there");
+    assert.equal(host.calls("workspace.todo.list").length, before + 1, "the list is re-read");
+    assert.deepEqual(texts(), ["b"]);
+    assert.equal($("todo-error").textContent, "Could not update the checklist: Invalid todo item");
+    // When the re-read confirms the workspace is gone, the pane says so.
+    workspaceGone = true;
+    await app.toggleItem(rows()[0].dataset.id);
+    await settle();
+    assert.equal(app.available, false);
+    assert.equal($("todo-unavailable").hidden, false);
   });
 
   test("unit: todo: a failed mutation reports the error and re-reads the list", async () => {
