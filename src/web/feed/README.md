@@ -65,6 +65,7 @@ A later `panel.init` is applied in place. The page sets the title with
 | `panel.feed.stop_reply` | `{id, text, request_id?, session_id?, workspace_id?, surface_id?, source?}` -> `{delivered?}` | "Send to <Agent>" on a stop card. Native looks the item up by `id` (a stop item without a reply), resolves the agent's surface from the item's own ids or the hook session map, and sends `text` as input with Enter (`ipcSendText(reply, true)`, or agent messages), then records `Resolution.reply` so the item reports `resolution {text, badge: "Sent"}`. The other keys are informational: the page renders agent-supplied markdown, so native never routes the text by ids the page sends |
 | `feed.jump` | `{id, workspace_id?, surface_id?, session_id?, source?}` -> `{}` | double click on a card, the ↗ button, Enter on a focused card, a workstream chip. `not_found` = the agent is not in a wmux terminal (the page says so) |
 | `panel.open_in_browser` | `{url}` | http(s) links inside a rendered plan |
+| `panel.open_external` | `{url}` | mailto: links inside a rendered plan |
 | `panel.state_changed` | `{state: {v: 1, filter}}` | tab changes, debounced 400 ms |
 
 Item fields are exactly what `query.zig writeListItem` writes: `id`, `kind`
@@ -112,7 +113,8 @@ decision: <message>". Either way the list reloads.
   `request_id` (telemetry-only sources such as Codex) show no buttons.
 - **Plan.** The plan is markdown rendered without raw HTML and sanitized by
   DOMPurify (no images, forms, media, styles, ids or classes; links only
-  http(s)/mailto, opened in a wmux browser tab). Plan file and allowed
+  http(s), opened in a wmux browser tab, and mailto, opened by the OS
+  handler; the page itself never navigates). Plan file and allowed
   prompts are listed. Ultraplan / Manual / Auto / Bypass / Deny as offered,
   and "Revise…" opens a feedback box ("Send feedback", Ctrl+Enter).
 - **Question.** Options are buttons; with one single-choice question a click

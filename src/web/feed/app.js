@@ -679,13 +679,17 @@ export function createApp(options) {
     setFilter(els.tabs[j].dataset.filter, true);
   }
 
-  /** Links in rendered plans: http(s) opens a wmux browser tab, nothing else navigates. */
+  /**
+   * Links in rendered plans never navigate the page: http(s) opens a wmux
+   * browser tab, mailto: goes to the OS handler (render.js keeps only these).
+   */
   function onLinkClick(e) {
     const a = e.target.closest && e.target.closest(".feed-plan a[href]");
     if (!a) return false;
     e.preventDefault();
     const href = a.getAttribute("href") || "";
     if (/^https?:\/\//i.test(href)) bridge.panel.openInBrowser(href).catch(() => {});
+    else if (/^mailto:/i.test(href)) bridge.panel.openExternal(href).catch(() => {});
     return true;
   }
 

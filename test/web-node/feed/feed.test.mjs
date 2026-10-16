@@ -70,6 +70,7 @@ async function startApp(opts = {}) {
     "panel.state_changed": () => ({}),
     "panel.subscribe": () => ({}),
     "panel.open_in_browser": () => ({}),
+    "panel.open_external": () => ({}),
     "feed.list": (p) => {
       if (p.before) return opts.older ? opts.older(p) : { items: [], has_more: false };
       return { items, has_more: opts.hasMore === true };
@@ -391,6 +392,21 @@ describe("unit: feed app", () => {
     await settle();
     assert.deepEqual(host.calls("feed.exit_plan.reply")[0].params, { request_id: "req-1", mode: "manual" });
     assert.equal(cardById(uuid(1)).querySelector(".feed-badge").textContent, "manual");
+  });
+
+  test("unit: feed: plan links never navigate: http(s) opens a browser tab, mailto the OS handler", async () => {
+    await startApp({ items: [plan(1, { plan: { text: "[mail](mailto:dev@example.com) and [web](https://example.com/y)", allowed_prompts: [] } })] });
+    const links = Array.from(cards()[0].querySelectorAll(".feed-plan a"));
+    const mail = links.find((a) => a.textContent === "mail");
+    const web = links.find((a) => a.textContent === "web");
+    assert.ok(mail && web);
+    const ev = new window.MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
+    mail.dispatchEvent(ev);
+    assert.equal(ev.defaultPrevented, true);
+    click(window, web);
+    await settle();
+    assert.deepEqual(host.calls("panel.open_external").map((m) => m.params.url), ["mailto:dev@example.com"]);
+    assert.deepEqual(host.calls("panel.open_in_browser").map((m) => m.params.url), ["https://example.com/y"]);
   });
 
   test("unit: feed: single single-choice question answers on click", async () => {
