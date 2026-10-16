@@ -59,7 +59,9 @@ export function createCards(deps) {
     const h = el("header", "feed-card-head");
     h.append(el("span", "feed-kind", t("feed.kind." + item.kind)));
     h.append(el("span", "feed-source", sourceDisplayName(item.source)));
-    if (item.tool_name && item.kind !== "todos") h.append(el("code", "feed-tool", item.tool_name));
+    // Native titles tool rows and permissions with the tool name; the title
+    // line then names the tool and the chip would repeat it.
+    if (item.tool_name && item.kind !== "todos" && item.title.trim() !== item.tool_name) h.append(el("code", "feed-tool", item.tool_name));
     if (item.kind === "toolResult" && item.is_error !== null) {
       const ok = !item.is_error;
       h.append(el("span", "feed-result " + (ok ? "feed-result-ok" : "feed-result-error"), t(ok ? "feed.toolResult.ok" : "feed.toolResult.error")));
@@ -92,6 +94,8 @@ export function createCards(deps) {
       title = t("feed.todos.title");
       detail = ""; // native's English todo summary; the body has the translated one
     }
+    // Native's "ok"/"error" digest of is_error; the head chip shows it translated.
+    if (item.kind === "toolResult" && item.is_error !== null) detail = "";
     // Pending questions list every question; a pending plan shows its text.
     if (item.kind === "question" && isPending(item) && item.questions.some((q) => q.question)) detail = "";
     if (item.kind === "exitPlan" && isPending(item) && item.plan && item.plan.text) detail = "";

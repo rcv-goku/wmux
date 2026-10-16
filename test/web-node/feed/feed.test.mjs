@@ -421,6 +421,10 @@ describe("unit: feed app", () => {
         question(4, [db], { title: "Claude question", detail: "Which DB?", status: "resolved", options: [], resolution: { selections: ["pg"], badge: "Submitted" } }),
         question(5, [db], { title: "Claude question", detail: "Which DB?", request_id: undefined }),
         item(6, "stop", { hook_event_name: "Stop", title: "Claude finished — reply to continue", detail: "All tests pass." }),
+        permission(7, { title: "Bash", detail: "rm -rf build" }),
+        item(8, "toolUse", { hook_event_name: "PreToolUse", tool_name: "Edit", title: "Edit", detail: "src/a.zig" }),
+        item(9, "toolResult", { hook_event_name: "PostToolUse", tool_name: "Bash", title: "Bash", detail: "error", is_error: true }),
+        item(10, "toolResult", { hook_event_name: "PostToolUse", tool_name: "Read", title: "Read", detail: "ok" }),
       ],
     });
     const count = (card, text) => card.textContent.split(text).length - 1;
@@ -434,6 +438,17 @@ describe("unit: feed app", () => {
     assert.ok(cardById(uuid(3)).querySelector(".feed-plan h1"));
     assert.equal(cardById(uuid(4)).querySelector(".feed-card-detail").textContent, "Which DB?", "an answered question keeps it as context");
     assert.equal(cardById(uuid(6)).querySelector(".feed-card-detail").textContent, "All tests pass.");
+    for (const n of [7, 8, 9, 10]) {
+      const card = cardById(uuid(n));
+      assert.equal(card.querySelector(".feed-tool"), null, `card ${n}: the title already names the tool`);
+      assert.equal(count(card.querySelector(".feed-card-head"), card.querySelector(".feed-card-title").textContent), 0);
+    }
+    assert.equal(cardById(uuid(7)).querySelector(".feed-card-detail").textContent, "rm -rf build");
+    assert.equal(cardById(uuid(8)).querySelector(".feed-card-detail").textContent, "src/a.zig");
+    const failed = cardById(uuid(9));
+    assert.equal(failed.querySelector(".feed-result").textContent, "error");
+    assert.equal(failed.querySelector(".feed-card-detail"), null, "the result chip carries ok/error");
+    assert.equal(cardById(uuid(10)).querySelector(".feed-card-detail").textContent, "ok", "without is_error the digest stays");
   });
 
   test("unit: feed: plan card renders sanitized markdown and sends modes and feedback", async () => {
