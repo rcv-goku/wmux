@@ -15,6 +15,7 @@ import {
   displayBinding,
   displayStroke,
   filterActions,
+  findConflicts,
   isCustomized,
   keyList,
   normalizeShortcutList,
@@ -286,25 +287,46 @@ export function createShortcutsView(ctx) {
   }
 
   async function unbind(action) {
-    if (action.keys.length) model.previous.set(action.id, action.keys.slice());
+    if (action.keys.length) model.previous.set(action.id, { keys: action.keys.slice(), source: action.source });
     return save(action, [], []);
   }
 
+  /**
+   * Restore what Unbind removed. A default binding comes back by dropping the
+   * override (wmux.json does not pin the default's keys, so the row keeps
+   * following the catalog); a custom one is written again. Like recording,
+   * restoring is refused when another action took those keys meanwhile.
+   */
   async function restore(action) {
     const prev = model.previous.get(action.id);
     if (!prev) return false;
-    const ok = await save(action, prev, []);
+    const keys = prev.source === "default" ? action.defaultKeys : prev.keys;
+    const errors = [];
+    for (const k of keys) {
+      for (const c of findConflicts(model.actions, action.id, k)) {
+        const text = t("settings.shortcuts.conflict", { action: c.title, keys: displayBinding(c.keys) });
+        if (!errors.includes(text)) errors.push(text);
+      }
+    }
+    if (errors.length > 0) {
+      model.messages.set(action.id, { errors, warnings: [] });
+      paintList();
+      return false;
+    }
+    const ok = prev.source === "default" ? await resetAction(action) : await save(action, prev.keys, []);
     if (ok) model.previous.delete(action.id);
     paintList();
     return ok;
   }
 
   async function resetAction(action) {
+    let ok = false;
     try {
       await call("wmux.settings.unset", { path: `shortcuts.bindings.${action.id}` });
       replaceAction({ ...action, keys: action.defaultKeys.slice(), source: "default", managed: null });
       model.previous.delete(action.id);
       model.messages.delete(action.id);
+      ok = true;
     } catch (err) {
       model.messages.set(action.id, {
         errors: [t("settings.shortcuts.saveFailed", { message: message(err) })],
@@ -313,6 +335,7 @@ export function createShortcutsView(ctx) {
     }
     paintList();
     await load();
+    return ok;
   }
 
   async function resetDefaults() {

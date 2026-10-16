@@ -303,8 +303,36 @@ describe("unit: core-shortcuts-settings-ui: recorder", () => {
     assert.equal(restore.getAttribute("aria-label"), "Restore previous shortcut for Split Right");
     restore.click();
     await flush();
-    assert.deepEqual(sc.wmux.splitRight, ["ctrl+shift+d"]);
+    // A default comes back by dropping the override, not by pinning its keys in wmux.json.
+    assert.equal(sc.wmux.splitRight, undefined);
+    assert.deepEqual(
+      host.calls("wmux.settings.unset").map((m) => m.params.path),
+      ["shortcuts.bindings.splitRight"],
+    );
     assert.deepEqual(keysOf("splitRight"), ["Ctrl+Shift+D"]);
+    assert.equal(row("splitRight").querySelector(".set-sc-restore"), null);
+    assert.ok(row("splitRight").querySelector(".set-sc-unbind"));
+  });
+
+  test("unit: core-shortcuts-settings-ui: restore writes a custom shortcut back but never creates a conflict", async () => {
+    const { sc } = await open({ wmux: { splitRight: ["ctrl+shift+alt+d"] } });
+    row("splitRight").querySelector(".set-sc-unbind").click();
+    await flush();
+    row("splitRight").querySelector(".set-sc-restore").click();
+    await flush();
+    assert.deepEqual(sc.wmux.splitRight, ["ctrl+shift+alt+d"]);
+    // Unbind again and give the keys to another action: Restore must not take them back.
+    row("splitRight").querySelector(".set-sc-unbind").click();
+    await flush();
+    await recordFor("newSurface", { key: "D", code: "KeyD", keyCode: 68, ctrlKey: true, shiftKey: true, altKey: true });
+    assert.deepEqual(sc.wmux.newSurface, ["ctrl+shift+alt+d"]);
+    const sets = host.calls("wmux.shortcuts.set").length;
+    row("splitRight").querySelector(".set-sc-restore").click();
+    await flush();
+    assert.deepEqual(errorsOf("splitRight"), ["This shortcut conflicts with New Surface (Ctrl+Shift+Alt+D)"]);
+    assert.equal(host.calls("wmux.shortcuts.set").length, sets);
+    assert.deepEqual(sc.wmux.splitRight, []);
+    assert.ok(row("splitRight").querySelector(".set-sc-restore"), "Restore stays available");
   });
 
   test("unit: core-shortcuts-settings-ui: keyboard focus stays on the row through record, unbind and restore", async () => {
