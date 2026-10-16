@@ -1000,3 +1000,24 @@ test "unit: vault: allocation failures never leak" {
     };
     try testing.checkAllAllocationFailures(testing.allocator, S.run, .{});
 }
+
+test "unit: vault: allocation failures validating an unterminated tail are reported" {
+    const S = struct {
+        // A complete record without its newline: consumed only after the
+        // tail validates, which allocates.
+        const transcript = claude_fixture ++ "{\"type\":\"user\",\"sessionId\":\"" ++ claude_id ++ "\",\"message\":{\"role\":\"user\",\"content\":\"tail\"}}";
+
+        fn run(gpa: std.mem.Allocator) !void {
+            var idx = index.Index.init(gpa);
+            defer idx.deinit();
+            const e = try idx.ingest("/p/t.jsonl", "claude", .{ .size = transcript.len, .mtime_ms = 1 }, 0, transcript, true);
+            try testing.expectEqual(@as(u64, transcript.len), e.consumed);
+            try testing.expectEqual(@as(u32, 4), e.session.turns);
+            var cp = try checkpoints.captureManual(gpa, .claude_code, transcript, .{ .id = "cp", .now_ms = 1 });
+            defer cp.deinit(gpa);
+            try testing.expectEqual(@as(u64, transcript.len), cp.byte_offset);
+            try testing.expectEqual(@as(u32, 4), cp.turn);
+        }
+    };
+    try testing.checkAllAllocationFailures(testing.allocator, S.run, .{});
+}

@@ -860,10 +860,12 @@ pub const LineIterator = struct {
 };
 
 /// True when an unterminated tail is one complete JSON object (safe to consume).
-pub fn tailIsComplete(gpa: Allocator, line: []const u8) bool {
+/// OOM is reported rather than read as "incomplete", which would silently
+/// leave the record out of the index or of a checkpoint.
+pub fn tailIsComplete(gpa: Allocator, line: []const u8) Allocator.Error!bool {
     const t = std.mem.trim(u8, line, " \t\r");
     if (t.len == 0 or t[0] != '{') return false;
-    return std.json.validate(gpa, t) catch false;
+    return std.json.validate(gpa, t);
 }
 
 /// Folds `bytes` into `s`; returns the number of bytes consumed.
@@ -875,7 +877,7 @@ fn feed(gpa: Allocator, s: *Session, format: Format, bytes: []const u8, at_eof: 
     while (it.next()) |ln| {
         const line = bytes[ln.start..ln.end];
         // An unterminated tail (no newline) may still be mid-write.
-        if (ln.next == ln.end and !tailIsComplete(gpa, line)) break;
+        if (ln.next == ln.end and !(try tailIsComplete(gpa, line))) break;
         _ = arena_state.reset(.retain_capacity);
         const info = try classifyLine(arena_state.allocator(), format, line);
         try apply(gpa, s, info);

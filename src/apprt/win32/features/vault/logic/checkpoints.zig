@@ -109,7 +109,7 @@ pub fn deriveTurns(gpa: Allocator, format: Format, transcript: []const u8) Alloc
     var complete: u64 = 0;
     while (it.next()) |ln| {
         const line = transcript[ln.start..ln.end];
-        if (ln.next == ln.end and !index.tailIsComplete(gpa, line)) break;
+        if (ln.next == ln.end and !(try index.tailIsComplete(gpa, line))) break;
         _ = arena_state.reset(.retain_capacity);
         const info = try index.classifyLine(arena_state.allocator(), format, line);
         if (info.kind == .user_prompt) {
