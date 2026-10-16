@@ -193,7 +193,10 @@ test "unit: model: every tab of a fake graph is located in its pane" {
     try testing.expectEqual(@as(?Workspace.Loc, null), Workspace.locateSurface(g.workspaces.items, @ptrFromInt(0x1000)));
 }
 
-test "unit: model: layout leaves are the panes in pane index order" {
+test "unit: model: layout of a fake graph runs left to right in pane order" {
+    // buildTree writes the nodes in pre-order, so a fake graph's node order
+    // (Workspace.paneAt) and the layout's depth-first order agree. Trees
+    // grown by SplitTree.split need not (model/layout.zig tests that).
     var g = Graph.init(testing.allocator);
     defer g.deinit();
     const ws = try g.addWorkspace(&.{ 1, 1, 1, 1 });

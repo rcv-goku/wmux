@@ -207,8 +207,14 @@ pub fn paneHandle(self: *const Workspace, pane: *const Pane) ?SplitTree(Pane).No
     return null;
 }
 
-/// Return the Nth leaf Pane (0-based, depth-first, left before right).
-/// Used by IPC `--pane` arguments to address a pane by positional index.
+/// Return the Nth leaf Pane (0-based) in split-tree node order (the order
+/// of SplitTree.iterator), the positional index IPC `--pane` arguments and
+/// the v2 session file have always used. Node order is not the on-screen
+/// depth-first order of model/layout.zig's leaves: SplitTree.split stores
+/// the inserted pane before the original it moves, so after splitting a
+/// lone pane to the right the new pane is index 0. (ADR-2.4 defines the v2
+/// pane index as depth-first; the legacy index keeps this order until W2-2
+/// maps it.)
 pub fn paneAt(self: *const Workspace, idx: usize) ?*Pane {
     var it = self.tree.iterator();
     var n: usize = 0;

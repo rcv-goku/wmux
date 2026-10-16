@@ -35,3 +35,7 @@ Dependency rule (ADR-1.2): may import `platform/`, `features/ext.zig` and
 `wmux_proto`; never `rpc/` or feature internals. ADR-2.3 fields are the
 exception: `Workspace.window` points at `ui/Window.zig` and `TabContent`
 at the terminal `Surface.zig` and `web/BrowserPane.zig`.
+
+Pane index: `Workspace.paneAt` (the legacy IPC `pane` index and the v2
+session file) counts panes in split-tree node order, which is not the
+depth-first order of `layout.zig`'s leaves (see `paneAt`).

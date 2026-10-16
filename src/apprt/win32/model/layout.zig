@@ -91,8 +91,9 @@ pub fn LayoutResult(comptime V: type) type {
         /// The parent split of every node (null for the root), indexed by
         /// node handle.
         parents: []?Handle,
-        /// The leaves in depth-first order, left before right (the pane
-        /// index order of Workspace.paneAt).
+        /// The leaves in depth-first order, left before right (the
+        /// on-screen order). This is not necessarily the node order of
+        /// SplitTree.iterator, which Workspace.paneAt indexes.
         leaves: []Leaf,
         /// The dividers in pre-order: a split before the splits inside it.
         dividers: []Divider,
@@ -442,6 +443,30 @@ test "unit: model: layout of nested splits gives each divider its own node rect"
     try testing.expectEqual(outer.handle, lay.parentSplit(&tree, lay.leaves[2].handle, .horizontal).?);
     try testing.expectEqual(@as(?TestLayout.Handle, null), lay.parentSplit(&tree, lay.leaves[0].handle, .vertical));
     try testing.expectEqual(inner.handle, lay.parents[lay.leafOf(&c).?.handle.idx()].?);
+}
+
+test "unit: model: layout leaves are depth-first where the node order differs" {
+    // SplitTree.split stores the inserted pane before the original it
+    // moves, so the tree iterator (the node order Workspace.paneAt and the
+    // legacy pane index use) yields b before a; the layout walks from the
+    // root and puts a, the left pane, first.
+    var a: TestView = .{ .id = 1 };
+    var b: TestView = .{ .id = 2 };
+    var tree = try TestTree.init(testing.allocator, &a);
+    defer tree.deinit();
+    try splitRoot(&tree, &b, .right, .root);
+
+    var it = tree.iterator();
+    try testing.expectEqual(&b, it.next().?.view);
+    try testing.expectEqual(&a, it.next().?.view);
+    try testing.expectEqual(@as(?TestTree.ViewEntry, null), it.next());
+
+    var lay = try computeLayout(testing.allocator, &tree, full, 1.0);
+    defer lay.deinit(testing.allocator);
+    try testing.expectEqual(@as(usize, 2), lay.leaves.len);
+    try testing.expectEqual(&a, lay.leaves[0].view);
+    try testing.expectEqual(&b, lay.leaves[1].view);
+    try testing.expect(lay.leaves[0].rect.right < lay.leaves[1].rect.left);
 }
 
 test "unit: model: divider drag measures against the dragged node rect" {
