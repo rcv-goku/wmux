@@ -246,9 +246,14 @@ fn runDisplay(ctx: *Ctx, args: []const []const u8) !u8 {
         try common.writeJsonResult(ctx, v);
         return output.exit.ok;
     }
-    const moved = common.int(v, "moved") orelse 0;
+    // cmux's result lists the moved window ids (`moved: [...]`); a count
+    // is accepted too.
+    const moved: usize = if (common.field(v, "moved")) |m| switch (m) {
+        .array => |arr| arr.items.len,
+        else => if (common.int(v, "moved")) |n| (if (n > 0) @intCast(n) else 0) else 0,
+    } else 0;
     const display = common.str(v, "display") orelse common.str(common.field(v, "display"), "name") orelse o.positionals[0];
-    try ctx.out.print("Moved {d} window(s) to {s}.\n", .{ moved, display });
+    try ctx.out.print("Moved {d} window{s} to {s}.\n", .{ moved, if (moved == 1) "" else "s", display });
     return output.exit.ok;
 }
 
@@ -483,7 +488,8 @@ test "unit: cli-window: window displays and display" {
     h.ok("window.displays", "{\"displays\":[]}");
     try testing.expectEqualStrings("No displays found.\n", try testkit.expectOk(&h, &.{ "window", "displays" }));
 
-    h.ok("window.display", "{\"moved\":2,\"display\":{\"name\":\"LG \\u00e9cran\",\"index\":1}}");
+    // cmux's result: the resolved display name and the moved window ids.
+    h.ok("window.display", "{\"display\":\"LG \\u00e9cran\",\"moved\":[\"6F1D2C3B-0000-4000-8000-000000000001\",\"6F1D2C3B-0000-4000-8000-000000000003\"]}");
     const moved = try testkit.expectOk(&h, &.{ "window", "display", "1" });
     try testkit.expectGolden(h.alloc(), "window-display.txt", moved);
     try h.expectLast("window.display", "{\"display\":\"1\"}");
@@ -491,8 +497,16 @@ test "unit: cli-window: window displays and display" {
     try h.expectLast("window.display", "{\"display\":\"LG\",\"window_id\":\"window:2\"}");
     _ = try testkit.expectOk(&h, &.{ "window", "display", "LG", "--window", "window:3" });
     try h.expectLast("window.display", "{\"display\":\"LG\",\"window_id\":\"window:3\"}");
-    h.ok("window.display", "{\"moved\":1,\"display\":\"DELL\"}");
-    try testing.expectEqualStrings("Moved 1 window(s) to DELL.\n", try testkit.expectOk(&h, &.{ "window", "display", "DE" }));
+    h.ok("window.display", "{\"display\":\"DELL\",\"moved\":[\"6F1D2C3B-0000-4000-8000-000000000001\"]}");
+    try testing.expectEqualStrings("Moved 1 window to DELL.\n", try testkit.expectOk(&h, &.{ "window", "display", "DE" }));
+    h.ok("window.display", "{\"display\":\"DELL\",\"moved\":[]}");
+    try testing.expectEqualStrings("Moved 0 windows to DELL.\n", try testkit.expectOk(&h, &.{ "window", "display", "DE" }));
+    // A count and a display object are accepted too; a missing name falls
+    // back to the argument.
+    h.ok("window.display", "{\"moved\":3,\"display\":{\"name\":\"LG\"}}");
+    try testing.expectEqualStrings("Moved 3 windows to LG.\n", try testkit.expectOk(&h, &.{ "window", "display", "1" }));
+    h.ok("window.display", "{\"moved\":-1}");
+    try testing.expectEqualStrings("Moved 0 windows to 2.\n", try testkit.expectOk(&h, &.{ "window", "display", "2" }));
 
     try testkit.expectUsage(&h, &.{"window"}, "window requires a subcommand: displays, display, default-display");
     try testkit.expectUsage(&h, &.{ "window", "bogus" }, "unknown window subcommand 'bogus'; expected one of: displays, display, default-display");

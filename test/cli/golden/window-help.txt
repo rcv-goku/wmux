@@ -8,7 +8,7 @@ Subcommands:
   display <name|index>      Move the windows onto a display matched by exact
                             name, substring or index, keeping their size and
                             without stealing focus; prints
-                            "Moved N window(s) to <display>.". With the global
+                            "Moved <n> windows to <display>.". With the global
                             --window (or --window after the subcommand) only
                             that window moves. --list (-l) aliases displays.
   default-display [<name>|--clear]
