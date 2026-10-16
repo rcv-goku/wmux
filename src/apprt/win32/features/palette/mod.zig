@@ -2,6 +2,7 @@
 //! The feature manifest imports only this file. Besides `id`, declare the
 //! optional registry tables and lifecycle hooks of ADR-1.3 here when needed.
 pub const id = "palette";
+pub const action_handlers = @import("actions.zig").handlers;
 
 test {
     _ = @import("logic/tests.zig");

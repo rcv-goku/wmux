@@ -41,6 +41,7 @@ test {
     _ = @import("features/session/legacy_v2.zig");
     _ = @import("features/status/log_ring.zig");
     _ = @import("features/workspaces/worktree.zig");
+    _ = @import("input/actions.zig");
     _ = @import("platform/taskbar.zig");
     _ = @import("rpc/compat/legacy_json.zig");
     _ = @import("rpc/registry.zig");
