@@ -5,9 +5,12 @@
 //! bytes, so sessions survive the bridge (and the ssh connection) going away.
 //!
 //! Access control: the slot directory is 0700 and the socket 0600, so only
-//! the owning user can connect. The server holds an exclusive flock on
-//! daemon.lock for its whole life; that lock (not the pid file) decides
-//! whether a server is running.
+//! the owning user can connect. Clients connect only after checking that
+//! the socket's directory is a private directory of their own: the
+//! /tmp/wmuxd-remote-<uid> fallback could otherwise be planted by another
+//! user, who would then receive the terminal traffic. The server holds an
+//! exclusive flock on daemon.lock for its whole life; that lock (not the
+//! pid file) decides whether a server is running.
 
 const std = @import("std");
 const posix = std.posix;
@@ -46,12 +49,22 @@ pub const Slot = struct {
     }
 };
 
-/// Creates `path` (and parents) and restricts it to the user (0700).
+/// Creates `path` (and parents) and restricts it to the user (0700). A
+/// symlink or a directory owned by someone else is refused, never chmod-ed.
 pub fn ensurePrivateDir(path: []const u8) !void {
     try std.fs.cwd().makePath(path);
+    const st = try posix.fstatat(posix.AT.FDCWD, path, posix.AT.SYMLINK_NOFOLLOW);
+    if (!posix.S.ISDIR(st.mode) or st.uid != pty.currentUid()) return error.AccessDenied;
     try posix.fchmodat(posix.AT.FDCWD, path, 0o700, 0);
-    const st = try posix.fstatat(posix.AT.FDCWD, path, 0);
-    if (st.uid != pty.currentUid()) return error.AccessDenied;
+}
+
+/// Fails with AccessDenied unless `path` is a real directory (not a
+/// symlink) owned by the user with no group or other access: then nobody
+/// else can have planted or swapped anything inside it.
+pub fn checkPrivateDir(path: []const u8) !void {
+    const st = try posix.fstatat(posix.AT.FDCWD, path, posix.AT.SYMLINK_NOFOLLOW);
+    if (!posix.S.ISDIR(st.mode) or st.uid != pty.currentUid() or (st.mode & 0o077) != 0)
+        return error.AccessDenied;
 }
 
 pub fn listen(path: []const u8) !posix.fd_t {
@@ -65,7 +78,10 @@ pub fn listen(path: []const u8) !posix.fd_t {
     return fd;
 }
 
+/// Connects to a slot socket, but only inside a private directory (see
+/// `checkPrivateDir`; the socket may be in the shared /tmp fallback).
 pub fn connect(path: []const u8) !posix.fd_t {
+    try checkPrivateDir(std.fs.path.dirname(path) orelse return error.AccessDenied);
     const addr = try std.net.Address.initUnix(path);
     const fd = try posix.socket(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
     errdefer posix.close(fd);
@@ -277,13 +293,13 @@ pub fn probeSlot(a: Allocator, home: []const u8, name: []const u8) !SlotStatus {
     const h = c.hello(false, 3000) catch return st;
     if (!h.ok) return st;
     const r = c.request(.pty_list, .{}, 3000) catch return st;
-    if (!r.ok) return st;
+    if (!r.ok or r.result != .object) return st;
     const sessions = r.result.object.get("sessions") orelse return st;
     if (sessions != .array) return st;
     var att: u64 = 0;
     for (sessions.array.items) |s| {
         if (s == .object) if (s.object.get("attachments")) |n| if (n == .integer) {
-            att += @intCast(@max(n.integer, 0));
+            att +|= @intCast(@max(n.integer, 0));
         };
     }
     st.sessions = sessions.array.items.len;
@@ -344,3 +360,43 @@ pub fn writeStatus(gpa: Allocator, w: *std.Io.Writer, home: []const u8, only: ?[
 }
 
 const Client = @import("client.zig").Client;
+
+const testing = std.testing;
+
+test "unit: remote-daemon: slot sockets are only reached through a private directory" {
+    const gpa = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmp.dir.realpathAlloc(gpa, ".");
+    defer gpa.free(root);
+    const dir = try std.fs.path.join(gpa, &.{ root, "d" });
+    defer gpa.free(dir);
+    const sock = try std.fs.path.join(gpa, &.{ dir, "s.sock" });
+    defer gpa.free(sock);
+    try ensurePrivateDir(dir);
+    const lfd = try listen(sock);
+    defer posix.close(lfd);
+    posix.close(try connect(sock));
+
+    // Others can enter the directory (as with a /tmp fallback directory
+    // planted by another user): no connecting.
+    try posix.fchmodat(posix.AT.FDCWD, dir, 0o755, 0);
+    try testing.expectError(error.AccessDenied, connect(sock));
+
+    // A symlink to a private directory is refused by client and server.
+    try posix.fchmodat(posix.AT.FDCWD, dir, 0o700, 0);
+    const link = try std.fs.path.join(gpa, &.{ root, "l" });
+    defer gpa.free(link);
+    try posix.symlink(dir, link);
+    const via_link = try std.fs.path.join(gpa, &.{ link, "s.sock" });
+    defer gpa.free(via_link);
+    try testing.expectError(error.AccessDenied, connect(via_link));
+    try testing.expectError(error.AccessDenied, ensurePrivateDir(link));
+    try testing.expectError(error.AccessDenied, checkPrivateDir(link));
+
+    // The server tightens a directory of its own again.
+    try posix.fchmodat(posix.AT.FDCWD, dir, 0o755, 0);
+    try ensurePrivateDir(dir);
+    try checkPrivateDir(dir);
+    posix.close(try connect(sock));
+}
