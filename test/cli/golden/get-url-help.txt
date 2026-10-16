@@ -1,0 +1,4 @@
+Usage: cmux get-url --surface <id|ref|index>
+
+Legacy alias for 'cmux browser get-url'. Run 'cmux browser --help' for details.
+--panel <id|ref|index> is accepted as the legacy spelling of --surface.

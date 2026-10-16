@@ -1,0 +1,9 @@
+1. saved report.csv
+   id: D-2
+   path: /dl/report.csv
+   bytes: 2048
+   path_exists: true
+2. downloading big.zip
+   id: D-1
+   path: (unavailable)
+   bytes: (unknown)

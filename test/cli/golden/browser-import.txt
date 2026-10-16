@@ -1,0 +1,3 @@
+Imported 12 cookies from chrome.
+Skipped 2 cookies.
+Warning: Chrome profile 'Work' is locked

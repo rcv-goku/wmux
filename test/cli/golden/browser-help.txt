@@ -1,0 +1,109 @@
+Usage: cmux browser [--surface <id|ref|index> | <surface>] <subcommand> [args]
+
+Automate a browser surface. The surface is --surface <h> (legacy: --panel) or
+the first argument; handles are UUIDs, refs like surface:2, or indexes. Verbs
+that act on a page require a surface and never fall back to the focused
+browser. Element selectors are CSS or snapshot refs such as @e3.
+
+Open and navigate:
+  open|open-split|new [url] [--workspace <h>] [--window <h>] [--focus <true|false>] [--profile <name|uuid>]
+                                  Open a browser next to the caller (reuses the right pane, else splits right)
+  <surface> open <url>            Same as navigate
+  goto|navigate <url>             Navigate and wait for the commit
+  back | forward | reload         History navigation
+  url | get-url                   Print the current URL
+  identify [--surface <h>]        system.identify plus the browser's url and title
+  focus-webview                   Move keyboard focus into the page
+  is-webview-focused              Print true or false
+
+Inspect:
+  snapshot [-i|--interactive] [--cursor] [-c|--compact] [-d|--max-depth <n>] [-s|--selector <css>]
+                                  Accessibility-style snapshot with refs ([ref=eN])
+  eval [--script <js> | <js...>]  Evaluate JavaScript and print the value
+  get url|title                   Page URL or title
+  get text|html|value|count|box <sel>
+  get attr <sel> (--attr <name> | <name>)
+  get styles <sel> [--property <name>]
+  is visible|enabled|checked <sel>
+                                  Print true or false
+  find role <role> [--name <text>] [--exact]
+  find text|label|placeholder|alt|title|testid [--exact] <value>
+  find first|last <sel> | find nth <n> <sel>
+                                  Locate one element and allocate a ref (see --json)
+  highlight <sel>                 Outline an element briefly
+  wait [--selector <css> | <css>] [--text <t>] [--url-contains <t>] [--load-state interactive|complete]
+       [--function <js>] [--timeout-ms <ms> | --timeout <seconds>]
+                                  Wait for a condition (default timeout 5000 ms)
+  screenshot [--out <path>] [--json]
+                                  Save a PNG; prints OK <path or file URL>
+  console list|clear              Console messages
+  errors list|clear               Page errors
+
+Act (accept --snapshot-after to print a fresh snapshot after OK):
+  click|dblclick|hover|focus|check|uncheck <sel>
+  scroll-into-view|scrollintoview|scrollinto <sel>
+  type <sel> (--text <t> | <text...>)
+  fill <sel> [--text <t> | <text...>]
+                                  Replace the value; empty text clears
+  press|key|keydown|keyup (--key <key> | <key>)
+                                  Playwright key names: Enter, Tab, Escape, ArrowLeft, Space, Shift...
+  select <sel> (--value <v> | <v>)
+  scroll [--selector <css>] [--dx <n>] [--dy <n>] [<dy>]
+  set-input-files --selector <css> (--file <path>... | --clear)
+  download [wait] [--path <path> | <path>] [--timeout-ms <ms> | --timeout <seconds>]
+  download list [--limit <1...25>] [--json]
+                                  Newest-first downloads (alias: ls)
+
+Context and state:
+  frame <selector|main>           Scope later commands to an iframe, or back to the page
+  dialog accept [text...] | dialog dismiss
+  tab [list] | tab new [url] | tab switch <index|surface> | tab close [index|surface] | tab <n>
+  cookies [get] [--name <n>] [--domain <d>] [--path <p>] [--url <u>]
+  cookies set <name> <value> [--url <u>] [--domain <d>] [--path <p>] [--expires <unix>] [--secure] [--http-only]
+  cookies clear (--url <u> | --domain <d> | --name <n> | --path <p> | --all)
+  storage [local|session] [get [key] | set <key> <value> | clear]
+  state save <path> | state load <path>
+                                  Cookies, storage, URL and frame (contains credentials: keep private)
+  addinitscript [--script <js> | <js>]
+  addscript [--script <js> | <js>]
+  addstyle [--css <css> | <css>]
+  viewport <width> <height> | viewport reset
+                                  Emulate a 1...4096 CSS-pixel viewport
+  geolocation|geo <latitude> <longitude> [accuracy] | geo clear
+  offline true|false
+
+Not supported by every app build (the app answers not_supported):
+  trace start|stop [path]
+  network route <pattern> [--abort] [--body <text>] | network unroute <pattern> | network requests
+  screencast start|stop
+  input mouse|keyboard|touch [args...] | input_mouse | input_keyboard | input_touch
+
+Without a surface (view verbs use --surface, else the caller's workspace):
+  react-grab toggle [--return-to <terminal-surface>]
+  devtools toggle|console
+  focus-mode enter|exit|toggle    (on and off are accepted)
+  design-mode [enable|disable|toggle|status]
+                                  Prints enabled or disabled
+  zoom in|out|reset|<factor>
+  history clear --force           Clear the default profile's history (--yes also confirms)
+  repl [eval] <js...> | repl --script <js> | repl list | repl reset | repl guide
+  profiles [list|ls]              <slug>, name and id per line
+  profiles add|new|create <name>
+  profiles rename <profile> <new name>
+  profiles clear (<profile> | --all) [--force]
+  profiles delete|remove|rm <profile>
+  import [--interactive | --non-interactive|-y] [--from <browser>] [--profile <name>]... [--all-profiles]
+         [--to <profile>] [--create-profile] [--domain <domain>]...
+                                  Import cookies (non-interactive by default for coding agents)
+  disable | enable | status       Same as disable-browser, enable-browser, browser-status
+  help | docs | skill (--skill)   This help, documentation pointers, the agent skill
+
+Output: plain text is OK or the value; --json prints the result with refs
+(--id-format uuids|both for UUIDs). Usage errors exit 2, app errors exit 1.
+
+Examples:
+  cmux browser open https://example.com
+  cmux browser surface:2 snapshot -i
+  cmux browser --surface surface:2 click @e3 --snapshot-after
+  cmux browser surface:2 fill '#email' --text a@b.c
+  cmux browser surface:2 wait --text Welcome --timeout-ms 2000

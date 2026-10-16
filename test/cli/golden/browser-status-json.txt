@@ -1,0 +1,13 @@
+{
+  "enabled": false,
+  "disabled": true,
+  "managed": false,
+  "domain": "<wmux.json>",
+  "key": "wmux.browser.enabled",
+  "url_allowlist": [],
+  "url_allowlist_active": false,
+  "url_allowlist_managed": false,
+  "url_allowlist_allows_localhost": true,
+  "url_allowlist_localhost_implicit": false,
+  "url_allowlist_allows_local_files": true
+}

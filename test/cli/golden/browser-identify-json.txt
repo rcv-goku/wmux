@@ -1,0 +1,14 @@
+{
+  "focused": {
+    "window_ref": "window:1",
+    "workspace_ref": "workspace:1",
+    "pane_ref": "pane:1",
+    "surface_ref": "surface:2",
+    "surface_type": "browser"
+  },
+  "browser": {
+    "surface": "surface:2",
+    "url": "https://example.com/",
+    "title": "Example Domain"
+  }
+}

@@ -1,0 +1,7 @@
+Usage: cmux disable-browser [--json]
+
+Disable browser creation and link interception until enable-browser. Links
+from terminals then open in the system browser and 'browser open' reports
+opened_externally. Works without the app: sets wmux.browser.enabled=false in
+wmux.json, which a running app applies at once. Prints 'cmux browser disabled';
+--json prints the availability status.
