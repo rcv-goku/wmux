@@ -12,7 +12,10 @@
 //! Comparisons bind tighter than && and ||. Unknown or absent keys read as
 //! false; `key == false` equals `!key`. Regexes support literals, `.`, `^`,
 //! `$`, `* + ?`, `[...]` classes (ranges, negation) and `\` escapes; flag `i`
-//! folds ASCII case.
+//! folds ASCII case. Matching is byte-oriented and runs in O(text × pattern)
+//! time (no backtracking), so a hostile pattern cannot stall the key router.
+//! Clauses are capped at `max_clause_len` bytes and patterns at
+//! `max_regex_len` (G6), which also bounds evaluation depth.
 
 const std = @import("std");
 
@@ -78,6 +81,8 @@ pub const ParseError = error{
     ExpectedValue,
     InvalidNumber,
     TooDeep,
+    /// The clause is longer than `max_clause_len` bytes.
+    TooLong,
     OutOfMemory,
 };
 
@@ -85,6 +90,11 @@ pub const ParseError = error{
 pub const Diagnostic = struct { offset: usize = 0 };
 
 const max_depth = 64;
+
+/// Longest accepted clause in bytes. Real clauses are a few dozen bytes; the
+/// cap bounds parse and evaluation cost, including the depth of the
+/// left-leaning tree a long `a || b || …` chain builds.
+pub const max_clause_len = 4096;
 
 const Tag = enum {
     ident,
@@ -266,6 +276,10 @@ pub fn parse(gpa: std.mem.Allocator, src: []const u8) ParseError!Clause {
 }
 
 pub fn parseDiag(gpa: std.mem.Allocator, src: []const u8, diag: ?*Diagnostic) ParseError!Clause {
+    if (src.len > max_clause_len) {
+        if (diag) |d| d.offset = max_clause_len;
+        return error.TooLong;
+    }
     var arena: std.heap.ArenaAllocator = .init(gpa);
     errdefer arena.deinit();
     const a = arena.allocator();
@@ -527,6 +541,10 @@ fn compare(lhs: Value, op: CmpOp, rhs: Value) bool {
 
 // ------------------------------------------------------------ mini regex
 
+/// Longest accepted `=~` pattern in bytes. Matching keeps one bit per pattern
+/// position, so the cap also bounds the work per text byte.
+pub const max_regex_len = 256;
+
 /// Length of the atom at the start of `pat`, or null when malformed.
 fn atomLen(pat: []const u8) ?usize {
     if (pat.len == 0) return null;
@@ -549,6 +567,7 @@ fn atomLen(pat: []const u8) ?usize {
 }
 
 fn regexValid(pat: []const u8) bool {
+    if (pat.len > max_regex_len) return false;
     var i: usize = 0;
     if (i < pat.len and pat[i] == '^') i += 1;
     while (i < pat.len) {
@@ -617,42 +636,66 @@ fn atomMatches(atom: []const u8, c: u8, icase: bool) bool {
     };
 }
 
-fn matchHere(pat: []const u8, text: []const u8, icase: bool) bool {
-    if (pat.len == 0) return true;
-    if (pat.len == 1 and pat[0] == '$') return text.len == 0;
-    const n = atomLen(pat).?;
-    const atom = pat[0..n];
-    const q: u8 = if (n < pat.len) pat[n] else 0;
-    switch (q) {
-        '*', '+', '?' => {
-            const rest = pat[n + 1 ..];
-            const min: usize = if (q == '+') 1 else 0;
-            var count: usize = 0;
-            const cap: usize = if (q == '?') 1 else text.len;
-            while (count < cap and count < text.len and atomMatches(atom, text[count], icase)) count += 1;
-            if (count < min) return false;
-            var k = count + 1;
-            while (k > min) {
-                k -= 1;
-                if (matchHere(rest, text[k..], icase)) return true;
-            }
-            return false;
-        },
-        else => {
-            if (text.len == 0 or !atomMatches(atom, text[0], icase)) return false;
-            return matchHere(pat[n..], text[1..], icase);
-        },
+/// Matcher state: bit `i` = "about to match the atom at byte `i` of the
+/// pattern"; bit `pat.len` = matched; a trailing `$` is a state of its own.
+const StateSet = std.StaticBitSet(max_regex_len + 1);
+
+/// The quantifier after the atom `pat[i .. i + n]`, or 0.
+fn quantAt(pat: []const u8, i: usize, n: usize) u8 {
+    if (i + n < pat.len) switch (pat[i + n]) {
+        '*', '+', '?' => return pat[i + n],
+        else => {},
+    };
+    return 0;
+}
+
+/// Adds state `start` and every state reachable from it without consuming
+/// text (skipping `*` and `?` atoms). A set bit always has its closure set
+/// too, so an already-set state ends the walk.
+fn addState(pat: []const u8, set: *StateSet, start: usize) void {
+    var i = start;
+    while (!set.isSet(i)) {
+        set.set(i);
+        if (i == pat.len or pat[i] == '$') return;
+        const n = atomLen(pat[i..]).?;
+        const q = quantAt(pat, i, n);
+        if (q != '*' and q != '?') return;
+        i += n + 1;
     }
 }
 
-/// Unanchored search (anchors `^`/`$` honored). `pat` must be `regexValid`.
+/// Unanchored search (anchors `^`/`$` honored). The set of live pattern
+/// positions advances one text byte at a time (Thompson simulation), so the
+/// cost is O(text × pattern) whatever the pattern. `pat` must be `regexValid`.
 pub fn regexSearch(pat: []const u8, text: []const u8, icase: bool) bool {
-    if (pat.len > 0 and pat[0] == '^') return matchHere(pat[1..], text, icase);
-    var start: usize = 0;
-    while (start <= text.len) : (start += 1) {
-        if (matchHere(pat, text[start..], icase)) return true;
+    if (pat.len > max_regex_len) return false;
+    const anchored = pat.len > 0 and pat[0] == '^';
+    var cur: StateSet = .initEmpty();
+    addState(pat, &cur, @intFromBool(anchored));
+    var pos: usize = 0;
+    while (true) : (pos += 1) {
+        if (cur.isSet(pat.len)) return true;
+        if (pos == text.len) return pat.len > 0 and pat[pat.len - 1] == '$' and cur.isSet(pat.len - 1);
+        var next: StateSet = .initEmpty();
+        var it = cur.iterator(.{});
+        while (it.next()) |i| {
+            if (i == pat.len or pat[i] == '$') continue;
+            const n = atomLen(pat[i..]).?;
+            if (!atomMatches(pat[i .. i + n], text[pos], icase)) continue;
+            switch (quantAt(pat, i, n)) {
+                '*' => addState(pat, &next, i),
+                '+' => {
+                    addState(pat, &next, i);
+                    addState(pat, &next, i + n + 1);
+                },
+                '?' => addState(pat, &next, i + n + 1),
+                else => addState(pat, &next, i + n),
+            }
+        }
+        // Unanchored: a new match attempt may start at every position.
+        if (!anchored) addState(pat, &next, 0);
+        cur = next;
     }
-    return false;
 }
 
 // ---------------------------------------------------------------- tests
@@ -802,8 +845,103 @@ test "unit: keys: when-clause nesting is bounded" {
     var aw: std.Io.Writer.Allocating = .init(a);
     defer aw.deinit();
     try aw.writer.writeAll("k0");
-    for (1..2000) |i| try aw.writer.print(" && k{d} || !k{d}", .{ i, i });
+    for (1..200) |i| try aw.writer.print(" && k{d} || !k{d}", .{ i, i });
+    try testing.expect(aw.written().len <= max_clause_len);
     try testing.expect(try ev(aw.written(), &.{}));
+}
+
+test "unit: keys: when-clause length is capped" {
+    const a = testing.allocator;
+    // The longest `a||a||…` chain that fits (the deepest tree a clause can
+    // build) still evaluates; a 40k-term chain used to overflow the stack.
+    const chain = "a" ++ "||a" ** ((max_clause_len - 1) / 3);
+    try testing.expectEqual(@as(usize, max_clause_len), chain.len);
+    try testing.expect(!try ev(chain, &.{}));
+    try testing.expect(try ev(chain, &.{.{ "a", .{ .boolean = true } }}));
+    // One byte over the cap is rejected before anything is allocated.
+    try testing.expectError(error.TooLong, validate(a, chain ++ " "));
+    var d: Diagnostic = .{};
+    try testing.expectError(error.TooLong, parseDiag(a, chain ++ "||a", &d));
+    try testing.expectEqual(@as(usize, max_clause_len), d.offset);
+}
+
+test "unit: keys: when-clause regex cost is linear (no backtracking blowup)" {
+    // Each of these takes exponential time with a backtracking matcher.
+    const as = "a" ** 40;
+    try testing.expect(!regexSearch("a*" ** 40 ++ "b", as, false));
+    try testing.expect(regexSearch("a*" ** 40 ++ "a", as, false));
+    try testing.expect(!regexSearch("^" ++ "a?" ** 40 ++ "a" ** 41 ++ "$", as, false));
+    try testing.expect(regexSearch("^" ++ "a?" ** 40 ++ "a" ** 40 ++ "$", as, false));
+    try testing.expect(!regexSearch(".*" ** 60 ++ "x", "markdown-panel-kind-" ** 10, false));
+    const ctx = [_]MapContext.Pair{.{ "panelKind", .{ .string = as } }};
+    try testing.expect(!try ev("panelKind =~ /" ++ "a*" ** 40 ++ "b/", &ctx));
+    // Patterns longer than max_regex_len are rejected.
+    try testing.expectError(error.InvalidRegex, validate(testing.allocator, "a =~ /" ++ "x" ** (max_regex_len + 1) ++ "/"));
+    try validate(testing.allocator, "a =~ /" ++ "x" ** max_regex_len ++ "/");
+    try testing.expect(!regexValid("x" ** (max_regex_len + 1)));
+    try testing.expect(!regexSearch("x" ** (max_regex_len + 1), "x" ** (max_regex_len + 1), false));
+}
+
+/// Reference backtracking matcher (exponential worst case; tests only).
+fn refMatchHere(pat: []const u8, text: []const u8, icase: bool) bool {
+    if (pat.len == 0) return true;
+    if (pat.len == 1 and pat[0] == '$') return text.len == 0;
+    const n = atomLen(pat).?;
+    const atom = pat[0..n];
+    const q = quantAt(pat, 0, n);
+    if (q == 0) return text.len > 0 and atomMatches(atom, text[0], icase) and refMatchHere(pat[n..], text[1..], icase);
+    const rest = pat[n + 1 ..];
+    const min: usize = if (q == '+') 1 else 0;
+    const cap: usize = if (q == '?') 1 else text.len;
+    var count: usize = 0;
+    while (count < cap and count < text.len and atomMatches(atom, text[count], icase)) count += 1;
+    if (count < min) return false;
+    var k = count + 1;
+    while (k > min) {
+        k -= 1;
+        if (refMatchHere(rest, text[k..], icase)) return true;
+    }
+    return false;
+}
+
+fn refSearch(pat: []const u8, text: []const u8, icase: bool) bool {
+    if (pat.len > 0 and pat[0] == '^') return refMatchHere(pat[1..], text, icase);
+    for (0..text.len + 1) |start| if (refMatchHere(pat, text[start..], icase)) return true;
+    return false;
+}
+
+test "unit: keys: when-clause regex agrees with a backtracking reference" {
+    const atoms = [_][]const u8{ "a", "b", ".", "[ab]", "[^a]", "\\d", "A" };
+    const quants = [_][]const u8{ "", "*", "+", "?" };
+    const texts = [_][]const u8{ "", "a", "b", "1", "ab", "ba", "aa", "a1b", "bab", "aab1", "Abba", "1a1a" };
+    var buf: [64]u8 = undefined;
+    var checked: usize = 0;
+    // Every pattern of up to two quantified atoms, with and without anchors.
+    for (0..3) |len| {
+        const combos = std.math.pow(usize, atoms.len * quants.len, len);
+        for (0..combos) |code| for ([_]bool{ false, true }) |bol| for ([_]bool{ false, true }) |eol| {
+            var w: std.Io.Writer = .fixed(&buf);
+            if (bol) try w.writeAll("^");
+            var c = code;
+            for (0..len) |_| {
+                const item = c % (atoms.len * quants.len);
+                c /= atoms.len * quants.len;
+                try w.writeAll(atoms[item / quants.len]);
+                try w.writeAll(quants[item % quants.len]);
+            }
+            if (eol) try w.writeAll("$");
+            const pat = w.buffered();
+            try testing.expect(regexValid(pat));
+            for (texts) |t| for ([_]bool{ false, true }) |icase| {
+                testing.expectEqual(refSearch(pat, t, icase), regexSearch(pat, t, icase)) catch |err| {
+                    std.log.err("pattern '{s}' text '{s}' icase={}", .{ pat, t, icase });
+                    return err;
+                };
+                checked += 1;
+            };
+        };
+    }
+    try testing.expect(checked > 10_000);
 }
 
 test "unit: keys: mini regex" {
