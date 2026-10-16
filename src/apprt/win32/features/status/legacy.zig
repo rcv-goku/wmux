@@ -7,7 +7,7 @@
 const std = @import("std");
 
 const App = @import("../../App.zig");
-const Window = @import("../../Window.zig");
+const Window = @import("../../ui/Window.zig");
 const ipc = @import("../../rpc/compat/legacy_json.zig");
 const LegacyCommand = @import("../../rpc/compat/legacy_table.zig").LegacyCommand;
 const targets = @import("../../rpc/compat/legacy_targets.zig");

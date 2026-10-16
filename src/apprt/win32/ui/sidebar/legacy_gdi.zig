@@ -10,7 +10,7 @@
 const std = @import("std");
 const w32 = @import("../../platform/win32.zig");
 const Pane = @import("../../model/Pane.zig");
-const Window = @import("../../Window.zig");
+const Window = @import("../Window.zig");
 const testing = std.testing;
 
 const ITEM_HEIGHT_BASE: i32 = 36;

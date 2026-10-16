@@ -5,26 +5,26 @@ const Window = @This();
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const apprt = @import("../../apprt.zig");
-const internal_os = @import("../../os/main.zig");
+const apprt = @import("../../../apprt.zig");
+const internal_os = @import("../../../os/main.zig");
 
-const App = @import("App.zig");
-const AttentionRing = @import("ui/overlays/AttentionRing.zig").AttentionRing;
-const FlashOverlay = @import("ui/overlays/FlashOverlay.zig").FlashOverlay;
-const BrowserPane = @import("web/BrowserPane.zig");
-const PaneButtonsMod = @import("ui/overlays/PaneButtons.zig");
+const App = @import("../App.zig");
+const AttentionRing = @import("overlays/AttentionRing.zig").AttentionRing;
+const FlashOverlay = @import("overlays/FlashOverlay.zig").FlashOverlay;
+const BrowserPane = @import("../web/BrowserPane.zig");
+const PaneButtonsMod = @import("overlays/PaneButtons.zig");
 const PaneButtons = PaneButtonsMod.PaneButtons;
-const Tab = @import("model/Tab.zig");
-const Pane = @import("model/Pane.zig");
-const RightSidebar = @import("ui/right_sidebar/legacy_strip.zig");
-const Sidebar = @import("ui/sidebar/legacy_gdi.zig");
-const Surface = @import("Surface.zig");
-const SessionState = @import("features/session/legacy_v2.zig");
-const WindowState = @import("ui/placement_state.zig");
-const SplitTree = @import("../../datastruct/split_tree.zig").SplitTree;
-const app_foreground = @import("app/foreground.zig");
-const app_paths = @import("app/paths.zig");
-const w32 = @import("platform/win32.zig");
+const Tab = @import("../model/Tab.zig");
+const Pane = @import("../model/Pane.zig");
+const RightSidebar = @import("right_sidebar/legacy_strip.zig");
+const Sidebar = @import("sidebar/legacy_gdi.zig");
+const Surface = @import("../Surface.zig");
+const SessionState = @import("../features/session/legacy_v2.zig");
+const WindowState = @import("placement_state.zig");
+const SplitTree = @import("../../../datastruct/split_tree.zig").SplitTree;
+const app_foreground = @import("../app/foreground.zig");
+const app_paths = @import("../app/paths.zig");
+const w32 = @import("../platform/win32.zig");
 
 /// Maximum bytes of a per-tab status string (set-status). Inline, like
 /// tab titles, so set-status never allocates; over-long text is byte

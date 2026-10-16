@@ -13,7 +13,7 @@ const App = @import("../../App.zig");
 const Tab = @import("../../model/Tab.zig");
 const Pane = @import("../../model/Pane.zig");
 const Surface = @import("../../Surface.zig");
-const Window = @import("../../Window.zig");
+const Window = @import("../../ui/Window.zig");
 const w32 = @import("../../platform/win32.zig");
 const ipc = @import("legacy_json.zig");
 

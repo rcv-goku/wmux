@@ -17,7 +17,7 @@ const Allocator = std.mem.Allocator;
 
 const App = @import("../App.zig");
 const Tab = @import("../model/Tab.zig");
-const Window = @import("../Window.zig");
+const Window = @import("../ui/Window.zig");
 const w32 = @import("../platform/win32.zig");
 const wv2 = @import("../platform/webview2.zig");
 

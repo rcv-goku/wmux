@@ -14,7 +14,7 @@ const internal_os = @import("../../os/main.zig");
 
 const App = @import("App.zig");
 const Tab = @import("model/Tab.zig");
-const Window = @import("Window.zig");
+const Window = @import("ui/Window.zig");
 const app_foreground = @import("app/foreground.zig");
 const app_modal = @import("app/modal.zig");
 const w32 = @import("platform/win32.zig");

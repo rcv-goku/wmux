@@ -10,7 +10,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const Tab = @import("Tab.zig");
-const Window = @import("../Window.zig");
+const Window = @import("../ui/Window.zig");
 const log_ring = @import("../features/status/log_ring.zig");
 const w32 = @import("../platform/win32.zig");
 

@@ -13,7 +13,7 @@ const input = @import("../../input.zig");
 const agent_session = @import("features/agents/legacy_store.zig");
 const BrowserPane = @import("web/BrowserPane.zig");
 const Surface = @import("Surface.zig");
-const Window = @import("Window.zig");
+const Window = @import("ui/Window.zig");
 
 // app/ plumbing (ARCHITECTURE.md ADR-1.6).
 const app_clipboard = @import("app/clipboard.zig");

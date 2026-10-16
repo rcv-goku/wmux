@@ -16,7 +16,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const App = @import("../../App.zig");
-const Window = @import("../../Window.zig");
+const Window = @import("../../ui/Window.zig");
 const tasks = @import("../../app/tasks.zig");
 const ws_meta = @import("probes.zig");
 

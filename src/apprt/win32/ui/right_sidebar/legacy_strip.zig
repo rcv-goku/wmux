@@ -14,7 +14,7 @@
 
 const std = @import("std");
 const w32 = @import("../../platform/win32.zig");
-const Window = @import("../../Window.zig");
+const Window = @import("../Window.zig");
 const log_ring = @import("../../features/status/log_ring.zig");
 
 /// Unscaled layout constants.
