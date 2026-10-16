@@ -249,26 +249,28 @@ function subtreeUsage(node) {
  * helper children are counted in its row), with usage over its subtree.
  */
 export function codingAgents(top) {
-  const rows = [];
-  if (!top) return rows;
-  const counted = new Set();
+  if (!top) return [];
+  const byPid = new Map();
   walk(top.windows, (n, parents) => {
-    if (n.kind !== "process" || !n.agent || n.pid === null || counted.has(n.pid)) return;
+    if (n.kind !== "process" || !n.agent || n.pid === null) return;
     if (parents.some((p) => p.kind === "process" && p.agent)) return;
-    counted.add(n.pid);
-    const usage = subtreeUsage(n);
-    rows.push({
-      kind: "agent",
-      key: `agent:${n.pid}`,
-      title: n.agent,
-      detail: workspaceTitle(parents),
-      pid: n.pid,
-      pids: subtreePids(n),
-      owner: { ...n.owner },
-      ...usage,
-    });
+    // One agent can be listed under its status tag (walked first) and under
+    // the terminal running it; keep the copy that knows its surface, so the
+    // row can jump to that terminal.
+    const prev = byPid.get(n.pid);
+    if (prev && (prev.node.owner.surface_id || !n.owner.surface_id)) return;
+    byPid.set(n.pid, { node: n, parents });
   });
-  return rows;
+  return Array.from(byPid.values(), ({ node: n, parents }) => ({
+    kind: "agent",
+    key: `agent:${n.pid}`,
+    title: n.agent,
+    detail: workspaceTitle(parents),
+    pid: n.pid,
+    pids: subtreePids(n),
+    owner: { ...n.owner },
+    ...subtreeUsage(n),
+  }));
 }
 
 /** Program Totals rows: unique processes grouped by executable name. */

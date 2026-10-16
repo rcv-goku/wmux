@@ -34,7 +34,9 @@ enforces Trusted Types.
 - **Coding Agents**: the outermost process of each known agent (Claude Code,
   Codex, OpenCode, Gemini CLI by executable name, or any process native marks
   with `agent`). CPU, memory and process count cover the agent and its
-  descendants (unique PIDs). Detail: owning workspace and PID.
+  descendants (unique PIDs). Detail: owning workspace and PID. An agent
+  listed both under a status tag and under its terminal takes the
+  terminal's owner, so its row jumps to that terminal.
 - **Program Totals**: unique PIDs grouped by executable name
   (case-insensitive, `.exe` stripped).
 - **Child Process RSS**: the `system.memory` command groups with their

@@ -110,6 +110,33 @@ describe("unit: task manager model", () => {
     assert.equal(agents[0].owner.surface_id, IDS.surfTerm);
   });
 
+  test("unit: task-manager: an agent listed under its status tag still jumps to its terminal", () => {
+    // `tag <key> "value" pid=N` with --processes repeats the agent's process
+    // tree under the tag, which is walked before the panes.
+    const reply = topReply();
+    const term = reply.windows[0].workspaces[0].panes[0].surfaces[0];
+    const claude = term.processes[0].children[0];
+    reply.windows[0].workspaces[0].tags.push({
+      key: "claude_code",
+      value: "Running",
+      pid: 200,
+      processes: [structuredClone(claude)],
+    });
+    const agents = m.codingAgents(m.normalizeTop(reply));
+    assert.equal(agents.length, 1, "one row per agent PID");
+    assert.equal(agents[0].pid, 200);
+    assert.equal(agents[0].owner.surface_id, IDS.surfTerm, "the terminal copy wins over the tag copy");
+    assert.equal(agents[0].owner.workspace_id, IDS.wsApi);
+    assert.deepEqual(agents[0].pids, [200, 300, 301]);
+    assert.equal(agents[0].proc, 3);
+    // Listed only under a tag (no terminal copy), the agent keeps the tag's owner.
+    term.processes = [];
+    const tagOnly = m.codingAgents(m.normalizeTop(reply));
+    assert.equal(tagOnly.length, 1);
+    assert.equal(tagOnly[0].owner.surface_id, undefined);
+    assert.equal(tagOnly[0].owner.workspace_id, IDS.wsApi);
+  });
+
   test("unit: task-manager: row keys stay unique when PIDs repeat", () => {
     const reply = topReply();
     // Process 501 under its status tag and in a terminal; two browser surfaces
