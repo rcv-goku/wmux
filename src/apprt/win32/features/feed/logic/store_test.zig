@@ -257,7 +257,8 @@ test "unit: feed: compaction keeps one line per item, newest first kept" {
     try appendLine(&file, items[4]);
     try file.appendSlice(gpa, "junk\n");
 
-    const out = try store.compactJsonl(gpa, file.items, 3);
+    const unbounded = std.math.maxInt(u64);
+    const out = try store.compactJsonl(gpa, file.items, 3, unbounded);
     defer gpa.free(out);
     try testing.expectEqual(@as(usize, 3), std.mem.count(u8, out, "\n"));
     var s = store.Store.init(gpa, 100);
@@ -267,12 +268,59 @@ test "unit: feed: compaction keeps one line per item, newest first kept" {
     try testing.expect(s.items()[0].id.eql(idN(3)));
     try testing.expectEqual(model.Status.resolved, s.items()[2].status);
     // Compacting again is a fixed point.
-    const again = try store.compactJsonl(gpa, out, 3);
+    const again = try store.compactJsonl(gpa, out, 3, unbounded);
     defer gpa.free(again);
     try testing.expectEqualStrings(out, again);
-    const none = try store.compactJsonl(gpa, file.items, 0);
+    const none = try store.compactJsonl(gpa, file.items, 0, unbounded);
     defer gpa.free(none);
     try testing.expectEqualStrings("", none);
+}
+
+test "unit: feed: compaction honors the byte budget so it cannot re-trigger" {
+    var file: std.ArrayList(u8) = .empty;
+    defer file.deinit(gpa);
+    var line_len: usize = 0;
+    var body: [3000]u8 = undefined;
+    @memset(&body, 'm');
+    for (1..7) |n| {
+        var json: std.ArrayList(u8) = .empty;
+        defer json.deinit(gpa);
+        try json.appendSlice(gpa, "{\"hook_event_name\":\"Notification\",\"message\":\"");
+        try json.appendSlice(gpa, &body);
+        try json.appendSlice(gpa, "\"}");
+        const it = try mk(@intCast(n), json.items);
+        defer it.destroy();
+        const line = try store.encodeLine(gpa, it);
+        defer gpa.free(line);
+        line_len = line.len;
+        try file.appendSlice(gpa, line);
+    }
+    // Room for three lines (plus slack below a fourth): the newest three stay.
+    const budget: u64 = line_len * 3 + line_len / 2;
+    const out = try store.compactJsonl(gpa, file.items, 100, budget);
+    defer gpa.free(out);
+    try testing.expect(out.len <= budget);
+    try testing.expectEqual(@as(usize, 3), std.mem.count(u8, out, "\n"));
+    var s = store.Store.init(gpa, 100);
+    defer s.deinit();
+    _ = try s.load(out);
+    try testing.expect(s.items()[0].id.eql(idN(4)));
+    try testing.expect(s.items()[2].id.eql(idN(6)));
+    // Exactly three lines' worth also keeps three.
+    const exact = try store.compactJsonl(gpa, file.items, 100, line_len * 3);
+    defer gpa.free(exact);
+    try testing.expectEqual(@as(usize, 3), std.mem.count(u8, exact, "\n"));
+    // A budget below one line keeps nothing.
+    const tiny = try store.compactJsonl(gpa, file.items, 100, line_len - 1);
+    defer gpa.free(tiny);
+    try testing.expectEqualStrings("", tiny);
+    // With the retention budget, a size-triggered compaction ends below the trigger.
+    const r: store.Retention = .{ .max_file_bytes = file.items.len - 1 };
+    try testing.expect(store.needsCompaction(6, file.items.len, r));
+    const compacted = try store.compactJsonl(gpa, file.items, r.file_items, r.compactBytes());
+    defer gpa.free(compacted);
+    try testing.expect(compacted.len > 0);
+    try testing.expect(!store.needsCompaction(std.mem.count(u8, compacted, "\n"), compacted.len, r));
 }
 
 test "unit: feed: compaction policy thresholds" {

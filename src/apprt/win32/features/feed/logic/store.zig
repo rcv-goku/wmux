@@ -27,9 +27,16 @@ pub const Retention = struct {
     slack_lines: usize = 20_000,
     /// ...or grows past this many bytes.
     max_file_bytes: u64 = 64 * 1024 * 1024,
+
+    /// Output budget for `compactJsonl`: half of `max_file_bytes`, so a
+    /// compacted file never re-triggers `needsCompaction` on size.
+    pub fn compactBytes(r: Retention) u64 {
+        return r.max_file_bytes / 2;
+    }
 };
 
-/// True when the appended file should be rewritten by `compactJsonl`.
+/// True when the appended file should be rewritten by
+/// `compactJsonl(gpa, bytes, r.file_items, r.compactBytes())`.
 pub fn needsCompaction(line_count: usize, file_bytes: u64, r: Retention) bool {
     return line_count > r.file_items + r.slack_lines or file_bytes > r.max_file_bytes;
 }
@@ -403,14 +410,29 @@ pub fn collapse(gpa: Allocator, bytes: []const u8) Allocator.Error!Collapsed {
 }
 
 /// Rewrites JSONL as one line per item (latest state), keeping the newest
-/// `keep` items. Malformed lines are dropped. Returns heap-owned bytes.
-pub fn compactJsonl(gpa: Allocator, bytes: []const u8, keep: usize) Allocator.Error![]u8 {
+/// items: at most `keep` of them in at most `max_bytes` of output (a
+/// contiguous newest run; an item whose line does not fit ends it). Pass
+/// `Retention.compactBytes()` so the result cannot re-trigger compaction on
+/// size. Malformed lines are dropped. Returns heap-owned bytes.
+pub fn compactJsonl(gpa: Allocator, bytes: []const u8, keep: usize, max_bytes: u64) Allocator.Error![]u8 {
     var c = try collapse(gpa, bytes);
     defer c.deinit(gpa);
-    const start = c.items.items.len -| keep;
+    const all = c.items.items;
+    var start = all.len;
+    var total: u64 = 0;
+    var scratch: [256]u8 = undefined;
+    while (start > 0 and all.len - start < keep) {
+        var counter: std.Io.Writer.Discarding = .init(&scratch);
+        // A discarding writer never fails.
+        writeItemJson(&counter.writer, all[start - 1]) catch unreachable;
+        const line_bytes = counter.fullCount() + 1;
+        if (line_bytes > max_bytes - total) break;
+        total += line_bytes;
+        start -= 1;
+    }
     var aw: std.Io.Writer.Allocating = .init(gpa);
     defer aw.deinit();
-    for (c.items.items[start..]) |it| {
+    for (all[start..]) |it| {
         writeItemJson(&aw.writer, it) catch return error.OutOfMemory;
         aw.writer.writeByte('\n') catch return error.OutOfMemory;
     }
