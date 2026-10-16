@@ -34,7 +34,9 @@ event bus and moved the legacy per-tab state into feature ext state.
   afterwards.
 - `events.zig`: the event bus (ADR-3.10). `emit` runs every feature's
   `onEvent` after the mutation. Lifecycle events come only from
-  `ops/*`, through `ops/lifecycle_events.zig`.
+  `ops/*`, through `ops/lifecycle_events.zig`. A family event
+  (`agent.hook.*`) carries its suffix in `Event.name_suffix`
+  (`Event.ofFamily`; CCR W0-A3-2).
 - `ops/*.zig`: the mutators. Core tab operations take explicit targets
   (`surface.insert`, the one way a tab enters a pane; `remove`,
   `moveInPane`, `selectInPane`, `closeTabAt`); the "focused pane" entry
