@@ -1,0 +1,20 @@
+Usage: cmux paste [--surface <id|ref|index>] [--submit] [--force] [<text>|-]
+
+Paste text into a terminal surface through the same path as the paste
+shortcut. The text is sent unchanged: the terminal brackets it when the
+program enabled bracketed paste (otherwise each newline is Enter) and turns
+unsafe control bytes into spaces. With no text, or with - before --, the
+text is read from stdin (once, before connecting). Text over 15 MiB is
+rejected.
+
+Options:
+  --surface <id|ref|index>      Target surface (default: $CMUX_SURFACE_ID)
+  --workspace <id|ref|index>    Workspace context (default: $CMUX_WORKSPACE_ID)
+  --window <id|ref|index>       Window context for refs and indexes
+  --submit                      Press the agent-aware submit key afterwards
+  --force                       Skip the draft guard
+  --json                        Print the full response
+
+Examples:
+  git diff | cmux paste --surface surface:2
+  cmux paste --submit "Review this"

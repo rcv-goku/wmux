@@ -1,0 +1,14 @@
+Usage: cmux send-panel [--panel <id|ref|index>] [--force] <text>
+
+Type text into a terminal panel (legacy form of send with a required
+--panel). Same escapes, draft guard and --force as send.
+
+Options:
+  --panel <id|ref|index>        Target surface (required)
+  --workspace <id|ref|index>    Workspace context (default: $CMUX_WORKSPACE_ID)
+  --window <id|ref|index>       Window context for refs and indexes
+  --force                       Skip the draft guard
+  --json                        Print the full response
+
+Example:
+  cmux send-panel --panel surface:2 "echo hello\n"

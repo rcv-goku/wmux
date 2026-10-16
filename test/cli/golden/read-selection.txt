@@ -1,0 +1,4 @@
+Kind: filepreview
+File: C:\src\Answer.swift
+Lines: 7-7
+let answer = 42

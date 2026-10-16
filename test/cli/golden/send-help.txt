@@ -1,0 +1,26 @@
+Usage: cmux send [--surface <id|ref|index>] [--paste] [--force] [--] <text>
+
+Type text into a terminal surface as keystrokes. Escapes are interpreted:
+\n and \r press Enter, \t presses Tab, \\ is a backslash. Options must come
+before the text; everything from the first word on is the text.
+
+Options:
+  --surface <id|ref|index>      Target surface (default: $CMUX_SURFACE_ID, else
+                                the focused surface)
+  --workspace <id|ref|index>    Workspace context (default: $CMUX_WORKSPACE_ID)
+  --window <id|ref|index>       Window context for refs and indexes
+  --paste                       Deliver the text unchanged through the paste
+                                path (like cmux paste); escapes are not
+                                interpreted
+  --force                       Skip the draft guard
+  --json                        Print the full response
+
+Large or multi-line text sent without --paste prints a hint on stderr.
+The command refuses to type over an agent's unsent prompt draft or into an
+open agent dialog unless --force comes before the text; text that only
+presses Enter is refused only for a dialog.
+
+Examples:
+  cmux send 'echo hi\n'
+  cmux send --surface surface:2 ls
+  cmux send -- '--not-a-flag'

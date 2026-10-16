@@ -392,7 +392,8 @@ test "unit: cli-probes: help after double dash is forwarded, not intercepted" {
     const r = h.run(&.{ "cmux", "send", "--", "--help" });
     try testing.expect(!contains(r.out, "Usage:"));
     try testing.expectEqual(@as(u8, 1), r.code);
-    try expectContains(r.err, "'send' is not available in this build of wmux yet");
+    // `send` treats the forwarded `--help` as its text; no app is running.
+    try expectContains(r.err, "No live wmux socket found. Tried:");
     // rpc treats a forwarded --help as its params.
     const rpc = h.run(&.{ "cmux", "rpc", "system.ping", "--", "--help" });
     try testing.expect(!contains(rpc.out, "Usage:"));
@@ -739,9 +740,9 @@ test "unit: cli-dispatch: legacy +send reaches send with its text intact" {
     defer h.deinit();
     h.setEnv("CMUX_QUIET", "1");
     const r = h.run(&.{ "cmux", "+send", "--version", "--enter" });
-    // `send` is not implemented yet; the text was not taken as a version flag.
+    // The text was not taken as a version flag: `send` tries to reach the app.
     try testing.expect(!contains(r.out, "cmux 1.2.3"));
-    try expectContains(r.err, "'send' is not available");
+    try expectContains(r.err, "No live wmux socket found. Tried:");
 }
 
 test "unit: cli-dispatch: Ghostty-native actions relay to wmux.exe without WMUX_ARGV0" {

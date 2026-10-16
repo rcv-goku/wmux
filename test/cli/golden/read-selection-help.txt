@@ -1,0 +1,12 @@
+Usage: cmux read-selection [--surface <id|ref|index>] [--json]
+
+Print the active selection of a terminal, file preview, Markdown or browser
+surface: the available context lines (Kind:, File:, Lines:, URL:) and then
+the selected text. With no selection it prints "Has selection: false" and
+exits 0.
+
+Options:
+  --surface <id|ref|index>      Surface to read (default: $CMUX_SURFACE_ID)
+  --workspace <id|ref|index>    Workspace context (default: $CMUX_WORKSPACE_ID)
+  --window <id|ref|index>       Window context for refs and indexes
+  --json                        Print the full response
