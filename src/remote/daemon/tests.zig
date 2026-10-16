@@ -505,6 +505,18 @@ test "unit: remote-daemon: a closing client that takes nothing is dropped after 
     try testing.expectError(error.EndOfStream, c.nextReply(timeout));
 }
 
+test "unit: remote-daemon: pipelined replies that arrive in one read are all kept" {
+    const h = try StdioHarness.start(testing.allocator, homeCfg("/tmp"));
+    defer h.stop();
+    const c = &h.client;
+    _ = try c.hello(false, timeout);
+    try c.writeAll("{\"id\":11,\"method\":\"ping\"}\n{\"id\":12,\"method\":\"ping\"}\n{\"id\":13,\"method\":\"pty.list\"}\n");
+    var id: i64 = 11;
+    while (id <= 13) : (id += 1) try testing.expectEqual(id, (try c.nextReply(timeout)).id.?.int);
+    // `request` still pairs a reply with its request afterwards.
+    try testing.expect((try c.request(.ping, .{}, timeout)).ok);
+}
+
 /// One server thread with two pipe-pair clients (`serve --stdio` loop).
 const PairHarness = struct {
     srv: Server,

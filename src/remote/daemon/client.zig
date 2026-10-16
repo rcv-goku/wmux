@@ -33,7 +33,8 @@ pub const Client = struct {
     events: std.ArrayList(Event) = .empty,
     /// PTY output per channel (binary frames and decoded pty.data events).
     data: std.AutoArrayHashMapUnmanaged(u32, std.ArrayList(u8)) = .empty,
-    reply: ?Reply = null,
+    /// Replies not taken yet, oldest first (one read can carry several).
+    replies: std.ArrayList(Reply) = .empty,
     eof: bool = false,
 
     pub fn init(gpa: Allocator, rfd: posix.fd_t, wfd: posix.fd_t, owns_fds: bool) Client {
@@ -47,6 +48,7 @@ pub const Client = struct {
         }
         self.dec.deinit(self.gpa);
         self.events.deinit(self.gpa);
+        self.replies.deinit(self.gpa);
         for (self.data.values()) |*v| v.deinit(self.gpa);
         self.data.deinit(self.gpa);
         self.arena.deinit();
@@ -68,8 +70,8 @@ pub const Client = struct {
         try self.writeAll(aw.written());
         const deadline = std.time.milliTimestamp() + timeout_ms;
         while (true) {
-            if (self.reply) |r| {
-                self.reply = null;
+            if (self.replies.items.len > 0) {
+                const r = self.replies.orderedRemove(0);
                 if (r.id == null or r.id.? != .int or r.id.?.int != id) {
                     // Errors for unparseable requests carry a null id.
                     if (r.id == null and !r.ok) return r;
@@ -84,9 +86,8 @@ pub const Client = struct {
     /// Waits for the next reply of any id (after a raw `writeAll`).
     pub fn nextReply(self: *Client, timeout_ms: i64) Error!Reply {
         const deadline = std.time.milliTimestamp() + timeout_ms;
-        while (self.reply == null) try self.pump(deadline);
-        defer self.reply = null;
-        return self.reply.?;
+        while (self.replies.items.len == 0) try self.pump(deadline);
+        return self.replies.orderedRemove(0);
     }
 
     /// `hello` with protocol version 1; `binary` asks for binary frames.
@@ -162,7 +163,7 @@ pub const Client = struct {
             else => return error.ProtocolError,
         };
         switch (in) {
-            .reply => |r| self.reply = r,
+            .reply => |r| try self.replies.append(self.gpa, r),
             .event => |e| {
                 if (std.mem.eql(u8, e.name, msgs.event_pty_data)) {
                     const p = std.json.parseFromValueLeaky(msgs.PtyDataEvent, a, e.params, .{ .ignore_unknown_fields = true }) catch return error.ProtocolError;
