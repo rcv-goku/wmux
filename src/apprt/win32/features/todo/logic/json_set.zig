@@ -37,12 +37,11 @@ pub const Diagnostic = struct {
     index: ?usize = null,
 };
 
-/// Validates `json` and atomically replaces `list`'s items. On error `list`
-/// is unchanged and `diag.index` names the offending element if any.
+/// Validates the `json` text (inline argument or stdin) and atomically
+/// replaces `list`'s items. On error `list` is unchanged and `diag.index`
+/// names the offending element if any.
 pub fn replace(gpa: Allocator, list: *Checklist, json: []const u8, diag: ?*Diagnostic) Error!void {
-    var scratch: Diagnostic = .{};
-    const d = diag orelse &scratch;
-    d.* = .{};
+    if (diag) |d| d.* = .{};
     if (json.len > max_input_bytes) return error.InputTooLarge;
 
     var parsed = std.json.parseFromSlice(std.json.Value, gpa, json, .{}) catch |err| switch (err) {
@@ -50,8 +49,22 @@ pub fn replace(gpa: Allocator, list: *Checklist, json: []const u8, diag: ?*Diagn
         else => return error.InvalidJson,
     };
     defer parsed.deinit();
+    return replaceValue(gpa, list, parsed.value, diag);
+}
 
-    const elems: []const std.json.Value = switch (parsed.value) {
+/// `replace` for an already-parsed payload: an array, or an object whose
+/// `items` member is one (other members are ignored). RPC params arrive
+/// parsed (`wmux_proto.envelope` hands handlers an ObjectMap), so a
+/// `workspace.todo.set` handler passes `.{ .object = params }` here rather
+/// than re-encoding them and parsing again on the UI thread. Session
+/// restore can rebuild a checklist the same way. Nothing in `payload` is
+/// retained: every string is copied.
+pub fn replaceValue(gpa: Allocator, list: *Checklist, payload: std.json.Value, diag: ?*Diagnostic) Error!void {
+    var scratch: Diagnostic = .{};
+    const d = diag orelse &scratch;
+    d.* = .{};
+
+    const elems: []const std.json.Value = switch (payload) {
         .array => |a| a.items,
         .object => |o| blk: {
             const v = o.get("items") orelse return error.ExpectedArray;
@@ -227,6 +240,46 @@ test "unit: todo: set with matching ids keeps identity and origin" {
     try replace(gpa, &c, json, null);
     try testing.expect(c.items.items[0].id.eql(testId(2)));
     try testing.expect(c.items.items[1].id.eql(testId(1)));
+}
+
+test "unit: todo: set takes already-parsed rpc params and copies their strings" {
+    const gpa = testing.allocator;
+    var c: Checklist = .{};
+    defer c.deinit(gpa);
+    _ = try c.add(gpa, "old", .{ .id = testId(1), .origin = .agent });
+    _ = try c.add(gpa, "gone", .{ .id = testId(2) });
+    const id1 = testId(1).toText();
+    const params_json = try std.fmt.allocPrint(gpa,
+        \\{{"workspace_id":"workspace:2","items":[{{"id":"{s}","text":" kept ","state":"completed"}},{{"text":"new","origin":"agent"}}]}}
+    , .{&id1});
+    defer gpa.free(params_json);
+    {
+        const params = try std.json.parseFromSlice(std.json.Value, gpa, params_json, .{});
+        defer params.deinit();
+        try replaceValue(gpa, &c, .{ .object = params.value.object }, null);
+    }
+    // The parsed tree is gone; the checklist owns copies.
+    try testing.expectEqual(@as(usize, 2), c.len());
+    const items = c.items.items;
+    try testing.expect(items[0].id.eql(testId(1)));
+    try testing.expectEqualStrings("kept", items[0].text);
+    try testing.expectEqual(checklist.State.completed, items[0].state);
+    try testing.expectEqual(checklist.Origin.agent, items[0].origin);
+    try testing.expectEqualStrings("new", items[1].text);
+    try testing.expectEqual(checklist.Origin.agent, items[1].origin);
+    try testing.expect(c.indexOfId(testId(2)) == null);
+
+    // Same validation as the text form, and nothing mutated on failure.
+    var d: Diagnostic = .{ .index = 7 };
+    try testing.expectError(error.ExpectedArray, replaceValue(gpa, &c, .null, &d));
+    try testing.expectEqual(@as(?usize, null), d.index);
+    try testing.expectError(error.ExpectedArray, replaceValue(gpa, &c, .{ .string = "[]" }, &d));
+    const bad = try std.json.parseFromSlice(std.json.Value, gpa, "[{\"text\":\"ok\"},{\"text\":\" \"}]", .{});
+    defer bad.deinit();
+    try testing.expectError(error.EmptyText, replaceValue(gpa, &c, bad.value, &d));
+    try testing.expectEqual(@as(?usize, 1), d.index);
+    try testing.expectEqual(@as(usize, 2), c.len());
+    try testing.expectEqualStrings("kept", c.items.items[0].text);
 }
 
 test "unit: todo: set accepts the list's own json payload unchanged" {
