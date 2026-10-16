@@ -226,7 +226,10 @@ pub const Checklist = struct {
     pub const AddOptions = struct {
         state: State = .pending,
         origin: Origin = .user,
-        /// Identity to adopt (session restore, `set`); a fresh v4 otherwise.
+        /// Identity to adopt (session restore); a fresh v4 otherwise. An id
+        /// that another item already has is replaced by a fresh v4, as
+        /// ADR-2.7 does for colliding handles: duplicate ids would make the
+        /// list's own JSON fail `todo set` with DuplicateId.
         id: ?Uuid = null,
     };
 
@@ -237,12 +240,20 @@ pub const Checklist = struct {
         const text = try normalizeText(gpa, raw_text);
         errdefer gpa.free(text);
         try self.items.append(gpa, .{
-            .id = opts.id orelse Uuid.v4(),
+            .id = self.unusedId(opts.id),
             .text = text,
             .state = opts.state,
             .origin = opts.origin,
         });
         return self.items.items.len - 1;
+    }
+
+    /// `want` when no item has it yet, otherwise (or when null) a fresh v4.
+    fn unusedId(self: *const Checklist, want: ?Uuid) Uuid {
+        if (want) |id| {
+            if (self.indexOfId(id) == null) return id;
+        }
+        return Uuid.v4();
     }
 
     /// check / uncheck / start.
@@ -481,6 +492,27 @@ test "unit: todo: add rejects empty text without mutating" {
     const idx = try c.add(gpa, "x", .{ .state = .in_progress, .origin = .agent, .id = testId(1) });
     try testing.expectEqual(@as(usize, 0), idx);
     try testing.expect(c.items.items[0].id.eql(testId(1)));
+}
+
+test "unit: todo: add never adopts an id another item already has" {
+    const gpa = testing.allocator;
+    var c: Checklist = .{};
+    defer c.deinit(gpa);
+    _ = try c.add(gpa, "a", .{ .id = testId(1) });
+    // A corrupted or hand-edited session snapshot can repeat an id.
+    _ = try c.add(gpa, "b", .{ .id = testId(1), .origin = .agent });
+    try testing.expect(c.items.items[0].id.eql(testId(1)));
+    const second = c.items.items[1];
+    try testing.expect(!second.id.eql(testId(1)));
+    try testing.expectEqual(@as(u4, 4), second.id.version());
+    try testing.expectEqualStrings("b", second.text);
+    try testing.expectEqual(Origin.agent, second.origin);
+    // Both stay addressable by their own id.
+    const second_text = second.id.toText();
+    try testing.expectEqual(@as(usize, 1), try c.resolve(&second_text));
+    // An unused id is still adopted as given.
+    _ = try c.add(gpa, "c", .{ .id = testId(2) });
+    try testing.expect(c.items.items[2].id.eql(testId(2)));
 }
 
 test "unit: todo: list text formats boxes, agent suffix, progress and empty" {

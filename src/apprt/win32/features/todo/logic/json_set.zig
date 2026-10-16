@@ -229,6 +229,23 @@ test "unit: todo: set with matching ids keeps identity and origin" {
     try testing.expect(c.items.items[1].id.eql(testId(1)));
 }
 
+test "unit: todo: set accepts the list's own json payload unchanged" {
+    const gpa = testing.allocator;
+    var c: Checklist = .{};
+    defer c.deinit(gpa);
+    _ = try c.add(gpa, "a", .{ .id = testId(1), .origin = .agent, .state = .in_progress });
+    // A restored snapshot that repeats an id must not break the round trip.
+    _ = try c.add(gpa, "b", .{ .id = testId(1) });
+    _ = try c.add(gpa, "c", .{ .state = .completed });
+    // `cmux todo list --json | cmux todo set`
+    const before = try std.json.Stringify.valueAlloc(gpa, &c, .{});
+    defer gpa.free(before);
+    try replace(gpa, &c, before, null);
+    const after = try std.json.Stringify.valueAlloc(gpa, &c, .{});
+    defer gpa.free(after);
+    try testing.expectEqualStrings(before, after);
+}
+
 test "unit: todo: set adopts an unknown valid id and accepts lowercase ids" {
     const gpa = testing.allocator;
     var c: Checklist = .{};
