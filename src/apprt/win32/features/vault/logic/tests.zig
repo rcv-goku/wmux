@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const testing = std.testing;
+const proto = @import("wmux_proto");
 const index = @import("index.zig");
 const query = @import("query.zig");
 const checkpoints = @import("checkpoints.zig");
@@ -856,6 +857,33 @@ test "unit: vault: fork error cases" {
     try testing.expectError(error.NothingBeforeCheckpoint, checkpoints.fork(gpa, "claude", "", &zero, .{ .new_session_id = new_id }));
     try testing.expectEqualStrings("Fork from checkpoint isn't available for this agent yet", checkpoints.errorMessage(error.ForkUnsupported));
     try testing.expect(checkpoints.forkSupported("grok") and !checkpoints.forkSupported("amp"));
+}
+
+test "unit: vault: fork session ids must be canonical lowercase UUIDs" {
+    const gpa = testing.allocator;
+    var tl = try checkpoints.timeline(gpa, .claude_code, claude_fixture, &.{});
+    defer tl.deinit(gpa);
+    const t1 = tl.findTurn(1).?;
+    // Braces, uppercase (proto Uuid text) and a dash-less form parse as UUIDs
+    // elsewhere but would give the fork a file name and resume id the agent
+    // never writes.
+    for ([_][]const u8{
+        "{aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee}",
+        "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE",
+        "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeeE",
+        "aaaaaaaabbbb4ccc8dddeeeeeeeeeeee",
+        "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee ",
+    }) |bad| {
+        try testing.expect(!checkpoints.validNewSessionId(bad));
+        try testing.expectError(error.InvalidSessionId, checkpoints.fork(gpa, "claude", claude_fixture, t1, .{ .new_session_id = bad }));
+    }
+    const u = proto.uuid.Uuid.fromRandomBytes(.{ 0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67, 0x89 });
+    const text = checkpoints.sessionIdText(u);
+    try testing.expectEqualStrings("abcdef01-2345-4789-abcd-ef0123456789", &text);
+    try testing.expect(checkpoints.validNewSessionId(&text));
+    const out = try checkpoints.fork(gpa, "claude", claude_fixture, t1, .{ .new_session_id = &text });
+    defer gpa.free(out);
+    try testing.expect(std.mem.indexOf(u8, out, "\"sessionId\":\"abcdef01-2345-4789-abcd-ef0123456789\"") != null);
 }
 
 /// A Claude assistant record (no newline) whose nesting depth, counting the

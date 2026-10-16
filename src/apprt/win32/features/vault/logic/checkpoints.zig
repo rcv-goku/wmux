@@ -537,10 +537,28 @@ pub fn errorMessage(err: anyerror) []const u8 {
 }
 
 pub const ForkOptions = struct {
-    /// New native session id (a UUID; Claude/Codex/Pi/Grok all use UUIDs).
+    /// New native session id: a canonical lowercase UUID, the form Claude
+    /// Code, Codex, Pi and Grok write (see `validNewSessionId`). Build it
+    /// with `sessionIdText`; `proto.uuid.Uuid` text alone is uppercase.
     new_session_id: []const u8,
     max_bytes: u64 = default_max_transcript_bytes,
 };
+
+/// True for a canonical lowercase `8-4-4-4-12` UUID. Braces and uppercase
+/// are rejected so the forked transcript, its file name and the agent's
+/// resume command all carry the one spelling the agent itself would write.
+pub fn validNewSessionId(id: []const u8) bool {
+    if (id.len != proto.uuid.Uuid.text_len or !proto.uuid.Uuid.isUuidText(id)) return false;
+    for (id) |c| if (std.ascii.isUpper(c)) return false;
+    return true;
+}
+
+/// Lowercase canonical text of `u`, ready for `ForkOptions.new_session_id`.
+pub fn sessionIdText(u: proto.uuid.Uuid) [proto.uuid.Uuid.text_len]u8 {
+    var text = u.toText();
+    for (&text) |*c| c.* = std.ascii.toLower(c.*);
+    return text;
+}
 
 /// Writes the forked transcript: the checkpoint's prefix with every session
 /// id field rewritten to `new_session_id`. Lines without a session id are
@@ -548,7 +566,7 @@ pub const ForkOptions = struct {
 pub fn fork(gpa: Allocator, agent: []const u8, transcript: []const u8, cp: *const Checkpoint, opts: ForkOptions) ForkError![]u8 {
     if (!forkSupported(agent)) return error.ForkUnsupported;
     if (transcript.len > opts.max_bytes) return error.TranscriptTooLarge;
-    if (!proto.uuid.Uuid.isUuidText(opts.new_session_id)) return error.InvalidSessionId;
+    if (!validNewSessionId(opts.new_session_id)) return error.InvalidSessionId;
     if (cp.byte_offset > transcript.len) return error.CheckpointMismatch;
     const end: usize = @intCast(cp.byte_offset);
     const prefix = transcript[0..end];
