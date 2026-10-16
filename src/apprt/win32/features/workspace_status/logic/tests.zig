@@ -2,4 +2,6 @@
 //! here and name tests "unit: workspace_status: <behavior>". Logic files use only std,
 //! wmux_proto and sibling logic files; they run in `zig build test-fast`.
 
-test {}
+test {
+    _ = @import("lanes.zig");
+}
