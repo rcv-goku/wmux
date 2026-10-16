@@ -593,17 +593,11 @@ pub fn sectionFor(modified_ms: i64, now_ms: i64, tz_offset_min: i32) Section {
 // ---------------------------------------------------------------------------
 // Paths
 
-fn isSep(c: u8) bool {
-    return c == '/' or c == '\\';
-}
-
-/// Last component of a `/` or `\` path, ignoring trailing separators.
+/// Last component of a `/` or `\` path, ignoring trailing separators. The
+/// Windows style accepts both separators, which suits transcripts written by
+/// Windows and POSIX agents alike.
 pub fn basename(path: []const u8) []const u8 {
-    var end = path.len;
-    while (end > 0 and isSep(path[end - 1])) end -= 1;
-    var start = end;
-    while (start > 0 and !isSep(path[start - 1])) start -= 1;
-    return path[start..end];
+    return proto.paths.basename(.windows, path);
 }
 
 /// File name without its final extension (`abc.jsonl` -> `abc`).
