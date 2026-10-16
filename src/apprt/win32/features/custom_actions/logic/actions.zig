@@ -442,13 +442,19 @@ fn shortcutErrorText(e: strokes.ParseError) []const u8 {
     };
 }
 
-/// "cmd+shift+t", "cmd+k cmd+c" or ["cmd+k", "cmd+c"].
+/// "cmd+shift+t", "cmd+k cmd+c" or ["cmd+k", "cmd+c"]. The settings unbind
+/// values (null, "", "none", "clear", "unbound", "disabled"; ADR-8.3) mean
+/// no shortcut. The trigger keeps the file's dialect: a cmux.json (mac)
+/// trigger still needs `strokes.translateMacTrigger` before matching.
 pub fn parseShortcut(v: *const jsonc.Node, dialect: strokes.Dialect, path: []const u8, diags: *Diagnostics) Allocator.Error!?strokes.Trigger {
     switch (v.data) {
         .null => return null,
-        .string => |s| return strokes.Trigger.parse(s, dialect) catch |e| {
-            try diags.add(.err, path, "invalid shortcut '{s}': {s}", .{ s, shortcutErrorText(e) });
-            return null;
+        .string => |s| {
+            if (strokes.isUnbindValue(s)) return null;
+            return strokes.Trigger.parse(s, dialect) catch |e| {
+                try diags.add(.err, path, "invalid shortcut '{s}': {s}", .{ s, shortcutErrorText(e) });
+                return null;
+            };
         },
         .array => |items| {
             if (items.len == 0 or items.len > 2) {
@@ -481,7 +487,8 @@ pub fn parseShortcut(v: *const jsonc.Node, dialect: strokes.Dialect, path: []con
     }
 }
 
-/// Lowercase extension of an image icon path, or null without one.
+/// Extension of an image icon path as written (no dot, case kept), or null
+/// without one.
 pub fn imageExtension(path: []const u8) ?[]const u8 {
     const base_start = if (std.mem.lastIndexOfAny(u8, path, "/\\")) |i| i + 1 else 0;
     const base = path[base_start..];
@@ -1742,6 +1749,18 @@ test "unit: custom_actions: shortcuts accept single strokes and chords" {
     var d: Diagnostics = .init(t.a());
     _ = try parseConfigText(t.a(), "{\"actions\":{\"a\":{\"command\":\"x\",\"shortcut\":\"cmd+t\"}}}", .{ .source = .global, .dialect = .windows }, &d);
     try testing.expect(std.mem.indexOf(u8, d.items.items[0].message, "macOS modifier") != null);
+}
+
+test "unit: custom_actions: unbind values mean no shortcut instead of dropping the action" {
+    var t = T.init();
+    defer t.deinit();
+    const cfg = try t.config(
+        \\{"actions": {"a": {"command": "x", "shortcut": ""}, "b": {"command": "x", "shortcut": "none"},
+        \\             "c": {"command": "x", "shortcut": " Disabled "}, "d": {"command": "x", "shortcut": null}}}
+    , .global);
+    try testing.expectEqual(@as(usize, 4), cfg.actions.len);
+    for (cfg.actions) |act| try testing.expect(act.shortcut == null);
+    try t.expectError("{\"actions\":{\"a\":{\"command\":\"x\",\"shortcut\":\"nonsense\"}}}", .global, "invalid shortcut");
 }
 
 test "unit: custom_actions: icons validate type, emoji scale and image extensions" {
