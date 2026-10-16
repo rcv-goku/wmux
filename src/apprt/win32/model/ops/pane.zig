@@ -12,6 +12,7 @@ const Surface = @import("../../Surface.zig");
 const Tab = @import("../Tab.zig");
 const Window = @import("../../ui/Window.zig");
 const Workspace = @import("../Workspace.zig");
+const pane_layout = @import("../layout.zig");
 const ops_surface = @import("surface.zig");
 const w32 = @import("../../platform/win32.zig");
 
@@ -240,31 +241,33 @@ pub fn swapSplit(self: *Window, swap_target: apprt.action.GotoSplit) void {
     }
 }
 
-/// Resize the nearest split in the given direction by the given pixel amount.
+/// Resize the nearest split in the given direction by the given pixel
+/// amount: the divider of the nearest enclosing split of that orientation
+/// moves by `amount` pixels of THAT split's own rect (model/layout.zig;
+/// ui-model 8.1 #2, it used to divide by the whole surface and rely on
+/// SplitTree.resize's gapless spatial estimate).
 pub fn resizeSplit(self: *Window, rs: apprt.action.ResizeSplit) void {
     const ws = self.activeWorkspace();
-    const alloc = self.app.core_app.alloc;
     const focused = ws.focusedPaneOrFirst() orelse return;
     const handle = ws.paneHandle(focused) orelse return;
 
-    const layout: SplitTree(Pane).Split.Layout = switch (rs.direction) {
+    const split_layout: SplitTree(Pane).Split.Layout = switch (rs.direction) {
         .left, .right => .horizontal,
         .up, .down => .vertical,
     };
-
-    const rect = self.surfaceRect();
-    const dimension: f32 = switch (layout) {
-        .horizontal => @floatFromInt(@max(rect.right - rect.left, 1)),
-        .vertical => @floatFromInt(@max(rect.bottom - rect.top, 1)),
+    const sign: i32 = switch (rs.direction) {
+        .left, .up => -1,
+        .right, .down => 1,
     };
-    const sign: f32 = switch (rs.direction) {
-        .left, .up => -1.0,
-        .right, .down => 1.0,
-    };
-    const delta: f16 = @floatCast(sign * @as(f32, @floatFromInt(rs.amount)) / dimension);
 
-    const new_tree = ws.tree.resize(alloc, handle, layout, delta) catch return;
-    installTree(ws, new_tree);
+    var sfa = std.heap.stackFallback(pane_layout.stack_bytes, self.app.core_app.alloc);
+    const gpa = sfa.get();
+    var lay = pane_layout.compute(Pane, gpa, &ws.tree, self.surfaceRect(), self.scale) catch return;
+    defer lay.deinit(gpa);
+    const split = lay.parentSplit(&ws.tree, handle, split_layout) orelse return;
+    const ratio = ws.tree.nodes[split.idx()].split.ratio;
+    const node_rect = lay.node_rects[split.idx()];
+    ws.tree.resizeInPlace(split, pane_layout.resizedRatio(split_layout, node_rect, ratio, sign * @as(i32, rs.amount)));
     self.layoutSplits();
 }
 

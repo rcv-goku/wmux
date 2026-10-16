@@ -9,9 +9,9 @@ const FlashOverlay = @import("FlashOverlay.zig").FlashOverlay;
 const Pane = @import("../../model/Pane.zig");
 const PaneButtonsMod = @import("PaneButtons.zig");
 const PaneButtons = PaneButtonsMod.PaneButtons;
-const SplitTree = @import("../../../../datastruct/split_tree.zig").SplitTree;
 const Tab = @import("../../model/Tab.zig");
 const Window = @import("../Window.zig");
+const layout = @import("../../model/layout.zig");
 const ops_surface = @import("../../model/ops/surface.zig");
 const w32 = @import("../../platform/win32.zig");
 
@@ -30,14 +30,36 @@ pub fn updateAttentionRings(self: *Window) void {
     const hwnd = self.hwnd orelse return self.hideAllRings();
     if (self.closing) return self.hideAllRings();
     const ws = self.activeWorkspace();
-    const tree = ws.tree;
+    const tree = &ws.tree;
     if (tree.isEmpty()) return self.hideAllRings();
     if (tree.zoomed != null) return self.hideAllRings();
 
     const focused_container = ws.focusedPaneOrFirst() orelse return self.hideAllRings();
     const focused = focused_container.selectedTab() orelse return self.hideAllRings();
+
+    // The rings sit on the same pane rects the layout uses
+    // (model/layout.zig).
+    var sfa = std.heap.stackFallback(layout.stack_bytes, self.app.core_app.alloc);
+    const gpa = sfa.get();
+    var lay = layout.compute(Pane, gpa, tree, self.surfaceRect(), self.scale) catch return self.hideAllRings();
+    defer lay.deinit(gpa);
+
     var next: usize = 0;
-    self.attentionRingNode(hwnd, tree, .root, self.surfaceRect(), focused, &next);
+    for (lay.leaves) |leaf| {
+        const tab = leaf.view.selectedTab() orelse continue;
+        if (tab == focused) continue;
+        const surface = tab.surface() orelse continue;
+        if (!surface.attention) continue;
+        const ring = self.ringAt(next, hwnd) orelse continue;
+        // Client rect → screen rect (the popup lives in screen coords).
+        const rect = leaf.rect;
+        var tl = w32.POINT{ .x = rect.left, .y = rect.top };
+        var br = w32.POINT{ .x = rect.right, .y = rect.bottom };
+        _ = w32.ClientToScreen(hwnd, &tl);
+        _ = w32.ClientToScreen(hwnd, &br);
+        ring.positionAround(.{ .left = tl.x, .top = tl.y, .right = br.x, .bottom = br.y });
+        next += 1;
+    }
 
     var i = next;
     while (i < self.attention_rings.items.len) : (i += 1) {
@@ -69,55 +91,6 @@ pub fn ringAt(self: *Window, idx: usize, hwnd: w32.HWND) ?*AttentionRing {
     return ring;
 }
 
-/// Walk the workspace split tree mirroring layoutNode's geometry; for each
-/// leaf container whose active pane is attention-flagged and not the focused
-/// pane, position a pool ring around its client rect (screen coords).
-pub fn attentionRingNode(
-    self: *Window,
-    hwnd: w32.HWND,
-    tree: SplitTree(Pane),
-    handle: SplitTree(Pane).Node.Handle,
-    rect: w32.RECT,
-    focused: *Tab,
-    next: *usize,
-) void {
-    if (handle.idx() >= tree.nodes.len) return;
-    switch (tree.nodes[handle.idx()]) {
-        .leaf => |container| {
-            const pane = container.selectedTab() orelse return;
-            if (pane == focused) return;
-            const surface = pane.surface() orelse return;
-            if (!surface.attention) return;
-            const ring = self.ringAt(next.*, hwnd) orelse return;
-            // Client rect → screen rect (the popup lives in screen coords).
-            var tl = w32.POINT{ .x = rect.left, .y = rect.top };
-            var br = w32.POINT{ .x = rect.right, .y = rect.bottom };
-            _ = w32.ClientToScreen(hwnd, &tl);
-            _ = w32.ClientToScreen(hwnd, &br);
-            ring.positionAround(.{ .left = tl.x, .top = tl.y, .right = br.x, .bottom = br.y });
-            next.* += 1;
-        },
-        .split => |s| {
-            const gap: i32 = @intFromFloat(@round(5.0 * self.scale));
-            if (s.layout == .horizontal) {
-                const total_w = rect.right - rect.left;
-                const split_x = rect.left + @as(i32, @intFromFloat(@as(f32, @floatCast(s.ratio)) * @as(f32, @floatFromInt(total_w))));
-                const left_rect = w32.RECT{ .left = rect.left, .top = rect.top, .right = split_x - @divTrunc(gap, 2), .bottom = rect.bottom };
-                const right_rect = w32.RECT{ .left = split_x + @divTrunc(gap + 1, 2), .top = rect.top, .right = rect.right, .bottom = rect.bottom };
-                self.attentionRingNode(hwnd, tree, s.left, left_rect, focused, next);
-                self.attentionRingNode(hwnd, tree, s.right, right_rect, focused, next);
-            } else {
-                const total_h = rect.bottom - rect.top;
-                const split_y = rect.top + @as(i32, @intFromFloat(@as(f32, @floatCast(s.ratio)) * @as(f32, @floatFromInt(total_h))));
-                const top_rect = w32.RECT{ .left = rect.left, .top = rect.top, .right = rect.right, .bottom = split_y - @divTrunc(gap, 2) };
-                const bottom_rect = w32.RECT{ .left = rect.left, .top = split_y + @divTrunc(gap + 1, 2), .right = rect.right, .bottom = rect.bottom };
-                self.attentionRingNode(hwnd, tree, s.left, top_rect, focused, next);
-                self.attentionRingNode(hwnd, tree, s.right, bottom_rect, focused, next);
-            }
-        },
-    }
-}
-
 /// Reconcile the per-pane corner-button overlays with the current layout.
 /// Policy: show a cluster on EVERY visible leaf pane of the active
 /// workspace's active tab (every pane gets its action icons, always — not
@@ -133,7 +106,7 @@ pub fn updatePaneButtons(self: *Window) void {
     if (self.closing) return self.hideAllPaneButtons();
     if (self.is_quick_terminal) return self.hideAllPaneButtons();
     const ws = self.activeWorkspace();
-    const tree = ws.tree;
+    const tree = &ws.tree;
     if (tree.isEmpty()) return self.hideAllPaneButtons();
 
     const focused_container = ws.focusedPaneOrFirst() orelse return self.hideAllPaneButtons();
@@ -141,11 +114,19 @@ pub fn updatePaneButtons(self: *Window) void {
 
     var next: usize = 0;
 
-    if (tree.zoomed) |zoomed_handle| {
-        _ = zoomed_handle;
+    if (tree.zoomed != null) {
         self.placePaneButton(hwnd, focused, self.surfaceRect(), &next);
     } else {
-        self.paneButtonsNode(hwnd, tree, .root, self.surfaceRect(), &next);
+        // One cluster per pane, on the pane rects of the layout
+        // (model/layout.zig).
+        var sfa = std.heap.stackFallback(layout.stack_bytes, self.app.core_app.alloc);
+        const gpa = sfa.get();
+        var lay = layout.compute(Pane, gpa, tree, self.surfaceRect(), self.scale) catch return self.hideAllPaneButtons();
+        defer lay.deinit(gpa);
+        for (lay.leaves) |leaf| {
+            const tab = leaf.view.selectedTab() orelse continue;
+            self.placePaneButton(hwnd, tab, leaf.rect, &next);
+        }
     }
 
     var i = next;
@@ -193,43 +174,6 @@ pub fn placePaneButton(self: *Window, hwnd: w32.HWND, pane: *Tab, rect: w32.RECT
         @ptrCast(self),
     );
     next.* += 1;
-}
-
-/// Walk the workspace split tree mirroring layoutNode's geometry; place a
-/// corner cluster on EVERY leaf container's active pane.
-pub fn paneButtonsNode(
-    self: *Window,
-    hwnd: w32.HWND,
-    tree: SplitTree(Pane),
-    handle: SplitTree(Pane).Node.Handle,
-    rect: w32.RECT,
-    next: *usize,
-) void {
-    if (handle.idx() >= tree.nodes.len) return;
-    switch (tree.nodes[handle.idx()]) {
-        .leaf => |container| {
-            const pane = container.selectedTab() orelse return;
-            self.placePaneButton(hwnd, pane, rect, next);
-        },
-        .split => |s| {
-            const gap: i32 = @intFromFloat(@round(5.0 * self.scale));
-            if (s.layout == .horizontal) {
-                const total_w = rect.right - rect.left;
-                const split_x = rect.left + @as(i32, @intFromFloat(@as(f32, @floatCast(s.ratio)) * @as(f32, @floatFromInt(total_w))));
-                const left_rect = w32.RECT{ .left = rect.left, .top = rect.top, .right = split_x - @divTrunc(gap, 2), .bottom = rect.bottom };
-                const right_rect = w32.RECT{ .left = split_x + @divTrunc(gap + 1, 2), .top = rect.top, .right = rect.right, .bottom = rect.bottom };
-                self.paneButtonsNode(hwnd, tree, s.left, left_rect, next);
-                self.paneButtonsNode(hwnd, tree, s.right, right_rect, next);
-            } else {
-                const total_h = rect.bottom - rect.top;
-                const split_y = rect.top + @as(i32, @intFromFloat(@as(f32, @floatCast(s.ratio)) * @as(f32, @floatFromInt(total_h))));
-                const top_rect = w32.RECT{ .left = rect.left, .top = rect.top, .right = rect.right, .bottom = split_y - @divTrunc(gap, 2) };
-                const bottom_rect = w32.RECT{ .left = rect.left, .top = split_y + @divTrunc(gap + 1, 2), .right = rect.right, .bottom = rect.bottom };
-                self.paneButtonsNode(hwnd, tree, s.left, top_rect, next);
-                self.paneButtonsNode(hwnd, tree, s.right, bottom_rect, next);
-            }
-        },
-    }
 }
 
 /// Routed from a corner-button overlay click (PaneButtons.on_click). The

@@ -67,16 +67,13 @@ pub const endDividerDrag = chrome.endDividerDrag;
 pub const focusRightSidebar = chrome.focusRightSidebar;
 pub const handleResize = chrome.handleResize;
 pub const hitTestDivider = chrome.hitTestDivider;
-pub const hitTestDividerNode = chrome.hitTestDividerNode;
 pub const hitTestReshowStrip = chrome.hitTestReshowStrip;
 pub const invalidateRightSidebar = chrome.invalidateRightSidebar;
 pub const invalidateSidebar = chrome.invalidateSidebar;
 pub const invalidateTabBar = chrome.invalidateTabBar;
-pub const layoutNode = chrome.layoutNode;
 pub const layoutSplits = chrome.layoutSplits;
 pub const onConfigChange = chrome.onConfigChange;
 pub const paintChrome = chrome.paintChrome;
-pub const paintDividerNode = chrome.paintDividerNode;
 pub const paintDividers = chrome.paintDividers;
 pub const paintFocusBorder = chrome.paintFocusBorder;
 pub const paintReshowStrip = chrome.paintReshowStrip;
@@ -114,13 +111,11 @@ pub const renameWorkspace = rename.renameWorkspace;
 pub const startRename = rename.startRename;
 pub const startTabRename = rename.startTabRename;
 
-pub const attentionRingNode = overlay_pools.attentionRingNode;
 pub const flashFocusedPane = overlay_pools.flashFocusedPane;
 pub const hideAllPaneButtons = overlay_pools.hideAllPaneButtons;
 pub const hideAllRings = overlay_pools.hideAllRings;
 pub const onPaneButtonClick = overlay_pools.onPaneButtonClick;
 pub const paneButtonsAt = overlay_pools.paneButtonsAt;
-pub const paneButtonsNode = overlay_pools.paneButtonsNode;
 pub const placePaneButton = overlay_pools.placePaneButton;
 pub const ringAt = overlay_pools.ringAt;
 pub const updateAttentionRings = overlay_pools.updateAttentionRings;
@@ -315,11 +310,12 @@ restore_maximized: bool = false,
 /// last good save. See savePlacement.
 saved_placement_ok: bool = false,
 
-/// Split divider drag state.
+/// Split divider drag state. `drag_split_rect` is the dragged split's own
+/// node rect (model/layout.zig), which the cursor is measured against.
 dragging_split: bool = false,
 drag_split_handle: SplitTree(Pane).Node.Handle = .root,
 drag_split_layout: SplitTree(Pane).Split.Layout = .horizontal,
-drag_start_rect: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
+drag_split_rect: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
 
 /// Sidebar edge drag-resize state. The width override is in unscaled
 /// pixels and wins over `window-sidebar-width` until the next config
@@ -952,7 +948,7 @@ pub fn windowWndProc(
                 return 0;
             }
             if (window.hitTestDivider(x, y)) |hit| {
-                window.startDividerDrag(hit.handle, hit.layout);
+                window.startDividerDrag(hit);
                 return 0;
             }
             if (window.hitTestSplitTabBar(x, y) != null) {
@@ -1201,6 +1197,7 @@ test {
     _ = tabbar_input;
     _ = tabbar_paint;
     _ = @import("tabbar/logic/geometry.zig");
+    _ = @import("../model/layout.zig");
     _ = ops_move;
     _ = ops_pane;
     _ = ops_surface;

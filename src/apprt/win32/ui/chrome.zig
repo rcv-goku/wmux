@@ -11,6 +11,7 @@ const RightSidebar = @import("right_sidebar/legacy_strip.zig");
 const Sidebar = @import("sidebar/legacy_gdi.zig");
 const SplitTree = @import("../../../datastruct/split_tree.zig").SplitTree;
 const Window = @import("Window.zig");
+const layout = @import("../model/layout.zig");
 const tabbar_paint = @import("tabbar/paint.zig");
 const titles = @import("../model/logic/titles.zig");
 const w32 = @import("../platform/win32.zig");
@@ -214,10 +215,18 @@ pub fn surfaceRect(self: *const Window) w32.RECT {
     return rect;
 }
 
+/// Lay out the active workspace's split tree over `rect` (model/layout.zig)
+/// with `gpa` (callers pass a stack-fallback allocator); deinit the result
+/// with the same allocator. Null on allocation failure.
+fn computeActiveLayout(self: *Window, gpa: std.mem.Allocator, rect: w32.RECT) ?layout.Layout(Pane) {
+    const ws = self.activeWorkspace();
+    return layout.compute(Pane, gpa, &ws.tree, rect, self.scale) catch null;
+}
+
 /// Layout split panes for the active workspace.
 pub fn layoutSplits(self: *Window) void {
     const ws = self.activeWorkspace();
-    const tree = ws.tree;
+    const tree = &ws.tree;
     if (tree.isEmpty()) return;
     const rect = self.surfaceRect();
     if (tree.zoomed) |zoomed_handle| {
@@ -237,7 +246,31 @@ pub fn layoutSplits(self: *Window) void {
         }
         return;
     }
-    self.layoutNode(tree, .root, rect);
+
+    {
+        var sfa = std.heap.stackFallback(layout.stack_bytes, self.app.core_app.alloc);
+        const gpa = sfa.get();
+        var lay = computeActiveLayout(self, gpa, rect) orelse return;
+        defer lay.deinit(gpa);
+        const split = tree.isSplit();
+        for (lay.leaves) |leaf| {
+            const pane = leaf.view;
+            pane.layout_rect = leaf.rect;
+
+            // A split pane with 2+ tabs shows its own tab bar on top.
+            var content_rect = leaf.rect;
+            if (split and pane.tabCount() > 1) {
+                content_rect.top += tabbar_paint.barHeight(self.scale);
+            }
+
+            if (pane.selectedHwnd()) |h| {
+                const w = @max(content_rect.right - content_rect.left, 1);
+                const ht = @max(content_rect.bottom - content_rect.top, 1);
+                _ = w32.MoveWindow(h, content_rect.left, content_rect.top, @intCast(w), @intCast(ht), 1);
+                _ = w32.ShowWindow(h, w32.SW_SHOW);
+            }
+        }
+    }
 
     // Paint divider lines directly using GetDC (not BeginPaint, which
     // clips to the invalid region and misses the content area gaps).
@@ -257,56 +290,39 @@ pub fn layoutSplits(self: *Window) void {
     self.updatePaneButtons();
 }
 
-pub fn layoutNode(self: *Window, tree: SplitTree(Pane), handle: SplitTree(Pane).Node.Handle, rect: w32.RECT) void {
-    if (handle.idx() >= tree.nodes.len) return;
-    switch (tree.nodes[handle.idx()]) {
-        .leaf => |container| {
-            container.layout_rect = rect;
-
-            var content_rect = rect;
-            if (tree.isSplit() and container.tabCount() > 1) {
-                const bar_h = tabbar_paint.barHeight(self.scale);
-                content_rect.top += bar_h;
-            }
-
-            if (container.selectedHwnd()) |h| {
-                const w = @max(content_rect.right - content_rect.left, 1);
-                const ht = @max(content_rect.bottom - content_rect.top, 1);
-                _ = w32.MoveWindow(h, content_rect.left, content_rect.top, @intCast(w), @intCast(ht), 1);
-                _ = w32.ShowWindow(h, w32.SW_SHOW);
-            }
-        },
-        .split => |s| {
-            const gap: i32 = @intFromFloat(@round(5.0 * self.scale));
-            if (s.layout == .horizontal) {
-                const total_w = rect.right - rect.left;
-                const split_x = rect.left + @as(i32, @intFromFloat(@as(f32, @floatCast(s.ratio)) * @as(f32, @floatFromInt(total_w))));
-                const left_rect = w32.RECT{ .left = rect.left, .top = rect.top, .right = split_x - @divTrunc(gap, 2), .bottom = rect.bottom };
-                const right_rect = w32.RECT{ .left = split_x + @divTrunc(gap + 1, 2), .top = rect.top, .right = rect.right, .bottom = rect.bottom };
-                self.layoutNode(tree, s.left, left_rect);
-                self.layoutNode(tree, s.right, right_rect);
-            } else {
-                const total_h = rect.bottom - rect.top;
-                const split_y = rect.top + @as(i32, @intFromFloat(@as(f32, @floatCast(s.ratio)) * @as(f32, @floatFromInt(total_h))));
-                const top_rect = w32.RECT{ .left = rect.left, .top = rect.top, .right = rect.right, .bottom = split_y - @divTrunc(gap, 2) };
-                const bottom_rect = w32.RECT{ .left = rect.left, .top = split_y + @divTrunc(gap + 1, 2), .right = rect.right, .bottom = rect.bottom };
-                self.layoutNode(tree, s.left, top_rect);
-                self.layoutNode(tree, s.right, bottom_rect);
-            }
-        },
-    }
-}
-
 /// Paint divider lines between split panes in the active tab,
 /// plus a colored border around the focused pane.
 pub fn paintDividers(self: *Window, hdc: w32.HDC) void {
     const ws = self.activeWorkspace();
-    const tree = ws.tree;
+    const tree = &ws.tree;
     if (tree.isEmpty()) return;
     if (!tree.isSplit()) return;
     if (tree.zoomed != null) return;
-    const rect = self.surfaceRect();
-    self.paintDividerNode(hdc, tree, .root, rect);
+    paint: {
+        var sfa = std.heap.stackFallback(layout.stack_bytes, self.app.core_app.alloc);
+        const gpa = sfa.get();
+        var lay = computeActiveLayout(self, gpa, self.surfaceRect()) orelse break :paint;
+        defer lay.deinit(gpa);
+
+        const pen = w32.CreatePen(0, layout.lineWidth(self.scale), 0x00808080) orelse break :paint;
+        defer _ = w32.DeleteObject(pen);
+        const old_pen = w32.SelectObject(hdc, pen);
+        defer _ = w32.SelectObject(hdc, old_pen);
+
+        for (lay.dividers) |d| {
+            const r = d.node_rect;
+            switch (d.layout) {
+                .horizontal => {
+                    _ = w32.MoveToEx(hdc, d.pos, r.top, null);
+                    _ = w32.LineTo(hdc, d.pos, r.bottom);
+                },
+                .vertical => {
+                    _ = w32.MoveToEx(hdc, r.left, d.pos, null);
+                    _ = w32.LineTo(hdc, r.right, d.pos);
+                },
+            }
+        }
+    }
     self.paintFocusBorder(hdc);
 }
 
@@ -343,48 +359,12 @@ pub fn paintFocusBorder(self: *Window, hdc: w32.HDC) void {
     _ = w32.FillRect(hdc, &r, brush);
 }
 
-pub fn paintDividerNode(self: *Window, hdc: w32.HDC, tree: SplitTree(Pane), handle: SplitTree(Pane).Node.Handle, rect: w32.RECT) void {
-    if (handle.idx() >= tree.nodes.len) return;
-    switch (tree.nodes[handle.idx()]) {
-        .leaf => {},
-        .split => |s| {
-            const gap: i32 = @intFromFloat(@round(5.0 * self.scale));
-            const line_w: i32 = @max(@as(i32, @intFromFloat(@round(1.0 * self.scale))), 1);
-
-            const pen = w32.CreatePen(0, line_w, 0x00808080) orelse return;
-            defer _ = w32.DeleteObject(pen);
-            const old_pen = w32.SelectObject(hdc, pen);
-            defer _ = w32.SelectObject(hdc, old_pen);
-
-            if (s.layout == .horizontal) {
-                const total_w = rect.right - rect.left;
-                const split_x = rect.left + @as(i32, @intFromFloat(@as(f32, @floatCast(s.ratio)) * @as(f32, @floatFromInt(total_w))));
-                _ = w32.MoveToEx(hdc, split_x, rect.top, null);
-                _ = w32.LineTo(hdc, split_x, rect.bottom);
-                const left_rect = w32.RECT{ .left = rect.left, .top = rect.top, .right = split_x - @divTrunc(gap, 2), .bottom = rect.bottom };
-                const right_rect = w32.RECT{ .left = split_x + @divTrunc(gap + 1, 2), .top = rect.top, .right = rect.right, .bottom = rect.bottom };
-                self.paintDividerNode(hdc, tree, s.left, left_rect);
-                self.paintDividerNode(hdc, tree, s.right, right_rect);
-            } else {
-                const total_h = rect.bottom - rect.top;
-                const split_y = rect.top + @as(i32, @intFromFloat(@as(f32, @floatCast(s.ratio)) * @as(f32, @floatFromInt(total_h))));
-                _ = w32.MoveToEx(hdc, rect.left, split_y, null);
-                _ = w32.LineTo(hdc, rect.right, split_y);
-                const top_rect = w32.RECT{ .left = rect.left, .top = rect.top, .right = rect.right, .bottom = split_y - @divTrunc(gap, 2) };
-                const bottom_rect = w32.RECT{ .left = rect.left, .top = split_y + @divTrunc(gap + 1, 2), .right = rect.right, .bottom = rect.bottom };
-                self.paintDividerNode(hdc, tree, s.left, top_rect);
-                self.paintDividerNode(hdc, tree, s.right, bottom_rect);
-            }
-        },
-    }
-}
-
 /// Repaint divider lines and the focus border. Called from focus change
 /// handlers so the accent border follows the active pane immediately.
 pub fn repaintDividers(self: *Window) void {
     const hwnd = self.hwnd orelse return;
     const ws = self.activeWorkspace();
-    const tree = ws.tree;
+    const tree = &ws.tree;
     if (tree.isEmpty()) return;
     if (!tree.isSplit()) return;
     if (tree.zoomed != null) return;
@@ -399,89 +379,53 @@ pub fn repaintDividers(self: *Window) void {
     self.paintDividers(hdc);
 }
 
+/// A split divider under the cursor.
 pub const DividerHit = struct {
     handle: SplitTree(Pane).Node.Handle,
     layout: SplitTree(Pane).Split.Layout,
+    /// The split node's own rect (what a drag of this divider measures
+    /// against).
+    rect: w32.RECT,
 };
 
 pub fn hitTestDivider(self: *Window, x: i32, y: i32) ?DividerHit {
     const ws = self.activeWorkspace();
-    const tree = ws.tree;
+    const tree = &ws.tree;
     if (tree.isEmpty()) return null;
     if (!tree.isSplit()) return null;
     if (tree.zoomed != null) return null;
-    const rect = self.surfaceRect();
-    return self.hitTestDividerNode(tree, .root, rect, x, y);
+    var sfa = std.heap.stackFallback(layout.stack_bytes, self.app.core_app.alloc);
+    const gpa = sfa.get();
+    var lay = computeActiveLayout(self, gpa, self.surfaceRect()) orelse return null;
+    defer lay.deinit(gpa);
+    const d = lay.hitTest(x, y, self.scale) orelse return null;
+    return .{ .handle = d.handle, .layout = d.layout, .rect = d.node_rect };
 }
 
-pub fn hitTestDividerNode(
-    self: *Window,
-    tree: SplitTree(Pane),
-    handle: SplitTree(Pane).Node.Handle,
-    rect: w32.RECT,
-    x: i32,
-    y: i32,
-) ?DividerHit {
-    if (handle.idx() >= tree.nodes.len) return null;
-    switch (tree.nodes[handle.idx()]) {
-        .leaf => return null,
-        .split => |s| {
-            const gap: i32 = @as(i32, @intFromFloat(@round(5.0 * self.scale)));
-            const hit_area: i32 = @max(@as(i32, @intFromFloat(@round(3.0 * self.scale))), 3);
-
-            if (s.layout == .horizontal) {
-                const total_w = rect.right - rect.left;
-                const split_x = rect.left + @as(i32, @intFromFloat(@as(f32, @floatCast(s.ratio)) * @as(f32, @floatFromInt(total_w))));
-                if (x >= split_x - hit_area and x <= split_x + hit_area and y >= rect.top and y <= rect.bottom) {
-                    return .{ .handle = handle, .layout = .horizontal };
-                }
-                const left_rect = w32.RECT{ .left = rect.left, .top = rect.top, .right = split_x - @divTrunc(gap, 2), .bottom = rect.bottom };
-                const right_rect = w32.RECT{ .left = split_x + @divTrunc(gap + 1, 2), .top = rect.top, .right = rect.right, .bottom = rect.bottom };
-                return self.hitTestDividerNode(tree, s.left, left_rect, x, y) orelse
-                    self.hitTestDividerNode(tree, s.right, right_rect, x, y);
-            } else {
-                const total_h = rect.bottom - rect.top;
-                const split_y = rect.top + @as(i32, @intFromFloat(@as(f32, @floatCast(s.ratio)) * @as(f32, @floatFromInt(total_h))));
-                if (y >= split_y - hit_area and y <= split_y + hit_area and x >= rect.left and x <= rect.right) {
-                    return .{ .handle = handle, .layout = .vertical };
-                }
-                const top_rect = w32.RECT{ .left = rect.left, .top = rect.top, .right = rect.right, .bottom = split_y - @divTrunc(gap, 2) };
-                const bottom_rect = w32.RECT{ .left = rect.left, .top = split_y + @divTrunc(gap + 1, 2), .right = rect.right, .bottom = rect.bottom };
-                return self.hitTestDividerNode(tree, s.left, top_rect, x, y) orelse
-                    self.hitTestDividerNode(tree, s.right, bottom_rect, x, y);
-            }
-        },
-    }
-}
-
-pub fn startDividerDrag(self: *Window, handle: SplitTree(Pane).Node.Handle, layout: SplitTree(Pane).Split.Layout) void {
+/// Start dragging the divider `hit`. The drag measures the cursor against
+/// the dragged split's own rect, so nested dividers track the cursor
+/// (ui-model 8.1 #2: the whole surface rect was used, which made every
+/// non-root divider jump).
+pub fn startDividerDrag(self: *Window, hit: DividerHit) void {
     self.dragging_split = true;
-    self.drag_split_handle = handle;
-    self.drag_split_layout = layout;
-    self.drag_start_rect = self.surfaceRect();
+    self.drag_split_handle = hit.handle;
+    self.drag_split_layout = hit.layout;
+    self.drag_split_rect = hit.rect;
     if (self.hwnd) |hwnd| _ = w32.SetCapture(hwnd);
 }
 
 pub fn updateDividerDrag(self: *Window, x: i32, y: i32) void {
     if (!self.dragging_split) return;
-    const rect = self.drag_start_rect;
-    const handle = self.drag_split_handle;
-
-    const new_ratio: f16 = switch (self.drag_split_layout) {
-        .horizontal => ratio: {
-            const total: f32 = @floatFromInt(@max(rect.right - rect.left, 1));
-            const pos: f32 = @floatFromInt(x - rect.left);
-            break :ratio @floatCast(std.math.clamp(pos / total, 0.1, 0.9));
-        },
-        .vertical => ratio: {
-            const total: f32 = @floatFromInt(@max(rect.bottom - rect.top, 1));
-            const pos: f32 = @floatFromInt(y - rect.top);
-            break :ratio @floatCast(std.math.clamp(pos / total, 0.1, 0.9));
-        },
-    };
-
     const ws = self.activeWorkspace();
-    ws.tree.resizeInPlace(handle, new_ratio);
+    const handle = self.drag_split_handle;
+    // The tree may have been replaced since the drag started (a pane
+    // closed under it): only resize a split of the dragged orientation.
+    if (handle.idx() >= ws.tree.nodes.len) return;
+    switch (ws.tree.nodes[handle.idx()]) {
+        .split => |s| if (s.layout != self.drag_split_layout) return,
+        .leaf => return,
+    }
+    ws.tree.resizeInPlace(handle, layout.dragRatio(self.drag_split_layout, self.drag_split_rect, x, y));
     self.layoutSplits();
 }
 
