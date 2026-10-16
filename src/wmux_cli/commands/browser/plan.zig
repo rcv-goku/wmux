@@ -279,8 +279,12 @@ pub fn plan(arena: Allocator, in: Inputs, diag: *Diag) Error!Plan {
     var c: C = .{ .arena = arena, .in = in, .diag = diag, .label = try std.fmt.allocPrint(arena, "browser {s}", .{in.verb}) };
     const v = in.verb;
     if (g.isNotExposed(v)) return c.usage("browser {s} is not supported by the cmux CLI", .{v});
-    // `browser <surface> open <url>` navigates that surface.
-    if (oneOf(v, &.{ "open", "open-split", "new" }) and in.surface_positional) return planNavigate(&c);
+    // `browser <surface> open <url>` navigates that surface, so it takes
+    // navigate's options (`--snapshot-after`); messages still say `open`.
+    if (oneOf(v, &.{ "open", "open-split", "new" }) and in.surface_positional) {
+        c.in.verb = "navigate";
+        return planNavigate(&c);
+    }
     if (oneOf(v, &.{ "open", "open-split", "new" })) return planOpen(&c);
     if (eql(v, "identify")) return planIdentify(&c);
     if (oneOf(v, &.{ "help", "docs", "skill" })) {

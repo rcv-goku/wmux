@@ -77,6 +77,18 @@ test "unit: browser-cli: open uses the caller workspace and never focuses by def
     try t.expectUsage(&.{ "open", "--focus", "yes" }, "--focus must be true or false");
 }
 
+test "unit: browser-cli: open on a positional surface takes navigate's options" {
+    var t = T.init();
+    defer t.deinit();
+    try t.expectCall(&.{ "surface:2", "open", "https://a.b", "--snapshot-after" }, "browser.navigate", "{\"surface_id\":\"surface:2\",\"snapshot_after\":true,\"url\":\"https://a.b\"}");
+    try testing.expectEqual(@as(?u32, 35_000), (try t.call(&.{ "surface:2", "new", "x.dev", "--snapshot-after" })).timeout_ms);
+    // Messages keep the verb the user typed.
+    try t.expectUsage(&.{ "surface:2", "open" }, "browser open requires a URL");
+    try t.expectUsage(&.{ "surface:2", "open", "x", "--focus", "true" }, "browser open does not support --focus");
+    // Without a positional surface, open never accepts --snapshot-after.
+    try t.expectUsage(&.{ "open", "x", "--snapshot-after" }, "browser open does not support --snapshot-after");
+}
+
 test "unit: browser-cli: view verb targets fail closed with cmux messages" {
     var t = T.init();
     defer t.deinit();
