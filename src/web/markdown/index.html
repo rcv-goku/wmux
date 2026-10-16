@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data: https://*.wmux.example; media-src 'self' https://*.wmux.example; font-src 'self'; frame-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+    <meta name="referrer" content="no-referrer">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Markdown</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="../_shared/base.css">
+    <link rel="stylesheet" id="mdv-hljs-light" href="../_vendor/highlightjs-cdn-assets@11.12.0/styles/github.min.css" media="not all">
+    <link rel="stylesheet" id="mdv-hljs-dark" href="../_vendor/highlightjs-cdn-assets@11.12.0/styles/github-dark.min.css">
+    <link rel="stylesheet" href="markdown.css">
+    <script type="module" src="markdown.js"></script>
+  </head>
+  <body>
+    <header class="mdv-toolbar" role="toolbar" aria-label="Markdown viewer" data-i18n-attr="aria-label:markdown.toolbar">
+      <div class="mdv-toolbar-group">
+        <button type="button" id="mdv-refresh" data-i18n="markdown.refresh">Refresh</button>
+        <button type="button" id="mdv-mode" aria-pressed="false">Show TextEdit</button>
+        <button type="button" id="mdv-revert" hidden data-i18n="markdown.revert">Revert</button>
+        <button type="button" id="mdv-save" class="wmux-primary" hidden data-i18n="markdown.save">Save</button>
+      </div>
+      <span id="mdv-status" class="mdv-status" role="status" aria-live="polite"></span>
+      <div class="mdv-toolbar-group">
+        <button type="button" id="mdv-find-toggle" data-i18n="markdown.find">Find</button>
+        <button type="button" id="mdv-copy-md" data-i18n="markdown.copyMarkdown">Copy as Markdown</button>
+        <button type="button" id="mdv-copy-html" data-i18n="markdown.copyHtml">Copy as HTML</button>
+        <button type="button" id="mdv-typography" aria-haspopup="dialog" aria-expanded="false" aria-controls="mdv-typography-popover" data-i18n="markdown.typography">Font Size</button>
+      </div>
+    </header>
+
+    <div id="mdv-typography-popover" class="mdv-popover" role="dialog" aria-label="Typography" data-i18n-attr="aria-label:markdown.typo.title" hidden>
+      <label class="mdv-field">
+        <span data-i18n="markdown.typo.font">Font</span>
+        <select id="mdv-font-family"></select>
+      </label>
+      <label class="mdv-field">
+        <span data-i18n="markdown.typo.size">Size (pt)</span>
+        <input id="mdv-font-size" type="number" min="8" max="96" step="1" inputmode="numeric">
+      </label>
+      <label class="mdv-field">
+        <span data-i18n="markdown.typo.maxWidth">Max Width (px)</span>
+        <input id="mdv-max-width" type="number" min="320" max="2400" step="20" inputmode="numeric">
+      </label>
+      <div class="mdv-popover-actions">
+        <button type="button" id="mdv-reset-default" data-i18n="markdown.typo.reset">Reset to default</button>
+        <button type="button" id="mdv-reset-builtin" data-i18n="markdown.typo.resetBuiltin">Reset to built-in defaults</button>
+        <button type="button" id="mdv-set-default" data-i18n="markdown.typo.setDefault">Set as default for new viewers</button>
+      </div>
+    </div>
+
+    <div id="mdv-find" class="mdv-find" role="search" hidden>
+      <input id="mdv-find-input" type="search" placeholder="Find" aria-label="Find in document" autocomplete="off" spellcheck="false" data-i18n-attr="placeholder:markdown.find.placeholder; aria-label:markdown.find.label">
+      <span id="mdv-find-count" class="mdv-find-count" aria-live="polite"></span>
+      <button type="button" id="mdv-find-prev" class="mdv-icon-button" aria-label="Previous match" title="Previous match" data-i18n-attr="aria-label:markdown.find.previous; title:markdown.find.previous">&#x2191;</button>
+      <button type="button" id="mdv-find-next" class="mdv-icon-button" aria-label="Next match" title="Next match" data-i18n-attr="aria-label:markdown.find.next; title:markdown.find.next">&#x2193;</button>
+      <button type="button" id="mdv-find-close" class="mdv-icon-button" aria-label="Close find bar" title="Close find bar" data-i18n-attr="aria-label:markdown.find.close; title:markdown.find.close">&#x2715;</button>
+    </div>
+
+    <main id="mdv-viewport" class="mdv-viewport" tabindex="-1">
+      <article id="mdv-content" class="markdown-body"></article>
+      <section id="mdv-unavailable" class="mdv-unavailable" hidden aria-labelledby="mdv-unavailable-title">
+        <svg class="mdv-unavailable-icon" viewBox="0 0 48 48" width="48" height="48" aria-hidden="true">
+          <path class="mdv-unavailable-page" d="M12 5h17l9 9v29H12z"></path>
+          <path class="mdv-unavailable-page" d="M29 5v9h9"></path>
+          <path class="mdv-unavailable-mark" d="M21 22a4 4 0 1 1 5.5 3.7c-1 .4-1.5 1.2-1.5 2.3v1"></path>
+          <circle class="mdv-unavailable-dot" cx="25" cy="35" r="1.6"></circle>
+        </svg>
+        <h2 id="mdv-unavailable-title" data-i18n="markdown.unavailable.title">File unavailable</h2>
+        <p data-i18n="markdown.unavailable.body">The file was moved, deleted or cannot be read. The viewer reloads it when it is back.</p>
+        <code id="mdv-unavailable-path" class="mdv-unavailable-path"></code>
+      </section>
+      <textarea id="mdv-editor" class="mdv-editor" hidden spellcheck="false" autocomplete="off" aria-label="Markdown source"></textarea>
+    </main>
+  </body>
+</html>
