@@ -465,7 +465,7 @@ test "unit: model: paneAt of an empty workspace returns null" {
 }
 
 test "unit: model: workspace status text via the focused pane" {
-    var tabs: [2]Tab = @splat(.{ .content = .placeholder });
+    var tabs: [2]Tab = @splat(.{ .content = .{ .placeholder = .{} } });
     var ptrs: [2]*Tab = undefined;
     var pane = testPane(&tabs, &ptrs);
     var ws: Workspace = .{ .window = undefined };
@@ -484,7 +484,7 @@ test "unit: model: workspace status text via the focused pane" {
 }
 
 test "unit: model: firstStatusText prefers the focused pane's selected tab" {
-    var tabs: [2]Tab = @splat(.{ .content = .placeholder });
+    var tabs: [2]Tab = @splat(.{ .content = .{ .placeholder = .{} } });
     var ptrs: [2]*Tab = undefined;
     var pane = testPane(&tabs, &ptrs);
     var ws: Workspace = .{ .window = undefined };
@@ -545,7 +545,7 @@ test "unit: model: workspace metadata setters store and report hasMetadata" {
 
     // A per-tab status alone also counts as metadata (the second-line
     // status segment).
-    var tabs: [1]Tab = @splat(.{ .content = .placeholder });
+    var tabs: [1]Tab = @splat(.{ .content = .{ .placeholder = .{} } });
     var ptrs: [1]*Tab = undefined;
     var pane = testPane(&tabs, &ptrs);
     ws.focused_pane = &pane;

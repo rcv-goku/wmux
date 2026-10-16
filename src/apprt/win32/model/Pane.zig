@@ -182,7 +182,7 @@ fn testPane(tabs: []Tab, ptrs: []*Tab) Pane {
 }
 
 fn placeholderTabs(comptime n: usize) [n]Tab {
-    return @splat(.{ .content = .placeholder });
+    return @splat(.{ .content = .{ .placeholder = .{} } });
 }
 
 test "unit: model: pane create returns the default state" {
@@ -325,7 +325,7 @@ test "unit: model: pane indexOf and tabAt agree" {
         try testing.expectEqual(@as(?usize, i), pane.indexOf(&tabs[i]));
         try testing.expectEqual(&tabs[i], pane.tabAt(i).?);
     }
-    var stranger: Tab = .{ .content = .placeholder };
+    var stranger: Tab = .{ .content = .{ .placeholder = .{} } };
     try testing.expectEqual(@as(?usize, null), pane.indexOf(&stranger));
     try testing.expectEqual(@as(?*Tab, null), pane.tabAt(3));
 }

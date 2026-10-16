@@ -119,7 +119,8 @@ fn containerDataFrom(a: Allocator, container: *const Pane) !PaneContainerData {
             .browser => {
                 td.kind = .browser;
             },
-            .placeholder => {},
+            // The v2 file has no web panels (session v3, W1-7, does).
+            .web, .placeholder => {},
         }
 
         tabs[ti] = td;

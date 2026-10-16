@@ -846,6 +846,7 @@ pub fn windowWndProc(
                             _ = sb.repositionAndResize();
                         },
                         .browser => |b| b.onParentWindowMoved(),
+                        .web => |p| p.onParentWindowMoved(),
                         .placeholder => {},
                     };
                 }

@@ -134,7 +134,9 @@ const UnrefAction = enum { keep, hide_zombie, destroy };
 /// window (tab closed mid-creation), its host HWND must hide so the
 /// zombie can't keep painting, eating mouse input, or taking focus.
 /// Transient unrefs leave the tab findable in a pane and keep it
-/// untouched, as do all non-final unrefs of terminal tabs.
+/// untouched, as do all non-final unrefs of terminal tabs. Web panels
+/// keep the browser discipline (their host is created asynchronously
+/// too, ADR-6.9).
 fn unrefAction(
     remaining: u32,
     kind: std.meta.Tag(TabContent),
@@ -143,7 +145,7 @@ fn unrefAction(
     if (remaining == 0) return .destroy;
     return switch (kind) {
         .terminal, .placeholder => .keep,
-        .browser => if (in_a_tab) .keep else .hide_zombie,
+        .browser, .web => if (in_a_tab) .keep else .hide_zombie,
     };
 }
 
@@ -163,13 +165,13 @@ pub fn unref(self: *Tab, alloc: Allocator) void {
             self.ref_count > 0 and
                 browser.parent_window.findLoc(self) != null,
         ),
+        .web => unrefAction(self.ref_count, .web, self.ref_count > 0 and self.pane != null),
     };
     switch (action) {
         .keep => {},
         .hide_zombie => {
-            // unrefAction only returns this for browser content.
-            const browser = self.content.browser;
-            if (browser.host_hwnd) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
+            // unrefAction only returns this for browser and web content.
+            if (self.content.hwnd()) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
         },
         .destroy => {
             // The handle stops resolving before the content goes away.
@@ -184,6 +186,7 @@ pub fn unref(self: *Tab, alloc: Allocator) void {
                 // before the parent Window teardown, mirroring the WGL
                 // ordering rule.
                 .browser => |browser| browser.destroy(alloc),
+                .web => |panel| panel.destroy(alloc),
                 .placeholder => {},
             }
             self.title.deinit(alloc);
@@ -253,7 +256,8 @@ test "unit: model: tab unref decision matrix is total" {
     // the focused tests above pin the interesting cells, this one
     // guarantees no combination was left unasserted: zero destroys
     // unconditionally, live terminals (and placeholders) are always kept,
-    // and a live browser is kept exactly while some pane still owns it.
+    // and a live browser or web panel is kept exactly while some pane
+    // still owns it.
     const Kind = std.meta.Tag(TabContent);
     const cases = [_]struct {
         remaining: u32,
@@ -267,12 +271,16 @@ test "unit: model: tab unref decision matrix is total" {
         .{ .remaining = 0, .kind = .browser, .in_a_tab = false, .want = .destroy },
         .{ .remaining = 0, .kind = .placeholder, .in_a_tab = true, .want = .destroy },
         .{ .remaining = 0, .kind = .placeholder, .in_a_tab = false, .want = .destroy },
+        .{ .remaining = 0, .kind = .web, .in_a_tab = true, .want = .destroy },
+        .{ .remaining = 0, .kind = .web, .in_a_tab = false, .want = .destroy },
         .{ .remaining = 1, .kind = .terminal, .in_a_tab = true, .want = .keep },
         .{ .remaining = 1, .kind = .terminal, .in_a_tab = false, .want = .keep },
         .{ .remaining = 1, .kind = .browser, .in_a_tab = true, .want = .keep },
         .{ .remaining = 1, .kind = .browser, .in_a_tab = false, .want = .hide_zombie },
         .{ .remaining = 1, .kind = .placeholder, .in_a_tab = true, .want = .keep },
         .{ .remaining = 1, .kind = .placeholder, .in_a_tab = false, .want = .keep },
+        .{ .remaining = 1, .kind = .web, .in_a_tab = true, .want = .keep },
+        .{ .remaining = 1, .kind = .web, .in_a_tab = false, .want = .hide_zombie },
         .{ .remaining = 2, .kind = .terminal, .in_a_tab = true, .want = .keep },
         .{ .remaining = 2, .kind = .terminal, .in_a_tab = false, .want = .keep },
         .{ .remaining = 2, .kind = .browser, .in_a_tab = true, .want = .keep },
@@ -292,7 +300,7 @@ test "unit: model: tab ref counts up and returns self" {
     // apprt.gtk reference) into the test build, which then collects
     // gtk's refAllDecls test and fails on the absent GTK modules. The
     // unref decision rules are covered through unrefAction above.
-    var tab: Tab = .{ .content = .placeholder };
+    var tab: Tab = .{ .content = .{ .placeholder = .{} } };
     try testing.expectEqual(@as(u32, 0), tab.ref_count);
     const p = try tab.ref(testing.allocator);
     try testing.expectEqual(&tab, p);
@@ -302,8 +310,8 @@ test "unit: model: tab ref counts up and returns self" {
 }
 
 test "unit: model: tab eql is identity" {
-    var a: Tab = .{ .content = .placeholder };
-    var b: Tab = .{ .content = .placeholder };
+    var a: Tab = .{ .content = .{ .placeholder = .{} } };
+    var b: Tab = .{ .content = .{ .placeholder = .{} } };
     try testing.expect(a.eql(&a));
     try testing.expect(!a.eql(&b));
 }
@@ -322,7 +330,7 @@ test "unit: model: tab legacy status text is byte truncated" {
 }
 
 test "unit: model: placeholder tabs have no HWND or surface" {
-    const tab: Tab = .{ .content = .placeholder };
+    const tab: Tab = .{ .content = .{ .placeholder = .{} } };
     try testing.expectEqual(@as(?w32.HWND, null), tab.hwnd());
     try testing.expectEqual(@as(?*Surface, null), tab.surface());
     try testing.expectEqualStrings("", tab.titleText());

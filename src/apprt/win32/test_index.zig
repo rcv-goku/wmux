@@ -49,4 +49,6 @@ test {
     _ = @import("rpc/types.zig");
     _ = @import("settings/legacy_config_files.zig");
     _ = @import("ui/Window.zig");
+    _ = @import("web/PanelKind.zig");
+    _ = @import("web/WebPanel.zig");
 }

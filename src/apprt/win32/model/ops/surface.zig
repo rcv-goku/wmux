@@ -765,7 +765,7 @@ const testing = std.testing;
 
 test "unit: model: insert clamps the index and links the tab to its pane" {
     const gpa = testing.allocator;
-    var tabs: [3]Tab = @splat(.{ .content = .placeholder });
+    var tabs: [3]Tab = @splat(.{ .content = .{ .placeholder = .{} } });
     var pane: Pane = .{};
     defer pane.tabs.deinit(gpa);
 
@@ -780,7 +780,7 @@ test "unit: model: insert clamps the index and links the tab to its pane" {
 
 test "unit: model: remove detaches the tab and keeps the order" {
     const gpa = testing.allocator;
-    var tabs: [3]Tab = @splat(.{ .content = .placeholder });
+    var tabs: [3]Tab = @splat(.{ .content = .{ .placeholder = .{} } });
     var pane: Pane = .{};
     defer pane.tabs.deinit(gpa);
     for (&tabs, 0..) |*t, i| try insert(gpa, &pane, t, i);
@@ -796,7 +796,7 @@ test "unit: model: remove detaches the tab and keeps the order" {
 
 test "unit: model: moveInPane shifts the tabs between and selects the moved tab" {
     const gpa = testing.allocator;
-    var tabs: [4]Tab = @splat(.{ .content = .placeholder });
+    var tabs: [4]Tab = @splat(.{ .content = .{ .placeholder = .{} } });
     var pane: Pane = .{};
     defer pane.tabs.deinit(gpa);
     for (&tabs, 0..) |*t, i| try insert(gpa, &pane, t, i);

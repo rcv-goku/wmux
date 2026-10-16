@@ -74,7 +74,7 @@ pub fn makePane(gpa: Allocator, workspace: ?*Workspace, n: usize) !*Pane {
     errdefer freePane(gpa, pane);
     for (0..n) |_| {
         const tab = try gpa.create(Tab);
-        tab.* = .{ .content = .placeholder, .ref_count = 1 };
+        tab.* = .{ .content = .{ .placeholder = .{} }, .ref_count = 1 };
         ops_surface.insert(gpa, pane, tab, pane.tabCount()) catch |err| {
             gpa.destroy(tab);
             return err;
@@ -186,7 +186,7 @@ test "unit: model: every tab of a fake graph is located in its pane" {
         }
     }
     // A tab of another graph is in none of these workspaces.
-    var stranger: Tab = .{ .content = .placeholder };
+    var stranger: Tab = .{ .content = .{ .placeholder = .{} } };
     try testing.expectEqual(@as(?Workspace.Loc, null), Workspace.locate(g.workspaces.items, &stranger));
     try testing.expectEqual(@as(?*Pane, null), second.findPaneOfTab(&stranger));
     // Placeholder tabs have no surface, so no surface lookup matches.

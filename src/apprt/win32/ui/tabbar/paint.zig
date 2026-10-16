@@ -420,7 +420,7 @@ test "unit: tabBarHeight returns scaled height" {
 }
 
 test "unit: paintTabBar returns 0 for single tab not force visible" {
-    var tabs: [1]Tab = @splat(.{ .content = .placeholder });
+    var tabs: [1]Tab = @splat(.{ .content = .{ .placeholder = .{} } });
     var ptrs: [1]*Tab = undefined;
     const pc = testPane(&tabs, &ptrs);
     const h = paintPane(&pc, test_hdc, .{ .left = 0, .top = 0, .right = 800, .bottom = 600 }, 1.0, test_config, true, null, null, null, false, false, false);
@@ -434,7 +434,7 @@ test "unit: paintTabBar returns 0 for empty container" {
 }
 
 test "unit: paintTabBar returns 0 for zero scale" {
-    var tabs: [3]Tab = @splat(.{ .content = .placeholder });
+    var tabs: [3]Tab = @splat(.{ .content = .{ .placeholder = .{} } });
     var ptrs: [3]*Tab = undefined;
     const pc = testPane(&tabs, &ptrs);
     const h = paintPane(&pc, test_hdc, .{ .left = 0, .top = 0, .right = 800, .bottom = 600 }, 0.0, test_config, true, null, null, null, false, false, false);
@@ -442,7 +442,7 @@ test "unit: paintTabBar returns 0 for zero scale" {
 }
 
 test "unit: paintTabBar returns 0 for zero-width rect" {
-    var tabs: [3]Tab = @splat(.{ .content = .placeholder });
+    var tabs: [3]Tab = @splat(.{ .content = .{ .placeholder = .{} } });
     var ptrs: [3]*Tab = undefined;
     const pc = testPane(&tabs, &ptrs);
     const h = paintPane(&pc, test_hdc, .{ .left = 100, .top = 0, .right = 100, .bottom = 600 }, 1.0, test_config, true, null, null, null, false, false, false);

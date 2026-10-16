@@ -1942,7 +1942,7 @@ test "sidebar formatMetaLineUtf8: branch, ports, and status joined with separato
     var ws = metaTestWorkspace();
     ws.setGitBranch("main");
     ws.setPorts(&.{ 3000, 8080 });
-    var tabs: [1]Tab = @splat(.{ .content = .placeholder });
+    var tabs: [1]Tab = @splat(.{ .content = .{ .placeholder = .{} } });
     var ptrs: [1]*Tab = undefined;
     var pc = testPane(&tabs, &ptrs);
     ws.focused_pane = &pc;
@@ -1982,7 +1982,7 @@ test "sidebar formatMetaLineUtf8: truncates without overflowing the buffer" {
     var ws = metaTestWorkspace();
     ws.setGitBranch("a-very-long-branch-name-that-keeps-going");
     ws.setPorts(&.{ 3000, 3001, 3002, 3003 });
-    var tabs: [1]Tab = @splat(.{ .content = .placeholder });
+    var tabs: [1]Tab = @splat(.{ .content = .{ .placeholder = .{} } });
     var ptrs: [1]*Tab = undefined;
     var pc = testPane(&tabs, &ptrs);
     ws.focused_pane = &pc;
