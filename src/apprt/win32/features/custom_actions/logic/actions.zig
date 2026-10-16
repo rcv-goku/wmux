@@ -961,16 +961,15 @@ pub const Registry = struct {
     }
 
     /// Display title: the action's title, else the built-in label (an
-    /// override keeps it), else the command name, else the id.
+    /// override keeps it), else the command name, else the keyboard
+    /// catalog's title (ids `resolve` accepts), else the id.
     pub fn titleOf(self: *const Registry, id: []const u8) []const u8 {
         const nid = normalizeId(id);
         if (self.findAction(nid)) |a| {
             if (a.title) |t| return t;
-        }
+        } else if (self.findCommandById(nid)) |c| return c.name;
         if (findBuiltin(nid)) |b| return b.title;
-        if (self.findAction(nid) == null) {
-            if (self.findCommandById(nid)) |c| return c.name;
-        }
+        if (proto.actions_catalog.find(nid)) |e| return e.title;
         return nid;
     }
 
@@ -1886,6 +1885,20 @@ test "unit: custom_actions: tab bar buttons accept objects, the legacy key, and 
     const bb = try tabBarButtons(t.a(), &both, null);
     try testing.expectEqual(@as(usize, 2), bb.len);
     try testing.expectEqualStrings("Split Right", bb[0].title);
+}
+
+test "unit: custom_actions: buttons naming keyboard catalog actions get the catalog title" {
+    var t = T.init();
+    defer t.deinit();
+    const reg = try t.registry("{\"ui\":{\"surfaceTabBar\":{\"buttons\":[\"splitRight\",\"cmux.splitRight\"]}}}", null);
+    const b = try tabBarButtons(t.a(), &reg, null);
+    try testing.expectEqual(@as(usize, 2), b.len);
+    try testing.expectEqualStrings(proto.actions_catalog.find("splitRight").?.title, b[0].title);
+    try testing.expectEqualStrings("Split Right", b[1].title);
+    const p = try plan(t.a(), &reg, "splitRight", .{});
+    try testing.expectEqualStrings("splitRight", p.run.builtin);
+    try testing.expectEqualStrings(proto.actions_catalog.find("splitRight").?.title, p.title);
+    try testing.expectEqualStrings("no-such-id", reg.titleOf("no-such-id"));
 }
 
 test "unit: custom_actions: default plus-button menu hides cloud rows unless enabled and appends layouts" {
