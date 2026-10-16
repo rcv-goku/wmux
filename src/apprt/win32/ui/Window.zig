@@ -678,7 +678,7 @@ pub fn close(self: *Window) void {
 
 /// Deinit and free all split trees (which unrefs and frees panes, tabs
 /// and surfaces) across every workspace. The workspace objects stay (with
-/// empty trees) until freeWorkspaces, so late messages during
+/// empty trees) until ops/window.freeWindowModel, so late messages during
 /// DestroyWindow still find a selected workspace.
 fn cleanupAllSurfaces(self: *Window) void {
     const alloc = self.app.core_app.alloc;
