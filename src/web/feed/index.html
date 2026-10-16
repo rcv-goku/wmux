@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; frame-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+    <meta name="referrer" content="no-referrer">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Feed</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="../_shared/base.css">
+    <link rel="stylesheet" href="feed.css">
+    <script type="module" src="feed.js"></script>
+  </head>
+  <body>
+    <header class="feed-header">
+      <div class="feed-tabs" role="tablist" aria-label="Feed filter" data-i18n-attr="aria-label:feed.tabs">
+        <button type="button" role="tab" id="feed-tab-actionable" data-filter="actionable" aria-selected="true" aria-controls="feed-viewport">
+          <span data-i18n="feed.tab.actionable">Actionable</span>
+          <span id="feed-pending-count" class="feed-count" hidden></span>
+        </button>
+        <button type="button" role="tab" id="feed-tab-activity" data-filter="activity" aria-selected="false" aria-controls="feed-viewport" tabindex="-1" data-i18n="feed.tab.activity">All Activity</button>
+      </div>
+    </header>
+
+    <section id="feed-banners" class="feed-banners" aria-label="Pending decisions" data-i18n-attr="aria-label:feed.banner.region" hidden></section>
+    <nav id="feed-workstreams" class="feed-workstreams" aria-label="Agents" data-i18n-attr="aria-label:feed.workstreams" hidden></nav>
+    <span id="feed-status" class="feed-status" role="status" aria-live="polite"></span>
+
+    <main id="feed-viewport" class="feed-viewport" role="tabpanel" aria-labelledby="feed-tab-actionable">
+      <div id="feed-list" class="feed-list" role="list" aria-label="Feed items" data-i18n-attr="aria-label:feed.list"></div>
+      <div class="feed-more">
+        <button type="button" id="feed-load-older" class="wmux-link" hidden data-i18n="feed.loadOlder">Load older activity</button>
+      </div>
+      <section id="feed-empty" class="feed-empty" hidden aria-labelledby="feed-empty-title">
+        <h2 id="feed-empty-title"></h2>
+        <p id="feed-empty-body"></p>
+      </section>
+    </main>
+  </body>
+</html>
