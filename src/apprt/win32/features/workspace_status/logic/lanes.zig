@@ -178,8 +178,16 @@ pub fn writeParseError(w: *std.Io.Writer, err: ParseError, args: []const []const
         },
         error.MissingLane => try w.writeAll("workspace status set requires a lane: todo, working, needs-attention, review, done, auto or none"),
         error.InvalidLane => {
-            const x = if (args.len > 1) args[1] else "";
-            try w.print("Invalid workspace status: {s} (expected todo, working, needs-attention, review, done, auto or none)", .{x});
+            // Every word after `set`: `set needs attention` names
+            // "needs attention", not a lone (and misleading) "needs".
+            try w.writeAll("Invalid workspace status: ");
+            if (args.len > 1) {
+                for (args[1..], 0..) |word, i| {
+                    if (i > 0) try w.writeByte(' ');
+                    try w.writeAll(word);
+                }
+            }
+            try w.writeAll(" (expected todo, working, needs-attention, review, done, auto or none)");
         },
     }
 }
@@ -480,7 +488,8 @@ test "unit: workspace_status: subcommand parsing and error strings" {
         .{ .args = &.{"set"}, .err = error.MissingLane, .msg = "workspace status set requires a lane: todo, working, needs-attention, review, done, auto or none" },
         .{ .args = &.{ "set", "Done" }, .err = error.InvalidLane, .msg = "Invalid workspace status: Done (expected todo, working, needs-attention, review, done, auto or none)" },
         .{ .args = &.{ "set", "" }, .err = error.InvalidLane, .msg = "Invalid workspace status:  (expected todo, working, needs-attention, review, done, auto or none)" },
-        .{ .args = &.{ "set", "done", "extra" }, .err = error.InvalidLane, .msg = "Invalid workspace status: done (expected todo, working, needs-attention, review, done, auto or none)" },
+        .{ .args = &.{ "set", "done", "extra" }, .err = error.InvalidLane, .msg = "Invalid workspace status: done extra (expected todo, working, needs-attention, review, done, auto or none)" },
+        .{ .args = &.{ "set", "needs", "attention" }, .err = error.InvalidLane, .msg = "Invalid workspace status: needs attention (expected todo, working, needs-attention, review, done, auto or none)" },
         .{ .args = &.{"ünïcødé"}, .err = error.UnknownSubcommand, .msg = "Unknown workspace status subcommand: ünïcødé. Try: cmux workspace status [set <lane|auto> | cycle]" },
     };
     for (cases) |c| {
