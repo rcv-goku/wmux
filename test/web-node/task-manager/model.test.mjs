@@ -87,6 +87,16 @@ describe("unit: task manager model", () => {
     assert.equal(m.agentName({ name: "node.exe", agent: "MyBot" }), "MyBot");
     assert.equal(m.agentName({ name: "node.exe" }), "");
     assert.equal(m.agentName(null), "");
+    // Arbitrary process names never reach inherited Object members.
+    assert.equal(m.agentName({ name: "C:\\bin\\Constructor.exe" }), "");
+    assert.equal(m.agentName({ name: "__proto__" }), "");
+    assert.equal(m.agentName({ name: "node.exe", agent: "constructor" }), "constructor");
+    const odd = topReply();
+    odd.windows[1].workspaces[0].panes[0].surfaces[0].processes = [{ pid: 77, name: "constructor.exe" }];
+    assert.deepEqual(
+      m.codingAgents(m.normalizeTop(odd)).map((a) => a.title),
+      ["Claude Code"],
+    );
     const top = m.normalizeTop(topReply());
     const agents = m.codingAgents(top);
     assert.equal(agents.length, 1);
@@ -287,6 +297,11 @@ describe("unit: task manager model", () => {
     assert.equal(m.formatBytes(1.25 * 1024 * MB), "1.3 GB");
     assert.equal(m.formatBytes(2 ** 70), "1048576 PB");
     assert.equal(m.formatBytes(null), "");
+    // Rounding that reaches the next unit or 100 is shown in that form.
+    assert.equal(m.formatBytes(MB - 1), "1.0 MB");
+    assert.equal(m.formatBytes(1023.97 * MB), "1.0 GB");
+    assert.equal(m.formatBytes(99.96 * MB), "100 MB");
+    assert.equal(m.formatBytes(99.94 * MB), "99.9 MB");
     assert.equal(m.formatTime(new Date(2026, 0, 2, 3, 4, 5)), "03:04:05");
     assert.equal(m.formatTime(new Date(NaN)), "");
     assert.equal(m.formatTime("x"), "");

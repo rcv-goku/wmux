@@ -402,7 +402,9 @@ export function createApp(options) {
     if (state.selected && !rows.has(state.selected)) state.selected = null;
     applyTabStops();
     // Refreshes rebuild the rows and headers; keep keyboard focus on the same
-    // one, or on the row that took the place of a row that went away.
+    // one, or on the row that took the place of a row that went away. Without
+    // preventScroll, focus() scrolls that row back into view on every 3 s
+    // refresh, undoing any scrolling the user did since focusing it.
     let el = focusedKey ? rowElement(focusedKey) : focusedSort ? sortButton(focusedSort) : null;
     if (!el && focusedPos) {
       const left = focusedPos.body.rows;
@@ -410,7 +412,7 @@ export function createApp(options) {
         ? left[Math.min(focusedPos.index, left.length - 1)]
         : ui.tables.tree.tBodies[0].rows[0];
     }
-    if (el) el.focus();
+    if (el) el.focus({ preventScroll: true });
   }
 
   /**

@@ -280,6 +280,35 @@ describe("unit: task manager sorting and refresh", () => {
     assert.ok(doc.activeElement.classList.contains("is-selected"));
   });
 
+  test("unit: task-manager: refreshes give focus back without scrolling the focused row into view", async () => {
+    await startApp();
+    const tr = treeRow((r) => r.kind === "workspace" && r.title === "docs");
+    click(window, tr);
+    // jsdom has no layout: record the focus() options instead. In WebView2 a
+    // plain focus() scrolls the row back into view on every 3 s refresh after
+    // the user scrolled away from it.
+    const proto = window.HTMLElement.prototype;
+    const original = proto.focus;
+    const calls = [];
+    proto.focus = function (opts) {
+      calls.push({ key: this.dataset ? this.dataset.key : undefined, opts });
+      return original.call(this, opts);
+    };
+    try {
+      await app.refresh();
+      await settle();
+    } finally {
+      proto.focus = original;
+    }
+    const restores = calls.filter((c) => c.key === tr.dataset.key);
+    assert.ok(restores.length > 0, "the rebuilt row got focus back");
+    assert.ok(
+      restores.every((c) => c.opts && c.opts.preventScroll === true),
+      "focus is restored with preventScroll",
+    );
+    assert.equal(doc.activeElement.dataset.key, tr.dataset.key);
+  });
+
   test("unit: task-manager: a focused column header keeps focus across sorting and refreshes", async () => {
     await startApp();
     const sortBtn = (id, s) => $(id).tHead.querySelector(`.tm-sort[data-sort="${s}"]`);

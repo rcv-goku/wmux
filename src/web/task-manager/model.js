@@ -59,14 +59,23 @@ export function exeKey(name) {
 }
 
 /**
+ * Display name of a known agent id or executable key, or "". Own keys only:
+ * process names are arbitrary, and `constructor` or `__proto__` would
+ * otherwise read inherited Object members.
+ */
+function knownAgent(key) {
+  return Object.prototype.hasOwnProperty.call(KNOWN_AGENTS, key) ? KNOWN_AGENTS[key] : "";
+}
+
+/**
  * Display name of the coding agent a process is, or "": an explicit `agent`
  * field from native (id or display name) wins over the executable name.
  */
 export function agentName(raw) {
   if (!raw || typeof raw !== "object") return "";
   const agent = str(raw.agent);
-  if (agent) return KNOWN_AGENTS[agent.toLowerCase()] || agent;
-  return KNOWN_AGENTS[exeKey(raw.name)] || "";
+  if (agent) return knownAgent(agent.toLowerCase()) || agent;
+  return knownAgent(exeKey(raw.name));
 }
 
 function idFor(kind, raw) {
@@ -413,6 +422,11 @@ export function formatCpu(p) {
 
 const UNITS = ["B", "KB", "MB", "GB", "TB", "PB"];
 
+/** `v` as shown in `unit`: whole bytes, one decimal below 100, whole numbers above. */
+function roundForUnit(v, unit) {
+  return unit === 0 || v >= 99.95 ? Math.round(v) : Math.round(v * 10) / 10;
+}
+
 /** Human-readable bytes, 1024-based: `512 B`, `12.5 MB`, `345 MB`, `1.2 GB`. */
 export function formatBytes(n) {
   if (n === null || n === undefined) return "";
@@ -422,8 +436,15 @@ export function formatBytes(n) {
     v /= 1024;
     u += 1;
   }
-  if (u === 0) return `${Math.round(v)} B`;
-  return `${v >= 100 ? Math.round(v) : v.toFixed(1)} ${UNITS[u]}`;
+  // Rounding can reach the next unit (1023.97 KB): show 1.0 MB, not 1024 KB.
+  let shown = roundForUnit(v, u);
+  if (shown >= 1024 && u < UNITS.length - 1) {
+    v /= 1024;
+    u += 1;
+    shown = roundForUnit(v, u);
+  }
+  if (u === 0) return `${shown} B`;
+  return `${shown >= 100 ? shown : shown.toFixed(1)} ${UNITS[u]}`;
 }
 
 /** `HH:MM:SS` (24 h, local time). */
