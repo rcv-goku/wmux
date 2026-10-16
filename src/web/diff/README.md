@@ -87,9 +87,15 @@ comment pool by the panel's workspace.
 | `panel.state_changed` | `{state}` | see "Session state" |
 | `panel.clipboard_write` | `{text}` | Copy git apply command |
 
-Errors `method_not_found`, `not_supported`, `forbidden` or `not_allowed` switch
-the corresponding feature off quietly (viewed and comments then work for the
-page's lifetime only); other errors show a status message.
+Errors `method_not_found`, `not_supported`, `forbidden` or `not_allowed` from
+`viewedFiles.*`, `viewerPrefs.set` or `comments.list` switch that feature off
+quietly: viewed marks and preferences then last for the page's lifetime only,
+and no stored comments are shown (other errors from these calls are logged).
+`comments.save`, `comments.delete` and `panel.diff.send_comments` report every
+error in the status bar (a failed save keeps the composer open), so adding
+comments needs the native store. A failed initial `panel.diff.load` shows the
+cmux error message; on Refresh the unsupported codes fall back to
+`params.patch_url`, then `params.patch`.
 
 Comment record (cmux schema): `{id, filePath, side: "additions" | "deletions",
 startLine, endLine, endSide?, lineText, message, submissionText, consumedAt?,
