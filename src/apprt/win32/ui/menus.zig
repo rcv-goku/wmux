@@ -124,6 +124,9 @@ pub const Context = struct {
             self.pane = loc.pane;
             self.tab = t;
         } else {
+            // A surface is found again through its tab only; a surface that
+            // had no tab when the menu opened is not in the model.
+            if (self.surface != null) return false;
             if (self.target_ids.workspace) |id| self.workspace = reg.get(Workspace, .workspace, id) orelse return false;
             if (self.target_ids.pane) |id| self.pane = reg.get(Pane, .pane, id) orelse return false;
         }
