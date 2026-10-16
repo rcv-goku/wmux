@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; frame-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types 'none'">
+    <meta name="referrer" content="no-referrer">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Todos</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="../_shared/base.css">
+    <link rel="stylesheet" href="todo.css">
+    <script type="module" src="todo.js"></script>
+  </head>
+  <body>
+    <header class="todo-header">
+      <button type="button" id="todo-status" class="todo-status" aria-label="Workspace status" title="Workspace status" data-i18n-attr="aria-label:todo.status; title:todo.status"><span class="todo-status-glyph" aria-hidden="true"></span></button>
+      <h1 id="todo-title" class="todo-title" data-i18n="todo.title">Todos</h1>
+      <span id="todo-lane" class="todo-lane" hidden></span>
+      <span id="todo-progress" class="todo-progress" aria-live="polite"></span>
+      <button type="button" id="todo-clear" class="todo-clear" hidden data-i18n="todo.clear">Clear</button>
+    </header>
+
+    <div id="todo-error" class="todo-error" role="alert" hidden></div>
+
+    <main id="todo-main" class="todo-main">
+      <ul id="todo-list" class="todo-list" role="listbox" tabindex="0" aria-label="Checklist" data-i18n-attr="aria-label:todo.list"></ul>
+      <p id="todo-empty" class="todo-empty" hidden data-i18n="todo.empty">No checklist items yet.</p>
+    </main>
+
+    <section id="todo-unavailable" class="todo-unavailable" hidden>
+      <p data-i18n="todo.unavailable">This workspace is no longer available.</p>
+    </section>
+
+    <footer id="todo-add" class="todo-add">
+      <svg class="todo-add-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+        <circle cx="8" cy="8" r="6.5"></circle>
+        <path d="M8 5v6M5 8h6"></path>
+      </svg>
+      <input id="todo-add-input" type="text" autocomplete="off" spellcheck="true" maxlength="2000" placeholder="New checklist item" aria-label="New checklist item" data-i18n-attr="placeholder:todo.add.placeholder; aria-label:todo.add.placeholder">
+    </footer>
+
+    <div id="todo-menu" class="todo-menu" role="menu" aria-label="Item actions" data-i18n-attr="aria-label:todo.menu.label" hidden></div>
+
+    <div id="todo-confirm" class="todo-confirm" role="alertdialog" aria-modal="true" aria-labelledby="todo-confirm-text" hidden>
+      <div class="todo-confirm-box">
+        <p id="todo-confirm-text"></p>
+        <div class="todo-confirm-actions">
+          <button type="button" id="todo-confirm-cancel" data-i18n="todo.cancel">Cancel</button>
+          <button type="button" id="todo-confirm-ok" class="wmux-primary" data-i18n="todo.clear.ok">Clear</button>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
