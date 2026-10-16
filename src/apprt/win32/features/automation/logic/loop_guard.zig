@@ -279,6 +279,14 @@ test "unit: automation: loop guard parses automation_origin JSON leniently" {
     try testing.expectEqual(@as(u32, max_chain), o3.depth);
     try testing.expectEqual(SkipReason.depth, skipReason(&o3, "z").?);
 
+    // Negative, fractional or non-numeric depths never lower the chain length.
+    for ([_][]const u8{ "-5", "1.5", "\"9\"", "null" }) |d| {
+        const text = try std.fmt.allocPrint(arena, "{{\"rule_id\":\"c\",\"chain\":[\"a\",\"b\",\"c\"],\"depth\":{s}}}", .{d});
+        const dv = try std.json.parseFromSliceLeaky(std.json.Value, arena, text, .{});
+        const od = (try fromJson(arena, dv)).?;
+        try testing.expectEqual(@as(u32, 3), od.depth);
+    }
+
     // Malformed shapes are ignored rather than trusted.
     const bad = [_][]const u8{
         "3",                                 "\"x\"",                                "{}",
@@ -304,6 +312,27 @@ test "unit: automation: loop guard parses automation_origin JSON leniently" {
     var obj: std.json.ObjectMap = .init(arena);
     try obj.put("rule_id", .{ .string = huge_id });
     try testing.expect((try fromJson(arena, .{ .object = obj })) == null);
+}
+
+test "unit: automation: loop guard frees everything on allocation failure" {
+    const S = struct {
+        fn run(gpa: Allocator) !void {
+            var arena_state: std.heap.ArenaAllocator = .init(gpa);
+            defer arena_state.deinit();
+            const arena = arena_state.allocator();
+            const a = try extend(arena, null, "a");
+            const ab = try extend(arena, &a, "règle-b");
+            _ = try runEnv(arena, &ab, "{\"name\":\"workspace.created\"}");
+            _ = try fromEnv(arena, "c", "[\"a\",\"règle-b\"]");
+            const json = try toJsonAlloc(gpa, &ab);
+            defer gpa.free(json);
+            const v = try std.json.parseFromSliceLeaky(std.json.Value, arena, json, .{});
+            _ = try fromJson(arena, v);
+            const chain = try chainJsonAlloc(gpa, &ab);
+            gpa.free(chain);
+        }
+    };
+    try testing.checkAllAllocationFailures(testing.allocator, S.run, .{});
 }
 
 test "unit: automation: loop guard round-trips through the run environment and the CLI" {

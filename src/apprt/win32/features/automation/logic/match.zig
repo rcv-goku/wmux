@@ -753,6 +753,32 @@ test "unit: automation: match dry-run test result does not touch rate limits" {
     try testing.expectEqual(@as(usize, 1), lim.len);
 }
 
+test "unit: automation: match test evaluation frees everything on allocation failure" {
+    const S = struct {
+        fn run(gpa: Allocator) !void {
+            var cfg = try rules.parse(gpa, rules_example);
+            defer cfg.deinit();
+            var arena_state: std.heap.ArenaAllocator = .init(gpa);
+            defer arena_state.deinit();
+            const ev = try parseEventJson(arena_state.allocator(),
+                \\{"name":"agent.needs_input","workspace_id":"W","automation_origin":{"rule_id":"a","chain":["a"],"depth":1},
+                \\ "payload":{"workspace_tags":["triage"],"surface_kind":"terminal","url":"https://h.example/?token=1","n":[1,{"cookie":"c"}]}}
+            );
+            const fired = try firingRules(gpa, &cfg, &ev);
+            defer gpa.free(fired);
+            var aw: std.Io.Writer.Allocating = .init(gpa);
+            defer aw.deinit();
+            var jw: std.json.Stringify = .{ .writer = &aw.writer };
+            const r = &cfg.rules[0];
+            writeTestResult(gpa, r, &ev, evaluate(r, &ev), true, &jw) catch |e| return switch (e) {
+                error.WriteFailed => error.OutOfMemory,
+                else => |x| x,
+            };
+        }
+    };
+    try testing.checkAllAllocationFailures(testing.allocator, S.run, .{});
+}
+
 test "unit: automation: match template vars come from the event" {
     var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena_state.deinit();

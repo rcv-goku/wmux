@@ -277,6 +277,31 @@ test "unit: automation: redaction strips URL userinfo and query credentials" {
     try testing.expect(!urlHasCredentials("h.example/x?next=a://u@b"));
 }
 
+test "unit: automation: redaction frees everything on allocation failure" {
+    const gpa = testing.allocator;
+    var doc = try jsonc.parse(gpa,
+        \\{"where":{"token":"t"},"then":[{"action":"webhook","url":"https://u:p@h.example/?key=1#access_token=2",
+        \\ "headers":{"Authorization":"a","X":"x"}}]}
+    , .{}, null);
+    defer doc.deinit();
+    var arena_state: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_state.deinit();
+    const v = try std.json.parseFromSliceLeaky(std.json.Value, arena_state.allocator(),
+        \\{"name":"x","payload":{"url":"https://h.example/?sig=1","n":[{"cookie":"c"}]}}
+    , .{});
+    const S = struct {
+        fn run(a: Allocator, node: *const jsonc.Node, value: std.json.Value) !void {
+            const n = try nodeToJsonAlloc(a, node);
+            a.free(n);
+            const e = try valueToJsonAlloc(a, value);
+            a.free(e);
+            const u = try redactUrlAlloc(a, "https://u:p@h.example/x?token=1&y=2#k=v");
+            a.free(u);
+        }
+    };
+    try testing.checkAllAllocationFailures(gpa, S.run, .{ &doc.root, v });
+}
+
 test "unit: automation: redaction of rules and events keeps structure" {
     const gpa = testing.allocator;
     var doc = try jsonc.parse(gpa,

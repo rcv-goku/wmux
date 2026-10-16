@@ -174,6 +174,21 @@ test "unit: automation: template substitutes event and payload values" {
     try testing.expectEqualStrings("[][]", out);
 }
 
+test "unit: automation: template render frees everything on allocation failure" {
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    const v = try std.json.parseFromSliceLeaky(std.json.Value, arena_state.allocator(),
+        \\{"obj":{"a":[1,"x",null]},"n":42,"s":"✓"}
+    , .{});
+    const S = struct {
+        fn run(gpa: Allocator, vars: Vars) !void {
+            const out = try render(gpa, "{{event.name}}/{{payload.obj}}/{{payload.n}}/{{payload.s}} {{x}} {{{event.source}}}", vars);
+            gpa.free(out);
+        }
+    };
+    try testing.checkAllAllocationFailures(testing.allocator, S.run, .{Vars{ .name = "e", .source = "s", .payload = &v.object }});
+}
+
 test "unit: automation: template output is capped on a code point boundary" {
     var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena_state.deinit();

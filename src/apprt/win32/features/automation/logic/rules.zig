@@ -1533,6 +1533,107 @@ test "unit: automation: rules enable and disable edit the file losslessly" {
     try testing.expectEqualStrings("Automation rule not found: zzz", m);
 }
 
+fn expectOnlyCrlf(text: []const u8) !void {
+    for (text, 0..) |c, i| {
+        if (c == '\n') try testing.expect(i > 0 and text[i - 1] == '\r');
+    }
+}
+
+test "unit: automation: rules handle Windows files (BOM, CRLF) in positions and edits" {
+    const gpa = testing.allocator;
+    const lf =
+        \\{
+        \\  "version": 1,
+        \\  "rules": [
+        \\    {
+        \\      "id": "a",
+        \\      "when": { "event": "no.such" },
+        \\      "then": []
+        \\    },
+        \\    {
+        \\      "id": "b",
+        \\      "enabled": true,
+        \\      "when": { "event": "*" },
+        \\      "then": [{ "action": "notify", "title": "é {{bad}}" }]
+        \\    }
+        \\  ]
+        \\}
+        \\
+    ;
+    const crlf = try std.mem.replaceOwned(u8, gpa, lf, "\n", "\r\n");
+    defer gpa.free(crlf);
+    const win = try std.mem.concat(gpa, u8, &.{ jsonc.utf8_bom, crlf });
+    defer gpa.free(win);
+
+    // The same issues at the same line:col whatever the line ends and BOM.
+    var ref = try parse(gpa, lf);
+    defer ref.deinit();
+    var cfg = try parse(gpa, win);
+    defer cfg.deinit();
+    try testing.expectEqual(@as(usize, 2), cfg.rules.len);
+    try testing.expectEqual(ref.issues.len, cfg.issues.len);
+    try testing.expect(cfg.issues.len >= 3);
+    for (ref.issues, cfg.issues) |a, b| {
+        try testing.expectEqualStrings(a.path, b.path);
+        try testing.expectEqual(a.pos, b.pos);
+    }
+    try expectIssue(&cfg, .warning, "$.rules[0].when.event", "unknown event");
+    try testing.expectEqual(jsonc.Pos{ .line = 6, .col = 26 }, cfg.issues[0].pos);
+    try testing.expectEqual(@as(u32, 9), cfg.rules[1].pos.line);
+
+    // Disabling inserts (a) or replaces (b) one value; BOM and CRLF survive.
+    for ([_][]const u8{ "a", "b" }) |id| {
+        const r = try setEnabled(gpa, win, id, false);
+        defer gpa.free(r.text);
+        try testing.expect(r.changed);
+        try testing.expect(std.mem.startsWith(u8, r.text, jsonc.utf8_bom));
+        try expectOnlyCrlf(r.text);
+        var after = try parse(gpa, r.text);
+        defer after.deinit();
+        try testing.expect(!after.find(id).?.enabled);
+        try testing.expectEqual(@as(usize, 2), after.rules.len);
+        // Only the edited rule changed: the other keeps its state.
+        const other: []const u8 = if (std.mem.eql(u8, id, "a")) "b" else "a";
+        try testing.expect(after.find(other).?.enabled);
+    }
+}
+
+test "unit: automation: rules parse and edit free everything on allocation failure" {
+    const S = struct {
+        fn parseOnce(gpa: Allocator, src: []const u8) !void {
+            var cfg = try parse(gpa, src);
+            defer cfg.deinit();
+            const lims = try cfg.limits(gpa);
+            gpa.free(lims);
+            const m = try ruleNotFoundMessage(gpa, "zzz");
+            gpa.free(m);
+        }
+        fn editOnce(gpa: Allocator, src: []const u8, id: []const u8) !void {
+            const off = try setEnabled(gpa, src, id, false);
+            gpa.free(off.text);
+            const on = try setEnabled(gpa, src, id, true);
+            gpa.free(on.text);
+        }
+    };
+    // Issues, dropped rules, duplicate ids and every action kind exercise each list.
+    const messy =
+        \\// comment
+        \\{"version":1,"extra":1,"rules":[
+        \\ {"id":"a","when":{"event":"no.such"},"then":[{"action":"notify"}],"where":{"t":"x","t":{"in":[1,"2",null]}}},
+        \\ {"id":"a","when":{"event":"*"},"then":[]},
+        \\ {"id":"b","when":{},"then":[]},
+        \\ {"id":"c","when":{"event":"*"},"rate_limit":{"interval_seconds":1.5,"maximum":3},
+        \\  "then":[{"action":"webhook","url":"https://h.example/","headers":{"A":"1","A":"2"}},{"action":"rpc","method":"m","focus":true}]},
+        \\]}
+    ;
+    try testing.checkAllAllocationFailures(testing.allocator, S.parseOnce, .{@as([]const u8, example)});
+    try testing.checkAllAllocationFailures(testing.allocator, S.parseOnce, .{@as([]const u8, messy)});
+    try testing.checkAllAllocationFailures(testing.allocator, S.parseOnce, .{@as([]const u8, "{\"version\":1,\n \"rules\": [ }")});
+    // Replace an existing `enabled`, insert a missing one, and the no-change copies.
+    try testing.checkAllAllocationFailures(testing.allocator, S.editOnce, .{ @as([]const u8, example), @as([]const u8, "triage-waiting") });
+    try testing.checkAllAllocationFailures(testing.allocator, S.editOnce, .{ @as([]const u8, messy), @as([]const u8, "c") });
+}
+
 test "unit: automation: rules list summary JSON" {
     const gpa = testing.allocator;
     var cfg = try parse(gpa,

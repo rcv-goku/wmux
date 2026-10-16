@@ -260,6 +260,16 @@ test "unit: automation: webhook redirects reject cleartext and strip credentials
     try testing.expectEqual(RedirectDecision.reject_invalid, redirect(from, "javascript:alert(1)", &buf).decision);
     var tiny: [4]u8 = undefined;
     try testing.expectEqual(RedirectDecision.reject_invalid, redirect(from, "/long/path", &tiny).decision);
+    // IPv6 literal origins keep brackets and port through a path-absolute redirect.
+    const v6 = Url.parse("https://[::1]:9443/hook").?;
+    const r6 = redirect(v6, "/next", &buf);
+    try testing.expectEqual(RedirectDecision.follow, r6.decision);
+    try testing.expectEqualStrings("[::1]", r6.target.?.host);
+    try testing.expectEqual(@as(u16, 9443), r6.target.?.effectivePort());
+    try testing.expectEqual(RedirectDecision.follow_without_credentials, redirect(v6, "https://[::1]:9444/next", &buf).decision);
+    // Relative references without a leading `/` are not followed (fail closed).
+    try testing.expectEqual(RedirectDecision.reject_invalid, redirect(from, "next", &buf).decision);
+    try testing.expectEqual(RedirectDecision.reject_invalid, redirect(from, "?page=2", &buf).decision);
 
     const headers = [_]Header{ .{ .name = "Authorization", .value = "x" }, .{ .name = "X-Api-Key", .value = "k" }, .{ .name = "Content-Type", .value = "application/json" } };
     var out: [headers.len]Header = undefined;

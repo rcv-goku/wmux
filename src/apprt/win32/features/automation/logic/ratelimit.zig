@@ -268,6 +268,23 @@ test "unit: automation: rate limit with a huge maximum stays bounded" {
     try testing.expect(try lim.tryAcquire(gpa, 60_000));
 }
 
+test "unit: automation: rate limit table frees everything on allocation failure" {
+    const S = struct {
+        fn run(gpa: Allocator) !void {
+            var t: Table = .{};
+            defer t.deinit(gpa);
+            const three: Limit = .{ .interval_ms = 1000, .maximum = 3 };
+            try t.sync(gpa, &.{ .{ .id = "a", .limit = three }, .{ .id = "b", .limit = default } });
+            _ = try t.tryAcquire(gpa, "a", 0);
+            _ = try t.tryAcquire(gpa, "b", 0);
+            // Reload: a changes limit, b goes, c arrives.
+            try t.sync(gpa, &.{ .{ .id = "a", .limit = default }, .{ .id = "c-✓", .limit = three } });
+            _ = try t.tryAcquire(gpa, "c-✓", 1);
+        }
+    };
+    try testing.checkAllAllocationFailures(testing.allocator, S.run, .{});
+}
+
 test "unit: automation: rate limit table survives reload and drops removed rules" {
     const gpa = testing.allocator;
     var t: Table = .{};
