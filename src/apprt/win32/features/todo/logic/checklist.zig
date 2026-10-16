@@ -49,6 +49,29 @@ pub const State = enum {
     pub fn jsonStringify(self: State, jws: anytype) !void {
         try jws.write(self.wireName());
     }
+
+    /// Inverse of `jsonStringify`: std.json would otherwise match tag names
+    /// and reject `"in-progress"`. Only wire-name strings are accepted.
+    pub fn jsonParse(gpa: Allocator, source: anytype, options: std.json.ParseOptions) std.json.ParseError(@TypeOf(source.*))!State {
+        const token = try source.nextAllocMax(gpa, .alloc_if_needed, options.max_value_len.?);
+        defer switch (token) {
+            .allocated_number, .allocated_string => |s| gpa.free(s),
+            else => {},
+        };
+        return switch (token) {
+            inline .string, .allocated_string => |s| parse(s) orelse error.InvalidEnumTag,
+            else => error.UnexpectedToken,
+        };
+    }
+
+    pub fn jsonParseFromValue(gpa: Allocator, source: std.json.Value, options: std.json.ParseOptions) std.json.ParseFromValueError!State {
+        _ = gpa;
+        _ = options;
+        return switch (source) {
+            .string => |s| parse(s) orelse error.InvalidEnumTag,
+            else => error.UnexpectedToken,
+        };
+    }
 };
 
 /// Who created the item. Wire names: `user`, `agent`.
@@ -364,6 +387,32 @@ test "unit: todo: state and origin wire names round-trip" {
     try testing.expect(State.parse("") == null);
     try testing.expectEqual(Origin.agent, Origin.parse("agent").?);
     try testing.expect(Origin.parse("bot") == null);
+}
+
+test "unit: todo: state parses back from its wire name through std.json" {
+    const gpa = testing.allocator;
+    inline for (.{ State.pending, State.in_progress, State.completed }) |s| {
+        const json = try std.json.Stringify.valueAlloc(gpa, s, .{});
+        defer gpa.free(json);
+        const parsed = try std.json.parseFromSlice(State, gpa, json, .{});
+        defer parsed.deinit();
+        try testing.expectEqual(s, parsed.value);
+        const tree = try std.json.parseFromSlice(std.json.Value, gpa, json, .{});
+        defer tree.deinit();
+        const from_value = try std.json.parseFromValue(State, gpa, tree.value, .{});
+        defer from_value.deinit();
+        try testing.expectEqual(s, from_value.value);
+    }
+    // Optional fields of a typed params struct take the same path.
+    const P = struct { state: ?State = null };
+    const p = try std.json.parseFromSlice(P, gpa, "{\"state\":\"in-progress\"}", .{});
+    defer p.deinit();
+    try testing.expectEqual(@as(?State, .in_progress), p.value.state);
+    // Tag spellings and enum numbers are not wire names.
+    try testing.expectError(error.InvalidEnumTag, std.json.parseFromSlice(State, gpa, "\"in_progress\"", .{}));
+    try testing.expectError(error.UnexpectedToken, std.json.parseFromSlice(State, gpa, "1", .{}));
+    try testing.expectError(error.InvalidEnumTag, std.json.parseFromValue(State, gpa, .{ .string = "done" }, .{}));
+    try testing.expectError(error.UnexpectedToken, std.json.parseFromValue(State, gpa, .{ .integer = 1 }, .{}));
 }
 
 test "unit: todo: text is trimmed, capped at 500 code points, empty rejected" {
