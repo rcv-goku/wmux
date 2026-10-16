@@ -59,6 +59,7 @@ export const STRINGS = Object.freeze({
   "diff.large": "Large diff",
   "diff.loadDiff": "Load diff",
   "diff.noChanges": "No content changes",
+  "diff.noNewline": "No newline at end of file",
   "diff.whitespaceOnly": "Only whitespace changes",
   "diff.combined": "Combined diff ({parents} parents)",
   "diff.collapseFile": "Collapse file",
@@ -80,6 +81,7 @@ export const STRINGS = Object.freeze({
   "diff.offline": "Not running inside wmux.",
 
   "diff.filter.placeholder": "Filter files",
+  "diff.filter.status": "Status",
   "diff.filter.hideViewed": "Hide viewed files",
   "diff.filter.showViewed": "Show viewed files",
   "diff.filter.empty": "No files match the filter.",

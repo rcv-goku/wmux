@@ -212,6 +212,19 @@ describe("unit: diff app rendering", () => {
     assert.match($("tr.dv-hunk td", sec).textContent, /^@@ -1,5 \+1,5 @@ function main\(\) \{$/);
   });
 
+  test("unit: diff: no-newline marker and status filter labels go through tr()", async () => {
+    const { addStrings, setLocale } = await importWeb("_shared/strings.js");
+    addStrings("x-test", { "diff.noNewline": "[no newline]", "diff.filter.status": "[status]" });
+    setLocale("x-test");
+    try {
+      await startApp({ params: { patch: patch("--- a/f.txt", "+++ b/f.txt", "@@ -1 +1 @@", "-a", "+b", "\\ No newline at end of file") } });
+      assert.equal($(".dv-nonl").title, "[no newline]");
+      assert.equal($(".dv-filter-statuses").getAttribute("aria-label"), "[status]");
+    } finally {
+      setLocale("en");
+    }
+  });
+
   test("unit: diff: split toggle re-renders side by side and persists", async () => {
     const { store } = await startApp();
     assert.equal($("#dv-layout").textContent, "Switch to split diff");

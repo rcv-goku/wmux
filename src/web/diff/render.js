@@ -174,7 +174,7 @@ export function createRenderer(env) {
     td.append(add, sign, text);
     if (line.noNewline) {
       const mark = el(doc, "span", "dv-nonl", "⊘");
-      mark.title = "No newline at end of file";
+      mark.title = t("diff.noNewline");
       td.append(mark);
     }
     return td;
