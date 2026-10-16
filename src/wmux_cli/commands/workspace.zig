@@ -513,7 +513,9 @@ test "unit: cli-workspace: workspace env lists, masks and targets" {
     var h: testkit.Harness = undefined;
     try h.init();
     defer h.deinit();
-    h.ok("workspace.env", "{\"workspace_id\":\"W\",\"workspace_ref\":\"workspace:2\",\"env\":{\"AWS_PROFILE\":\"prod\",\"TOKEN\":\"s3cr\u{e9}t\",\"EMPTY\":\"\"}}");
+    // cmux's workspace.env result.
+    h.ok("workspace.env", "{\"window_id\":\"6F1D2C3B-0000-4000-8000-000000000001\",\"window_ref\":\"window:1\",\"workspace_id\":\"W\",\"workspace_ref\":\"workspace:2\",\"env\":{\"TOKEN\":\"s3cr\u{e9}t\",\"AWS_PROFILE\":\"prod\",\"EMPTY\":\"\"},\"count\":3}");
+    // Lines are sorted by name.
     const out = try testkit.expectOk(&h, &.{ "workspace", "env" });
     try testkit.expectGolden(h.alloc(), "workspace-env.txt", out);
     try h.expectLast("workspace.env", "{}");
@@ -522,6 +524,7 @@ test "unit: cli-workspace: workspace env lists, masks and targets" {
     const mj = try testkit.expectOk(&h, &.{ "workspace", "env", "--mask", "--json" });
     try testing.expect(std.mem.indexOf(u8, mj, "s3cr") == null);
     try testing.expect(std.mem.indexOf(u8, mj, "\"TOKEN\": \"***\"") != null);
+    try testing.expect(std.mem.indexOf(u8, mj, "\"count\": 3") != null);
     _ = try testkit.expectOk(&h, &.{ "workspace", "env", "workspace:3" });
     try h.expectLast("workspace.env", "{\"workspace_id\":\"workspace:3\"}");
     _ = try testkit.expectOk(&h, &.{ "workspace", "env", "--workspace", "2" });
@@ -531,8 +534,8 @@ test "unit: cli-workspace: workspace env lists, masks and targets" {
     try h.expectLast("workspace.env", "{\"workspace_id\":\"CALLER-UUID\"}");
     _ = try testkit.expectOk(&h, &.{ "workspace", "env", "--window", "window:1" });
     try h.expectLast("workspace.env", "{\"window_id\":\"window:1\"}");
-    h.ok("workspace.env", "{\"env\":{}}");
-    try testing.expectEqualStrings("No environment variables set.\n", try testkit.expectOk(&h, &.{ "workspace", "env" }));
+    h.ok("workspace.env", "{\"env\":{},\"count\":0}");
+    try testing.expectEqualStrings("No environment variables\n", try testkit.expectOk(&h, &.{ "workspace", "env" }));
     try testkit.expectUsage(&h, &.{ "workspace", "env", "a", "b" }, "unexpected argument 'b'");
     try testkit.expectUsage(&h, &.{ "workspace", "env", "workspace:1", "--workspace", "workspace:2" }, "give the workspace as an argument or --workspace, not both");
     try testkit.expectUsage(&h, &.{ "workspace", "env", "surface:1" }, "Invalid workspace handle: surface:1 (expected UUID, ref like workspace:1, or index)");
@@ -644,19 +647,21 @@ test "unit: cli-workspace: workspace env --mask hides values whatever the result
     try testing.expect(std.mem.indexOf(u8, plain, "s3cret") != null);
 
     // A set under any other key is masked as well; only the target handles
-    // keep their values.
+    // and a numeric count keep their values.
     h.ok("workspace.env", "{\"workspace_id\":\"W-UUID\",\"workspace_ref\":\"workspace:2\",\"window_ref\":\"window:1\",\"variables\":{\"API_KEY\":\"k3y\"},\"count\":1}");
     const other = try testkit.expectOk(&h, &.{ "workspace", "env", "--mask", "--json", "--id-format", "both" });
     try expectNoLeak(other, &.{"k3y"});
     try testing.expect(std.mem.indexOf(u8, other, "\"API_KEY\": \"***\"") != null);
-    try testing.expect(std.mem.indexOf(u8, other, "\"count\": \"***\"") != null);
+    try testing.expect(std.mem.indexOf(u8, other, "\"count\": 1") != null);
     try testing.expect(std.mem.indexOf(u8, other, "\"workspace_id\": \"W-UUID\"") != null);
     try testing.expect(std.mem.indexOf(u8, other, "\"workspace_ref\": \"workspace:2\"") != null);
     try testing.expect(std.mem.indexOf(u8, other, "\"window_ref\": \"window:1\"") != null);
+    h.ok("workspace.env", "{\"count\":\"k3y\"}");
+    try expectNoLeak(try testkit.expectOk(&h, &.{ "workspace", "env", "--mask", "--json" }), &.{"k3y"});
     // So is a result that is not an object, in JSON and in text.
     h.ok("workspace.env", "[\"TOKEN=s3cret\",{\"name\":\"PW\",\"value\":\"hunter2\"}]");
     try expectNoLeak(try testkit.expectOk(&h, &.{ "workspace", "env", "--mask", "--json" }), &.{ "s3cret", "hunter2" });
-    try testing.expectEqualStrings("No environment variables set.\n", try testkit.expectOk(&h, &.{ "workspace", "env", "--mask" }));
+    try testing.expectEqualStrings("No environment variables\n", try testkit.expectOk(&h, &.{ "workspace", "env", "--mask" }));
     h.ok("workspace.env", "\"TOKEN=s3cret\"");
     try testing.expectEqualStrings("\"***\"\n", try testkit.expectOk(&h, &.{ "workspace", "env", "--mask", "--json" }));
 
@@ -671,6 +676,39 @@ test "unit: cli-workspace: workspace env --mask hides values whatever the result
     try testing.expectEqualStrings("{\"workspace_id\":\"W\",\"window_id\":null,\"env\":{\"A\":\"***\"},\"workspace\":\"***\"}", try std.json.Stringify.valueAlloc(a, try create.maskEnvResult(a, r), .{}));
     try testing.expectEqualStrings("\"***\"", try std.json.Stringify.valueAlloc(a, try create.maskEnvResult(a, .{ .integer = 42 }), .{}));
     try testing.expectEqualStrings("{}", try std.json.Stringify.valueAlloc(a, try create.maskEnvResult(a, .{ .object = std.json.ObjectMap.init(a) }), .{}));
+    const c = try std.json.parseFromSliceLeaky(std.json.Value, a, "{\"count\":2,\"env\":{\"count\":\"9\"}}", .{});
+    try testing.expectEqualStrings("{\"count\":2,\"env\":{\"count\":\"***\"}}", try std.json.Stringify.valueAlloc(a, try create.maskEnvResult(a, c), .{}));
+}
+
+test "unit: cli-workspace: workspace env --json formats handles but never the variables" {
+    var h: testkit.Harness = undefined;
+    try h.init();
+    defer h.deinit();
+    // Variable names that look like handle pairs.
+    h.ok("workspace.env", "{\"workspace_id\":\"W-UUID\",\"workspace_ref\":\"workspace:2\",\"env\":{\"id\":\"1\",\"ref\":\"main\",\"db_id\":\"7\",\"db_ref\":\"prod\",\"svc_ids\":\"a,b\",\"svc_refs\":\"x,y\"},\"count\":6}");
+    const all_vars = [_][]const u8{ "\"id\": \"1\"", "\"ref\": \"main\"", "\"db_id\": \"7\"", "\"db_ref\": \"prod\"", "\"svc_ids\": \"a,b\"", "\"svc_refs\": \"x,y\"" };
+    for ([_][]const u8{ "refs", "uuids", "both" }) |mode| {
+        const js = try testkit.expectOk(&h, &.{ "workspace", "env", "--json", "--id-format", mode });
+        for (all_vars) |want| {
+            if (std.mem.indexOf(u8, js, want) == null) {
+                std.debug.print("\n--id-format {s} lost {s}:\n{s}\n", .{ mode, want, js });
+                return error.TestUnexpectedResult;
+            }
+        }
+        // The result's own handles still follow --id-format.
+        const has_id = std.mem.indexOf(u8, js, "\"workspace_id\"") != null;
+        const has_ref = std.mem.indexOf(u8, js, "\"workspace_ref\"") != null;
+        try testing.expect(has_id == !std.mem.eql(u8, mode, "refs"));
+        try testing.expect(has_ref == !std.mem.eql(u8, mode, "uuids"));
+    }
+    try testing.expect(std.mem.indexOf(u8, try testkit.expectOk(&h, &.{ "workspace", "env", "--json" }), "\"db_id\": \"7\"") != null);
+    // Masked sets keep their names too.
+    const masked = try testkit.expectOk(&h, &.{ "workspace", "env", "--json", "--mask" });
+    try testing.expect(std.mem.indexOf(u8, masked, "\"db_id\": \"***\"") != null);
+    try testing.expect(std.mem.indexOf(u8, masked, "\"id\": \"***\"") != null);
+    try testing.expect(std.mem.indexOf(u8, masked, "\"count\": 6") != null);
+    try expectNoLeak(masked, &.{ "main", "prod", "a,b", "x,y" });
+    try testing.expectEqualStrings("db_id=7\ndb_ref=prod\nid=1\nref=main\nsvc_ids=a,b\nsvc_refs=x,y\n", try testkit.expectOk(&h, &.{ "workspace", "env" }));
 }
 
 test "unit: cli-workspace: next, previous and last window" {

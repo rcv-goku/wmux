@@ -10,8 +10,8 @@ Subcommands:
   create [new-workspace flags]
       Same flags as "cmux new-workspace"; prints "OK <workspace>"
   env [<id|ref|index> | --workspace <id|ref|index>] [--mask]
-      The workspace's environment variables as KEY=VALUE lines; --mask hides
-      the values
+      The workspace's environment variables as KEY=VALUE lines sorted by
+      name; --mask hides the values
   close <id|ref|index> [--window <id|ref|index>] [--force]
   rename [<id|ref|index>] --title <title>
   select <id|ref|index> [--window <id|ref|index>]
