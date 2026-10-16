@@ -48,6 +48,8 @@ const STATE_DEBOUNCE_MS = 400;
 const STATUS_MS = 2500;
 const PAGE_STEP = 10;
 const TIME_REFRESH_MS = 60000;
+/** Longest a pointer press holds back renders (a release the page never sees). */
+const PRESS_MAX_MS = 2000;
 
 /**
  * @param {{
@@ -96,6 +98,10 @@ export function createApp(options) {
     stateTimer: null,
     statusTimer: null,
     timeTimer: null,
+    /** A primary pointer button is down; renders wait for its release. */
+    pressed: false,
+    renderDeferred: false,
+    pressTimer: null,
   };
   const cleanups = [];
   let keys = null;
@@ -239,15 +245,17 @@ export function createApp(options) {
     const restoreFocus = els.list.contains(doc.activeElement);
     const nodes = [];
     if (state.grouped) {
-      groupRecords(state.records, state.titles).forEach((group, gi) => {
+      groupRecords(state.records, state.titles).forEach((group) => {
         const section = el("div", "ntf-group");
         section.setAttribute("role", "group");
         const title = group.title || t("notifications.group.unknown");
         const heading = el("div", "ntf-group-title");
-        heading.id = "ntf-group-" + gi;
         heading.append(el("span", "ntf-group-name", title));
         if (group.unread > 0) heading.append(el("span", "ntf-group-count", String(group.unread)));
-        section.setAttribute("aria-labelledby", heading.id);
+        // The group carries the name; the visible heading would otherwise be
+        // read again as stray text among the listbox options.
+        section.setAttribute("aria-label", t("notifications.group.label", { title, unread: group.unread }));
+        heading.setAttribute("aria-hidden", "true");
         section.append(heading);
         for (const r of group.records) section.append(buildRow(r));
         nodes.push(section);
@@ -287,12 +295,40 @@ export function createApp(options) {
   }
 
   function render() {
+    // A render rebuilds every row. Between pointerdown and pointerup a live
+    // update would replace the pressed row (or its X), and the browser drops
+    // a click whose mousedown target left the document, so renders wait for
+    // the release.
+    if (state.pressed) {
+      state.renderDeferred = true;
+      return;
+    }
     renderHeader();
     const kind = bodyState(state.records, state.markers);
     renderEmpty(kind);
     if (kind === "list") renderList();
     else els.list.replaceChildren();
     if (state.menuFor && !find(state.menuFor)) closeMenu(false);
+  }
+
+  function onPointerDown(e) {
+    if (typeof e.button === "number" && e.button !== 0) return;
+    state.pressed = true;
+    if (state.pressTimer) win.clearTimeout(state.pressTimer);
+    state.pressTimer = win.setTimeout(releasePress, PRESS_MAX_MS);
+  }
+
+  function releasePress() {
+    if (state.pressTimer) win.clearTimeout(state.pressTimer);
+    state.pressTimer = null;
+    if (!state.pressed) return;
+    state.pressed = false;
+    if (!state.renderDeferred) return;
+    state.renderDeferred = false;
+    // Runs after the click that this pointerup produces.
+    win.setTimeout(() => {
+      if (!state.destroyed) render();
+    }, 0);
   }
 
   /* ----------------------------------------------------------------- data */
@@ -368,15 +404,20 @@ export function createApp(options) {
 
   /**
    * Runs a bridge call after an optimistic local change; a failure shows the
-   * error and reloads the authoritative list.
+   * error and reloads the authoritative list. A `notification.list` reply
+   * still in flight was taken before this action and would undo it on
+   * screen (a dismissed row coming back), so it is dropped and the list
+   * reloads once the action is done.
    */
   async function act(method, params, optimistic) {
+    state.loadSeq += 1;
     if (optimistic) {
       optimistic();
       render();
     }
     try {
       await bridge.call(method, params);
+      scheduleReload();
       return true;
     } catch (err) {
       setStatus(t("notifications.status.actionFailed", { message: errorMessage(err) }));
@@ -491,11 +532,15 @@ export function createApp(options) {
     focusRow(ids[i]);
   }
 
-  /** Focus the list (pane shown or focused): the focused row, else the first. */
-  function focusList() {
+  /**
+   * Focus the list (pane shown or focused): the focused row, else the first.
+   * `scroll` brings that row into view; focus coming back to the window
+   * passes false (see start()).
+   */
+  function focusList(scroll = true) {
     if (state.records.length === 0) return;
     if (!state.focusedId || !find(state.focusedId)) state.focusedId = orderedIds()[0] || null;
-    applyFocus(true);
+    applyFocus(true, scroll);
   }
 
   function rowOf(target) {
@@ -686,11 +731,18 @@ export function createApp(options) {
     listen(doc, "keydown", onDocKeydown);
     listen(doc, "pointerdown", onDocPointerDown);
     listen(doc, "mousedown", onDocPointerDown);
+    listen(doc, "pointerdown", onPointerDown, true);
+    listen(win, "pointerup", releasePress, true);
+    listen(win, "pointercancel", releasePress, true);
+    listen(win, "blur", releasePress);
     listen(els.jump, "click", () => jumpToUnread());
     listen(els.clear, "click", () => clearAll());
-    // Pane shown or focused: the first (or last focused) row takes focus.
+    // Pane shown or focused: the first (or last focused) row takes focus,
+    // without scrolling. Focus usually comes back with a click into the
+    // list, and scrolling the list under the pointer would hand that click
+    // to another row (or drop it).
     listen(win, "focus", () => {
-      if (!els.list.contains(doc.activeElement) && !state.menuFor) focusList();
+      if (!els.list.contains(doc.activeElement) && !state.menuFor) focusList(false);
     });
     cleanups.push(bridge.on("cmux.event", onFrame));
     cleanups.push(bridge.on("panel.notifications.snapshot", (p) => applySnapshot(p)));
@@ -730,7 +782,7 @@ export function createApp(options) {
 
   function destroy() {
     state.destroyed = true;
-    for (const timer of [state.reloadTimer, state.titlesTimer, state.stateTimer, state.statusTimer]) {
+    for (const timer of [state.reloadTimer, state.titlesTimer, state.stateTimer, state.statusTimer, state.pressTimer]) {
       if (timer) win.clearTimeout(timer);
     }
     if (state.timeTimer) win.clearInterval(state.timeTimer);

@@ -81,7 +81,9 @@ workspace title, so it is the `workspace_title` fallback) and `created_at` /
 so the markers-only state can show "N unread notifications".
 
 Actions are optimistic: the row changes at once; a failed call shows "Could
-not complete the action: <message>" and reloads the list.
+not complete the action: <message>" and reloads the list. A
+`notification.list` reply that was in flight when an action started is
+dropped (it predates the action), and the list reloads after the action.
 
 ### Events pushed by native
 
@@ -113,11 +115,16 @@ not complete the action: <message>" and reloads the list.
 - **Rows.** Click opens. The hover-only X dismisses. Right click (or
   Shift+F10 / the Menu key) opens Open / Copy / Mark as Read|Mark as Unread /
   Dismiss; the menu is keyboard navigable (arrows, Home/End, Enter, Escape).
+  Every render rebuilds the rows, so while a primary pointer button is held,
+  renders wait for its release (at most 2 s): a live update must not replace
+  the row under a click, which the browser would then drop.
 - **Keyboard.** The list is a listbox with a roving tab stop. ArrowUp/Down or
   `k`/`j`, Home/End, PgUp/PgDn move; Enter opens; Space toggles read; Delete
   or Backspace dismisses; Ctrl+C copies. When the page gets focus (pane shown
   or focused) the last focused row, else the first, takes focus, so Return
-  opens the newest notification. Escape in the popover closes it.
+  opens the newest notification. That does not scroll the list: focus usually
+  comes back with a click, which must land on the row under the pointer.
+  Escape in the popover closes it.
 - **Copy.** Workspace title (if known), title, then the body (or the subtitle
   when the body is empty); each trimmed, empty lines dropped, the detail
   dropped when equal to the title; joined with `\n`.

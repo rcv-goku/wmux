@@ -271,6 +271,25 @@ describe("unit: feed model", () => {
     assert.equal(ws[0].pending_count, 1, "like query.zig: only status pending counts");
   });
 
+  test("unit: feed: a stop card is superseded once its agent goes on", () => {
+    const stop = (n, extra) => item(n, "stop", { hook_event_name: "Stop", ...extra });
+    const items = model.itemsFrom([
+      stop(10), // an older turn of sess-1
+      item(8, "prompt", { text: "next" }), // sess-1 went on
+      stop(6), // the newest stop of sess-1
+      item(5, "notification", { title: "Claude is waiting for your input" }), // idle reminder
+      stop(9, { session_id: "sess-2" }), // another agent context
+      stop(7, { source: "codex" }),
+    ]);
+    assert.deepEqual(Array.from(model.supersededStops(items)), [uuid(10)]);
+    const byId = (id) => items.find((it) => it.id === id);
+    assert.equal(model.isActionable({ ...byId(uuid(10)), superseded: true }), false);
+    assert.equal(model.isActionable(byId(uuid(6))), true);
+    const ended = model.itemsFrom([stop(6), item(4, "sessionEnd")]);
+    assert.deepEqual(Array.from(model.supersededStops(ended)), [uuid(6)], "after the session ended the reply would reach a shell");
+    assert.equal(model.supersededStops([]).size, 0);
+  });
+
   test("unit: feed: plan markdown is sanitized and links are kept safe", () => {
     const render = createMarkdownRenderer({ markdownit, purify, document: doc });
     const div = doc.createElement("div");
@@ -326,6 +345,7 @@ describe("unit: feed app", () => {
     await settle();
     assert.deepEqual(host.calls("feed.permission.reply").map((m) => m.params), [{ request_id: "req-1", mode: "always" }]);
     assert.ok(doc.querySelector(".feed-divider"));
+    assert.ok(Array.from($("feed-list").children).every((c) => c.getAttribute("role") === "listitem"), "the list owns only list items, the divider included");
     const card = cardById(uuid(1));
     assert.equal(card.dataset.status, "resolved");
     assert.equal(card.querySelector(".feed-badge").textContent, "always");
@@ -377,9 +397,15 @@ describe("unit: feed app", () => {
   });
 
   test("unit: feed: answering a request resolved elsewhere says so", async () => {
-    await startApp({ handlers: { "feed.permission.reply": () => { throw hostError("not_found", "unknown request"); } } });
+    // ADR-3.5 codes only: an unknown request id, or one no longer pending.
+    for (const code of ["not_found", "invalid_state", "stale_state"]) {
+      await startApp({ handlers: { "feed.permission.reply": () => { throw hostError(code, "request is not pending"); } } });
+      await app.replyPermission(uuid(1), "deny");
+      assert.equal(cardById(uuid(1)).querySelector(".feed-card-error").textContent, "This request was already resolved.", code);
+    }
+    await startApp({ handlers: { "feed.permission.reply": () => { throw hostError("busy", "try again"); } } });
     await app.replyPermission(uuid(1), "deny");
-    assert.equal(cardById(uuid(1)).querySelector(".feed-card-error").textContent, "This request was already resolved.");
+    assert.equal(cardById(uuid(1)).querySelector(".feed-card-error").textContent, "Could not send the decision: try again");
   });
 
   test("unit: feed: All Activity lists every kind with labels, todos and tool results", async () => {
@@ -513,6 +539,21 @@ describe("unit: feed app", () => {
     await settle();
     assert.deepEqual(host.calls("panel.open_external").map((m) => m.params.url), ["mailto:dev@example.com"]);
     assert.deepEqual(host.calls("panel.open_in_browser").map((m) => m.params.url), ["https://example.com/y"]);
+
+    // Middle click: routed the same way, never left to the host's new-window default.
+    const middle = (el) => {
+      const e = new window.MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 });
+      el.dispatchEvent(e);
+      return e;
+    };
+    assert.equal(middle(web).defaultPrevented, true);
+    assert.equal(middle(mail).defaultPrevented, true);
+    await settle();
+    assert.deepEqual(host.calls("panel.open_in_browser").map((m) => m.params.url), ["https://example.com/y", "https://example.com/y"]);
+    assert.deepEqual(host.calls("panel.open_external").map((m) => m.params.url), ["mailto:dev@example.com", "mailto:dev@example.com"]);
+    const right = new window.MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 2 });
+    web.dispatchEvent(right);
+    assert.equal(right.defaultPrevented, false, "other buttons are left alone");
   });
 
   test("unit: feed: single single-choice question answers on click", async () => {
@@ -692,6 +733,46 @@ describe("unit: feed app", () => {
     assert.equal(done.querySelector('[data-field="reply"]'), null);
   });
 
+  test("unit: feed: only the newest stop card of an agent offers the reply", async () => {
+    const stop = (n) => item(n, "stop", { hook_event_name: "Stop" });
+    const h = await startApp({
+      params: { filter: "activity" },
+      items: [item(5, "notification", { title: "Claude is waiting for your input" }), stop(6), item(8, "prompt", { text: "go on" }), stop(10)],
+    });
+    const old = cardById(uuid(10));
+    assert.equal(old.querySelector('[data-field="reply"]'), null, "the stop card of an earlier turn has no reply box");
+    assert.equal(old.classList.contains("feed-actionable"), false);
+    assert.equal(await app.replyStop(uuid(10), "typed into a busy agent"), false);
+    const latest = cardById(uuid(6));
+    assert.ok(latest.querySelector('[data-field="reply"]'), "an idle reminder does not end the wait");
+    assert.ok(latest.classList.contains("feed-actionable"));
+
+    // The agent goes on (the user typed in its terminal): the box goes away.
+    type(latest.querySelector('[data-field="reply"]'), "half a reply");
+    h.setItems([item(1, "toolUse", { tool_name: "Bash", hook_event_name: "PreToolUse" }), ...h.items]);
+    host.emit("cmux.event", { name: "feed.item.received" });
+    await sleep(60);
+    await settle();
+    assert.equal(cardById(uuid(6)).querySelector('[data-field="reply"]'), null);
+    assert.equal(await app.replyStop(uuid(6), "half a reply"), false);
+    assert.equal(host.calls("panel.feed.stop_reply").length, 0, "nothing reached native");
+  });
+
+  test("unit: feed: a sent stop reply stays on its card when the agent goes on", async () => {
+    const h = await startApp({ params: { filter: "activity" }, items: [item(2, "stop", { hook_event_name: "Stop" })] });
+    type(cardById(uuid(2)).querySelector('[data-field="reply"]'), "continue with tests");
+    click(window, btn(cardById(uuid(2)), "stop-reply"));
+    await settle();
+    assert.equal(host.calls("panel.feed.stop_reply").length, 1);
+    h.setItems([item(1, "prompt", { text: "continue with tests" }), ...h.items]);
+    host.emit("cmux.event", { name: "feed.item.received" });
+    await sleep(60);
+    await settle();
+    const card = cardById(uuid(2));
+    assert.equal(card.querySelector(".feed-sent").textContent, "continue with tests");
+    assert.equal(card.querySelector(".feed-badge").textContent, "Sent");
+  });
+
   test("unit: feed: double click, the jump button and Enter jump to the agent", async () => {
     await startApp();
     dblclick(window, cards()[0].querySelector(".feed-card-title"));
@@ -792,6 +873,11 @@ describe("unit: feed app", () => {
     assert.equal(doc.activeElement, cardById(uuid(2)));
     assert.equal(cardById(uuid(2)).tabIndex, 0);
     assert.equal(cardById(uuid(1)).tabIndex, -1);
+    // Focus that enters another card (Tab into its buttons, a click) takes the tab stop along.
+    btn(cardById(uuid(1)), "permission").focus();
+    assert.equal(cardById(uuid(1)).tabIndex, 0);
+    assert.equal(cardById(uuid(2)).tabIndex, -1);
+    assert.equal(app.state.focusedId, uuid(1));
 
     $("feed-tab-activity").focus();
     key(window, $("feed-tab-activity"), { key: "ArrowRight" });

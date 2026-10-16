@@ -62,7 +62,7 @@ A later `panel.init` is applied in place. The page sets the title with
 | `feed.permission.reply` | `{request_id, mode: once\|always\|all\|bypass\|deny}` -> `{delivered}` | permission buttons |
 | `feed.exit_plan.reply` | `{request_id, mode: ultraplan\|bypassPermissions\|autoAccept\|manual\|deny, feedback?}` | plan buttons; "Send feedback" sends `mode: "deny"` with the trimmed `feedback` (badge "refined") |
 | `feed.question.reply` | `{request_id, selections: [string], answers?: [[string]]}` | option click (one single-choice question) or Submit / Submit All Answers. `answers` (wmux extension, only with several questions) keeps the per-question split that the flat `selections` loses |
-| `panel.feed.stop_reply` | `{id, text, request_id?, session_id?, workspace_id?, surface_id?, source?}` -> `{delivered?}` | "Send to <Agent>" on a stop card. Native looks the item up by `id` (a stop item without a reply), resolves the agent's surface from the item's own ids or the hook session map, and sends `text` as input with Enter (`ipcSendText(reply, true)`, or agent messages), then records `Resolution.reply` so the item reports `resolution {text, badge: "Sent"}`. The other keys are informational: the page renders agent-supplied markdown, so native never routes the text by ids the page sends |
+| `panel.feed.stop_reply` | `{id, text, request_id?, session_id?, workspace_id?, surface_id?, source?}` -> `{delivered?}` | "Send to <Agent>" on a stop card. Native looks the item up by `id` (a stop item without a reply), resolves the agent's surface from the item's own ids or the hook session map, and sends `text` as input with Enter (`ipcSendText(reply, true)`, or agent messages), then records `Resolution.reply` so the item reports `resolution {text, badge: "Sent"}`. The other keys are informational: the page renders agent-supplied markdown, so native never routes the text by ids the page sends. For the same reason native enforces the page's stale-card rule itself: it rejects the reply (`invalid_state`) unless the stop item is still the newest item of its agent context (source + session) apart from notifications |
 | `feed.jump` | `{id, workspace_id?, surface_id?, session_id?, source?}` -> `{}` | double click on a card, the ↗ button, Enter on a focused card, a workstream chip. `not_found` = the agent is not in a wmux terminal (the page says so) |
 | `panel.open_in_browser` | `{url}` | http(s) links inside a rendered plan |
 | `panel.open_external` | `{url}` | mailto: links inside a rendered plan |
@@ -80,9 +80,11 @@ status, active_form}]`, `todo_summary`, `is_error`, `options` (selectable
 modes, or the question option labels), `resolution {mode?, feedback?,
 selections?, text?, badge}`, `resolved_at`. Unknown kinds are skipped.
 
-Reply errors: `not_found`, `conflict`, `expired`, `gone` or `already_resolved`
-show "This request was already resolved."; others "Could not send the
-decision: <message>". Either way the list reloads.
+Reply errors use the v2 codes of ADR-3.5 (`wmux_proto/errors.zig`):
+`not_found` (unknown request id) and `invalid_state` or `stale_state` (the
+request is no longer pending: answered elsewhere, timed out or expired) show
+"This request was already resolved."; others "Could not send the decision:
+<message>". Either way the list reloads.
 
 ### Events pushed by native
 
@@ -114,7 +116,8 @@ decision: <message>". Either way the list reloads.
 - **Plan.** The plan is markdown rendered without raw HTML and sanitized by
   DOMPurify (no images, forms, media, styles, ids or classes; links only
   http(s), opened in a wmux browser tab, and mailto, opened by the OS
-  handler; the page itself never navigates). Plan file and allowed
+  handler, on click and on middle click; the page itself never navigates
+  and never asks the host for a new window). Plan file and allowed
   prompts are listed. Ultraplan / Manual / Auto / Bypass / Deny as offered,
   and "Revise…" opens a feedback box ("Send feedback", Ctrl+Enter).
 - **Question.** Options are buttons; with one single-choice question a click
@@ -125,6 +128,12 @@ decision: <message>". Either way the list reloads.
   text field. "Skip + plan immediately" arrives as a regular option label.
 - **Stop.** "<Agent> finished — reply to continue", a "Reply to <Agent>…"
   box and "Send to <Agent>" (Ctrl+Enter). The sent text stays on the card.
+  Only the newest stop card of an agent context (source + session) offers
+  the box: once a later item of that context arrives (anything but a
+  notification, since an idle agent posts "waiting for your input"
+  reminders while it still waits), the reply would be typed into whatever
+  the agent's terminal shows now (a new turn, a permission prompt, a shell
+  after the session ended), so the card keeps no box.
 - **Todos.** "Tasks" with "<n> open, <n> in progress, <n> done" (zero parts
   omitted, empty = "0 open") and a "Show tasks" / "Collapse" toggle.
 - **Answering.** The card shows "Sending…", then the resolved badge at once;

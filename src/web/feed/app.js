@@ -31,6 +31,7 @@ import {
   normalizeItem,
   partition,
   sourceDisplayName,
+  supersededStops,
   workstreams,
 } from "./model.js";
 import { t } from "./strings.js";
@@ -45,8 +46,12 @@ const TIME_REFRESH_MS = 30000;
 const MAX_BANNERS = 3;
 /** Longest a pointer press holds back renders (a release the page never sees). */
 const PRESS_MAX_MS = 2000;
-/** Error codes that mean the request is gone (answered elsewhere, expired). */
-const GONE_CODES = new Set(["not_found", "conflict", "expired", "gone", "already_resolved"]);
+/**
+ * v2 error codes (ADR-3.5, wmux_proto/errors.zig) that mean the request is
+ * gone: unknown request id, or no longer pending (answered elsewhere, timed
+ * out, expired).
+ */
+const GONE_CODES = new Set(["not_found", "invalid_state", "stale_state"]);
 
 /**
  * @param {{
@@ -147,14 +152,19 @@ export function createApp(options) {
 
   /* ------------------------------------------------------------- rendering */
 
-  /** Items with answers given here applied until native reports them closed. */
+  /**
+   * Items with answers given here applied until native reports them closed,
+   * and stop items whose agent went on marked `superseded` (no reply box).
+   */
   function effectiveItems() {
-    if (state.localResolved.size === 0) return state.items;
+    const stale = supersededStops(state.items);
+    if (state.localResolved.size === 0 && stale.size === 0) return state.items;
     return state.items.map((it) => {
+      let out = it;
       const r = state.localResolved.get(it.id);
-      if (!r) return it;
-      if (it.kind === "stop") return it.resolution ? it : { ...it, resolution: r };
-      return isPending(it) ? { ...it, status: "resolved", resolution: r } : it;
+      if (r && it.kind === "stop") out = it.resolution ? it : { ...it, resolution: r };
+      else if (r && isPending(it)) out = { ...it, status: "resolved", resolution: r };
+      return stale.has(it.id) ? { ...out, superseded: true } : out;
     });
   }
 
@@ -319,8 +329,9 @@ export function createApp(options) {
     const view = visibleItems(items);
     const nodes = view.main.map((it) => cards.buildCard(it, uiFor(it.id)));
     if (view.resolved.length) {
+      // An item of the list (a list owns only list items), read as "Resolved".
       const divider = el("div", "feed-divider", t("feed.resolved"));
-      divider.setAttribute("role", "separator");
+      divider.setAttribute("role", "listitem");
       nodes.push(divider);
       for (const it of view.resolved) nodes.push(cards.buildCard(it, uiFor(it.id)));
     }
@@ -552,6 +563,9 @@ export function createApp(options) {
     const item = find(id);
     const body = typeof text === "string" ? text.trim() : "";
     if (!item || item.kind !== "stop" || !body) return Promise.resolve(false);
+    // The agent went on since this stop: the text would be typed into its
+    // terminal as it is now, not as a reply to this turn.
+    if (supersededStops(state.items).has(id)) return Promise.resolve(false);
     const params = { id, text: body };
     for (const key of ["request_id", "session_id", "workspace_id", "surface_id"]) if (item[key]) params[key] = item[key];
     if (item.source) params.source = item.source;
@@ -806,12 +820,21 @@ export function createApp(options) {
     listen(doc.body, "click", (e) => {
       if (!onLinkClick(e)) onClick(e);
     });
+    // A middle click on a link would otherwise ask the host for a new
+    // window; route it like a click (as the markdown panel does).
+    listen(doc.body, "auxclick", (e) => {
+      if (e.button === 1) onLinkClick(e);
+    });
     listen(els.list, "dblclick", onDblClick);
     listen(els.list, "input", onInput);
     listen(els.list, "keydown", onListKeydown);
+    // Focus that enters a card (click, Tab into its buttons) moves the roving
+    // tab stop with it, so Tab from outside comes back to that card.
     listen(els.list, "focusin", (e) => {
       const card = e.target.closest && e.target.closest(".feed-card");
-      if (card) state.focusedId = card.dataset.id;
+      if (!card) return;
+      state.focusedId = card.dataset.id;
+      for (const c of els.list.querySelectorAll(".feed-card")) c.tabIndex = c === card ? 0 : -1;
     });
     for (const tab of els.tabs) {
       listen(tab, "click", () => setFilter(tab.dataset.filter));

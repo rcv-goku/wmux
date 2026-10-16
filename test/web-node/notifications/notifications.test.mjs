@@ -250,6 +250,11 @@ describe("unit: notifications app", () => {
     await startApp();
     assert.equal(doc.documentElement.dataset.placement, "tab");
     assert.deepEqual(texts(doc, ".ntf-group-name"), ["api", "web"]);
+    const groups = Array.from(doc.querySelectorAll(".ntf-group"));
+    assert.deepEqual(groups.map((g) => g.getAttribute("role")), ["group", "group"]);
+    assert.deepEqual(groups.map((g) => g.getAttribute("aria-label")), ["api, 1 unread", "web, 1 unread"]);
+    assert.ok(groups.every((g) => g.querySelector(".ntf-group-title").getAttribute("aria-hidden") === "true"), "the group name is read once");
+    assert.ok(groups.every((g) => Array.from(g.children).every((c) => c.getAttribute("role") === "option" || c.getAttribute("aria-hidden") === "true")));
     assert.equal(rows().length, 3);
     assert.deepEqual(rows().map((r) => r.classList.contains("ntf-unread")), [true, false, true]);
     assert.equal($("ntf-count").textContent, "2");
@@ -483,6 +488,32 @@ describe("unit: notifications app", () => {
     assert.deepEqual(host.calls("notification.open").map((m) => m.params.id), [uuid(1)]);
   });
 
+  test("unit: notifications: focus coming back to the window does not scroll the list", async () => {
+    // A click from another pane focuses the window before the press lands;
+    // scrolling the list then would put another row under the pointer.
+    const proto = window.HTMLElement.prototype;
+    const had = Object.prototype.hasOwnProperty.call(proto, "scrollIntoView");
+    const original = proto.scrollIntoView;
+    const scrolled = [];
+    proto.scrollIntoView = function scrollIntoView() {
+      scrolled.push(this.dataset ? this.dataset.id : null);
+    };
+    try {
+      await startApp({ records: Array.from({ length: 30 }, (_, i) => rec(i + 1)), params: { group_by: "none" } });
+      if (doc.activeElement && doc.activeElement !== doc.body) doc.activeElement.blur();
+      assert.equal(doc.activeElement, doc.body);
+      scrolled.length = 0;
+      window.dispatchEvent(new window.Event("focus"));
+      assert.equal(doc.activeElement, rows()[0], "the row still takes focus, so Return opens it");
+      assert.deepEqual(scrolled, [], "the list stays where the user left it");
+      host.emit("panel.notifications.command", { action: "focus" });
+      assert.deepEqual(scrolled, [uuid(1)], "an explicit focus command still brings the row into view");
+    } finally {
+      if (had) proto.scrollIntoView = original;
+      else delete proto.scrollIntoView;
+    }
+  });
+
   test("unit: notifications: Escape in the popover asks native to close it", async () => {
     await startApp({ params: { placement: "popover" } });
     key(window, doc.body, { key: "Escape" });
@@ -570,6 +601,39 @@ describe("unit: notifications app", () => {
     }
   });
 
+  test("unit: notifications: renders wait while a pointer is pressed, so the pressed row keeps its click", async () => {
+    const press = (type, target) => target.dispatchEvent(new window.MouseEvent(type, { bubbles: true, cancelable: true, button: 0 }));
+    const update = async (h, n) => {
+      h.setRecords([rec(n, { title: `Fresh ${n}` }), ...h.records]);
+      host.emit("cmux.event", { name: "notification.created" });
+      await sleep(60);
+      await settle();
+    };
+    const h = await startApp({ params: { group_by: "none" } });
+    const row = rowById(uuid(2));
+    press("pointerdown", row);
+    await update(h, 0.5);
+    assert.equal(app.state.records.length, 4, "the data is current");
+    assert.equal(rows().length, 3, "the rows are not rebuilt while the button is held");
+    assert.equal(row.isConnected, true, "the pressed row stays in the document");
+    press("pointerup", row);
+    click(window, row.querySelector(".ntf-row-primary"));
+    await settle();
+    assert.deepEqual(host.calls("notification.open").map((m) => m.params), [{ id: uuid(2) }], "the click opens the pressed row");
+    assert.equal(rows().length, 4, "the held-back render ran after the release");
+
+    rows()[0].dispatchEvent(new window.MouseEvent("pointerdown", { bubbles: true, button: 2 }));
+    assert.equal(app.state.pressed, false, "a secondary button does not hold renders back");
+
+    press("pointerdown", rows()[0]);
+    await update(h, 0.2);
+    assert.equal(rows().length, 4);
+    window.dispatchEvent(new window.Event("blur"));
+    await settle();
+    assert.equal(rows().length, 5, "losing focus releases the press");
+    assert.equal(app.state.pressed, false);
+  });
+
   test("unit: notifications: snapshot events replace the list without a round trip", async () => {
     await startApp();
     host.emit("panel.notifications.snapshot", { notifications: [rec(5, { workspace: WS2 })], workspaces: WORKSPACES.workspaces });
@@ -595,6 +659,30 @@ describe("unit: notifications app", () => {
     await settle();
     assert.equal(host.calls("notification.list").length, before + 1);
     assert.equal(rows().length, 3, "the row comes back from the reload");
+  });
+
+  test("unit: notifications: a list reply in flight during an action does not undo it", async () => {
+    const h = await startApp();
+    let release = null;
+    host.handlers.set("notification.list", async () => {
+      // Answered from the store as it was before the dismiss below.
+      const snapshot = { notifications: h.records.map((r) => ({ ...r })) };
+      if (release === null) await new Promise((resolve) => (release = resolve));
+      return snapshot;
+    });
+    host.emit("cmux.event", { name: "notification.created" });
+    await sleep(60);
+    assert.equal(typeof release, "function", "a reload is in flight");
+    await app.dismiss(uuid(1));
+    assert.equal(rowById(uuid(1)), undefined);
+    release();
+    await settle();
+    assert.equal(rowById(uuid(1)), undefined, "the stale reply does not bring the dismissed row back");
+    await sleep(60);
+    await settle();
+    assert.equal(rowById(uuid(1)), undefined);
+    assert.equal(rows().length, 2, "the list reloads after the action");
+    assert.ok(host.calls("notification.list").length >= 3);
   });
 
   test("unit: notifications: load failure shows a status and the empty state", async () => {
