@@ -8,7 +8,10 @@
 //! serializer speak (ADR-9.2 shape: split dir/ratio/a/b, panes with tabs).
 //!
 //! Pure: std + wmux_proto only. Every result lives in a caller-provided
-//! arena; nothing here frees individual allocations.
+//! arena; nothing here frees individual allocations. The node-based parsers
+//! (`parseWorkspace`, `parseLayout`) also borrow the node's source text,
+//! because jsonc keeps unescaped strings as slices of its input; the `*Text`
+//! parsers copy their input into the arena first.
 
 const std = @import("std");
 const proto = @import("wmux_proto");
@@ -154,7 +157,9 @@ fn indexPath(arena: Allocator, base: []const u8, i: usize) Allocator.Error![]con
 // Parsing
 
 /// Parses a workspace definition object. Returns error.InvalidLayout when
-/// `diags` holds at least one error; warnings alone do not fail.
+/// `diags` holds at least one error; warnings alone do not fail. Strings of
+/// the result may be slices of `node`'s source text (see the file comment);
+/// `cloneWorkspace` detaches it.
 pub fn parseWorkspace(arena: Allocator, node: *const jsonc.Node, base_path: []const u8, diags: *Diagnostics) ParseError!Workspace {
     const ws = try parseWorkspaceInner(arena, node, base_path, diags);
     if (diags.hasErrors()) return error.InvalidLayout;
@@ -162,37 +167,39 @@ pub fn parseWorkspace(arena: Allocator, node: *const jsonc.Node, base_path: []co
 }
 
 /// Parses a single layout node (the value of `layout`, or the `--layout`
-/// argument of `new-workspace`).
+/// argument of `new-workspace`). Borrows like `parseWorkspace`.
 pub fn parseLayout(arena: Allocator, node: *const jsonc.Node, base_path: []const u8, diags: *Diagnostics) ParseError!Node {
     const n = try parseNode(arena, node, base_path, 0, diags);
     if (diags.hasErrors()) return error.InvalidLayout;
     return n orelse error.InvalidLayout;
 }
 
-/// Parses JSONC text holding a workspace definition.
+/// Parses JSONC text holding a workspace definition. The result lives
+/// entirely in `arena`, so the caller may free `src` afterwards.
 pub fn parseWorkspaceText(arena: Allocator, src: []const u8, diags: *Diagnostics) ParseError!Workspace {
-    var jd: jsonc.Diagnostic = .{};
-    const root = jsonc.parseInto(arena, src, .{}, &jd) catch |e| switch (e) {
-        error.OutOfMemory => return error.OutOfMemory,
-        error.SyntaxError => {
-            try diags.add(.err, "", "{d}:{d}: {s}", .{ jd.pos.line, jd.pos.col, jd.message });
-            return error.InvalidLayout;
-        },
-    };
+    const root = try parseRoot(arena, src, diags);
     return parseWorkspace(arena, &root, "", diags);
 }
 
-/// Parses JSONC text holding a layout node.
+/// Parses JSONC text holding a layout node. The result lives entirely in
+/// `arena`.
 pub fn parseLayoutText(arena: Allocator, src: []const u8, diags: *Diagnostics) ParseError!Node {
+    const root = try parseRoot(arena, src, diags);
+    return parseLayout(arena, &root, "", diags);
+}
+
+fn parseRoot(arena: Allocator, src: []const u8, diags: *Diagnostics) ParseError!jsonc.Node {
+    // jsonc keeps unescaped strings as slices of its input: parse a copy so
+    // nothing in the result points into the caller's buffer.
+    const text = try arena.dupe(u8, src);
     var jd: jsonc.Diagnostic = .{};
-    const root = jsonc.parseInto(arena, src, .{}, &jd) catch |e| switch (e) {
+    return jsonc.parseInto(arena, text, .{}, &jd) catch |e| switch (e) {
         error.OutOfMemory => return error.OutOfMemory,
         error.SyntaxError => {
             try diags.add(.err, "", "{d}:{d}: {s}", .{ jd.pos.line, jd.pos.col, jd.message });
             return error.InvalidLayout;
         },
     };
-    return parseLayout(arena, &root, "", diags);
 }
 
 const workspace_keys = [_][]const u8{ "name", "cwd", "color", "env", "setup", "layout" };
@@ -1209,6 +1216,29 @@ test "unit: layouts: clone is independent of the source arena" {
     ar.deinit();
     const out = try workspaceToJsonAlloc(ar2.allocator(), copy, .{});
     try testing.expect(std.mem.indexOf(u8, out, "npm run start") != null);
+}
+
+test "unit: layouts: text parsers do not borrow the caller's buffer" {
+    var ar = testArena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const wbuf = try testing.allocator.dupe(u8, readme_example);
+    defer testing.allocator.free(wbuf);
+    const lbuf = try testing.allocator.dupe(u8, "{\"surfaces\":[{\"name\":\"ed\",\"command\":\"vim\",\"env\":{\"K\":\"v\"}}]}");
+    defer testing.allocator.free(lbuf);
+    var d: Diagnostics = .init(a);
+    const ws = try parseWorkspaceText(a, wbuf, &d);
+    const n = try parseLayoutText(a, lbuf, &d);
+    // A caller that reuses or frees its file buffer must not change the result.
+    @memset(wbuf, 'X');
+    @memset(lbuf, 'X');
+    try testing.expectEqualStrings("dev", ws.name.?);
+    try testing.expectEqualStrings("~/src/app", ws.cwd.?);
+    try testing.expectEqualStrings("npm run start", ws.layout.?.split.children[1].pane.surfaces[0].command.?);
+    const s = n.pane.surfaces[0];
+    try testing.expectEqualStrings("ed", s.name.?);
+    try testing.expectEqualStrings("K", s.env[0].name);
+    try testing.expectEqualStrings("v", s.env[0].value);
 }
 
 test "unit: layouts: cwd resolution follows unset, relative, home and absolute rules" {

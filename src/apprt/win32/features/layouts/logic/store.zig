@@ -93,14 +93,18 @@ pub const Store = struct {
 
     /// Loads layouts.json text. Empty or whitespace-only text (a lone byte
     /// order mark included) is an empty store. A syntax or schema error
-    /// gives error.CorruptFile; `problems` explains why.
+    /// gives error.CorruptFile; `problems` explains why. The store keeps no
+    /// reference to `src`.
     pub fn parse(gpa: Allocator, src: []const u8, problems: ?*Problems) Error!Store {
         var store: Store = .init(gpa);
         errdefer store.deinit();
         const a = store.arena.allocator();
         if (isBlankDocument(src)) return store;
+        // jsonc keeps unescaped strings as slices of its input: parse a copy
+        // in the store arena so the caller can free its file buffer.
+        const text = try a.dupe(u8, src);
         var jd: jsonc.Diagnostic = .{};
-        const root = jsonc.parseInto(a, src, .{}, &jd) catch |e| switch (e) {
+        const root = jsonc.parseInto(a, text, .{}, &jd) catch |e| switch (e) {
             error.OutOfMemory => return error.OutOfMemory,
             error.SyntaxError => {
                 try Problems.add(problems, "{d}:{d}: {s}", .{ jd.pos.line, jd.pos.col, jd.message });
@@ -377,6 +381,24 @@ test "unit: layouts: store round-trips layouts.json" {
     defer testing.allocator.free(text2);
     try testing.expectEqualStrings(text, text2);
     try testing.expectEqualStrings("Ünïcode ✓", st2.get("DEV").?.description.?);
+}
+
+test "unit: layouts: a parsed store does not borrow the file text" {
+    const buf = try testing.allocator.dupe(u8,
+        \\{"layouts":[{"name":"dev","description":"two panes","workspace":{"cwd":"/w","env":{"A":"1"},
+        \\  "layout":{"surfaces":[{"command":"vim"}]}}}]}
+    );
+    defer testing.allocator.free(buf);
+    var st = try Store.parse(testing.allocator, buf, null);
+    defer st.deinit();
+    // The app frees (or reuses) its file buffer right after loading.
+    @memset(buf, 'X');
+    const l = st.get("dev").?;
+    try testing.expectEqualStrings("dev", l.name);
+    try testing.expectEqualStrings("two panes", l.description.?);
+    try testing.expectEqualStrings("/w", l.workspace.cwd.?);
+    try testing.expectEqualStrings("A", l.workspace.env[0].name);
+    try testing.expectEqualStrings("vim", l.workspace.layout.?.pane.surfaces[0].command.?);
 }
 
 test "unit: layouts: empty file is an empty store and garbage is corruptFile" {
