@@ -376,6 +376,40 @@ test "unit: remote-daemon: a max-size fs.get reply does not disconnect a streami
     try testing.expect(std.mem.count(u8, c.channelData(a.channel), "t-4") > before);
 }
 
+/// Pumps until `needle` shows up in the channel's output, scanning only the
+/// bytes that arrived since the last look (the buffer may be megabytes).
+fn waitTail(c: *Client, channel: u32, needle: []const u8, timeout_ms: i64) !void {
+    const deadline = std.time.milliTimestamp() + timeout_ms;
+    var from: usize = 0;
+    while (true) {
+        const data = c.channelData(channel);
+        if (std.mem.indexOfPos(u8, data, from, needle) != null) return;
+        from = (data.len + 1) -| needle.len;
+        try c.pump(deadline);
+    }
+}
+
+test "unit: remote-daemon: a slow streaming client throttles the PTY instead of being dropped" {
+    var cfg = homeCfg("/tmp");
+    // Small limits keep the test light: 12 MB of output is three times
+    // max_outbound.
+    cfg.max_outbound = 4 * 1024 * 1024;
+    cfg.pty_high_water = 256 * 1024;
+    const h = try StdioHarness.start(testing.allocator, cfg);
+    defer h.stop();
+    const c = &h.client;
+    _ = try c.hello(true, timeout);
+    const sid = try openSh(c, null, 80, 24);
+    const a = try ptyAttach(c, sid, 80, 24);
+    try typeLine(c, sid, "head -c 12000000 /dev/zero | tr '\\000' x; echo; echo end-$((5*5))\n");
+    // Not reading: output backs up behind the full pipe. Without flow
+    // control the queue passes max_outbound and the server drops us.
+    std.Thread.sleep(1500 * std.time.ns_per_ms);
+    try waitTail(c, a.channel, "end-25", 60_000);
+    try testing.expect(std.mem.count(u8, c.channelData(a.channel), "x") >= 12_000_000);
+    try testing.expect((try c.request(.ping, .{}, timeout)).ok);
+}
+
 const persistent = @import("persistent.zig");
 
 /// A persistent slot server on a Unix socket under a temporary home.

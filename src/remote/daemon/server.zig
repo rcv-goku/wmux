@@ -30,6 +30,10 @@ pub const Config = struct {
     idle_exit_ms: i64 = 0,
     /// A client whose unsent output exceeds this is disconnected.
     max_outbound: usize = default_max_outbound,
+    /// Flow control: while a client streaming a session has this much
+    /// unsent output, the session's PTY is not read, so a fast producer
+    /// blocks on its terminal instead of the client hitting `max_outbound`.
+    pty_high_water: usize = default_pty_high_water,
     /// Stop when the last client leaves (`serve --stdio`).
     exit_when_no_clients: bool = true,
     /// Polled each tick; set from a signal handler to stop the loop.
@@ -48,11 +52,17 @@ pub const read_chunk = 64 * 1024;
 /// client (on the carrier, every terminal of the route at once).
 pub const default_max_outbound: usize = 64 * 1024 * 1024;
 
+/// Default `Config.pty_high_water`. PTY output past it waits in the kernel
+/// (the producer blocks), so a slow link no longer costs the connection.
+pub const default_pty_high_water: usize = 1024 * 1024;
+
 comptime {
     const max_reply = std.base64.standard.Encoder.calcSize(msgs.max_fs_bytes) + 64 * 1024;
     // Room for the largest reply plus 16 MiB of output queued behind it.
     if (default_max_outbound < max_reply + 16 * 1024 * 1024)
         @compileError("default_max_outbound must exceed the largest reply plus headroom");
+    if (default_pty_high_water * 16 > default_max_outbound)
+        @compileError("default_pty_high_water must stay far below default_max_outbound");
 }
 
 pub const Conn = struct {
@@ -187,7 +197,8 @@ pub const Server = struct {
         }
         for (self.sessions.values()) |s| {
             if (s.master < 0) continue;
-            const want_in: i16 = if (s.master_eof) 0 else IN;
+            // A backed-up client resumes the PTY via POLLOUT on its own fd.
+            const want_in: i16 = if (s.master_eof or self.outputBlocked(s)) 0 else IN;
             const want_out: i16 = if (s.input.items.len > 0) OUT else 0;
             if (want_in | want_out == 0) continue;
             try fds.append(self.gpa, .{ .fd = s.master, .events = want_in | want_out, .revents = 0 });
@@ -213,7 +224,7 @@ pub const Server = struct {
                 },
                 .session => |s| {
                     if (r & OUT != 0) s.flushInput();
-                    if (r & (IN | ERRS) != 0) self.pumpSession(s);
+                    if (r & (IN | ERRS) != 0) self.pumpSession(s, true);
                 },
             }
         }
@@ -368,10 +379,25 @@ pub const Server = struct {
         }
     }
 
-    fn pumpSession(self: *Server, s: *Session) void {
+    /// True while a client streaming `s` has `pty_high_water` or more bytes
+    /// unsent. Dead and closing connections do not hold the session back.
+    fn outputBlocked(self: *Server, s: *const Session) bool {
+        for (s.attachments.items) |a| {
+            if (a.channel == null) continue;
+            const c = self.findConn(a.conn_id) orelse continue;
+            if (!c.closing and c.pendingOut() >= self.cfg.pty_high_water) return true;
+        }
+        return false;
+    }
+
+    /// Reads PTY output into the ring and to streaming clients. With
+    /// `throttle`, stops while `outputBlocked` (the final drain of an
+    /// exited session does not throttle; it is bounded by its rounds).
+    fn pumpSession(self: *Server, s: *Session, throttle: bool) void {
         var buf: [read_chunk]u8 = undefined;
         var rounds: usize = 0;
         while (rounds < 4 and s.master >= 0 and !s.master_eof) : (rounds += 1) {
+            if (throttle and self.outputBlocked(s)) return;
             const n = posix.read(s.master, &buf) catch |err| switch (err) {
                 error.WouldBlock => return,
                 else => 0, // EIO: every slave fd is closed
@@ -400,7 +426,7 @@ pub const Server = struct {
     /// The child exited: flush its last output, tell attached clients, drop it.
     fn finishSession(self: *Server, s: *Session) void {
         var rounds: usize = 0;
-        while (!s.master_eof and s.master >= 0 and rounds < 64) : (rounds += 1) self.pumpSession(s);
+        while (!s.master_eof and s.master >= 0 and rounds < 64) : (rounds += 1) self.pumpSession(s, false);
         const ev: msgs.PtyExitEvent = .{ .session_id = s.id, .exit_code = s.exit.?.code, .signal = s.exit.?.signal };
         self.notifyAttached(s, msgs.event_pty_exit, ev);
         self.removeSession(s);
