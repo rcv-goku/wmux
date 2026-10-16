@@ -428,11 +428,17 @@ describe("unit: markdown render", () => {
     const imgs = Array.from(div.querySelectorAll("img"));
     const byAlt = (alt) => imgs.find((i) => i.getAttribute("alt") === alt);
     assert.equal(byAlt("a").getAttribute("src"), base + "img/a.png");
-    assert.equal(byAlt("up").getAttribute("src"), base + "up.png", "cannot climb above the host root");
+    // "../up.png" climbs above the host root: native resolves it, so it never
+    // turns into a different file at the root of the host.
+    assert.equal(byAlt("up").hasAttribute("src"), false);
+    assert.equal(byAlt("up").getAttribute("data-mdv-local-src"), "../up.png");
     assert.equal(byAlt("ok").getAttribute("src"), "https://example.com/ok.png");
     assert.equal(byAlt("abs").hasAttribute("src"), false);
     assert.equal(byAlt("abs").getAttribute("data-mdv-local-src"), "C:\\pics\\c.png");
-    assert.equal(out.imageRequests.length, 1);
+    assert.deepEqual(
+      out.imageRequests.map((r) => r.path),
+      ["../up.png", "C:\\pics\\c.png"],
+    );
     assert.ok(byAlt("data").getAttribute("src").startsWith("data:image/png"));
 
     const placeholders = div.querySelectorAll(".wmux-remote-image");
@@ -508,6 +514,12 @@ describe("unit: markdown links", () => {
     assert.deepEqual(classifyLink("src/main.zig"), { action: "file", path: "src/main.zig" });
     assert.deepEqual(classifyLink("日本/読む.md"), { action: "markdown", path: "日本/読む.md", fragment: "" });
     assert.deepEqual(classifyLink("?q=1#frag"), { action: "anchor", id: "frag" });
+    // One letter before ":" is a Windows drive, never a URL scheme for the OS handler.
+    assert.deepEqual(classifyLink("c:tool.exe"), { action: "file", path: "c:tool.exe" });
+    assert.deepEqual(classifyLink("C:..%5CUsers%5Cx.exe"), { action: "file", path: "C:..\\Users\\x.exe" });
+    assert.deepEqual(classifyLink("d:notes.md#top"), { action: "markdown", path: "d:notes.md", fragment: "top" });
+    assert.deepEqual(classifyLink("ms-settings:display"), { action: "external", url: "ms-settings:display" });
+    assert.ok(looksLikeMarkdownPath("c:notes.md"));
     for (const bad of ["", "   ", "#", "javascript:alert(1)", " JavaScript:x", "data:text/html,x", "vbscript:x", "blob:x", "a\u0000b", "x".repeat(5000), null, 42, ".md"]) {
       const action = classifyLink(bad).action;
       assert.ok(action === "none" || (bad === ".md" && action === "file"), `none for ${String(bad).slice(0, 20)}`);
@@ -538,6 +550,19 @@ describe("unit: markdown links", () => {
     assert.deepEqual(classifyImage("\\\\srv\\share\\p.png", base), { kind: "absolute", path: "\\\\srv\\share\\p.png" });
     assert.deepEqual(classifyImage("ftp://x/p.png", base), { kind: "none" });
     assert.deepEqual(classifyImage("", base), { kind: "none" });
+    assert.deepEqual(classifyImage("c:p.png", base), { kind: "absolute", path: "c:p.png" });
+    // Relative paths that climb above the host root go to native instead of
+    // being clamped to a different file at the root.
+    assert.deepEqual(classifyImage("../up.png", base), { kind: "outside", path: "../up.png" });
+    assert.deepEqual(classifyImage("..", base), { kind: "outside", path: ".." });
+    assert.deepEqual(classifyImage("a/../../b%20c.png?x=1#y", base), { kind: "outside", path: "a/../../b c.png" });
+    assert.deepEqual(classifyImage("%2e%2e/x.png", base), { kind: "outside", path: "../x.png" });
+    assert.deepEqual(classifyImage("..\\x.png", base), { kind: "outside", path: "..\\x.png" });
+    assert.deepEqual(classifyImage("a/../b.png", base), { kind: "local", url: base + "b.png" });
+    assert.deepEqual(classifyImage("./a/./b.png?raw=1", base), { kind: "local", url: base + "a/b.png?raw=1" });
+    // A base below the host root (native mapped an ancestor directory) may be climbed up to the root.
+    assert.deepEqual(classifyImage("../../img/x.png", base + "docs/guide/"), { kind: "local", url: base + "img/x.png" });
+    assert.deepEqual(classifyImage("../../../x.png", base + "docs/guide/"), { kind: "outside", path: "../../../x.png" });
   });
 });
 
@@ -1121,16 +1146,24 @@ describe("unit: markdown app", () => {
 
   test("unit: markdown: absolute local images are resolved by native", async () => {
     await startApp({
-      text: "![p](C:\\pics\\p.png) ![q](/etc/q.png)",
+      text: "![p](C:\\pics\\p.png) ![q](/etc/q.png) ![r](../assets/r.png)",
       handlers: {
-        "panel.markdown.resolve_image": ({ path }) =>
-          path.startsWith("C:") ? { url: "https://d-0000000000000001.wmux.example/p.png" } : { url: "https://evil.example/q.png" },
+        "panel.markdown.resolve_image": ({ path }) => {
+          if (path.startsWith("C:")) return { url: "https://d-0000000000000001.wmux.example/p.png" };
+          if (path === "../assets/r.png") return { url: "https://d-0000000000000001.wmux.example/r.png" };
+          return { url: "https://evil.example/q.png" };
+        },
       },
     });
     await settle();
-    const [p, q] = doc.querySelectorAll("#mdv-content img");
+    assert.deepEqual(
+      host.calls("panel.markdown.resolve_image").map((m) => m.params),
+      [{ path: "C:\\pics\\p.png" }, { path: "/etc/q.png" }, { path: "../assets/r.png" }],
+    );
+    const [p, q, r] = doc.querySelectorAll("#mdv-content img");
     assert.equal(p.getAttribute("src"), "https://d-0000000000000001.wmux.example/p.png");
     assert.equal(q.hasAttribute("src"), false, "non-wmux URLs from native are ignored");
+    assert.equal(r.getAttribute("src"), "https://d-0000000000000001.wmux.example/r.png", "parent-relative image via native");
   });
 
   test("unit: markdown: mermaid blocks render after the page renders", async () => {

@@ -73,7 +73,7 @@ The page sets the tab title with `panel.set_title {title: <basename>}`.
 | `panel.open_file` | `{path}` | non-markdown local paths (file-open router); also the fallback when `panel.markdown.open` is not implemented |
 | `panel.markdown.open` | `{path, fragment?}` -> `{}` | markdown links (`.md .markdown .mkd .mdx`). `path` is as written in the document (decoded, `?query` and `#fragment` stripped; `file:` URLs converted to paths). Native resolves it against the document's directory, then the working directory, and opens a focused sibling markdown tab in the same pane. `file_not_found` makes the page show "File not found" |
 | `panel.markdown.resolve_links` | `{paths: [..]}` -> `{exists: {"<path>": bool}}` | existence check for inline code spans that look like markdown paths (`docs/x.md`); at most 200 paths per call, cached per page load |
-| `panel.markdown.resolve_image` | `{path}` -> `{url}` | absolute local image paths (`C:\x.png`, `/x.png`, `\\srv\x.png`, `file:` URLs). `url` must be `https://*.wmux.example/...` or `data:image/...`; anything else is ignored |
+| `panel.markdown.resolve_image` | `{path}` -> `{url}` | local image paths the file host cannot serve: absolute (`C:\x.png`, `/x.png`, `\\srv\x.png`, `file:` URLs), drive-relative (`c:x.png`), and relative paths that climb above the `base_url` root (`../assets/x.png` when the host maps the document's directory). Relative paths are resolved against the document's directory. `url` must be `https://*.wmux.example/...` or `data:image/...`; anything else is ignored |
 | `panel.markdown.approve_remote_image` | `{url}` -> `{}` | "Load image" on a blocked remote image: record the approval for exactly this URL for this panel and allow it in the panel's CSP (native rewrites the page CSP, see `_shared/README.md`), then the page sets `<img src=url>` |
 | `panel.markdown.list_fonts` | `{}` -> `{families: [..]}` | font picker (EnumFontFamiliesExW); the page falls back to a short built-in list |
 | `panel.markdown.set_defaults` | `{fontSize, fontFamily, maxWidth}` -> `{}` | "Set as default for new viewers": write `markdown.fontSize`, `markdown.fontFamily`, `markdown.maxWidth` |
@@ -109,14 +109,20 @@ can report `display_mode` in `file.open` replies from it.
   `securityLevel: "strict"` and a theme that follows the light/dark scheme.
   Errors show "Mermaid error: <message>" inline. Mermaid's `<style>` and
   `style=""` output are re-applied through the CSSOM (CSP).
-- **Images.** Relative paths are resolved against `base_url`. URLs that would
-  leave the host are not loaded. Remote http(s) images show the "Remote image
+- **Images.** Relative paths are resolved against `base_url`; a path that
+  climbs above its root goes to `panel.markdown.resolve_image` instead of
+  being clamped to a different file. URLs that would leave the host are not
+  loaded. Remote http(s) images show the "Remote image
   blocked" placeholder with Load image / Open URL / Copy URL ("Copied" for
   1.2 s). A placeholder for a linked image follows the link.
 - **Links.** Every click (and middle click) in the document is intercepted.
   `#fragment` scrolls smoothly in the page. Other targets go through the
-  methods above. `target` attributes are removed. Documents cannot run script,
-  so there is no `window.open`.
+  methods above. One letter before `:` is a Windows drive (`c:tool.exe` is a
+  local path for `panel.open_file`), never a URL scheme. `target` attributes
+  are removed. Documents cannot run script, so there is no `window.open`.
+  `panel.open_external` receives any other scheme the document links to, so
+  native must apply a scheme policy (a confirmation or a deny list for
+  handlers such as `ms-msdt:` or `search-ms:`) before calling the OS handler.
 - **Typography.** `fontSize` 8..96 pt (zoom = size / 15), `maxWidth`
   320..2400 px in steps of 20, `fontFamily` "" = system stack. Code stays
   monospace. A viewer keeps its own values. When defaults change, each value

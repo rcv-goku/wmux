@@ -18,8 +18,12 @@ export const MARKDOWN_EXTENSIONS = Object.freeze([".md", ".markdown", ".mkd", ".
 export const MAX_LINK_LENGTH = 4096;
 
 const SCHEME_RE = /^([a-zA-Z][a-zA-Z0-9+.-]*):/;
-// A drive letter path, also as markdown-it writes it ("C:%5Cdocs%5Ca.md").
-const DRIVE_RE = /^[a-zA-Z]:(?:[\\/]|%5[cC]|%2[fF])/;
+// A Windows drive letter: "C:\docs", "C:%5Cdocs%5Ca.md" (as markdown-it writes
+// it) and drive-relative "c:notes.md". One letter before ":" is never treated
+// as a URL scheme, so "c:tool.exe" cannot reach the OS URL handler.
+const DRIVE_RE = /^[a-zA-Z]:/;
+// Prefix used to detect relative image paths that climb above the file host root.
+const PROBE_ROOT = "/wmux-probe-root";
 const BLOCKED_SCHEMES = new Set(["javascript", "vbscript", "data", "blob", "about", "filesystem"]);
 const CONTROL_RE = /[\u0000-\u001f\u007f]/;
 
@@ -136,7 +140,10 @@ export function looksLikeMarkdownPath(text) {
  *   {kind: "data", url}       data: URI, rendered as is
  *   {kind: "local", url}      relative path resolved against the panel's file host
  *   {kind: "host", url}       already a URL on the panel's file host
- *   {kind: "absolute", path}  absolute local path or file: URL (native maps it)
+ *   {kind: "absolute", path}  absolute or drive-relative local path, or file: URL (native maps it)
+ *   {kind: "outside", path}   relative path that climbs above the file host root
+ *                             ("../x.png" when the host maps the document's directory):
+ *                             native resolves it against the document's directory
  *   {kind: "remote", url}     http(s) elsewhere: blocked until approved
  *   {kind: "none"}            anything else (not loaded)
  *
@@ -175,7 +182,14 @@ export function classifyImage(rawSrc, baseUrl) {
   if (!base) return { kind: "none" };
   try {
     const url = new URL(src, base.href);
-    return url.origin === base.origin ? { kind: "local", url: url.href } : { kind: "none" };
+    if (url.origin !== base.origin) return { kind: "none" };
+    // URL resolution stops at the host root, so "../x.png" would silently turn
+    // into "<root>/x.png", a different file. Let native resolve those.
+    const probe = new URL(src, base.origin + PROBE_ROOT + base.pathname);
+    if (!probe.pathname.startsWith(PROBE_ROOT + "/")) {
+      return { kind: "outside", path: safeDecode(src.split(/[?#]/)[0]) };
+    }
+    return { kind: "local", url: url.href };
   } catch {
     return { kind: "none" };
   }

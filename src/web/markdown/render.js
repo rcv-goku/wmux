@@ -11,7 +11,8 @@
  * sanitizes the HTML (raw HTML in markdown is allowed but scripts, styles,
  * forms, frames and embeds are dropped); the result is then post-processed in
  * the DOM: copy buttons on code blocks, images routed through the panel's file
- * host or replaced by a "Remote image blocked" placeholder, task checkboxes
+ * host (or resolved by native when they are absolute or climb above the host
+ * root) or replaced by a "Remote image blocked" placeholder, task checkboxes
  * disabled, link targets removed (clicks are routed by the app), and inline
  * code spans that look like markdown paths marked for an existence check.
  */
@@ -329,6 +330,7 @@ export function createRenderer(libs) {
           img.setAttribute("src", target.url);
           break;
         case "absolute":
+        case "outside":
           img.removeAttribute("src");
           img.setAttribute("data-mdv-local-src", target.path);
           imageRequests.push({ img, path: target.path });
