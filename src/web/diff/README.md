@@ -74,7 +74,7 @@ comment pool by the panel's workspace.
 
 | Method | Params -> result | Notes |
 |---|---|---|
-| `panel.diff.load` | `{refresh, context_lines, ignore_whitespace}` -> `{patch` or `patch_url, title?, generated?, apply_command?}` | initial load when `params` has no patch, and every Refresh (`refresh: true`). Native regenerates the diff for refreshes; it may honor `context_lines` (`git diff -U<n>`) and `ignore_whitespace` (`-w`), the page applies both itself anyway. If the method is unsupported, Refresh re-fetches `params.patch_url` |
+| `panel.diff.load` | `{refresh, context_lines, ignore_whitespace}` -> `{patch` or `patch_url, title?, generated?, apply_command?}` | initial load when `params` has no patch, and every Refresh (`refresh: true`). Native regenerates the diff for refreshes; it may honor `context_lines` (`git diff -U<n>`) and `ignore_whitespace` (`-w`), the page applies both itself anyway (changing either re-renders the current patch at once; a diff regenerated with them arrives with the next Refresh, and viewed marks survive it). If the method is unsupported, Refresh re-fetches `params.patch_url` |
 | `viewedFiles.list` | `{}` -> `{files: [{path, fingerprint}]}` (or `{viewed: {path: fingerprint}}`) | at start and before each refresh |
 | `viewedFiles.set` | `{path, fingerprint, viewed}` -> `{}` | Viewed checkbox / `v`. `fingerprint` = `"fp1:"` + 16 hex digits, computed in the page over the blob ids of the git `index` line (cut to 7 digits), the paths, the status and the modes, so a diff regenerated with other `context_lines` or `ignore_whitespace` keeps its marks; files without an index line (plain `diff -u`, pure renames and mode changes) hash their patch text. A stored fingerprint that differs shows "Changed since viewed" |
 | `viewedFiles.clear` | `{}` -> `{}` | `app.clearViewed()` (not bound to UI; available to native through a command if wanted) |
@@ -88,9 +88,10 @@ comment pool by the panel's workspace.
 | `panel.clipboard_write` | `{text}` | Copy git apply command |
 
 Errors `method_not_found`, `not_supported`, `forbidden` or `not_allowed` from
-`viewedFiles.*`, `viewerPrefs.set` or `comments.list` switch that feature off
-quietly: viewed marks and preferences then last for the page's lifetime only,
-and no stored comments are shown (other errors from these calls are logged).
+`viewedFiles.*` or `comments.list` switch that feature's native calls off
+quietly, and the same codes from `viewerPrefs.set` are not logged: viewed
+marks and preferences then last for the page's lifetime only, and no stored
+comments are shown (other errors from these calls are logged).
 `comments.save`, `comments.delete` and `panel.diff.send_comments` report every
 error in the status bar (a failed save keeps the composer open), so adding
 comments needs the native store. A failed initial `panel.diff.load` shows the
