@@ -38,6 +38,7 @@ pub const Config = struct {
     /// taken a single byte for this long is dropped (0 disables): it holds
     /// its sessions back, and it is most likely gone (a half-open bridge
     /// can linger until TCP keepalive, hours). Only its attachments end.
+    /// A closing client with any unsent bytes gets the same timeout.
     stall_timeout_ms: i64 = 30_000,
     /// Stop when the last client leaves (`serve --stdio`).
     exit_when_no_clients: bool = true,
@@ -80,7 +81,8 @@ pub const Conn = struct {
     out_off: usize = 0,
     hello_done: bool = false,
     binary: bool = false,
-    /// Stop reading; close once the output is flushed.
+    /// Stop reading and queue no more PTY output; close once the output
+    /// already queued is flushed.
     closing: bool = false,
     /// Remove at the end of the tick.
     dead: bool = false,
@@ -255,10 +257,14 @@ pub const Server = struct {
         self.sweep();
     }
 
-    /// Drops a client that holds sessions back (see `outputBlocked`) but
-    /// has not taken a byte for `stall_timeout_ms`; its sessions resume.
+    /// Drops a client that has not taken a byte for `stall_timeout_ms`
+    /// while it holds sessions back (see `outputBlocked`; its sessions
+    /// resume), or while it is closing: its input ended, so it is only owed
+    /// what is queued, and with nothing queued behind that (`sendData`) no
+    /// other limit would ever end it.
     fn checkStall(self: *Server, c: *Conn, now: i64) void {
-        if (c.dead or self.cfg.stall_timeout_ms <= 0 or c.pendingOut() < self.cfg.pty_high_water) return;
+        if (c.dead or self.cfg.stall_timeout_ms <= 0) return;
+        if (!c.closing and c.pendingOut() < self.cfg.pty_high_water) return;
         if (now - c.drained_ms < self.cfg.stall_timeout_ms) return;
         log.info("client {d} took no output for {d} ms; disconnecting", .{ c.id, now - c.drained_ms });
         c.dead = true;
@@ -384,7 +390,12 @@ pub const Server = struct {
     /// PTY output for one attachment: a binary frame, or a `pty.data` event
     /// with base64 when the client did not negotiate binary frames.
     pub fn sendData(self: *Server, c: *Conn, channel: u32, session_id: []const u8, bytes: []const u8) void {
-        if (c.dead) return;
+        // A closing client (its input ended) is owed its replies and events,
+        // not more terminal output. That output would keep the connection
+        // open for as long as the session prints, and since a closing client
+        // does not throttle the PTY (`outputBlocked`), it could also push
+        // the queue past max_outbound and drop the replies with it.
+        if (c.dead or c.closing) return;
         var rest = bytes;
         while (rest.len > 0 and !c.dead) {
             const chunk = rest[0..@min(rest.len, read_chunk)];

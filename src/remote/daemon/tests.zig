@@ -424,6 +424,87 @@ test "unit: remote-daemon: a slow streaming client throttles the PTY instead of 
     try testing.expect((try c.request(.ping, .{}, timeout)).ok);
 }
 
+/// Ends the client's request stream (end of input for the server) while it
+/// keeps reading. Harnesses close `wfd` again later, so it becomes a dup of
+/// the read end.
+fn halfClose(c: *Client) !void {
+    posix.close(c.wfd);
+    c.wfd = try posix.dup(c.rfd);
+}
+
+/// Pumps until the server ends the stream; a timeout fails the test.
+fn expectEndOfStream(c: *Client) !void {
+    const deadline = std.time.milliTimestamp() + timeout;
+    while (true) c.pump(deadline) catch |e| {
+        try testing.expectEqual(error.EndOfStream, e);
+        return;
+    };
+}
+
+test "unit: remote-daemon: a client whose input ended gets its replies, then end of stream" {
+    var cfg = homeCfg("/tmp");
+    cfg.max_outbound = 4 * 1024 * 1024;
+    cfg.pty_high_water = 256 * 1024;
+    const h = try StdioHarness.start(testing.allocator, cfg);
+    defer h.stop();
+    const c = &h.client;
+    _ = try c.hello(true, timeout);
+    const sid = try openSh(c, null, 80, 24);
+    const a = try ptyAttach(c, sid, 80, 24);
+    try typeLine(c, sid, "while :; do head -c 65536 /dev/zero | tr '\\000' z; done\n");
+    try c.waitData(a.channel, "zzzz", timeout);
+    // Stop reading: the queue reaches the high water and holds the PTY.
+    std.Thread.sleep(500 * std.time.ns_per_ms);
+    // A last request, then end of input, and still no reading for a while.
+    try c.writeAll("{\"id\":42,\"method\":\"ping\"}\n");
+    try halfClose(c);
+    std.Thread.sleep(1500 * std.time.ns_per_ms);
+    // The reply arrives behind the output queued before, then the stream
+    // ends. Output queued after the input ended would have run the queue
+    // past max_outbound and dropped the reply along with the connection.
+    const before = c.channelData(a.channel).len;
+    const r = try c.nextReply(timeout);
+    try testing.expectEqual(@as(i64, 42), r.id.?.int);
+    try expectEndOfStream(c);
+    try testing.expect(c.channelData(a.channel).len - before < 2 * 1024 * 1024);
+}
+
+test "unit: remote-daemon: a closing client that takes nothing is dropped after the stall timeout" {
+    const gpa = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const home = try tmp.dir.realpathAlloc(gpa, ".");
+    defer gpa.free(home);
+    {
+        const blob = try gpa.alloc(u8, 512 * 1024);
+        defer gpa.free(blob);
+        @memset(blob, 'q');
+        try tmp.dir.writeFile(.{ .sub_path = "blob.bin", .data = blob });
+    }
+    var cfg = homeCfg(home);
+    cfg.stall_timeout_ms = 300;
+    const h = try StdioHarness.start(gpa, cfg);
+    defer h.stop();
+    const c = &h.client;
+    _ = try c.hello(true, timeout);
+    // The reply (~700 KiB of base64) fills the pipe and the rest stays
+    // queued, below the high water. The client ends its input and does not
+    // read: it is gone, and nothing but the stall timeout would notice.
+    try c.writeAll("{\"id\":5,\"method\":\"fs.get\",\"params\":{\"path\":\"~/blob.bin\"}}\n");
+    try halfClose(c);
+    // Without reading, wait for the server to close its end of the pipe
+    // (POLLHUP is reported while unread data is still buffered).
+    const deadline = std.time.milliTimestamp() + timeout;
+    while (true) {
+        var fds = [_]posix.pollfd{.{ .fd = c.rfd, .events = 0, .revents = 0 }};
+        _ = try posix.poll(&fds, 50);
+        if (fds[0].revents & posix.POLL.HUP != 0) break;
+        if (std.time.milliTimestamp() > deadline) return error.Timeout;
+    }
+    // Dropped: what the pipe held, then end of stream in mid-reply.
+    try testing.expectError(error.EndOfStream, c.nextReply(timeout));
+}
+
 /// One server thread with two pipe-pair clients (`serve --stdio` loop).
 const PairHarness = struct {
     srv: Server,
