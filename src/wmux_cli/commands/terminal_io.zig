@@ -9,6 +9,9 @@
 //!   (`surface.send_text`); `--paste` before the text routes it unchanged
 //!   through `terminal.paste`. Large or multi-line text without `--paste`
 //!   prints cmux's stderr hint.
+//! - `send-key` passes the key name through unchanged: the app owns the key
+//!   table and answers an unknown name with `invalid_params` (exit 1), as
+//!   `cmux send-key bogus` does.
 //! - `send`, `send-panel`, `paste` and `send --paste` ask
 //!   `surface.input_state` first and refuse over an agent draft or dialog;
 //!   `send-key`, `send-key-panel` and Enter-only `send` refuse only for a
@@ -105,50 +108,6 @@ pub fn wantsPasteHint(text: []const u8) bool {
 }
 
 pub const paste_hint = "hint: each newline was typed as Enter; for large multi-line text use cmux send --paste or cmux paste to deliver it as one paste\n";
-
-// ----- key names (cmux send-key table) -----
-
-const named_keys = [_][]const u8{
-    "enter",          "return",     "tab",       "escape",    "esc",         "backspace",  "delete",     "del",
-    "forward_delete", "space",      "up",        "arrow_up",  "arrowup",     "down",       "arrow_down", "arrowdown",
-    "left",           "arrow_left", "arrowleft", "right",     "arrow_right", "arrowright", "home",       "end",
-    "pageup",         "page_up",    "pagedown",  "page_down",
-};
-
-const alias_keys = [_][]const u8{
-    "shift+tab", "shift-tab", "backtab", "ctrl-c",  "ctrl+c",  "sigint", "ctrl-d", "eof", "ctrl-f",
-    "ctrl-z",    "sigtstp",   "ctrl-\\", "ctrl+\\", "sigquit",
-};
-
-const modifiers = [_][]const u8{ "ctrl", "control", "shift", "alt", "opt", "option", "cmd", "command", "super" };
-
-fn inList(list: []const []const u8, s: []const u8) bool {
-    for (list) |x| if (std.ascii.eqlIgnoreCase(x, s)) return true;
-    return false;
-}
-
-/// Whether `key` is a cmux key name: a named key, an alias, or a chord
-/// `<mod>[+-]<mod>...<key>` whose key is a letter a-z or a named key.
-/// Case-insensitive.
-pub fn isValidKey(key: []const u8) bool {
-    const k = std.mem.trim(u8, key, " \t");
-    if (k.len == 0 or k.len > 64) return false;
-    if (inList(&named_keys, k) or inList(&alias_keys, k)) return true;
-    // Chord: split on '+'/'-' but keep the last token as the key, so
-    // `ctrl+arrow_up` and `alt-page_down` work.
-    var mods: usize = 0;
-    var rest = k;
-    while (true) {
-        const sep = std.mem.indexOfAny(u8, rest, "+-") orelse break;
-        const word = rest[0..sep];
-        if (!inList(&modifiers, word)) break;
-        mods += 1;
-        rest = rest[sep + 1 ..];
-    }
-    if (mods == 0 or rest.len == 0) return false;
-    if (rest.len == 1 and std.ascii.isAlphabetic(rest[0])) return true;
-    return inList(&named_keys, rest);
-}
 
 // ----- draft guard -----
 
@@ -248,10 +207,11 @@ fn sendKey(ctx: *Ctx, verb: []const u8, usage: []const u8, panel: bool) !u8 {
     const values: []const []const u8 = if (panel) &.{ "--panel", "--workspace", "--window" } else &.{ "--workspace", "--surface", "--window" };
     const o = (try ps.parseArgs(ctx, usage, .{ .values = values, .bools = &.{"--force"}, .stop_at_positional = true })) orelse return output.exit.usage;
     if (panel and o.get(&.{"--panel"}) == null) return ps.usageWithLine(ctx, usage, "{s} requires --panel <id|ref|index>", .{verb});
-    if (o.positionals.len == 0) return ps.usageWithLine(ctx, usage, "{s} requires a key", .{verb});
     if (o.positionals.len > 1) return unexpected(ctx, usage, o.positionals[1]);
-    const key = std.mem.trim(u8, o.positionals[0], " \t");
-    if (!isValidKey(key)) return ps.usageWithLine(ctx, usage, "unknown key '{s}' (examples: enter, tab, escape, up, ctrl+c, shift+tab)", .{key});
+    // A blank key is a missing key. Any other name goes to the app, which
+    // owns the key table and rejects unknown names with `invalid_params`.
+    const key = if (o.positionals.len == 1) std.mem.trim(u8, o.positionals[0], " \t") else "";
+    if (key.len == 0) return ps.usageWithLine(ctx, usage, "{s} requires a key", .{verb});
     var target = Params.init(ctx.arena);
     const tspec: ps.TargetSpec = if (panel) .{ .surface_flags = &.{"--panel"}, .env_surface = false } else .{};
     if (!try ps.addTargets(ctx, &target, o, tspec)) return output.exit.usage;
@@ -560,24 +520,6 @@ test "unit: cli-ps: send escapes, enter-only detection and paste hint" {
     try testing.expect(!wantsPasteHint(big[0..4096]));
 }
 
-test "unit: cli-ps: send-key name table" {
-    for ([_][]const u8{ "enter", "Return", "TAB", "esc", "escape", "backspace", "delete", "del", "forward_delete", "space", "up", "arrow_up", "ArrowUp", "down", "left", "right", "home", "end", "pageup", "page_up", "pagedown", "page_down", "shift+tab", "shift-tab", "backtab", "ctrl-c", "ctrl+c", "sigint", "ctrl-d", "eof", "ctrl-f", "ctrl-z", "sigtstp", "ctrl-\\", "sigquit", "ctrl+r", "Ctrl+Shift+T", "alt-left", "opt+b", "cmd+k", "super-a", "control+page_down", " enter " }) |k| {
-        if (!isValidKey(k)) {
-            std.debug.print("rejected valid key '{s}'\n", .{k});
-            return error.TestUnexpectedResult;
-        }
-    }
-    for ([_][]const u8{ "", "bogus", "ctrl+", "ctrl", "+c", "ctrl+cc", "ctrl+1", "hyper+a", "shift+\u{e9}", "f13x", "ctrl-+" }) |k| {
-        if (isValidKey(k)) {
-            std.debug.print("accepted invalid key '{s}'\n", .{k});
-            return error.TestUnexpectedResult;
-        }
-    }
-    var long: [100]u8 = undefined;
-    @memset(&long, 'a');
-    try testing.expect(!isValidKey(&long));
-}
-
 test "unit: cli-ps: send params, double dash, caller default and hint on stderr" {
     var h: Harness = undefined;
     try h.init();
@@ -617,7 +559,6 @@ test "unit: cli-ps: send params, double dash, caller default and hint on stderr"
     // An unknown dash word starts the text.
     _ = h.run(&.{ "cmux", "send", "--force", "--version", "-la" });
     try h.expectLast("surface.send_text", "{\"text\":\"--version -la\",\"surface_id\":\"" ++ sf_uuid ++ "\"}");
-    try pt.expectUsage(h.run(&.{ "cmux", "send-key", "--bogus" }), "unknown key '--bogus'");
 }
 
 test "unit: cli-ps: draft guard refuses over drafts and dialogs, --force and old apps proceed" {
@@ -663,17 +604,27 @@ test "unit: cli-ps: send-key params and validation" {
     try h.expectLast("surface.send_key", "{\"key\":\"ctrl+c\",\"workspace_id\":\"W-UUID\",\"surface_id\":\"" ++ sf_uuid ++ "\"}");
     _ = h.run(&.{ "cmux", "send-key", "--workspace", "workspace:2", "--force", "--", "up" });
     try h.expectLast("surface.send_key", "{\"key\":\"up\",\"workspace_id\":\"workspace:2\"}");
+    // Key names go to the app unchanged (case, chords and aliases included);
+    // the CLI keeps no key table of its own.
+    _ = h.run(&.{ "cmux", "send-key", "--force", "Ctrl+Shift+T" });
+    try h.expectLast("surface.send_key", "{\"key\":\"Ctrl+Shift+T\",\"workspace_id\":\"W-UUID\",\"surface_id\":\"" ++ sf_uuid ++ "\"}");
+    _ = h.run(&.{ "cmux", "send-key-panel", "--panel", "surface:3", "--force", " ctrl-\\ " });
+    try h.expectLast("surface.send_key", "{\"key\":\"ctrl-\\\\\",\"workspace_id\":\"W-UUID\",\"surface_id\":\"surface:3\"}");
     h.clearRequests();
     try pt.expectUsage(h.run(&.{ "cmux", "send-key" }), "send-key requires a key");
-    try pt.expectUsage(h.run(&.{ "cmux", "send-key", "bogus" }), "unknown key 'bogus'");
+    try pt.expectUsage(h.run(&.{ "cmux", "send-key", " " }), "send-key requires a key");
     try pt.expectUsage(h.run(&.{ "cmux", "send-key", "enter", "tab" }), "unexpected argument 'tab'");
     try pt.expectUsage(h.run(&.{ "cmux", "send-key-panel", "enter" }), "send-key-panel requires --panel <id|ref|index>");
     try testing.expectEqual(@as(usize, 0), h.requests().len);
-    // A server-side rejection still maps to exit 1.
-    h.reply("surface.send_key", .{ .err = "{\"code\":\"invalid_params\",\"message\":\"Unknown key\",\"data\":{\"key\":\"ctrl+q\"}}" });
-    const r = h.run(&.{ "cmux", "send-key", "--force", "ctrl+q" });
+    // An unknown key is the app's invalid_params (exit 1), as for
+    // `cmux send-key bogus`, after the dialog guard was asked.
+    h.reply("surface.send_key", .{ .err = "{\"code\":\"invalid_params\",\"message\":\"Unknown key\",\"data\":{\"key\":\"bogus\"}}" });
+    const r = h.run(&.{ "cmux", "send-key", "bogus" });
     try testing.expectEqual(@as(u8, 1), r.code);
     try testing.expectEqualStrings("invalid_params: Unknown key\n", r.err);
+    try testing.expectEqual(@as(usize, 2), h.requests().len);
+    try testing.expectEqualStrings("surface.input_state", h.requests()[0].method);
+    try h.expectLast("surface.send_key", "{\"key\":\"bogus\",\"workspace_id\":\"W-UUID\",\"surface_id\":\"" ++ sf_uuid ++ "\"}");
 }
 
 test "unit: cli-ps: paste reads argument or stdin and maps submit" {

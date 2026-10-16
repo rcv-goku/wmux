@@ -1,6 +1,7 @@
 Usage: cmux send-key [--surface <id|ref|index>] [--force] <key>
 
-Press one key in a terminal surface.
+Press a single key, or a key chord, in a terminal surface. The app checks
+the name; an unknown one is an invalid_params error.
 
 Keys (case-insensitive): enter/return, tab, escape/esc, backspace,
 delete/del/forward_delete, space, up/arrow_up, down, left, right, home, end,
