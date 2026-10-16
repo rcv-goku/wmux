@@ -423,13 +423,16 @@ pub fn printOpened(ctx: *Ctx, result: std.json.Value) !void {
 
 /// For focus-intent requests from an interactive, non-agent caller: lets the
 /// app take the foreground (ADR-3.11) and marks the request accordingly.
-pub fn grantForeground(ctx: *Ctx, p: *Params) !void {
-    if (!focus_default.defaultFocus(ctx.platform.isInteractive(), ctx.env, ctx.env_names)) return;
-    const c = (try ctx.connect()) orelse return;
-    const t = c.conn orelse return;
-    const pid = t.serverPid() orelse return;
+/// False when the app cannot be reached; the error is already printed and
+/// the caller exits 1 (connecting again would print it twice).
+pub fn grantForeground(ctx: *Ctx, p: *Params) !bool {
+    if (!focus_default.defaultFocus(ctx.platform.isInteractive(), ctx.env, ctx.env_names)) return true;
+    const c = (try ctx.connect()) orelse return false;
+    const t = c.conn orelse return true;
+    const pid = t.serverPid() orelse return true;
     ctx.platform.allowForeground(pid);
     try p.boolean("foreground_grant", true);
+    return true;
 }
 
 /// Writes `text` rebranded and a newline to stderr; exit code 1.

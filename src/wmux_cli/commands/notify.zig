@@ -320,7 +320,7 @@ fn runOpen(ctx: *Ctx) !u8 {
     const text = s.get("--id") orelse return ctx.usageError("open-notification requires --id", .{});
     var p = Params.init(ctx.arena);
     if (!try idParam(ctx, cmd, text, &p, &code)) return code;
-    try common.grantForeground(ctx, &p);
+    if (!try common.grantForeground(ctx, &p)) return output.exit.runtime;
     const r = (try common.request(ctx, "notification.open", &p)) orelse return output.exit.runtime;
     if (ctx.json()) return common.printOk(ctx, r);
     try common.printOpened(ctx, r);
@@ -345,7 +345,7 @@ fn printJump(ctx: *Ctx, r: std.json.Value, none_text: []const u8) !u8 {
 fn runJumpToUnread(ctx: *Ctx) !u8 {
     if (noArgs(ctx, "jump-to-unread")) |c| return c;
     var p = Params.init(ctx.arena);
-    try common.grantForeground(ctx, &p);
+    if (!try common.grantForeground(ctx, &p)) return output.exit.runtime;
     const r = (try common.request(ctx, "notification.jump_to_unread", &p)) orelse return output.exit.runtime;
     return printJump(ctx, r, "No unread notifications");
 }
@@ -355,7 +355,7 @@ fn runJumpToLastPrompt(ctx: *Ctx) !u8 {
     var p = Params.init(ctx.arena);
     // A focus intent through `focus:true` (Appendix B).
     try p.boolean("focus", true);
-    try common.grantForeground(ctx, &p);
+    if (!try common.grantForeground(ctx, &p)) return output.exit.runtime;
     const r = (try common.request(ctx, "surface.jump_to_last_prompt", &p)) orelse return output.exit.runtime;
     return printJump(ctx, r, "No agent prompt to jump to");
 }

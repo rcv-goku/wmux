@@ -284,6 +284,23 @@ test "unit: cli-notify: focus-intent commands grant the foreground only to inter
     try testing.expectEqual(@as(usize, 1), h.fp.foreground_grants.items.len);
 }
 
+test "unit: cli-notify: an interactive focus command reports a missing app once" {
+    var h: Harness = undefined;
+    try h.init(notifyHandler);
+    defer h.deinit();
+    h.fp.interactive = true;
+    h.fp.servers.clearRetainingCapacity();
+    for ([_][]const []const u8{
+        &.{ "cmux", "jump-to-unread" },
+        &.{ "cmux", "jump-to-last-prompt" },
+        &.{ "cmux", "open-notification", "--id", nid },
+    }) |argv| {
+        const r = h.run(argv);
+        try testing.expectEqual(@as(u8, 1), r.code);
+        try testing.expectEqual(@as(usize, 1), std.mem.count(u8, r.err, "No live wmux socket found"));
+    }
+}
+
 test "unit: cli-notify: clear-notifications scopes" {
     var h: Harness = undefined;
     try h.init(notifyHandler);
