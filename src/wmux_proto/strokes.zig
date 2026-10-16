@@ -186,6 +186,9 @@ pub const KeyEvent = struct {
 };
 
 /// Resolves the bindable key of an event, or null when nothing matches.
+/// Letters (by virtual key) are tried first, so on layouts that put a letter
+/// at a US punctuation position (AZERTY M at `;`, Dvorak S at `;`) the event
+/// is the letter and the positional punctuation default is shadowed.
 pub fn keyFromEvent(ev: KeyEvent) ?Key {
     inline for (comptime std.enums.values(Key)) |k| {
         switch (comptime matchBy(k)) {
@@ -197,12 +200,10 @@ pub fn keyFromEvent(ev: KeyEvent) ?Key {
 }
 
 /// True when the event is this key: by scan code for digits and
-/// punctuation, by virtual key for letters and named keys.
+/// punctuation, by virtual key for letters and named keys. An event is at
+/// most one key (`keyFromEvent`), so two bindings never both match it.
 pub fn keyMatches(k: Key, ev: KeyEvent) bool {
-    return switch (matchBy(k)) {
-        .scan_code => ev.scan == scanCode(k).?,
-        .virtual_key => ev.vk == virtualKey(k),
-    };
+    return keyFromEvent(ev) == k;
 }
 
 const Mod = enum { ctrl, shift, alt, win, cmd };
@@ -383,11 +384,8 @@ pub const Stroke = struct {
     /// family. Returns the pressed digit (1–9) or null.
     pub fn matchNumbered(s: Stroke, ev: KeyEvent) ?u8 {
         if (s.key.kind() != .digit or !s.mods.eql(ev.mods)) return null;
-        var dg: u8 = 1;
-        while (dg <= 9) : (dg += 1) {
-            if (keyMatches(Key.fromDigit(dg), ev)) return dg;
-        }
-        return null;
+        const dg = (keyFromEvent(ev) orelse return null).digit() orelse return null;
+        return if (dg == 0) null else dg;
     }
 
     /// No modifiers at all (bare key).
@@ -717,6 +715,39 @@ test "unit: keys: numbered families match 1-9 only" {
     try testing.expectEqual(@as(?u8, null), fam.matchNumbered(.{ .mods = .{ .ctrl = true }, .vk = 0, .scan = 0x02 }));
     const letter = try Stroke.parse("ctrl+shift+a", .windows);
     try testing.expectEqual(@as(?u8, null), letter.matchNumbered(.{ .mods = .{ .ctrl = true, .shift = true }, .vk = 0x41, .scan = 0x1E }));
+}
+
+test "unit: keys: an event matches one key on non-US layouts" {
+    const cs: Mods = .{ .ctrl = true, .shift = true };
+    // A letter at a US punctuation position is the letter, never the
+    // punctuation: AZERTY M at ';', Dvorak W at ',', S at ';', Z at '/'.
+    const cases = [_]struct { u16, u16, Key, []const u8, []const u8 }{
+        .{ 'M', 0x27, .m, "ctrl+shift+m", "ctrl+shift+;" },
+        .{ 'W', 0x33, .w, "ctrl+shift+w", "ctrl+shift+," },
+        .{ 'S', 0x27, .s, "ctrl+shift+s", "ctrl+shift+;" },
+        .{ 'Z', 0x35, .z, "ctrl+shift+z", "ctrl+shift+/" },
+    };
+    for (cases) |c| {
+        const ev: KeyEvent = .{ .mods = cs, .vk = c[0], .scan = c[1] };
+        try testing.expectEqual(c[2], keyFromEvent(ev).?);
+        try testing.expect((try Stroke.parse(c[3], .windows)).matches(ev));
+        try testing.expect(!(try Stroke.parse(c[4], .windows)).matches(ev));
+    }
+    // AZERTY ',' sits at the US 'm' position: no positional key there.
+    const comma: KeyEvent = .{ .mods = cs, .vk = 0xBC, .scan = 0x32 };
+    try testing.expectEqual(@as(?Key, null), keyFromEvent(comma));
+    try testing.expect(!(try Stroke.parse("ctrl+shift+,", .windows)).matches(comma));
+    // The AZERTY digit row keeps the US positions for numbered families...
+    const fam = try Stroke.parse("ctrl+shift+1", .windows);
+    try testing.expectEqual(@as(?u8, 3), fam.matchNumbered(.{ .mods = cs, .vk = 0x33, .scan = 0x04 }));
+    try testing.expectEqual(@as(?u8, 9), fam.matchNumbered(.{ .mods = cs, .vk = 0x00, .scan = 0x0A }));
+    // ...but a letter on the digit row is a letter.
+    try testing.expectEqual(@as(?u8, null), fam.matchNumbered(.{ .mods = cs, .vk = 'A', .scan = 0x02 }));
+    // Every key matches its own US event and no other key does.
+    for (std.enums.values(Key)) |k| {
+        const ev: KeyEvent = .{ .mods = .{}, .vk = virtualKey(k), .scan = scanCode(k) orelse 0 };
+        for (std.enums.values(Key)) |other| try testing.expectEqual(k == other, keyMatches(other, ev));
+    }
 }
 
 fn tierOf(text: []const u8) !Tier {
