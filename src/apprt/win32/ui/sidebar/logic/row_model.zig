@@ -710,21 +710,17 @@ pub fn build(arena: Allocator, input: RowModelInput) Allocator.Error![]Row {
 /// group header while the group is collapsed (or null if absent).
 pub fn revealTarget(rows: []const Row, ws: Uuid) ?usize {
     for (rows, 0..) |*r, i| switch (r.body) {
-        .workspace => |w| if (uuidEql(w.id, ws)) return i,
+        .workspace => |w| if (w.id.eql(ws)) return i,
         .group_header => |g| if (g.collapsed) {
-            for (g.member_ids) |m| if (uuidEql(m, ws)) return i;
+            for (g.member_ids) |m| if (m.eql(ws)) return i;
         },
     };
     return null;
 }
 
 pub fn indexOf(rows: []const Row, row_id: Uuid) ?usize {
-    for (rows, 0..) |*r, i| if (uuidEql(r.id(), row_id)) return i;
+    for (rows, 0..) |*r, i| if (r.id().eql(row_id)) return i;
     return null;
-}
-
-pub fn uuidEql(a: Uuid, b: Uuid) bool {
-    return std.mem.eql(u8, &a.b, &b.b);
 }
 
 /// Badge text for an unread count: "" for 0, the number up to 99, "99+".
@@ -987,7 +983,7 @@ test "unit: sidebar: pinned tier first, then unpinned, each in user order" {
     try testing.expectEqualStrings("three", rows[0].body.workspace.title.title);
     try testing.expect(rows[0].body.workspace.title.pinned);
     try testing.expectEqualStrings("G", rows[1].body.group_header.title);
-    try testing.expect(uuidEql(testId(10), rows[2].body.workspace.group.?));
+    try testing.expect(testId(10).eql(rows[2].body.workspace.group.?));
     try testing.expectEqualStrings("one", rows[3].body.workspace.title.title);
     try testing.expectEqualStrings("two", rows[4].body.workspace.title.title);
 }

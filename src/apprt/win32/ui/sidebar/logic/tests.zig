@@ -901,6 +901,6 @@ test "unit: sidebar: wmux_proto uuid ids round-trip through row identity" {
     const id = try proto.uuid.Uuid.parse("3F2504E0-4F89-41D3-9A0C-0305E82C3301");
     const nodes = [_]model.Node{.{ .workspace = .{ .id = id } }};
     const rows = try model.build(arena.allocator(), .{ .nodes = &nodes });
-    try testing.expect(model.uuidEql(id, rows[0].id()));
+    try testing.expect(id.eql(rows[0].id()));
     try testing.expectEqual(model.RowKind.workspace, rows[0].kind());
 }

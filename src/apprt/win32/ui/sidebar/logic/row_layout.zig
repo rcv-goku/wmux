@@ -880,8 +880,8 @@ pub fn writeSnapshot(arena: Allocator, w: *std.Io.Writer, rows: []const model.Ro
         try s.objectField("kind");
         try s.write(rowKindName(row.kind()));
         try s.objectField("id");
-        var idbuf: [36]u8 = undefined;
-        try s.write(uuidText(row.id(), &idbuf));
+        const id_text = row.id().toText();
+        try s.write(@as([]const u8, &id_text));
         try s.objectField("top");
         try s.write(g.top);
         try s.objectField("height");
@@ -928,21 +928,6 @@ pub fn writeSnapshot(arena: Allocator, w: *std.Io.Writer, rows: []const model.Ro
     }
     try s.endArray();
     try s.endObject();
-}
-
-fn uuidText(u: model.Uuid, buf: *[36]u8) []const u8 {
-    const hex = "0123456789ABCDEF";
-    var o: usize = 0;
-    for (u.b, 0..) |byte, i| {
-        if (i == 4 or i == 6 or i == 8 or i == 10) {
-            buf[o] = '-';
-            o += 1;
-        }
-        buf[o] = hex[byte >> 4];
-        buf[o + 1] = hex[byte & 15];
-        o += 2;
-    }
-    return buf[0..o];
 }
 
 /// Compact text dump of a layout for golden tests.
