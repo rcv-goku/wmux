@@ -250,6 +250,23 @@ describe("unit: task manager sorting and refresh", () => {
     assert.notEqual(doc.activeElement, tr, "the row element was rebuilt");
     assert.ok(doc.activeElement.classList.contains("is-selected"));
   });
+
+  test("unit: task-manager: a focused column header keeps focus across sorting and refreshes", async () => {
+    await startApp();
+    const sortBtn = (id, s) => $(id).tHead.querySelector(`.tm-sort[data-sort="${s}"]`);
+    // WebView2 focuses a button on click; keyboard users Tab to it.
+    sortBtn("tm-tree", "mem").focus();
+    click(window, sortBtn("tm-tree", "mem"));
+    assert.deepEqual(app.sort, { key: "mem", dir: "desc" });
+    assert.equal(doc.activeElement, sortBtn("tm-tree", "mem"), "the rebuilt header button has focus");
+    await app.refresh();
+    await settle();
+    assert.equal(doc.activeElement, sortBtn("tm-tree", "mem"), "the 3 s refresh does not drop it");
+    sortBtn("tm-programs", "name").focus();
+    await app.refresh();
+    await settle();
+    assert.equal(doc.activeElement, sortBtn("tm-programs", "name"));
+  });
 });
 
 describe("unit: task manager states", () => {

@@ -351,6 +351,8 @@ export function createApp(options) {
   function render() {
     const active = doc.activeElement;
     const focusedKey = active && ui.main.contains(active) ? rowKeyOf(active) : null;
+    // Header sort buttons are rebuilt too (every refresh): remember the focused one.
+    const focusedSort = !focusedKey && active && ui.main.contains(active) ? sortFocusOf(active) : null;
     rows.clear();
     renderCards();
     ui.refreshing.hidden = !state.busy;
@@ -392,8 +394,8 @@ export function createApp(options) {
     );
     renderTree();
     if (state.selected && !rows.has(state.selected)) state.selected = null;
-    // Refreshes rebuild the rows; keep keyboard focus on the same row.
-    const el = focusedKey ? rowElement(focusedKey) : null;
+    // Refreshes rebuild the rows and headers; keep keyboard focus on the same one.
+    const el = focusedKey ? rowElement(focusedKey) : focusedSort ? sortButton(focusedSort) : null;
     if (el) el.focus();
   }
 
@@ -561,6 +563,20 @@ export function createApp(options) {
 
   function rowElement(key) {
     for (const tr of doc.querySelectorAll("#tm-main tr[data-key]")) if (tr.dataset.key === key) return tr;
+    return null;
+  }
+
+  /** `{section, sort}` of the header sort button `target` is in, or null. */
+  function sortFocusOf(target) {
+    const btn = typeof target.closest === "function" ? target.closest(".tm-sort") : null;
+    const table = btn ? btn.closest("table[data-section]") : null;
+    return table ? { section: table.dataset.section, sort: btn.dataset.sort } : null;
+  }
+
+  function sortButton(where) {
+    const head = ui.tables[where.section] ? ui.tables[where.section].tHead : null;
+    if (!head) return null;
+    for (const btn of head.querySelectorAll(".tm-sort")) if (btn.dataset.sort === where.sort) return btn;
     return null;
   }
 
