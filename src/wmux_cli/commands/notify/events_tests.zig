@@ -165,6 +165,23 @@ test "unit: cli-events: slow_consumer error frames are transient" {
     try kit.expectResult(h.run(&.{ "cmux", "events", "--no-ack", "--reconnect" }), 1, "", "cmux: invalid_params: Unknown category\n");
 }
 
+test "unit: cli-events: server error text is printed as printable characters only" {
+    // ADR-4.7: control and bidi characters a message may echo never reach
+    // the terminal, whether the error ends the stream or would be retried.
+    const fatal = "{\"type\":\"error\",\"code\":\"invalid_params\",\"message\":\"Unknown category: \\u001b]0;pwned\\u0007x\\u202e\\ny\"}";
+    const slow = "{\"type\":\"error\",\"code\":\"slow_consumer\",\"message\":\"Slow\\u0007 consumer\\u001b[2J\"}";
+    const busy = "{\"id\":null,\"ok\":false,\"error\":{\"code\":\"overloaded\",\"message\":\"Busy\\u001b[31m\\r\\n\"}}";
+    var sc: Script = .{ .batches = &.{comptime lines(&.{ ack, fatal })} };
+    var h: Harness = undefined;
+    try harness(&h, &sc);
+    defer h.deinit();
+    try kit.expectResult(fresh(&h, &.{ "cmux", "events", "--no-ack" }), 1, "", "cmux: invalid_params: Unknown category: ]0;pwnedx y\n");
+    sc.batches = &.{comptime lines(&.{ ack, slow })};
+    try kit.expectResult(fresh(&h, &.{ "cmux", "events", "--no-ack" }), 1, "", "cmux: slow_consumer: Slow consumer[2J\n");
+    sc.batches = &.{busy};
+    try kit.expectResult(fresh(&h, &.{ "cmux", "events" }), 1, "", "cmux: overloaded: Busy[31m  \n");
+}
+
 test "unit: cli-events: an error reply to the subscription is reported" {
     var sc: Script = .{ .batches = &.{"{\"id\":null,\"ok\":false,\"error\":{\"code\":\"invalid_params\",\"message\":\"Unknown category: bogus\"}}"} };
     var h: Harness = undefined;

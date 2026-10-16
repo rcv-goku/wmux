@@ -262,6 +262,16 @@ const Stream = struct {
         return .fatal;
     }
 
+    /// `<code>: <message>` of an error the server sent, reduced to
+    /// printable text like every other error line (ADR-4.7): the message
+    /// may echo input such as a category name.
+    fn serverErrorText(self: *Stream, code: []const u8, message: []const u8) ![]const u8 {
+        const scratch = self.a();
+        const c = try proto.utf8.sanitizePrintableAlloc(scratch, code);
+        const m = try proto.utf8.sanitizePrintableAlloc(scratch, message);
+        return std.fmt.allocPrint(scratch, "{s}: {s}", .{ c, m });
+    }
+
     /// One connection: connect if needed, subscribe, then frames until the
     /// stream ends.
     fn session(self: *Stream) !Outcome {
@@ -323,9 +333,9 @@ const Stream = struct {
         if (std.mem.eql(u8, ty, "event")) return self.onEvent(frame, raw);
         if (std.mem.eql(u8, ty, "error")) {
             const code = common.strField(frame, "code") orelse "error";
-            const msg = common.strField(frame, "message") orelse code;
-            if (isTransientCode(code)) return self.transient("{s}: {s}", .{ code, msg });
-            return self.fatal("{s}: {s}", .{ code, msg });
+            const text = try self.serverErrorText(code, common.strField(frame, "message") orelse code);
+            if (isTransientCode(code)) return .{ .transient = text };
+            return self.fatal("{s}", .{text});
         }
         // Unknown frame kinds pass through (forward compatible).
         try self.print(frame, raw);
@@ -374,7 +384,7 @@ const Stream = struct {
             self.auth_tried = true;
             return self.login();
         }
-        if (isTransientCode(e.code)) return self.transient("{s}: {s}", .{ e.code, e.message });
+        if (isTransientCode(e.code)) return .{ .transient = try self.serverErrorText(e.code, e.message) };
         _ = try self.ctx.reportError("events.stream", .{ .rpc_error = .{ .err = e, .raw = line } });
         return .fatal;
     }
