@@ -59,9 +59,12 @@ Agents:
   notify [--title <text>] [--body <text>] [--workspace <id|ref|index>] [--surface <id|ref|index>] [--desktop <true|false>] [--clear]
                                               Post a notification
   list-notifications                          List queued notifications
-  dismiss-notification [<id>|--all-read]      Remove notifications
-  mark-notification-read [<id>|--all]         Mark notifications read
-  open-notification <id>                      Focus a notification's surface and mark it read
+  dismiss-notification (--id <uuid|notification:<uuid>> | --all-read) [--json]
+                                              Remove notifications
+  mark-notification-read (--id <uuid> | --workspace <id|ref|index> [--surface <id|ref|index>] [--window <id|ref|index>] | --all) [--json]
+                                              Mark notifications read
+  open-notification --id <uuid|notification:<uuid>> [--json]
+                                              Focus a notification's surface and mark it read
   jump-to-unread                              Jump to the newest unread notification
   jump-to-last-prompt                         Focus the surface of the last agent prompt
   clear-notifications [--workspace <id|ref|index>] [--surface <id|ref|index>]
