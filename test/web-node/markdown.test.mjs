@@ -1316,12 +1316,53 @@ describe("unit: markdown app", () => {
     click(box.querySelector('[data-image-action="load"]'));
     await settle();
     assert.deepEqual(host.calls("panel.markdown.approve_remote_image")[0].params, { url: "https://img.shields.io/b.svg" });
+    // Native reloads the page with a rewritten CSP to allow the URL, so the
+    // approval is in the panel state before native is asked.
+    const sent = host.sent.map((m) => m.method);
+    const approveAt = sent.indexOf("panel.markdown.approve_remote_image");
+    const stateAt = sent.lastIndexOf("panel.state_changed", approveAt);
+    assert.ok(stateAt >= 0, "panel.state_changed precedes the approval");
+    assert.deepEqual(host.sent[stateAt].params.state.approved_images, ["https://img.shields.io/b.svg"]);
     const img = doc.querySelector("#mdv-content img");
     assert.equal(img.getAttribute("src"), "https://img.shields.io/b.svg");
     assert.equal(img.getAttribute("alt"), "badge");
     // A re-render keeps the approval.
     app.renderPreview(true);
     assert.equal(doc.querySelector("#mdv-content img").getAttribute("src"), "https://img.shields.io/b.svg");
+  });
+
+  test("unit: markdown: a refused remote image approval is rolled back", async () => {
+    await startApp({
+      text: "![badge](https://img.shields.io/b.svg)",
+      handlers: {
+        "panel.markdown.approve_remote_image": () => {
+          throw hostError("forbidden", "Remote images are disabled");
+        },
+      },
+    });
+    click(doc.querySelector('.wmux-remote-image [data-image-action="load"]'));
+    await settle();
+    assert.equal(app.state.approvedImages.size, 0);
+    assert.ok(doc.querySelector("#mdv-content .wmux-remote-image"), "the placeholder stays");
+    assert.equal(doc.querySelector("#mdv-content img"), null);
+    const states = host.calls("panel.state_changed").map((m) => m.params.state.approved_images);
+    assert.deepEqual(states, [["https://img.shields.io/b.svg"], []], "saved before asking, rolled back after");
+    assert.match(doc.getElementById("mdv-status").textContent, /Could not load the image: Remote images are disabled/);
+  });
+
+  test("unit: markdown: remote image approvals never push the session state over 64 KiB", async () => {
+    const urls = Array.from({ length: 200 }, (_, i) => `https://img.example/${i}/` + "x".repeat(1000));
+    await startApp({ init: { params: { path: "a.md" }, state: { v: 1, approved_images: urls } } });
+    assert.equal(app.state.approvedImages.size, 200);
+    app.setMode("text");
+    await new Promise((resolve) => setTimeout(resolve, 450)); // the state save is debounced
+    const last = host.calls("panel.state_changed").at(-1);
+    assert.ok(last, "the state was saved");
+    const saved = last.params.state;
+    assert.equal(saved.display_mode, "text");
+    assert.ok(Buffer.byteLength(JSON.stringify(saved)) < 65536);
+    assert.ok(saved.approved_images.length > 0 && saved.approved_images.length < 200);
+    assert.equal(saved.approved_images.at(-1), urls.at(-1), "the newest approvals are kept");
   });
 
   test("unit: markdown: absolute local images are resolved by native", async () => {

@@ -74,7 +74,7 @@ The page sets the tab title with `panel.set_title {title: <basename>}`.
 | `panel.markdown.open` | `{path, fragment?}` -> `{}` | markdown links (`.md .markdown .mkd .mdx`). `path` is as written in the document (decoded, `?query` and `#fragment` stripped; `file:` URLs converted to paths). Native resolves it against the document's directory, then the working directory, and opens a focused sibling markdown tab in the same pane. `file_not_found` makes the page show "File not found" |
 | `panel.markdown.resolve_links` | `{paths: [..]}` -> `{exists: {"<path>": bool}}` | existence check for inline code spans that look like markdown paths (`docs/x.md`); at most 200 paths per call, cached per page load |
 | `panel.markdown.resolve_image` | `{path}` -> `{url}` | local image paths the file host cannot serve: absolute (`C:\x.png`, `/x.png`, `\\srv\x.png`, `file:` URLs), drive-relative (`c:x.png`), and relative paths that climb above the `base_url` root (`../assets/x.png` when the host maps the document's directory). Relative paths are resolved against the document's directory. `url` must be `https://*.wmux.example/...` or `data:image/...`; anything else is ignored |
-| `panel.markdown.approve_remote_image` | `{url}` -> `{}` | "Load image" on a blocked remote image: record the approval for exactly this URL for this panel and allow it in the panel's CSP (native rewrites the page CSP, see `_shared/README.md`), then the page sets `<img src=url>` |
+| `panel.markdown.approve_remote_image` | `{url}` -> `{}` | "Load image" on a blocked remote image: record the approval for exactly this URL for this panel. A meta CSP cannot be relaxed in a loaded page, so native then reloads the page with `img-src` extended by the panel's approved URLs (page rewrite, see `_shared/README.md`) and passes the last panel state back in `panel.init.state`. The page sends `panel.state_changed` with the URL in `approved_images` just before this call (and again without it if the call fails), so the reloaded page shows the image. The page also sets `<img src=url>` at once; that only loads if the current CSP already allows the URL |
 | `panel.markdown.list_fonts` | `{}` -> `{families: [..]}` | font picker (EnumFontFamiliesExW); the page falls back to a short built-in list |
 | `panel.markdown.set_defaults` | `{fontSize, fontFamily, maxWidth}` -> `{}` | "Set as default for new viewers": write `markdown.fontSize`, `markdown.fontFamily`, `markdown.maxWidth` |
 
@@ -91,8 +91,10 @@ The page sets the tab title with `panel.set_title {title: <basename>}`.
 ### Session state (`panel.state_changed`)
 
 `{v: 1, display_mode: "preview" | "text", typography: {fontSize, fontFamily,
-maxWidth}, approved_images: [url, ...] (last 200), find: "<needle>"}`. Native
-can report `display_mode` in `file.open` replies from it.
+maxWidth}, approved_images: [url, ...] (the newest 200 that fit in 32 KiB, so
+the state stays below the 64 KiB cap), find: "<needle>"}`. Native can report
+`display_mode` in `file.open` replies from it, and must pass it back in
+`panel.init.state` when it reloads the page for a remote image approval.
 
 ## Behavior notes
 

@@ -51,6 +51,7 @@ const STATUS_MS = 2500;
 const COPIED_MS = 1200;
 const STATE_DEBOUNCE_MS = 400;
 const MAX_APPROVED_IMAGES = 200;
+const MAX_APPROVED_CHARS = 32768;
 const MAX_RESOLVE_BATCH = 200;
 const FALLBACK_FONTS = [
   "Segoe UI",
@@ -212,21 +213,41 @@ export function createApp(options) {
   /* ---------------------------------------------------------------------- */
 
   let stateTimer = 0;
+
+  /** Newest approvals that fit the budget (panel.state_changed is capped at 64 KiB). */
+  function approvedForState() {
+    const all = Array.from(state.approvedImages);
+    const out = [];
+    let chars = 0;
+    for (let i = all.length - 1; i >= 0 && out.length < MAX_APPROVED_IMAGES; i -= 1) {
+      chars += all[i].length + 3;
+      if (chars > MAX_APPROVED_CHARS) break;
+      out.unshift(all[i]);
+    }
+    return out;
+  }
+
+  /** Send the session state now, replacing a pending debounced save. */
+  function flushState() {
+    cancel(stateTimer);
+    stateTimer = 0;
+    if (!bridge.available) return;
+    const snapshot = {
+      v: 1,
+      display_mode: state.mode,
+      typography: { ...state.typography },
+      approved_images: approvedForState(),
+      find: find.needle || "",
+    };
+    bridge.panel.setState(snapshot).catch((err) => {
+      console.warn("[markdown] panel.state_changed failed:", errorMessage(err));
+    });
+  }
+
   function saveState() {
     if (!bridge.available) return;
     cancel(stateTimer);
-    stateTimer = later(() => {
-      const snapshot = {
-        v: 1,
-        display_mode: state.mode,
-        typography: { ...state.typography },
-        approved_images: Array.from(state.approvedImages).slice(-MAX_APPROVED_IMAGES),
-        find: find.needle || "",
-      };
-      bridge.panel.setState(snapshot).catch((err) => {
-        console.warn("[markdown] panel.state_changed failed:", errorMessage(err));
-      });
-    }, STATE_DEBOUNCE_MS);
+    stateTimer = later(flushState, STATE_DEBOUNCE_MS);
   }
 
   function restoreState(saved) {
@@ -798,14 +819,22 @@ export function createApp(options) {
     } else if (action === "open") {
       await routeLink(url);
     } else if (action === "load") {
+      // A meta CSP cannot be relaxed in place: native allows the URL by
+      // reloading the page with a rewritten CSP, so the approval must already
+      // be in the panel state that the reloaded page gets in panel.init.
+      const added = !state.approvedImages.has(url);
+      state.approvedImages.add(url);
+      flushState();
       try {
         await call("panel.markdown.approve_remote_image", { url });
       } catch (err) {
+        if (added) {
+          state.approvedImages.delete(url);
+          flushState();
+        }
         setStatus(t("markdown.image.loadFailed", { message: errorMessage(err) }), "error");
         return;
       }
-      state.approvedImages.add(url);
-      saveState();
       for (const other of Array.from(ui.content.querySelectorAll(".wmux-remote-image"))) {
         if (other.getAttribute("data-url") !== url) continue;
         const img = doc.createElement("img");
