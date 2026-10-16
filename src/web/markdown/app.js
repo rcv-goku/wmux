@@ -414,23 +414,31 @@ export function createApp(options) {
     state.diskText = text;
     state.available = true;
     state.deletedOnDisk = false;
-    showBody();
-    if (state.mode === "text") {
-      if (state.dirty && reason !== "revert") {
-        setStatus(t("markdown.status.changedOnDisk"), "warning", true);
-        return;
-      }
+    if (reason === "revert") {
+      // Revert discards the unsaved buffer, whichever mode is showing now.
       ui.editor.value = text;
       setDirty(false);
-      if (reason === "revert" || ui.status.getAttribute("data-kind") === "warning") setStatus("");
+      setStatus("");
+    }
+    showBody();
+    if (state.dirty) {
+      // Never replace unsaved edits: the editor and the preview keep the buffer.
+      setStatus(t("markdown.status.changedOnDisk"), "warning", true);
       return;
     }
-    if (state.dirty) return; // the preview shows the unsaved buffer
+    if (state.mode === "text") {
+      ui.editor.value = text;
+      setDirty(false);
+      if (ui.status.getAttribute("data-kind") === "warning") setStatus("");
+      return;
+    }
     renderPreview(reason !== "initial" && !wasUnavailable);
   }
 
   function markUnavailable() {
-    if (state.mode === "text" && state.dirty) {
+    if (state.dirty) {
+      // Unsaved edits stay on screen in either mode (the preview renders the
+      // buffer); Save writes the file again.
       state.deletedOnDisk = true;
       setStatus(t("markdown.status.deletedOnDisk"), "warning", true);
       return;
@@ -658,9 +666,8 @@ export function createApp(options) {
     const seq = ++state.loadSeq;
     try {
       const result = await readFile();
-      if (seq !== state.loadSeq) return;
+      if (seq !== state.loadSeq || state.destroyed) return;
       acceptFileMeta(result);
-      state.dirty = true; // force the buffer replacement below
       applyText(result && typeof result.text === "string" ? result.text : "", "revert");
     } catch (err) {
       setStatus(t("markdown.status.loadFailed", { message: errorMessage(err) }), "error");

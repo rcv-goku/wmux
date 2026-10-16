@@ -1130,6 +1130,64 @@ describe("unit: markdown app", () => {
     assert.equal(app.state.dirty, false);
   });
 
+  test("unit: markdown: deleting the file keeps unsaved edits reachable in both modes", async () => {
+    await startApp();
+    app.setMode("text");
+    const editor = doc.getElementById("mdv-editor");
+    editor.value = "# Unsaved";
+    editor.dispatchEvent(new window.Event("input", { bubbles: true }));
+    app.setMode("preview");
+    assert.equal(doc.querySelector("#mdv-content h1").textContent, "Unsaved", "the preview renders the buffer");
+
+    host.emit("panel.markdown.file_changed", { status: "changed", text: "# Theirs" });
+    await settle();
+    assert.equal(doc.querySelector("#mdv-content h1").textContent, "Unsaved", "external changes never replace the buffer");
+    assert.match(doc.getElementById("mdv-status").textContent, /changed on disk/);
+
+    host.emit("panel.markdown.file_changed", { status: "deleted" });
+    await settle();
+    assert.equal(doc.getElementById("mdv-unavailable").hidden, true, "unsaved edits are not replaced by File unavailable");
+    assert.equal(doc.getElementById("mdv-content").hidden, false);
+    assert.equal(doc.querySelector("#mdv-content h1").textContent, "Unsaved");
+    assert.match(doc.getElementById("mdv-status").textContent, /deleted on disk/);
+
+    app.setMode("text");
+    assert.equal(editor.hidden, false);
+    assert.equal(editor.value, "# Unsaved");
+    const save = doc.getElementById("mdv-save");
+    assert.equal(save.disabled, false);
+    click(save);
+    await settle();
+    assert.deepEqual(host.calls("panel.write_file").map((m) => m.params.text), ["# Unsaved"]);
+    assert.equal(app.state.dirty, false);
+  });
+
+  test("unit: markdown: Revert discards the buffer even if the mode changes during the read", async () => {
+    await startApp();
+    app.setMode("text");
+    const editor = doc.getElementById("mdv-editor");
+    editor.value = "scratch";
+    editor.dispatchEvent(new window.Event("input", { bubbles: true }));
+    await settle();
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    host.handlers.set("panel.read_file", async () => {
+      await gate;
+      return { text: "# From disk" };
+    });
+    const reverting = app.revert();
+    app.setMode("preview");
+    release();
+    await reverting;
+    await settle();
+    assert.equal(app.state.dirty, false);
+    assert.equal(editor.value, "# From disk");
+    assert.equal(doc.querySelector("#mdv-content h1")?.textContent, "From disk");
+    assert.deepEqual(host.calls("panel.set_dirty").map((m) => m.params), [{ dirty: true }, { dirty: false }]);
+  });
+
   test("unit: markdown: copy toolbar and code copy buttons use panel.clipboard_write", async () => {
     await startApp();
     click(doc.getElementById("mdv-copy-md"));
