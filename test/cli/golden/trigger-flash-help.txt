@@ -1,0 +1,9 @@
+Usage: cmux trigger-flash [--workspace <id|ref|index>] [--surface <id|ref|index>]
+
+Flash a workspace or surface so it is easy to find.
+
+Options:
+  --surface <id|ref|index>      Surface to flash (default: $CMUX_SURFACE_ID)
+  --workspace <id|ref|index>    Workspace context (default: $CMUX_WORKSPACE_ID)
+  --window <id|ref|index>       Window context for refs and indexes
+  --json                        Print the full response

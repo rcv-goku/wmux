@@ -1,0 +1,18 @@
+Usage: cmux new-split <left|right|up|down> [--surface <id|ref|index>] [--command <text>]
+
+Split from a surface in a direction and print the new surface, pane and
+workspace (`OK surface:<n> pane:<n> workspace:<n>`). The new terminal does not
+take keyboard focus unless --focus true is given.
+
+Options:
+  <left|right|up|down>          Direction of the new split (required)
+  --surface <id|ref|index>      Surface to split from (alias --panel; default:
+                                $CMUX_SURFACE_ID, else the focused surface)
+  --workspace <id|ref|index>    Workspace context (default: $CMUX_WORKSPACE_ID)
+  --window <id|ref|index>       Window context for refs and indexes
+  --command <text>              Type <text> plus Enter into the new shell
+  --focus <true|false>          Focus the new surface (default: false)
+  --json                        Print the full response
+
+Example:
+  cmux new-split down --command 'htop'

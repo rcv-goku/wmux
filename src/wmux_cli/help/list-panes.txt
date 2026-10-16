@@ -1,0 +1,11 @@
+Usage: cmux list-panes [--workspace <id|ref|index>]
+
+List the panes of a workspace, one per line:
+  * pane:2  [3 surfaces]  [focused]
+Dock panes carry [dock:<scope>].
+
+Options:
+  --workspace <id|ref|index>    Workspace (default: $CMUX_WORKSPACE_ID, else
+                                the selected workspace)
+  --window <id|ref|index>       Window context for refs and indexes
+  --json                        Print the full response (frames, grid sizes)

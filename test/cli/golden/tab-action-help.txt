@@ -1,0 +1,28 @@
+Usage: cmux tab-action --action <name> [--surface <id|ref|index>]
+
+Run a tab context-menu action. The action may also be given positionally
+(`cmux tab-action close-right`).
+
+Actions:
+  rename (--title <text> or trailing text), clear-name, close-left,
+  close-right, close-others (--force), new-terminal-right, new-browser-right
+  (--url optional), move-to-new-workspace, reload, duplicate, pin, unpin,
+  mark-unread, toggle-full-width-tab
+
+Options:
+  --action <name>               Action to run (required)
+  --tab <id|ref|index>          Target tab, tab:<n> or surface:<n> (alias
+                                --surface; default: $CMUX_SURFACE_ID, else the
+                                focused tab)
+  --workspace <id|ref|index>    Workspace context (default: $CMUX_WORKSPACE_ID)
+  --window <id|ref|index>       Window context for refs and indexes
+  --title <text>                New title for rename
+  --url <url>                   Page for new-browser-right
+  --focus <true|false>          Focus the result (default: false for
+                                move-to-new-workspace)
+  --force                       Close without confirmation (close-others)
+  --json                        Print the full response
+
+Examples:
+  cmux tab-action --tab tab:2 --action pin
+  cmux tab-action close-right

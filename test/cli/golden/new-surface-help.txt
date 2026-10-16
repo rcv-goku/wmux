@@ -1,0 +1,15 @@
+Usage: cmux new-surface [--pane <id|ref|index>] [--type <terminal|browser>] [--command <text>]
+
+Create a surface (tab) inside a pane.
+
+Options:
+  --pane <id|ref|index>         Pane for the new surface (default: the
+                                focused pane of the workspace)
+  --type <terminal|browser>     Content of the new surface (default: terminal)
+  --workspace <id|ref|index>    Workspace (default: $CMUX_WORKSPACE_ID)
+  --window <id|ref|index>       Window context for refs and indexes
+  --url <url>                   Page for a browser surface
+  --command <text>              Type <text> plus Enter into the new shell
+                                (terminal surfaces only)
+  --focus <true|false>          Focus the new surface (default: false)
+  --json                        Print the full response

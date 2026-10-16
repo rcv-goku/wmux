@@ -1,0 +1,14 @@
+Usage: cmux resize-pane [--pane <id|ref|index>] [--workspace <id|ref|index>] [--window <id|ref|index>] [-L|-R|-U|-D] [--amount <n>]
+
+Resize a pane (tmux-compatible): move its divider left, right, up or down.
+
+Options:
+  --pane <id|ref|index>         Pane to resize (default: the focused pane)
+  --workspace <id|ref|index>    Workspace context (default: $CMUX_WORKSPACE_ID)
+  --window <id|ref|index>       Window context for refs and indexes
+  -L, -R, -U, -D                Direction (default: -R)
+  --amount <n>                  Steps to move, at least 1 (default: 1)
+  --json                        Print the full response
+
+Example:
+  cmux resize-pane -L --amount 5

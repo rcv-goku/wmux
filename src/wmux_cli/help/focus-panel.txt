@@ -1,0 +1,11 @@
+Usage: cmux focus-panel --panel <id|ref|index>
+
+Focus a panel (compatibility alias over surface focus; the handle may also be
+given positionally).
+
+Options:
+  --panel <id|ref|index>        Surface to focus (required; aliases --surface,
+                                --tab)
+  --workspace <id|ref|index>    Workspace context (default: $CMUX_WORKSPACE_ID)
+  --window <id|ref|index>       Window context for refs and indexes
+  --json                        Print the full response

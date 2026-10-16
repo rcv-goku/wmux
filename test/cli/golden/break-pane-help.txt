@@ -1,0 +1,12 @@
+Usage: cmux break-pane [--workspace <id|ref|index>] [--pane <id|ref|index>] [--surface <id|ref|index>] [--window <id|ref|index>] [--focus <true|false>] [--no-focus]
+
+Move the selected pane or surface into its own workspace.
+
+Options:
+  --pane <id|ref|index>         Pane to move
+  --surface <id|ref|index>      Surface to move (default: $CMUX_SURFACE_ID)
+  --workspace <id|ref|index>    Workspace context (default: $CMUX_WORKSPACE_ID)
+  --window <id|ref|index>       Window context for refs and indexes
+  --focus <true|false>          Select the new workspace (default: false);
+                                --no-focus is the same as --focus false
+  --json                        Print the full response

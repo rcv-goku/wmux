@@ -1,0 +1,10 @@
+Usage: cmux reorder-surface --surface <id|ref|index> --index <n>
+
+Move a surface to a new position inside its pane.
+
+Options:
+  --surface <id|ref|index>      Surface to move (required; alias --panel)
+  --index <n>                   New position, 0-based (required)
+  --workspace <id|ref|index>    Workspace context (default: $CMUX_WORKSPACE_ID)
+  --window <id|ref|index>       Window context for refs and indexes
+  --json                        Print the full response
