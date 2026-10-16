@@ -335,7 +335,12 @@ pub fn printLine(ctx: *Ctx, msg: []const u8) !void {
 // ----- paths -----
 
 /// `~` / `~/x` / `~\x` expanded with `USERPROFILE` (Windows) or `HOME`, then
-/// made absolute against the CLI's cwd. No file-system access.
+/// made absolute against the CLI's cwd and normalized lexically: `.` and
+/// `..` segments are resolved, separators and the drive letter are made
+/// canonical, and on Windows a root-relative `\x` or drive-relative `C:x`
+/// resolves like the OS does. The app then sees one spelling per file (git
+/// roots, file tabs, session paths). No file-system access; a relative path
+/// stays relative when the cwd is unknown.
 pub fn resolvePath(ctx: *Ctx, p: []const u8) Allocator.Error![]const u8 {
     const style = proto.paths.Style.native;
     var path = p;
@@ -343,10 +348,9 @@ pub fn resolvePath(ctx: *Ctx, p: []const u8) Allocator.Error![]const u8 {
         const home = if (style == .windows) ctx.env.getNonEmpty(env_names.USERPROFILE) else ctx.env.getNonEmpty(env_names.HOME);
         if (home) |h| path = if (p.len <= 2) h else try proto.paths.join(ctx.arena, style, &.{ h, p[2..] });
     }
-    if (isAbsolute(path)) return path;
+    if (isAbsolute(path)) return std.fs.path.resolve(ctx.arena, &.{path});
     const cwd = ctx.platform.cwd(ctx.arena) orelse return path;
-    if (std.mem.eql(u8, path, ".")) return cwd;
-    return proto.paths.join(ctx.arena, style, &.{ cwd, path });
+    return std.fs.path.resolve(ctx.arena, &.{ cwd, path });
 }
 
 pub fn isAbsolute(p: []const u8) bool {
@@ -436,6 +440,8 @@ pub fn explicitFocus(flags: Flags) error{InvalidFocusValue}!?bool {
 }
 
 /// Directory of the nearest `.git` at or above `start` (no git process).
+/// `start` must be normalized (`resolvePath`): the walk is lexical, so a
+/// `..` segment would otherwise send it into a child directory.
 pub fn gitRoot(ctx: *Ctx, start: []const u8) Allocator.Error!?[]const u8 {
     const style = proto.paths.Style.native;
     var d = start;

@@ -2,6 +2,7 @@
 //! comments.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const testing = std.testing;
 const proto = @import("wmux_proto");
 const harness = @import("../cli_misc/harness.zig");
@@ -114,6 +115,49 @@ test "unit: cli-open: HTML, positions, separate batches and missing paths" {
     try harness.expectFail(missing, 1, try std.fmt.allocPrint(h.alloc(), "Path does not exist: {s}", .{f.path("nope.txt")}));
     try harness.expectFail(h.run(&.{ "cmux", "open", "nope.txt:3" }), 1, "Path does not exist:");
     try testing.expectEqual(before, h.requestCount());
+}
+
+test "unit: cli-open: paths are normalized before they are checked and sent" {
+    var f: Fixture = undefined;
+    f.init();
+    defer f.deinit();
+    const h = &f.h;
+    const a = h.alloc();
+    try harness.expectOk(h.run(&.{ "cmux", "open", "./a.md", "../work/b.png", "dir/." }));
+    const reqs = h.server.requests.items;
+    const paths = harness.param(reqs[0], "paths").?.array.items;
+    try testing.expectEqualStrings(f.path("a.md"), paths[0].string);
+    try testing.expectEqualStrings(f.path("b.png"), paths[1].string);
+    try testing.expectEqualStrings(f.path("dir"), harness.param(reqs[1], "cwd").?.string);
+    try harness.expectFail(h.run(&.{ "cmux", "open", "dir/../nope.md" }), 1, try std.fmt.allocPrint(a, "Path does not exist: {s}\n", .{f.path("nope.md")}));
+    _ = h.run(&.{ "cmux", "markdown", "open", "./notes/../plan.md" });
+    try testing.expectEqualStrings(f.path("plan.md"), harness.param(h.last(), "path").?.string);
+    if (builtin.os.tag == .windows) {
+        // Root-relative and drive-relative spellings resolve like Windows does.
+        _ = h.run(&.{ "cmux", "markdown", "open", "\\plan.md" });
+        try testing.expectEqualStrings("C:\\plan.md", harness.param(h.last(), "path").?.string);
+        _ = h.run(&.{ "cmux", "markdown", "open", "C:plan.md" });
+        try testing.expectEqualStrings(f.path("plan.md"), harness.param(h.last(), "path").?.string);
+        _ = h.run(&.{ "cmux", "markdown", "open", "c:/t/work/plan.md" });
+        try testing.expectEqualStrings(f.path("plan.md"), harness.param(h.last(), "path").?.string);
+    }
+}
+
+test "unit: cli-comments: a '..' in --repo resolves before the repository walk" {
+    var f: Fixture = undefined;
+    f.init();
+    defer f.deinit();
+    const h = &f.h;
+    const a = h.alloc();
+    // The outer repository at the root and a nested one at work/dir.
+    h.addDir(harness.p(a, &.{ harness.root, ".git" }));
+    h.addDir(harness.p(a, &.{ harness.root, "work", "dir", ".git" }));
+    try harness.expectOk(h.run(&.{ "cmux", "comments", "list", "--repo", "dir/.." }));
+    try testing.expectEqualStrings(harness.root, harness.param(h.last(), "repo").?.string);
+    try harness.expectOk(h.run(&.{ "cmux", "comments", "list", "--repo", "./dir" }));
+    try testing.expectEqualStrings(f.path("dir"), harness.param(h.last(), "repo").?.string);
+    try harness.expectOk(h.run(&.{ "cmux", "diff", "--staged", "--repo", "dir/.." }));
+    try testing.expectEqualStrings(harness.root, harness.param(h.last(), "repo").?.string);
 }
 
 test "unit: cli-open: focus defaults, overrides and caller targets" {
