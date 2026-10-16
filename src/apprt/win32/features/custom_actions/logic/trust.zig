@@ -304,6 +304,13 @@ pub const TrustedAction = struct {
 
 pub const LoadError = error{ OutOfMemory, CorruptFile };
 
+/// True when `src` holds only whitespace after an optional UTF-8 byte order
+/// mark (Windows PowerShell 5.1 writes a BOM even for an empty file).
+fn isBlankDocument(src: []const u8) bool {
+    const body = if (std.mem.startsWith(u8, src, jsonc.utf8_bom)) src[jsonc.utf8_bom.len..] else src;
+    return std.mem.trim(u8, body, " \t\r\n").len == 0;
+}
+
 /// The trusted fingerprints. Strings live in the store arena; removals keep
 /// their bytes until deinit (the file is small).
 pub const ActionTrustStore = struct {
@@ -319,13 +326,14 @@ pub const ActionTrustStore = struct {
         self.* = undefined;
     }
 
-    /// Empty text is an empty store. Entries with a malformed fingerprint
-    /// are dropped; a wrong document shape is error.CorruptFile (the caller
-    /// starts empty and keeps the bad file aside).
+    /// Empty text (a lone byte order mark included) is an empty store.
+    /// Entries with a malformed fingerprint are dropped; a wrong document
+    /// shape is error.CorruptFile (the caller starts empty and keeps the bad
+    /// file aside).
     pub fn parse(gpa: Allocator, src: []const u8) LoadError!ActionTrustStore {
         var self: ActionTrustStore = .init(gpa);
         errdefer self.deinit();
-        if (std.mem.trim(u8, src, " \t\r\n").len == 0) return self;
+        if (isBlankDocument(src)) return self;
         const a = self.arena.allocator();
         const root = jsonc.parseInto(a, src, .{}, null) catch |e| switch (e) {
             error.OutOfMemory => return error.OutOfMemory,
@@ -500,7 +508,7 @@ pub const ProjectTrustStore = struct {
     pub fn parse(gpa: Allocator, style: paths.Style, src: []const u8) LoadError!ProjectTrustStore {
         var self: ProjectTrustStore = .init(gpa, style);
         errdefer self.deinit();
-        if (std.mem.trim(u8, src, " \t\r\n").len == 0) return self;
+        if (isBlankDocument(src)) return self;
         const a = self.arena.allocator();
         const root = jsonc.parseInto(a, src, .{}, null) catch |e| switch (e) {
             error.OutOfMemory => return error.OutOfMemory,
@@ -763,6 +771,20 @@ test "unit: custom_actions: trusted-actions.json round-trips and tolerates bad e
         try testing.expectError(error.CorruptFile, ActionTrustStore.parse(testing.allocator, bad));
     }
     try testing.expect(!isFingerprint("E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"));
+}
+
+test "unit: custom_actions: trust files holding only a byte order mark are empty stores" {
+    for ([_][]const u8{ "\xEF\xBB\xBF", "\xEF\xBB\xBF\r\n" }) |src| {
+        var acts = try ActionTrustStore.parse(testing.allocator, src);
+        defer acts.deinit();
+        try testing.expectEqual(@as(usize, 0), acts.entries.items.len);
+        var projects = try ProjectTrustStore.parse(testing.allocator, .windows, src);
+        defer projects.deinit();
+        try testing.expectEqual(@as(usize, 0), projects.entries.items.len);
+    }
+    var acts = try ActionTrustStore.parse(testing.allocator, "\xEF\xBB\xBF{\"trusted\":[{\"fingerprint\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"actionID\":\"a\"}]}\r\n");
+    defer acts.deinit();
+    try testing.expect(acts.isTrusted(sha256Hex("")));
 }
 
 test "unit: custom_actions: project approvals are keyed by path and config content hash" {
