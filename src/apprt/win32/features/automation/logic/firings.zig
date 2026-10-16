@@ -134,16 +134,18 @@ pub const Log = struct {
 
     /// Completes firing `seq`: releases its slot and updates its record
     /// when still kept. Unknown or already finished sequence numbers are ignored.
+    /// The slot is released and the outcome recorded even when copying
+    /// `message` fails (the record then has no message), so an allocation
+    /// failure can never leave a slot held forever.
     pub fn finish(self: *Log, gpa: Allocator, seq: u64, outcome: Outcome, message: ?[]const u8, now_ms: i64) Allocator.Error!void {
         std.debug.assert(outcome != .running and outcome != .dropped_busy);
         const slot = std.mem.indexOfScalar(u64, self.inflight[0..self.running], seq) orelse return;
-        if (self.findPtr(seq)) |rec| {
-            rec.message = if (message) |m| try gpa.dupe(u8, wmux_proto.utf8.truncateUtf8(m, max_message_bytes)) else null;
-            rec.outcome = outcome;
-            rec.finished_ms = now_ms;
-        }
         self.inflight[slot] = self.inflight[self.running - 1];
         self.running -= 1;
+        const rec = self.findPtr(seq) orelse return;
+        rec.outcome = outcome;
+        rec.finished_ms = now_ms;
+        if (message) |m| rec.message = try gpa.dupe(u8, wmux_proto.utf8.truncateUtf8(m, max_message_bytes));
     }
 
     /// The newest `limit` records, oldest first (borrowed until the next mutation).
@@ -229,6 +231,40 @@ test "unit: automation: firing log holds the slot of an evicted running firing u
     try testing.expectEqual(@as(usize, 0), log.running);
     try log.finish(gpa, stuck, .timed_out, null, 3);
     try testing.expectEqual(@as(usize, 0), log.running);
+}
+
+test "unit: automation: firing log releases the slot when the message copy fails" {
+    var failing = std.testing.FailingAllocator.init(testing.allocator, .{});
+    const gpa = failing.allocator();
+    var log: Log = .{};
+    defer log.deinit(gpa);
+    var seqs: [max_concurrent]u64 = undefined;
+    for (&seqs) |*s| s.* = (try log.begin(gpa, "r", "e", 0)).?;
+    // Every finish fails to copy its message; none may keep its slot.
+    failing.fail_index = failing.alloc_index;
+    for (seqs) |s| try testing.expectError(error.OutOfMemory, log.finish(gpa, s, .failed, "boom", 1));
+    try testing.expectEqual(@as(usize, 0), log.running);
+    const r = log.find(seqs[0]).?;
+    try testing.expectEqual(Outcome.failed, r.outcome);
+    try testing.expectEqual(@as(?i64, 1), r.finished_ms);
+    try testing.expect(r.message == null);
+    // The cap is free again.
+    failing.fail_index = std.math.maxInt(usize);
+    try testing.expect((try log.begin(gpa, "r", "e", 2)) != null);
+}
+
+test "unit: automation: firing log frees everything on allocation failure" {
+    const S = struct {
+        fn run(gpa: Allocator) !void {
+            var log: Log = .{};
+            defer log.deinit(gpa);
+            const a = (try log.begin(gpa, "règle", "workspace.created", 1)).?;
+            try log.finish(gpa, a, .failed, "rpc workspace.select: not_found", 2);
+            const b = (try log.begin(gpa, "b", "agent.needs_input", 3)).?;
+            try log.finish(gpa, b, .ok, null, 4);
+        }
+    };
+    try testing.checkAllAllocationFailures(testing.allocator, S.run, .{});
 }
 
 test "unit: automation: firing log JSON and message caps" {
