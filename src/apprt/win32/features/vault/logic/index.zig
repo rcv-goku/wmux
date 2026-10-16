@@ -315,13 +315,22 @@ fn onlyToolResults(content: std.json.Value) bool {
     return any;
 }
 
-/// Injected, non-prompt user text (command output wrappers, environment
-/// context, instruction files).
+/// Injected, non-prompt user text: command output wrappers, local slash
+/// commands, `!` shell-mode input and output, background task notifications,
+/// interrupt markers, environment context and instruction files. None of
+/// these is a prompt the user typed for the agent, so none starts a turn.
+/// Prompt-type slash commands begin with `<command-message>` and do count.
 fn isInjectedPrompt(text: []const u8) bool {
     const t = std.mem.trimLeft(u8, text, " \t\r\n");
     if (t.len == 0) return true;
     const prefixes = [_][]const u8{
         "<local-command-",
+        "<command-name>",
+        "<bash-input>",
+        "<bash-stdout>",
+        "<bash-stderr>",
+        "<task-notification>",
+        "[Request interrupted by user",
         "<environment_context>",
         "<user_instructions>",
         "<system-reminder>",
@@ -343,7 +352,10 @@ fn classifyClaude(arena: Allocator, obj: std.json.ObjectMap) Allocator.Error!Lin
     const msg = getObj(obj, "message");
     if (std.mem.eql(u8, t, "user")) {
         const content = if (msg) |m| m.get("content") orelse .null else .null;
-        if (getBool(obj, "isSidechain") or getBool(obj, "isMeta") or onlyToolResults(content)) {
+        // isCompactSummary marks the summary written after a compaction.
+        if (getBool(obj, "isSidechain") or getBool(obj, "isMeta") or
+            getBool(obj, "isCompactSummary") or onlyToolResults(content))
+        {
             info.kind = .user_other;
             info.text = try contentText(arena, content, true);
             return info;

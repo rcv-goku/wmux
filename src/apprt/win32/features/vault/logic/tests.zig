@@ -87,6 +87,41 @@ test "unit: vault: claude transcript yields id, cwd, branch, title and turns" {
     try testing.expectEqual(@as(u64, claude_fixture.len), e.consumed);
 }
 
+test "unit: vault: injected claude records are searchable but never start a turn" {
+    const t =
+        \\{"type":"user","sessionId":"s","message":{"role":"user","content":"<command-name>/model</command-name>\n<command-message>model</command-message>\n<command-args></command-args>"}}
+        \\{"type":"user","sessionId":"s","message":{"role":"user","content":"<local-command-stdout>model set</local-command-stdout>"}}
+        \\{"type":"user","sessionId":"s","message":{"role":"user","content":"Find the socket leak"}}
+        \\{"type":"assistant","sessionId":"s","message":{"role":"assistant","content":[{"type":"text","text":"Looking."}]}}
+        \\{"type":"user","sessionId":"s","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]}}
+        \\{"type":"user","sessionId":"s","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user for tool use]"}]}}
+        \\{"type":"user","sessionId":"s","message":{"role":"user","content":"<bash-input>git status</bash-input>"}}
+        \\{"type":"user","sessionId":"s","message":{"role":"user","content":"<bash-stdout>nothing to commit</bash-stdout><bash-stderr></bash-stderr>"}}
+        \\{"type":"user","sessionId":"s","message":{"role":"user","content":"<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n</task-notification>"}}
+        \\{"type":"user","sessionId":"s","isCompactSummary":true,"message":{"role":"user","content":"Summary of the conversation so far."}}
+        \\{"type":"user","sessionId":"s","message":{"role":"user","content":"<command-message>init is analyzing your codebase</command-message>\n<command-name>/init</command-name>"}}
+        \\{"type":"user","sessionId":"s","isMeta":true,"message":{"role":"user","content":[{"type":"text","text":"Please analyze this codebase"}]}}
+        \\{"type":"assistant","sessionId":"s","message":{"role":"assistant","content":[{"type":"text","text":"Wrote CLAUDE.md."}]}}
+        \\
+    ;
+    var idx = index.Index.init(testing.allocator);
+    defer idx.deinit();
+    const e = try ingestAll(&idx, "/p/s.jsonl", "claude", t, "2026-01-01T00:00:00Z");
+    // Turns: the typed prompt and the prompt-type /init command, nothing else.
+    try testing.expectEqual(@as(u32, 2), e.session.turns);
+    // A leading local command does not become the title.
+    try testing.expectEqualStrings("Find the socket leak", e.session.title);
+    // Injected text is still searchable.
+    try testing.expect(std.mem.indexOf(u8, e.session.text.items, "git status") != null);
+    try testing.expect(std.mem.indexOf(u8, e.session.text.items, "Summary of the conversation") != null);
+    // Turn checkpoints start at the same two records.
+    var turns = try checkpoints.deriveTurns(testing.allocator, .claude_code, t);
+    defer turns.deinit(testing.allocator);
+    try testing.expectEqual(@as(usize, 2), turns.marks.len);
+    try testing.expectEqual(@as(u64, std.mem.indexOf(u8, t, "{\"type\":\"user\",\"sessionId\":\"s\",\"message\":{\"role\":\"user\",\"content\":\"Find").?), turns.marks[0].start);
+    try testing.expectEqual(@as(u64, std.mem.indexOf(u8, t, "{\"type\":\"user\",\"sessionId\":\"s\",\"message\":{\"role\":\"user\",\"content\":\"<command-message>").?), turns.marks[1].start);
+}
+
 test "unit: vault: codex rollout yields meta, skips injected context as turns" {
     var idx = index.Index.init(testing.allocator);
     defer idx.deinit();
