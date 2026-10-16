@@ -282,9 +282,12 @@ fn runDismiss(ctx: *Ctx) !u8 {
     const cmd = "dismiss-notification";
     var code: u8 = 0;
     const s = (try common.scanOrReport(ctx, cmd, &dismiss_opts, .{}, &code)) orelse return code;
-    if (s.positionals.len > 1) return common.reportProblem(ctx, cmd, .{ .unexpected = s.positionals[1..] });
-    // A lone positional id is accepted like `--id` (older usage line).
-    const id = s.get("--id") orelse (if (s.positionals.len == 1) s.positionals[0] else null);
+    const pos = s.positionals;
+    // A lone positional id is accepted like `--id` (older usage line); next
+    // to `--id` any positional is a stray argument, never silently dropped.
+    const extra = if (s.has("--id")) pos else if (pos.len > 1) pos[1..] else pos[0..0];
+    if (extra.len > 0) return common.reportProblem(ctx, cmd, .{ .unexpected = extra });
+    const id = s.get("--id") orelse (if (pos.len == 1) pos[0] else null);
     const all_read = s.has("--all-read");
     if ((id != null) == all_read) return ctx.usageError("dismiss-notification requires exactly one of --id or --all-read", .{});
     var p = Params.init(ctx.arena);

@@ -261,6 +261,9 @@ test "unit: cli-notify: dismiss-notification selectors" {
     try kit.expectResult(h.run(&.{ "cmux", "dismiss-notification", "--id", nid, "--all-read" }), 2, "", req);
     try kit.expectResult(h.run(&.{ "cmux", "dismiss-notification", "--id", "bogus" }), 2, "", "cmux: dismiss-notification: invalid notification id 'bogus' (expected <uuid> or notification:<uuid>)\n");
     try kit.expectResult(h.run(&.{ "cmux", "dismiss-notification", "a", "b" }), 2, "", "cmux: dismiss-notification: unexpected arguments: b\n");
+    // A second id next to --id is not dismissed silently.
+    try kit.expectResult(h.run(&.{ "cmux", "dismiss-notification", "--id", nid, "55555555-5555-4555-8555-555555555555" }), 2, "", "cmux: dismiss-notification: unexpected arguments: 55555555-5555-4555-8555-555555555555\n");
+    try kit.expectResult(h.run(&.{ "cmux", "dismiss-notification", "x", "--id", nid, "y" }), 2, "", "cmux: dismiss-notification: unexpected arguments: x y\n");
     try testing.expectEqual(n, h.requestCount());
     const missing = h.run(&.{ "cmux", "dismiss-notification", "--id", "44444444-4444-4444-8444-444444444444" });
     try kit.expectResult(missing, 1, "", "not_found: Notification not found\n");
