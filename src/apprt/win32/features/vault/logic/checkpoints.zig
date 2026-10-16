@@ -615,13 +615,15 @@ fn rewriteIds(arena: Allocator, format: Format, line: []const u8, new_id: []cons
         .claude_code => changed = replaceStr(&root.object, "sessionId", new_val),
         .codex => {
             const t = if (root.object.get("type")) |v| (if (v == .string) v.string else "") else "";
-            if (std.mem.eql(u8, t, "session_meta")) {
-                if (root.object.getPtr("payload")) |p| if (p.* == .object) {
-                    changed = replaceStr(&p.object, "id", new_val);
-                };
-            } else if (root.object.get("payload") == null and t.len == 0) {
-                changed = replaceStr(&root.object, "id", new_val);
-            }
+            // Mirror index.classifyCodex: the meta fields live in an object
+            // `payload`, else at the top level (session_meta without one, and
+            // the legacy first line), so the fork re-indexes under its new id.
+            const payload: ?*std.json.ObjectMap = blk: {
+                const p = root.object.getPtr("payload") orelse break :blk null;
+                break :blk if (p.* == .object) &p.object else null;
+            };
+            if (std.mem.eql(u8, t, "session_meta") or (payload == null and t.len == 0))
+                changed = replaceStr(payload orelse &root.object, "id", new_val);
         },
         .pi => {
             const t = if (root.object.get("type")) |v| (if (v == .string) v.string else "") else "";

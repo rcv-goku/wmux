@@ -827,6 +827,32 @@ test "unit: vault: fork codex and pi rewrites their header ids" {
         defer gpa.free(out);
         try testing.expect(std.mem.startsWith(u8, out, "{\"type\":\"session\",\"id\":\"" ++ new_id ++ "\""));
     }
+    // Every codex layout the index reads an id from gets the new id: a
+    // session_meta without an object payload and the legacy first line.
+    for ([_][]const u8{
+        \\{"type":"session_meta","id":"11111111-2222-4333-8444-555555555555","cwd":"/w"}
+        \\{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"go"}]}}
+        \\
+        ,
+        \\{"type":"session_meta","payload":"x","id":"11111111-2222-4333-8444-555555555555"}
+        \\{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"go"}]}}
+        \\
+        ,
+        \\{"id":"11111111-2222-4333-8444-555555555555","timestamp":"2025-05-01T12:00:00Z","instructions":""}
+        \\{"type":"message","role":"user","content":[{"type":"input_text","text":"go"}]}
+        \\
+        ,
+    }) |t| {
+        var tl = try checkpoints.timeline(gpa, .codex, t, &.{});
+        defer tl.deinit(gpa);
+        const out = try checkpoints.fork(gpa, "codex", t, tl.findTurn(1).?, .{ .new_session_id = new_id });
+        defer gpa.free(out);
+        try testing.expect(std.mem.indexOf(u8, out, "11111111-2222") == null);
+        var idx = index.Index.init(gpa);
+        defer idx.deinit();
+        const e = try idx.ingest("/f.jsonl", "codex", .{ .size = out.len, .mtime_ms = 1 }, 0, out, true);
+        try testing.expectEqualStrings(new_id, e.session.id);
+    }
 }
 
 test "unit: vault: fork error cases" {
