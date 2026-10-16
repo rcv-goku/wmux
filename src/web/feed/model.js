@@ -256,6 +256,29 @@ export function badgeFor(item) {
   return "";
 }
 
+/** Translation keys of the badges above; the badge itself is the English default. */
+const BADGE_KEYS = new Map([
+  ["once", "feed.badge.once"],
+  ["always", "feed.badge.always"],
+  ["all tools", "feed.badge.allTools"],
+  ["bypass", "feed.badge.bypass"],
+  ["denied", "feed.badge.denied"],
+  ["ultraplan", "feed.badge.ultraplan"],
+  ["auto", "feed.badge.auto"],
+  ["manual", "feed.badge.manual"],
+  ["refined", "feed.badge.refined"],
+  ["Submitted", "feed.badge.submitted"],
+  ["Sent", "feed.badge.sent"],
+  ["timed out", "feed.badge.timedOut"],
+  ["expired", "feed.badge.expired"],
+]);
+
+/** Display text of a badge: known badges through t(), any other text as sent. */
+export function badgeLabel(badge) {
+  const key = BADGE_KEYS.get(badge);
+  return key ? t(key) : badge;
+}
+
 /** Local resolution for an answered card (before native confirms it). */
 export function localResolution(kind, reply) {
   switch (kind) {

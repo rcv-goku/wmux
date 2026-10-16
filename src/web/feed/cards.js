@@ -9,6 +9,7 @@
 import {
   availableModes,
   badgeFor,
+  badgeLabel,
   canReply,
   isActionable,
   isDecision,
@@ -64,10 +65,7 @@ export function createCards(deps) {
       h.append(el("span", "feed-result " + (ok ? "feed-result-ok" : "feed-result-error"), t(ok ? "feed.toolResult.ok" : "feed.toolResult.error")));
     }
     const badge = badgeFor(item);
-    if (badge && (!isDecision(item) || !isPending(item))) {
-      const key = badge === "timed out" ? "feed.badge.timedOut" : badge === "expired" ? "feed.badge.expired" : null;
-      h.append(el("span", "feed-badge", key ? t(key) : badge));
-    }
+    if (badge && (!isDecision(item) || !isPending(item))) h.append(el("span", "feed-badge", badgeLabel(badge)));
     const time = el("time", "feed-time", relativeTime(item.created_at_ms, deps.now()));
     if (item.created_at_ms > 0) {
       time.dateTime = new Date(item.created_at_ms).toISOString();

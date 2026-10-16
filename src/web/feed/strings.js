@@ -89,6 +89,19 @@ export const STRINGS = Object.freeze({
   "feed.todos.status.in_progress": "In progress",
   "feed.todos.status.completed": "Done",
 
+  // Badges of closed items: the resolution badges native sends
+  // (model.zig badge()) and the closed statuses.
+  "feed.badge.once": "once",
+  "feed.badge.always": "always",
+  "feed.badge.allTools": "all tools",
+  "feed.badge.bypass": "bypass",
+  "feed.badge.denied": "denied",
+  "feed.badge.ultraplan": "ultraplan",
+  "feed.badge.auto": "auto",
+  "feed.badge.manual": "manual",
+  "feed.badge.refined": "refined",
+  "feed.badge.submitted": "Submitted",
+  "feed.badge.sent": "Sent",
   "feed.badge.timedOut": "timed out",
   "feed.badge.expired": "expired",
   "feed.sending": "Sending…",

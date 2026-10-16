@@ -320,6 +320,32 @@ describe("unit: feed app", () => {
     assert.equal(app.state.localResolved.size, 0);
   });
 
+  test("unit: feed: resolved badges go through tr()", async () => {
+    const strings = await importWeb("_shared/strings.js");
+    const prev = strings.getLocale();
+    strings.addStrings("qps-ploc", { "feed.badge.denied": "[denied]", "feed.badge.submitted": "[submitted]", "feed.badge.timedOut": "[timed out]" });
+    strings.setLocale("qps-ploc");
+    try {
+      assert.equal(model.badgeLabel("denied"), "[denied]");
+      assert.equal(model.badgeLabel("Submitted"), "[submitted]");
+      assert.equal(model.badgeLabel("once"), "once", "keys without a translation keep the English default");
+      assert.equal(model.badgeLabel("custom"), "custom", "unknown badges show as sent");
+      assert.equal(model.badgeLabel("constructor"), "constructor", "no inherited members");
+      await startApp({
+        items: [
+          permission(1, { status: "resolved", options: [], resolution: { mode: "deny", badge: "denied" } }),
+          permission(2, { status: "timedOut", options: [] }),
+          permission(3, { status: "resolved", options: [], resolution: { mode: "once", badge: "custom" } }),
+        ],
+      });
+      assert.equal(cardById(uuid(1)).querySelector(".feed-badge").textContent, "[denied]");
+      assert.equal(cardById(uuid(2)).querySelector(".feed-badge").textContent, "[timed out]");
+      assert.equal(cardById(uuid(3)).querySelector(".feed-badge").textContent, "custom");
+    } finally {
+      strings.setLocale(prev);
+    }
+  });
+
   test("unit: feed: a failed decision shows an inline error and keeps the buttons", async () => {
     await startApp({ handlers: { "feed.permission.reply": () => { throw hostError("internal_error", "pipe closed"); } } });
     await app.replyPermission(uuid(1), "once");
