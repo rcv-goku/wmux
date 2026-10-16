@@ -58,7 +58,7 @@ comment pool by the panel's workspace.
 |---|---|
 | `params.title` | toolbar and tab title (`--title`); empty -> the load result's `title`, then "Untitled" |
 | `params.patch` | patch text inline (small diffs) |
-| `params.patch_url` | otherwise: `https://d-<16hex>.wmux.example/...` token URL served by `WebResourceRequested` (ADR-6.4); any other URL is refused |
+| `params.patch_url` | otherwise: a token URL, normally `https://d-<16hex>.wmux.example/...` served by `WebResourceRequested` (ADR-6.4). The page fetches it without credentials only when it starts with `https://<label>.wmux.example/` (so an `f-<16hex>` file host works too) and refuses any other URL; the same rule applies to a `patch_url` returned by `panel.diff.load` |
 | (neither) | the page calls `panel.diff.load` |
 | `params.layout` | `"unified"` / `"split"`: explicit `--layout`, beats persisted prefs and the setting |
 | `params.prefs` | the stored `preferences.json` object (native reads it at open time; sanitized again here) |
