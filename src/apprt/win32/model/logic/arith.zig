@@ -73,7 +73,7 @@ pub fn closeWorkspaceArith(count: usize, active: usize, idx: usize) CloseWorkspa
 
 const testing = std.testing;
 
-test "unit: new-tab insert position matches config" {
+test "unit: model: new-tab insert position matches config" {
     const Pos = enum { current, end };
     // .current after the active tab; at 0 when empty.
     try testing.expectEqual(@as(usize, 0), newTabInsertPos(Pos.current, 0, 0));
@@ -85,7 +85,7 @@ test "unit: new-tab insert position matches config" {
     try testing.expectEqual(@as(usize, 3), newTabInsertPos(Pos.end, 3, 1));
 }
 
-test "unit: tab new returns an index list shows and close accepts (BUG 2)" {
+test "unit: model: tab new returns an index list shows and close accepts (BUG 2)" {
     // The create/list/close index contract: the index `tab-new` reports
     // (the insert position, which becomes the workspace's active_tab) must
     // be a valid index for `tab-list` (0..tab_count) and address THAT same
@@ -119,7 +119,7 @@ test "unit: tab new returns an index list shows and close accepts (BUG 2)" {
     }
 }
 
-test "unit: workspace close survivor selection table" {
+test "unit: model: workspace close survivor selection table" {
     const Case = struct {
         count: usize,
         active: usize,
@@ -149,14 +149,14 @@ test "unit: workspace close survivor selection table" {
     }
 }
 
-test "unit: workspace close of the only workspace closes the window" {
+test "unit: model: workspace close of the only workspace closes the window" {
     try testing.expect(closeWorkspaceArith(1, 0, 0) == .close_window);
     // With siblings, the window never closes from this path.
     try testing.expect(closeWorkspaceArith(2, 0, 0) != .close_window);
     try testing.expect(closeWorkspaceArith(2, 1, 1) != .close_window);
 }
 
-test "unit: workspace close arithmetic exhaustive over count 1..4" {
+test "unit: model: workspace close arithmetic exhaustive over count 1..4" {
     // Every (count, active, idx) combination, verified against an id
     // simulation of the slot shift closeWorkspace publishes: for i in
     // idx..new_count slot[i] = slot[i+1], then the duplicate at
@@ -200,7 +200,7 @@ test "unit: workspace close arithmetic exhaustive over count 1..4" {
     }
 }
 
-test "unit: tab close active fixup table" {
+test "unit: model: tab close active fixup table" {
     // Args are (new_count, active, idx): the POST-close tab count, the
     // pre-close active index, and the closed index.
     // Closing below the active tab shifts it down.
@@ -215,7 +215,7 @@ test "unit: tab close active fixup table" {
     try testing.expectEqual(@as(usize, 0), closeTabActiveFixup(1, 0, 1));
 }
 
-test "unit: tab close active fixup exhaustive over count 2..4" {
+test "unit: model: tab close active fixup exhaustive over count 2..4" {
     // Every (count, active, idx) with count >= 2 (closing the last tab
     // takes the workspace-collapse/window-close paths before the fixup
     // runs), verified against the ordered removal the tab list does.
@@ -245,7 +245,7 @@ test "unit: tab close active fixup exhaustive over count 2..4" {
     }
 }
 
-test "unit: workspace create guard only blocks the quick terminal" {
+test "unit: model: workspace create guard only blocks the quick terminal" {
     try testing.expect(canCreateWorkspace(false));
     // QuickTerminal is single-workspace.
     try testing.expect(!canCreateWorkspace(true));

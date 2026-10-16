@@ -175,7 +175,7 @@ fn placeholderTabs(comptime n: usize) [n]Tab {
     return @splat(.{ .content = .placeholder });
 }
 
-test "unit: Pane create returns default state" {
+test "unit: model: pane create returns the default state" {
     const pane = try Pane.create(testing.allocator);
     defer testing.allocator.destroy(pane);
     try testing.expectEqual(@as(u32, 0), pane.ref_count);
@@ -184,7 +184,7 @@ test "unit: Pane create returns default state" {
     try testing.expectEqual(@as(?*Workspace, null), pane.workspace);
 }
 
-test "unit: Pane ref counts up and returns self" {
+test "unit: model: pane ref counts up and returns self" {
     var pane: Pane = .{};
     try testing.expectEqual(@as(u32, 0), pane.ref_count);
     const p = try pane.ref(testing.allocator);
@@ -194,14 +194,14 @@ test "unit: Pane ref counts up and returns self" {
     try testing.expectEqual(@as(u32, 2), pane.ref_count);
 }
 
-test "unit: Pane eql is identity" {
+test "unit: model: pane eql is identity" {
     var a: Pane = .{};
     var b: Pane = .{};
     try testing.expect(a.eql(&a));
     try testing.expect(!a.eql(&b));
 }
 
-test "unit: Pane aggregateStatus returns worst" {
+test "unit: model: pane aggregateStatus returns the worst status" {
     var tabs = placeholderTabs(3);
     var ptrs: [3]*Tab = undefined;
     const pane = testPane(&tabs, &ptrs);
@@ -214,12 +214,12 @@ test "unit: Pane aggregateStatus returns worst" {
     try testing.expectEqual(TabStatus.exited, pane.aggregateStatus());
 }
 
-test "unit: Pane aggregateStatus empty is normal" {
+test "unit: model: pane aggregateStatus of no tabs is normal" {
     const pane: Pane = .{};
     try testing.expectEqual(TabStatus.normal, pane.aggregateStatus());
 }
 
-test "unit: Pane aggregate status exited beats bell" {
+test "unit: model: pane aggregate status exited beats bell" {
     var tabs = placeholderTabs(4);
     var ptrs: [4]*Tab = undefined;
     const pane = testPane(&tabs, &ptrs);
@@ -232,7 +232,7 @@ test "unit: Pane aggregate status exited beats bell" {
     try testing.expectEqual(TabStatus.exited, pane.aggregateStatus());
 }
 
-test "unit: Pane aggregate status has no tab cap" {
+test "unit: model: pane aggregate status has no tab cap" {
     // 100 tabs: more than the former 64-slot MAX_TABS arrays held.
     var tabs = placeholderTabs(100);
     var ptrs: [100]*Tab = undefined;
@@ -244,7 +244,7 @@ test "unit: Pane aggregate status has no tab cap" {
     try testing.expectEqual(TabStatus.exited, pane.aggregateStatus());
 }
 
-test "unit: Pane hasAttention" {
+test "unit: model: pane hasAttention" {
     var tabs = placeholderTabs(2);
     var ptrs: [2]*Tab = undefined;
     const pane = testPane(&tabs, &ptrs);
@@ -255,7 +255,7 @@ test "unit: Pane hasAttention" {
     try testing.expect(!pane.hasAttention());
 }
 
-test "unit: Pane attention is orthogonal to bell/exited status" {
+test "unit: model: pane attention is orthogonal to bell/exited status" {
     var tabs = placeholderTabs(3);
     var ptrs: [3]*Tab = undefined;
     const pane = testPane(&tabs, &ptrs);
@@ -268,7 +268,7 @@ test "unit: Pane attention is orthogonal to bell/exited status" {
     try testing.expect(!pane.hasAttention());
 }
 
-test "unit: Pane progress and log store and clear per tab" {
+test "unit: model: tab progress and log store and clear per tab" {
     var tabs = placeholderTabs(2);
 
     try testing.expectEqual(@as(?u8, null), tabs[0].legacy.progress);
@@ -288,13 +288,13 @@ test "unit: Pane progress and log store and clear per tab" {
     try testing.expect(tabs[1].legacy.log.latest() == null);
 }
 
-test "unit: Pane activePane null when empty" {
+test "unit: model: pane selectedTab is null when empty" {
     const pane: Pane = .{};
     try testing.expectEqual(@as(?*Tab, null), pane.selectedTab());
     try testing.expectEqual(@as(?w32.HWND, null), pane.selectedHwnd());
 }
 
-test "unit: Pane activePane returns active tab" {
+test "unit: model: pane selectedTab returns the selected tab" {
     var tabs = placeholderTabs(2);
     var ptrs: [2]*Tab = undefined;
     var pane = testPane(&tabs, &ptrs);
@@ -307,7 +307,7 @@ test "unit: Pane activePane returns active tab" {
     try testing.expectEqual(@as(?*Tab, null), pane.selectedTab());
 }
 
-test "unit: Pane indexOf and tabAt agree" {
+test "unit: model: pane indexOf and tabAt agree" {
     var tabs = placeholderTabs(3);
     var ptrs: [3]*Tab = undefined;
     const pane = testPane(&tabs, &ptrs);
@@ -320,12 +320,12 @@ test "unit: Pane indexOf and tabAt agree" {
     try testing.expectEqual(@as(?*Tab, null), pane.tabAt(3));
 }
 
-test "unit: Pane focus is noop when empty" {
+test "unit: model: pane focus is a no-op when empty" {
     const pane: Pane = .{};
     pane.focus();
 }
 
-test "unit: Pane default hover state is cleared" {
+test "unit: model: pane default hover state is cleared" {
     const pane: Pane = .{};
     try testing.expectEqual(@as(?usize, null), pane.hovered_tab_idx);
     try testing.expectEqual(@as(?usize, null), pane.hovered_close_idx);
@@ -333,13 +333,13 @@ test "unit: Pane default hover state is cleared" {
     try testing.expect(!pane.hovered_dropdown);
 }
 
-test "unit: Pane default layout rect is zeroed" {
+test "unit: model: pane default layout rect is zeroed" {
     const pane: Pane = .{};
     try testing.expectEqual(@as(i32, 0), pane.layout_rect.left);
     try testing.expectEqual(@as(i32, 0), pane.layout_rect.right);
 }
 
-test "unit: Pane hover state is independently settable" {
+test "unit: model: pane hover state is independently settable" {
     var pane: Pane = .{};
     pane.hovered_tab_idx = 2;
     pane.hovered_close_idx = 1;
@@ -363,7 +363,7 @@ test "unit: Pane hover state is independently settable" {
     try testing.expect(!pane.hovered_dropdown);
 }
 
-test "unit: Pane tab bar visibility rule" {
+test "unit: model: pane tab bar visibility rule" {
     // A split pane paints its own bar only with 2+ tabs (layoutNode,
     // invalidateTabBar and the tab bar geometry all test tabCount() > 1).
     var tabs = placeholderTabs(5);
@@ -374,7 +374,7 @@ test "unit: Pane tab bar visibility rule" {
     }
 }
 
-test "unit: Pane aggregate status of an empty container is normal" {
+test "unit: model: pane aggregate status ignores spare list capacity" {
     var tabs = placeholderTabs(1);
     tabs[0].legacy.status = .exited;
     var ptrs = [_]*Tab{&tabs[0]};
@@ -383,14 +383,14 @@ test "unit: Pane aggregate status of an empty container is normal" {
     try testing.expectEqual(TabStatus.normal, pane.aggregateStatus());
 }
 
-test "unit: Pane aggregate status all-normal stays normal" {
+test "unit: model: pane aggregate status all-normal stays normal" {
     var tabs = placeholderTabs(3);
     var ptrs: [3]*Tab = undefined;
     const pane = testPane(&tabs, &ptrs);
     try testing.expectEqual(TabStatus.normal, pane.aggregateStatus());
 }
 
-test "unit: Pane hasAttention ignores slots past tab_count" {
+test "unit: model: pane hasAttention ignores spare list capacity" {
     var tabs = placeholderTabs(2);
     var ptrs = [_]*Tab{ &tabs[0], &tabs[1] };
     tabs[1].legacy.attention = true;
@@ -401,7 +401,7 @@ test "unit: Pane hasAttention ignores slots past tab_count" {
     try testing.expect(pane.hasAttention());
 }
 
-test "unit: Pane aggregate status slot visibility at the count boundaries" {
+test "unit: model: pane aggregate status at the former 64-tab boundary" {
     // 64 tabs, the former MAX_TABS: the last tab counts exactly while it
     // is inside the list.
     const n = 64;
@@ -419,7 +419,7 @@ test "unit: Pane aggregate status slot visibility at the count boundaries" {
     try testing.expectEqual(TabStatus.normal, pane.aggregateStatus());
 }
 
-test "unit: Pane layout_rect stores assigned position" {
+test "unit: model: pane layout_rect stores the assigned position" {
     // Simulate layoutSplits assigning rects to panes in a side-by-side split.
     var left: Pane = .{};
     left.layout_rect = .{ .left = 0, .top = 0, .right = 400, .bottom = 300 };

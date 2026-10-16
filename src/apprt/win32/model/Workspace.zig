@@ -436,7 +436,7 @@ fn testPane(tabs: []Tab, ptrs: []*Tab) Pane {
     return .{ .tabs = .{ .items = ptrs[0..tabs.len], .capacity = tabs.len } };
 }
 
-test "unit: containerAtIndex empty workspace returns null" {
+test "unit: model: paneAt of an empty workspace returns null" {
     const ws: Workspace = .{ .window = undefined };
     try testing.expectEqual(@as(?*Pane, null), ws.paneAt(0));
     try testing.expectEqual(@as(?*Pane, null), ws.paneAt(1));
@@ -444,7 +444,7 @@ test "unit: containerAtIndex empty workspace returns null" {
     try testing.expectEqual(@as(?*Pane, null), ws.focusedPaneOrFirst());
 }
 
-test "unit: workspace status text via focused container" {
+test "unit: model: workspace status text via the focused pane" {
     var tabs: [2]Tab = @splat(.{ .content = .placeholder });
     var ptrs: [2]*Tab = undefined;
     var pane = testPane(&tabs, &ptrs);
@@ -463,7 +463,7 @@ test "unit: workspace status text via focused container" {
     try testing.expectEqualStrings("", ws.tabStatusText(2));
 }
 
-test "unit: firstStatusText prioritises focused container active tab" {
+test "unit: model: firstStatusText prefers the focused pane's selected tab" {
     var tabs: [2]Tab = @splat(.{ .content = .placeholder });
     var ptrs: [2]*Tab = undefined;
     var pane = testPane(&tabs, &ptrs);
@@ -486,7 +486,7 @@ test "unit: firstStatusText prioritises focused container active tab" {
     try testing.expectEqualStrings("building", ws.firstStatusText());
 }
 
-test "unit: workspace metadata setters store and report hasMetadata" {
+test "unit: model: workspace metadata setters store and report hasMetadata" {
     var ws: Workspace = .{ .window = undefined };
 
     // Fresh workspace has no metadata.
@@ -533,7 +533,7 @@ test "unit: workspace metadata setters store and report hasMetadata" {
     try testing.expect(ws.hasMetadata());
 }
 
-test "unit: branch over-long byte truncation never overruns the buffer" {
+test "unit: model: an over-long git branch is byte truncated within the buffer" {
     var ws: Workspace = .{ .window = undefined };
     var long: [MAX_BRANCH_BYTES + 10]u8 = undefined;
     @memset(&long, 'a');

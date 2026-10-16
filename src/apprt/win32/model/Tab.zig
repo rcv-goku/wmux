@@ -212,20 +212,20 @@ pub fn titleText(self: *const Tab) []const u8 {
 
 const testing = std.testing;
 
-test "unit: pane unref destroys at zero regardless of kind" {
+test "unit: model: tab unref destroys at zero regardless of kind" {
     try testing.expectEqual(UnrefAction.destroy, unrefAction(0, .terminal, true));
     try testing.expectEqual(UnrefAction.destroy, unrefAction(0, .terminal, false));
     try testing.expectEqual(UnrefAction.destroy, unrefAction(0, .browser, true));
     try testing.expectEqual(UnrefAction.destroy, unrefAction(0, .browser, false));
 }
 
-test "unit: pane unref keeps live panes that are still owned" {
+test "unit: model: tab unref keeps live tabs that are still owned" {
     try testing.expectEqual(UnrefAction.keep, unrefAction(1, .terminal, true));
     try testing.expectEqual(UnrefAction.keep, unrefAction(1, .browser, true));
     try testing.expectEqual(UnrefAction.keep, unrefAction(3, .browser, true));
 }
 
-test "unit: pane unref hides only an orphaned browser" {
+test "unit: model: tab unref hides only an orphaned browser" {
     // The in-flight WebView2 creation ref outliving every tab is the
     // zombie case; terminals never hide before destruction.
     try testing.expectEqual(UnrefAction.hide_zombie, unrefAction(1, .browser, false));
@@ -233,7 +233,7 @@ test "unit: pane unref hides only an orphaned browser" {
     try testing.expectEqual(UnrefAction.keep, unrefAction(1, .terminal, false));
 }
 
-test "unit: pane unref decision matrix is total" {
+test "unit: model: tab unref decision matrix is total" {
     // Every (remaining, kind, in_a_tab) cell as one explicit table —
     // the focused tests above pin the interesting cells, this one
     // guarantees no combination was left unasserted: zero destroys
@@ -271,7 +271,7 @@ test "unit: pane unref decision matrix is total" {
     }
 }
 
-test "unit: pane ref counts up and returns self" {
+test "unit: model: tab ref counts up and returns self" {
     // No test calls unref(): analyzing it pulls the entire content
     // teardown graph (Surface.deinit -> renderer -> a comptime
     // apprt.gtk reference) into the test build, which then collects
@@ -286,7 +286,7 @@ test "unit: pane ref counts up and returns self" {
     try testing.expectEqual(@as(u32, 2), tab.ref_count);
 }
 
-test "unit: pane eql is identity" {
+test "unit: model: tab eql is identity" {
     var a: Tab = .{ .content = .placeholder };
     var b: Tab = .{ .content = .placeholder };
     try testing.expect(a.eql(&a));
