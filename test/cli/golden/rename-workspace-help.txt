@@ -1,9 +1,9 @@
 Usage: cmux rename-workspace [--workspace <id|ref|index>] [--] <title>
 
-Rename a workspace (default: the caller's workspace). The remaining words
-form the title; use -- before a title that starts with "--". Prints "OK".
-rename-window is a tmux-compatible alias. Legacy alias of
-"cmux workspace rename".
+Rename a workspace (default: the caller's workspace) and print
+"OK <workspace>". The remaining words form the title; use -- before a title
+that starts with "--". rename-window is a tmux-compatible alias. Legacy
+alias of "cmux workspace rename".
 
 Options:
   --workspace <id|ref|index>   Workspace to rename

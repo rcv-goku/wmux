@@ -179,15 +179,26 @@ pub fn writeJsonResult(ctx: *Ctx, v: std.json.Value) !void {
     try output.writeResult(ctx.arena, ctx.out, v, ctx.parsed.globals.id_format);
 }
 
-/// Calls `method` and prints the JSON result or `OK`.
-pub fn simple(ctx: *Ctx, method: []const u8, p: *const Params) !u8 {
+/// Calls `method` and prints the JSON result, or cmux's v2 summary: `OK`
+/// followed by the handle of each of `kinds` (`workspace`, `window`) that
+/// the result names.
+pub fn simple(ctx: *Ctx, method: []const u8, p: *const Params, kinds: []const []const u8) !u8 {
     switch (try request(ctx, method, p)) {
         .code => |c| return c,
         .ok => |v| {
-            if (ctx.json()) try writeJsonResult(ctx, v) else try ctx.out.writeAll("OK\n");
+            if (ctx.json()) try writeJsonResult(ctx, v) else try writeOkSummary(ctx, v, kinds);
             return output.exit.ok;
         },
     }
+}
+
+/// `OK` plus ` <handle>` for each of `kinds` present in `v`.
+pub fn writeOkSummary(ctx: *Ctx, v: std.json.Value, kinds: []const []const u8) !void {
+    try ctx.out.writeAll("OK");
+    for (kinds) |k| {
+        if (try kindHandle(ctx, v, k)) |t| try ctx.out.print(" {s}", .{t});
+    }
+    try ctx.out.writeByte('\n');
 }
 
 /// Calls `method` and prints the JSON result or `OK <handle>` of the
@@ -257,6 +268,16 @@ pub fn handleText(ctx: *Ctx, v: std.json.Value, prefix: []const u8) !?[]const u8
     const alt_id = if (group) str(v, "workspace_group_id") else null;
     const ref = str(v, try std.fmt.allocPrint(a, "{s}_ref", .{prefix})) orelse alt_ref orelse str(v, "ref");
     const id = str(v, try std.fmt.allocPrint(a, "{s}_id", .{prefix})) orelse alt_id orelse str(v, "id");
+    if (ref == null and id == null) return null;
+    return try idformat.handleTextAlloc(a, ctx.parsed.globals.id_format, ref, id, .{});
+}
+
+/// `<kind>_ref` / `<kind>_id` of `v` for `--id-format` (`both` prints
+/// `<ref> (<uuid>)`); null when `v` names neither (cmux's summaries).
+pub fn kindHandle(ctx: *Ctx, v: std.json.Value, kind: []const u8) !?[]const u8 {
+    const a = ctx.arena;
+    const ref = str(v, try std.fmt.allocPrint(a, "{s}_ref", .{kind}));
+    const id = str(v, try std.fmt.allocPrint(a, "{s}_id", .{kind}));
     if (ref == null and id == null) return null;
     return try idformat.handleTextAlloc(a, ctx.parsed.globals.id_format, ref, id, .{});
 }

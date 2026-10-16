@@ -1,7 +1,7 @@
 Usage: cmux close-workspace --workspace <id|ref|index> [--window <id|ref|index>] [--force]
 
-Close a workspace (default: the caller's workspace). Prints "OK". Legacy
-alias of "cmux workspace close".
+Close a workspace (default: the caller's workspace) and print
+"OK <workspace>". Legacy alias of "cmux workspace close".
 
 Options:
   --workspace <id|ref|index>   Workspace to close

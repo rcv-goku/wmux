@@ -81,5 +81,5 @@ pub fn runRemote(ctx: *Ctx, args: []const []const u8, u: []const u8, method: []c
     var p = Params.init(ctx.arena);
     if (try common.putWorkspaceTarget(ctx, &p, u, explicit, common.windowText(ctx, o) != null)) |c| return c;
     if (try common.putWindow(ctx, &p, u, o)) |c| return c;
-    return common.simple(ctx, method, &p);
+    return common.simple(ctx, method, &p, &.{ "workspace", "window" });
 }

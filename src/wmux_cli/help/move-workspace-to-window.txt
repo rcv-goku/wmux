@@ -1,6 +1,6 @@
 Usage: cmux move-workspace-to-window --workspace <id|ref|index> --window <id|ref|index>
 
-Move a workspace into another window. Prints "OK".
+Move a workspace into another window and print "OK <workspace> <window>".
 
 Options:
   --workspace <id|ref|index>   Workspace to move (default: $CMUX_WORKSPACE_ID)

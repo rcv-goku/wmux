@@ -210,5 +210,5 @@ pub fn runAction(ctx: *Ctx) !u8 {
         try p.str("color", norm);
     }
     if (o.has("--force")) try p.boolean("force", true);
-    return common.simple(ctx, "workspace.action", &p);
+    return common.simple(ctx, "workspace.action", &p, &.{});
 }

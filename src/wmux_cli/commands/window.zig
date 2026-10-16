@@ -129,7 +129,7 @@ fn runFocus(ctx: *Ctx) !u8 {
     // Bringing the window to front needs the foreground grant (ADR-3.11),
     // which only an interactive, non-agent caller hands over.
     if (!try common.grantForeground(ctx, &p)) return output.exit.runtime;
-    return common.simple(ctx, "window.focus", &p);
+    return common.simple(ctx, "window.focus", &p, &.{});
 }
 
 fn runClose(ctx: *Ctx) !u8 {
@@ -140,7 +140,7 @@ fn runClose(ctx: *Ctx) !u8 {
     var p = Params.init(ctx.arena);
     if (try requiredWindow(ctx, u_close, o, &p)) |c| return c;
     if (o.has("--force")) try p.boolean("force", true);
-    return common.simple(ctx, "window.close", &p);
+    return common.simple(ctx, "window.close", &p, &.{});
 }
 
 /// A `--width`/`--height` value: finite, > 0 and <= 100000.
@@ -273,7 +273,7 @@ fn runMove(ctx: *Ctx) !u8 {
     if (try common.putWorkspaceTarget(ctx, &p, u_move, o.get("--workspace"), false)) |c| return c;
     if (p.map.get("workspace_id") == null) return common.usage(ctx, u_move, "move-workspace-to-window requires --workspace", .{});
     if (try requiredWindow(ctx, u_move, o, &p)) |c| return c;
-    return common.simple(ctx, "workspace.move_to_window", &p);
+    return common.simple(ctx, "workspace.move_to_window", &p, &.{ "workspace", "window" });
 }
 
 // ----- tests -----
@@ -518,9 +518,10 @@ test "unit: cli-window: move-workspace-to-window targets and defaults" {
     var h: testkit.Harness = undefined;
     try h.init();
     defer h.deinit();
-    h.ok("workspace.move_to_window", "{}");
-    try testing.expectEqualStrings("OK\n", try testkit.expectOk(&h, &.{ "move-workspace-to-window", "--workspace", "workspace:3", "--window", "window:2" }));
+    h.ok("workspace.move_to_window", "{\"workspace_ref\":\"workspace:3\",\"window_ref\":\"window:2\"}");
+    try testing.expectEqualStrings("OK workspace:3 window:2\n", try testkit.expectOk(&h, &.{ "move-workspace-to-window", "--workspace", "workspace:3", "--window", "window:2" }));
     try h.expectLast("workspace.move_to_window", "{\"workspace_id\":\"workspace:3\",\"window_id\":\"window:2\"}");
+    h.ok("workspace.move_to_window", "{}");
     try testkit.expectUsage(&h, &.{ "move-workspace-to-window", "--window", "window:2" }, "move-workspace-to-window requires --workspace");
     h.setEnv("CMUX_WORKSPACE_ID", "9B690000-0000-4000-8000-000000000002");
     _ = try testkit.expectOk(&h, &.{ "move-workspace-to-window", "--window", "2" });

@@ -190,7 +190,7 @@ fn runSelect(ctx: *Ctx, args: []const []const u8, u: []const u8, name: []const u
     var p = Params.init(ctx.arena);
     if (try common.putExplicitWorkspace(ctx, &p, u, "workspace_id", ws, common.windowText(ctx, o) != null)) |c| return c;
     if (try common.putWindow(ctx, &p, u, o)) |c| return c;
-    return common.simple(ctx, "workspace.select", &p);
+    return common.simple(ctx, "workspace.select", &p, &.{"workspace"});
 }
 
 fn runClose(ctx: *Ctx, args: []const []const u8, u: []const u8, name: []const u8) !u8 {
@@ -203,7 +203,7 @@ fn runClose(ctx: *Ctx, args: []const []const u8, u: []const u8, name: []const u8
     if (p.map.get("workspace_id") == null) return common.usage(ctx, u, "{s} requires a workspace (<id|ref|index> or --workspace)", .{name});
     if (try common.putWindow(ctx, &p, u, o)) |c| return c;
     if (o.has("--force")) try p.boolean("force", true);
-    return common.simple(ctx, "workspace.close", &p);
+    return common.simple(ctx, "workspace.close", &p, &.{"workspace"});
 }
 
 /// `rename-workspace [--workspace <h>] [--] <title>` (tmux-style
@@ -218,7 +218,7 @@ fn runRenameLegacy(ctx: *Ctx) !u8 {
     if (try common.putWorkspaceTarget(ctx, &p, u, o.get("--workspace"), common.windowText(ctx, o) != null)) |c| return c;
     if (try common.putWindow(ctx, &p, u, o)) |c| return c;
     try p.str("title", title);
-    return common.simple(ctx, "workspace.rename", &p);
+    return common.simple(ctx, "workspace.rename", &p, &.{"workspace"});
 }
 
 fn runRenameNs(ctx: *Ctx, args: []const []const u8) !u8 {
@@ -234,7 +234,7 @@ fn runRenameNs(ctx: *Ctx, args: []const []const u8) !u8 {
     if (try common.putWorkspaceTarget(ctx, &p, u, explicit, common.windowText(ctx, o) != null)) |c| return c;
     if (try common.putWindow(ctx, &p, u, o)) |c| return c;
     try p.str("title", title);
-    return common.simple(ctx, "workspace.rename", &p);
+    return common.simple(ctx, "workspace.rename", &p, &.{"workspace"});
 }
 
 // ----- next, previous, last -----
@@ -245,7 +245,7 @@ fn runCycle(ctx: *Ctx, u: []const u8, method: []const u8) !u8 {
     if (o.positionals.len > 0) return common.usage(ctx, u, "unexpected argument '{s}'", .{o.positionals[0]});
     var p = Params.init(ctx.arena);
     if (try common.putWindow(ctx, &p, u, o)) |c| return c;
-    return common.simple(ctx, method, &p);
+    return common.simple(ctx, method, &p, &.{"workspace"});
 }
 
 fn runNext(ctx: *Ctx) !u8 {
@@ -518,9 +518,12 @@ test "unit: cli-workspace: select, close and rename in legacy and namespace form
     var h: testkit.Harness = undefined;
     try h.init();
     defer h.deinit();
-    for ([_][]const u8{ "workspace.select", "workspace.close", "workspace.rename" }) |m| h.ok(m, "{\"workspace_ref\":\"workspace:3\"}");
-    try testing.expectEqualStrings("OK\n", try testkit.expectOk(&h, &.{ "select-workspace", "--workspace", "workspace:3" }));
+    for ([_][]const u8{ "workspace.select", "workspace.close", "workspace.rename" }) |m| h.ok(m, "{\"workspace_id\":\"9B690000-0000-4000-8000-000000000003\",\"workspace_ref\":\"workspace:3\",\"window_ref\":\"window:1\"}");
+    // cmux's summary: OK and the workspace handle per --id-format.
+    try testing.expectEqualStrings("OK workspace:3\n", try testkit.expectOk(&h, &.{ "select-workspace", "--workspace", "workspace:3" }));
     try h.expectLast("workspace.select", "{\"workspace_id\":\"workspace:3\"}");
+    try testing.expectEqualStrings("OK 9B690000-0000-4000-8000-000000000003\n", try testkit.expectOk(&h, &.{ "workspace", "close", "workspace:3", "--id-format", "uuids" }));
+    try testing.expectEqualStrings("OK workspace:3 (9B690000-0000-4000-8000-000000000003)\n", try testkit.expectOk(&h, &.{ "workspace", "rename", "workspace:3", "--title", "t", "--id-format", "both" }));
     _ = try testkit.expectOk(&h, &.{ "workspace", "select", "2", "--window", "window:1" });
     try h.expectLast("workspace.select", "{\"workspace_id\":2,\"window_id\":\"window:1\"}");
     try testkit.expectUsage(&h, &.{"select-workspace"}, "select-workspace requires a workspace (<id|ref|index> or --workspace)");
@@ -653,7 +656,7 @@ test "unit: cli-workspace: next, previous and last window" {
     const cases = [_][2][]const u8{ .{ "next-window", "workspace.next" }, .{ "previous-window", "workspace.previous" }, .{ "last-window", "workspace.last" } };
     for (cases) |c| {
         h.ok(c[1], "{\"workspace_ref\":\"workspace:2\"}");
-        try testing.expectEqualStrings("OK\n", try testkit.expectOk(&h, &.{c[0]}));
+        try testing.expectEqualStrings("OK workspace:2\n", try testkit.expectOk(&h, &.{c[0]}));
         try h.expectLast(c[1], "{}");
         _ = try testkit.expectOk(&h, &.{ c[0], "--window", "window:2" });
         try h.expectLast(c[1], "{\"window_id\":\"window:2\"}");
@@ -793,9 +796,9 @@ test "unit: cli-workspace: workspace reconnect and disconnect" {
     var h: testkit.Harness = undefined;
     try h.init();
     defer h.deinit();
-    h.ok("workspace.remote.reconnect", "{\"workspace_ref\":\"workspace:3\",\"remote\":{\"state\":\"connecting\"}}");
+    h.ok("workspace.remote.reconnect", "{\"workspace_ref\":\"workspace:3\",\"window_ref\":\"window:1\",\"remote\":{\"state\":\"connecting\"}}");
     h.ok("workspace.remote.disconnect", "{\"workspace_ref\":\"workspace:3\",\"remote\":{\"state\":\"disconnected\"}}");
-    try testing.expectEqualStrings("OK\n", try testkit.expectOk(&h, &.{ "workspace", "reconnect", "workspace:3" }));
+    try testing.expectEqualStrings("OK workspace:3 window:1\n", try testkit.expectOk(&h, &.{ "workspace", "reconnect", "workspace:3" }));
     try h.expectLast("workspace.remote.reconnect", "{\"workspace_id\":\"workspace:3\"}");
     _ = try testkit.expectOk(&h, &.{ "workspace", "disconnect", "--workspace", "workspace:3" });
     try h.expectLast("workspace.remote.disconnect", "{\"workspace_id\":\"workspace:3\"}");

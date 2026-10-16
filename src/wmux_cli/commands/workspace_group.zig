@@ -108,7 +108,7 @@ fn runGroupOnly(ctx: *Ctx, args: []const []const u8, v: *const Verb, prefix: []c
     var code: u8 = 0;
     var p = Params.init(ctx.arena);
     _ = (try groupParams(ctx, args, v, prefix, &.{}, &p, &code)) orelse return code;
-    return common.simple(ctx, v.method, &p);
+    return common.simple(ctx, v.method, &p, &.{});
 }
 
 fn runList(ctx: *Ctx, args: []const []const u8, v: *const Verb, _: []const u8) !u8 {
@@ -185,7 +185,7 @@ fn runRename(ctx: *Ctx, args: []const []const u8, v: *const Verb, prefix: []cons
     const name = o.get("--name") orelse "";
     if (std.mem.trim(u8, name, " \t\r\n").len == 0) return common.usage(ctx, v.usage, "{s} rename requires --name <new>", .{prefix});
     try p.str("name", name);
-    return common.simple(ctx, v.method, &p);
+    return common.simple(ctx, v.method, &p, &.{});
 }
 
 fn runUngroup(ctx: *Ctx, args: []const []const u8, v: *const Verb, prefix: []const u8) !u8 {
@@ -193,7 +193,7 @@ fn runUngroup(ctx: *Ctx, args: []const []const u8, v: *const Verb, prefix: []con
     var p = Params.init(ctx.arena);
     const o = (try groupParams(ctx, args, v, prefix, &.{.{ .name = "--remove-generated-anchor", .takes_value = false }}, &p, &code)) orelse return code;
     if (o.has("--remove-generated-anchor")) try p.boolean("remove_generated_anchor", true);
-    return common.simple(ctx, v.method, &p);
+    return common.simple(ctx, v.method, &p, &.{});
 }
 
 fn runDelete(ctx: *Ctx, args: []const []const u8, v: *const Verb, prefix: []const u8) !u8 {
@@ -233,7 +233,7 @@ fn runGroupWorkspace(ctx: *Ctx, args: []const []const u8, v: *const Verb, prefix
     var p = Params.init(ctx.arena);
     const o = (try groupParams(ctx, args, v, prefix, &.{.{ .name = "--workspace" }}, &p, &code)) orelse return code;
     if (try putMember(ctx, o, v, prefix, &p)) |c| return c;
-    return common.simple(ctx, v.method, &p);
+    return common.simple(ctx, v.method, &p, &.{});
 }
 
 fn runRemove(ctx: *Ctx, args: []const []const u8, v: *const Verb, prefix: []const u8) !u8 {
@@ -242,7 +242,7 @@ fn runRemove(ctx: *Ctx, args: []const []const u8, v: *const Verb, prefix: []cons
     if (o.positionals.len > 0) return common.usage(ctx, v.usage, "unexpected argument '{s}'", .{o.positionals[0]});
     var p = Params.init(ctx.arena);
     if (try putMember(ctx, o, v, prefix, &p)) |c| return c;
-    return common.simple(ctx, v.method, &p);
+    return common.simple(ctx, v.method, &p, &.{});
 }
 
 /// `#RRGGBB`.
@@ -264,7 +264,7 @@ fn runSetColor(ctx: *Ctx, args: []const []const u8, v: *const Verb, prefix: []co
         if (!validHex(hex)) return common.usage(ctx, v.usage, "--hex must be #RRGGBB (got '{s}')", .{hex});
         try p.str("hex", hex);
     }
-    return common.simple(ctx, v.method, &p);
+    return common.simple(ctx, v.method, &p, &.{});
 }
 
 fn runSetIcon(ctx: *Ctx, args: []const []const u8, v: *const Verb, prefix: []const u8) !u8 {
@@ -273,7 +273,7 @@ fn runSetIcon(ctx: *Ctx, args: []const []const u8, v: *const Verb, prefix: []con
     const o = (try groupParams(ctx, args, v, prefix, &.{.{ .name = "--symbol" }}, &p, &code)) orelse return code;
     const sym = std.mem.trim(u8, o.get("--symbol") orelse "", " \t");
     if (sym.len == 0) try p.value("symbol", .null) else try p.str("symbol", sym);
-    return common.simple(ctx, v.method, &p);
+    return common.simple(ctx, v.method, &p, &.{});
 }
 
 fn runMove(ctx: *Ctx, args: []const []const u8, v: *const Verb, prefix: []const u8) !u8 {
@@ -292,7 +292,7 @@ fn runMove(ctx: *Ctx, args: []const []const u8, v: *const Verb, prefix: []const 
     }
     if (o.get("--before")) |g| if (try common.putHandle(ctx, &p, v.usage, "before_group_id", .workspace_group, g)) |c| return c;
     if (o.get("--after")) |g| if (try common.putHandle(ctx, &p, v.usage, "after_group_id", .workspace_group, g)) |c| return c;
-    return common.simple(ctx, v.method, &p);
+    return common.simple(ctx, v.method, &p, &.{});
 }
 
 fn runNewWorkspace(ctx: *Ctx, args: []const []const u8, v: *const Verb, prefix: []const u8) !u8 {

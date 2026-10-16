@@ -1,6 +1,6 @@
 Usage: cmux select-workspace --workspace <id|ref|index> [--window <id|ref|index>]
 
-Select a workspace in its window. Prints "OK". Legacy alias of
+Select a workspace in its window and print "OK <workspace>". Legacy alias of
 "cmux workspace select".
 
 Options:
