@@ -670,10 +670,14 @@ pub fn close(self: *Window) void {
 fn cleanupAllSurfaces(self: *Window) void {
     const alloc = self.app.core_app.alloc;
     for (self.workspaces.items) |ws| {
-        ws.tree.deinit();
+        // Empty the workspace before tearing its tree down: destroying
+        // the surfaces moves focus, and the window procedures that run
+        // meanwhile must not find the dying panes.
+        var tree = ws.tree;
         ws.tree = .empty;
         ws.syncZoomed();
         ws.focused_pane = null;
+        tree.deinit();
         ws.freeCwd(alloc);
     }
 }

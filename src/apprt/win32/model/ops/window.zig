@@ -239,10 +239,11 @@ pub fn closeWorkspace(self: *Window, idx: usize) void {
     if (arith == .close_window) {
         self.closing = true;
         const ws = self.workspaces.items[idx];
-        ws.tree.deinit();
+        var tree = ws.tree;
         ws.tree = .empty;
         ws.syncZoomed();
         ws.focused_pane = null;
+        tree.deinit();
         if (self.hwnd) |hwnd| _ = w32.PostMessageW(hwnd, w32.WM_CLOSE, 0, 0);
         return;
     }

@@ -308,7 +308,10 @@ fn restoreV2Workspace(
     // Recursively build the SplitTree from the serialized JSON.
     const tree = buildSplitTree(alloc, window, ws, is_bg, tree_obj) orelse return;
 
-    // Replace any existing tree on the workspace.
+    // Replace any existing tree on the workspace. Drop the focused pane
+    // first: it belongs to the old tree, which installTree frees (and
+    // focus messages sent while it is torn down must not reach it).
+    ws.focused_pane = null;
     ops_pane.installTree(ws, tree);
 
     // Set the focused container.
