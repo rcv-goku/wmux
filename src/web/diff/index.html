@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' https://*.wmux.example; img-src 'self' data:; font-src 'self'; frame-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+    <meta name="referrer" content="no-referrer">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Diff</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="../_shared/base.css">
+    <link rel="stylesheet" id="dv-hljs-light" href="../_vendor/highlightjs-cdn-assets@11.12.0/styles/github.min.css" media="not all">
+    <link rel="stylesheet" id="dv-hljs-dark" href="../_vendor/highlightjs-cdn-assets@11.12.0/styles/github-dark.min.css">
+    <link rel="stylesheet" href="diff.css">
+    <script type="module" src="diff.js"></script>
+  </head>
+  <body>
+    <header class="dv-toolbar" role="toolbar" aria-label="Diff viewer" data-i18n-attr="aria-label:diff.toolbar">
+      <div class="dv-toolbar-group dv-toolbar-title">
+        <h1 id="dv-title" class="dv-title">Untitled</h1>
+        <span id="dv-stats" class="dv-stats" title="Diff stats" data-i18n-attr="title:diff.stats">
+          <span id="dv-stats-add" class="dv-plus" title="Additions" data-i18n-attr="title:diff.additions"></span>
+          <span id="dv-stats-del" class="dv-minus" title="Deletions" data-i18n-attr="title:diff.deletions"></span>
+        </span>
+        <span id="dv-progress" class="dv-progress"></span>
+      </div>
+      <span id="dv-status" class="dv-status" role="status" aria-live="polite"></span>
+      <div class="dv-toolbar-group">
+        <button type="button" id="dv-files-toggle" class="dv-overflowable" aria-expanded="true" aria-controls="dv-sidebar">Hide files</button>
+        <button type="button" id="dv-layout" class="dv-overflowable">Switch to split diff</button>
+        <button type="button" id="dv-search-toggle" class="dv-overflowable" aria-expanded="false" aria-controls="dv-filesearch">Show file search</button>
+        <button type="button" id="dv-expand-all" class="dv-overflowable">Collapse all diffs</button>
+        <button type="button" id="dv-refresh" class="dv-overflowable" data-i18n="diff.refresh">Refresh</button>
+        <button type="button" id="dv-copy-apply" class="dv-overflowable" data-i18n="diff.copyApply">Copy git apply command</button>
+        <button type="button" id="dv-comments-toggle" aria-pressed="false" aria-controls="dv-comments">Comments</button>
+        <button type="button" id="dv-options" aria-expanded="false" aria-controls="dv-options-menu" data-i18n="diff.options">Options</button>
+      </div>
+    </header>
+
+    <div id="dv-options-menu" class="dv-menu" role="group" aria-label="Options" data-i18n-attr="aria-label:diff.options" hidden>
+      <div class="dv-menu-overflow">
+        <button type="button" data-menu="layout"></button>
+        <button type="button" data-menu="files"></button>
+        <button type="button" data-menu="search"></button>
+        <button type="button" data-menu="expand-all"></button>
+        <button type="button" data-menu="refresh" data-i18n="diff.refresh">Refresh</button>
+        <button type="button" data-menu="copy-apply" data-i18n="diff.copyApply">Copy git apply command</button>
+        <hr class="dv-menu-sep">
+      </div>
+      <button type="button" data-menu="wordWrap"></button>
+      <button type="button" data-menu="wordDiffs"></button>
+      <button type="button" data-menu="lineNumbers"></button>
+      <button type="button" data-menu="showBackgrounds"></button>
+      <button type="button" data-menu="expandUnchanged"></button>
+      <button type="button" data-menu="ignoreWhitespace"></button>
+      <label class="dv-menu-field">
+        <span data-i18n="diff.contextLines">Context lines</span>
+        <input id="dv-context-lines" type="number" min="0" max="100" step="1" inputmode="numeric">
+      </label>
+      <div class="dv-menu-group" role="group" aria-labelledby="dv-indicator-label">
+        <span id="dv-indicator-label" class="dv-menu-label" data-i18n="diff.indicatorStyle">Indicator style</span>
+        <button type="button" aria-pressed="false" data-indicator="bars" data-i18n="diff.indicator.bars">Bars</button>
+        <button type="button" aria-pressed="false" data-indicator="classic" data-i18n="diff.indicator.classic">Classic</button>
+        <button type="button" aria-pressed="false" data-indicator="none" data-i18n="diff.indicator.none">None</button>
+      </div>
+    </div>
+
+    <div id="dv-filesearch" class="dv-filesearch" hidden>
+      <input id="dv-filesearch-input" type="search" placeholder="Jump to file" aria-label="Jump to file" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-controls="dv-filesearch-list" data-i18n-attr="placeholder:diff.fileSearch.placeholder; aria-label:diff.jumpToFile">
+      <ul id="dv-filesearch-list" class="dv-filesearch-list" role="listbox" aria-label="Files" data-i18n-attr="aria-label:diff.files"></ul>
+    </div>
+
+    <div id="dv-find" class="dv-find" role="search" hidden>
+      <input id="dv-find-input" type="search" placeholder="Find in diff" aria-label="Find in diff" autocomplete="off" spellcheck="false" data-i18n-attr="placeholder:diff.find.placeholder; aria-label:diff.find.label">
+      <span id="dv-find-count" class="dv-find-count" aria-live="polite"></span>
+      <button type="button" id="dv-find-prev" class="dv-icon-button" aria-label="Previous match" title="Previous match" data-i18n-attr="aria-label:diff.find.previous; title:diff.find.previous">&#x2191;</button>
+      <button type="button" id="dv-find-next" class="dv-icon-button" aria-label="Next match" title="Next match" data-i18n-attr="aria-label:diff.find.next; title:diff.find.next">&#x2193;</button>
+      <button type="button" id="dv-find-close" class="dv-icon-button" aria-label="Close find" title="Close find" data-i18n-attr="aria-label:diff.find.close; title:diff.find.close">&#x2715;</button>
+    </div>
+
+    <div class="dv-body">
+      <aside id="dv-sidebar" class="dv-sidebar" aria-labelledby="dv-sidebar-title">
+        <h2 id="dv-sidebar-title" class="dv-sidebar-title" data-i18n="diff.changedFiles">Changed files</h2>
+        <div class="dv-filter">
+          <input id="dv-filter-input" type="search" placeholder="Filter files" aria-label="Filter files" autocomplete="off" spellcheck="false" data-i18n-attr="placeholder:diff.filter.placeholder; aria-label:diff.filter.placeholder">
+          <div class="dv-filter-statuses" role="group" aria-label="Status" data-i18n-attr="aria-label:diff.filter.status">
+            <label><input type="checkbox" data-status="added" checked><span data-i18n="diff.status.added">Added</span></label>
+            <label><input type="checkbox" data-status="modified" checked><span data-i18n="diff.status.modified">Modified</span></label>
+            <label><input type="checkbox" data-status="deleted" checked><span data-i18n="diff.status.deleted">Deleted</span></label>
+            <label><input type="checkbox" data-status="renamed" checked><span data-i18n="diff.status.renamed">Renamed</span></label>
+          </div>
+          <button type="button" id="dv-hide-viewed" data-i18n="diff.filter.hideViewed">Hide viewed files</button>
+        </div>
+        <ul id="dv-tree" class="dv-tree" aria-label="Changed files" data-i18n-attr="aria-label:diff.changedFiles"></ul>
+        <div id="dv-filter-empty" class="dv-filter-empty" hidden>
+          <p data-i18n="diff.filter.empty">No files match the filter.</p>
+          <button type="button" id="dv-filter-clear" data-i18n="diff.filter.clear">Clear filter</button>
+        </div>
+      </aside>
+      <main id="dv-viewport" class="dv-viewport" tabindex="-1">
+        <div id="dv-message" class="dv-message" role="status"></div>
+        <div id="dv-files" class="dv-files"></div>
+        <div id="dv-files-empty" class="dv-filter-empty" hidden>
+          <p data-i18n="diff.filter.empty">No files match the filter.</p>
+          <button type="button" id="dv-files-clear" data-i18n="diff.filter.clear">Clear filter</button>
+        </div>
+      </main>
+      <aside id="dv-comments" class="dv-comments" aria-labelledby="dv-comments-title" hidden>
+        <h2 id="dv-comments-title" class="dv-sidebar-title" data-i18n="diff.comments">Comments</h2>
+        <p id="dv-comments-empty" class="dv-muted" data-i18n="diff.noComments">No comments yet</p>
+        <ul id="dv-comments-list" class="dv-comments-list"></ul>
+        <button type="button" id="dv-send" class="wmux-primary" data-i18n="diff.sendToAgent">Send to agent</button>
+      </aside>
+    </div>
+  </body>
+</html>
