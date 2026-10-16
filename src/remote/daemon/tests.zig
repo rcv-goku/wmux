@@ -729,6 +729,17 @@ test "unit: remote-daemon: persistent sessions survive client detach and replay 
     try testing.expect(std.mem.indexOf(u8, aw.written(), "\"running\":true") != null);
 }
 
+/// The bridge side of `serve --stdio --persistent` in a thread: pumps
+/// between a pipe pair and the slot socket, then closes all three.
+const BridgePump = struct {
+    fn run(in_fd: posix.fd_t, out_fd: posix.fd_t, s: posix.fd_t) void {
+        persistent.pump(in_fd, out_fd, s, null) catch {};
+        posix.close(s);
+        posix.close(in_fd);
+        posix.close(out_fd);
+    }
+};
+
 test "unit: remote-daemon: stdio bridge pumps bytes to the slot server" {
     const gpa = testing.allocator;
     const h = try SlotHarness.start(gpa, .{});
@@ -736,15 +747,7 @@ test "unit: remote-daemon: stdio bridge pumps bytes to the slot server" {
     const to_bridge = try posix.pipe2(.{ .CLOEXEC = true });
     const from_bridge = try posix.pipe2(.{ .CLOEXEC = true });
     const sock = try persistent.connect(h.slot.sock);
-    const Pump = struct {
-        fn run(in_fd: posix.fd_t, out_fd: posix.fd_t, s: posix.fd_t) void {
-            persistent.pump(in_fd, out_fd, s, null) catch {};
-            posix.close(s);
-            posix.close(in_fd);
-            posix.close(out_fd);
-        }
-    };
-    const t = try std.Thread.spawn(.{}, Pump.run, .{ to_bridge[0], from_bridge[1], sock });
+    const t = try std.Thread.spawn(.{}, BridgePump.run, .{ to_bridge[0], from_bridge[1], sock });
     var c = Client.init(gpa, from_bridge[0], to_bridge[1], true);
     _ = try c.hello(true, timeout);
     const sid = try openSh(&c, null, 80, 24);
@@ -759,6 +762,34 @@ test "unit: remote-daemon: stdio bridge pumps bytes to the slot server" {
     _ = try c2.hello(false, timeout);
     const lst = try c2.request(.pty_list, .{}, timeout);
     try testing.expectEqual(@as(usize, 1), lst.result.object.get("sessions").?.array.items.len);
+}
+
+test "unit: remote-daemon: the bridge relays end of input and still delivers every reply" {
+    const gpa = testing.allocator;
+    const h = try SlotHarness.start(gpa, .{});
+    defer h.stop();
+    const to_bridge = try posix.pipe2(.{ .CLOEXEC = true });
+    const from_bridge = try posix.pipe2(.{ .CLOEXEC = true });
+    const sock = try persistent.connect(h.slot.sock);
+    const t = try std.Thread.spawn(.{}, BridgePump.run, .{ to_bridge[0], from_bridge[1], sock });
+    defer t.join();
+    var c = Client.init(gpa, from_bridge[0], to_bridge[1], true);
+    defer c.deinit();
+    // A one-shot script (`printf ... | wmuxd-remote serve --stdio
+    // --persistent`): pipelined requests, then end of input at once.
+    try c.writeAll("{\"id\":1,\"method\":\"hello\",\"params\":{\"protocol_version\":1}}\n" ++
+        "{\"id\":2,\"method\":\"ping\"}\n" ++
+        "{\"id\":3,\"method\":\"pty.list\"}\n");
+    try halfClose(&c);
+    var id: i64 = 1;
+    while (id <= 3) : (id += 1) {
+        const r = try c.nextReply(timeout);
+        try testing.expect(r.ok);
+        try testing.expectEqual(id, r.id.?.int);
+    }
+    // The server closes the connection after its replies, and the bridge
+    // follows, as `serve --stdio` would.
+    try expectEndOfStream(&c);
 }
 
 test "unit: remote-daemon: a second server for the same slot is refused" {

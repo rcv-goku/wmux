@@ -223,13 +223,18 @@ fn writeAllFd(fd: posix.fd_t, bytes: []const u8) !void {
     }
 }
 
-/// Copies bytes both ways between (in_fd, out_fd) and `sock` until either
-/// side reaches end of stream (or `stop` is set).
+/// Copies bytes both ways between (in_fd, out_fd) and `sock`. When the
+/// input ends, only the socket's write side is shut down: the server still
+/// answers what it received and then closes, which ends the pump (as do an
+/// error on either side and `stop`). A script piped into the bridge thus
+/// gets every reply, as it does from `serve --stdio`.
 pub fn pump(in_fd: posix.fd_t, out_fd: posix.fd_t, sock: posix.fd_t, stop: ?*const std.atomic.Value(bool)) !void {
     var buf: [64 * 1024]u8 = undefined;
+    var input_open = true;
     while (stop == null or !stop.?.load(.acquire)) {
         var fds = [_]posix.pollfd{
-            .{ .fd = in_fd, .events = posix.POLL.IN, .revents = 0 },
+            // poll skips a negative fd.
+            .{ .fd = if (input_open) in_fd else -1, .events = posix.POLL.IN, .revents = 0 },
             .{ .fd = sock, .events = posix.POLL.IN, .revents = 0 },
         };
         if (try posix.poll(&fds, 250) == 0) continue;
@@ -239,8 +244,10 @@ pub fn pump(in_fd: posix.fd_t, out_fd: posix.fd_t, sock: posix.fd_t, stop: ?*con
                 else => return,
             };
             if (n) |len| {
-                if (len == 0) return; // end of stream
-                writeAllFd(sock, buf[0..len]) catch return;
+                if (len == 0) {
+                    input_open = false;
+                    posix.shutdown(sock, .send) catch return;
+                } else writeAllFd(sock, buf[0..len]) catch return;
             }
         }
         if (fds[1].revents != 0) {
