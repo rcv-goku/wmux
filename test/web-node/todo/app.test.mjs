@@ -594,6 +594,12 @@ describe("unit: todo pane attachments, live updates and states", () => {
     assert.equal(host.calls("workspace.todo.add").length, 0);
   });
 
+  test("unit: todo: a list reply that is not a checklist is reported", async () => {
+    await startApp({ handlers: { "workspace.todo.list": () => ({ nope: 1 }) } });
+    assert.equal(app.available, true);
+    assert.equal($("todo-error").textContent, "Could not load the checklist: malformed reply");
+  });
+
   test("unit: todo: not_found on load shows the unavailable state", async () => {
     await startApp({
       handlers: {

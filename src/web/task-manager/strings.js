@@ -55,6 +55,7 @@ export const STRINGS = Object.freeze({
   "tm.state.loadFailed": "Unable to load resource usage",
   "tm.state.refreshFailed": "Unable to refresh Task Manager data.",
   "tm.state.unsupported": "This wmux build does not support process diagnostics.",
+  "tm.state.malformed": "malformed system.top reply",
   "tm.state.offline": "Not running inside wmux.",
 
   "tm.menu.label": "Row actions",

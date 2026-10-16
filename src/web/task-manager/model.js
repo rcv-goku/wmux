@@ -9,6 +9,7 @@
  * `memory_bytes`, `process_count`) and its tree node kinds; unknown fields
  * are ignored and missing numbers read as 0.
  */
+import { t } from "./strings.js";
 
 /** Child arrays and the node kind each holds, in display order. */
 const CHILD_KEYS = Object.freeze([
@@ -283,7 +284,7 @@ export function programTotals(top) {
       g = {
         kind: "program",
         key: `program:${k}`,
-        title: node.name.split(/[\\/]/).pop() || k,
+        title: baseName(node.name) || t("tm.pid", { pid: node.pid }),
         cpu: 0,
         mem: 0,
         proc: 0,

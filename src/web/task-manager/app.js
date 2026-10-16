@@ -452,7 +452,7 @@ export function createApp(options) {
     ]);
     const top = normalizeTop(topResult);
     if (!top) {
-      const err = new Error("malformed system.top reply");
+      const err = new Error(t("tm.state.malformed"));
       err.code = "internal_error";
       throw err;
     }

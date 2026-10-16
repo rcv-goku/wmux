@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const web = path.resolve(here, "../../../src/web");
 const m = await import(pathToFileURL(path.join(web, "todo/model.js")).href);
+const strings = await import(pathToFileURL(path.join(web, "_shared/strings.js")).href);
 
 const it = (id, state = "pending", extra = {}) => ({
   id,
@@ -89,6 +90,18 @@ describe("unit: todo model", () => {
     assert.equal(m.normalizeList({}), null);
     assert.equal(m.normalizeList(null), null);
     assert.equal(m.normalizeList("[]"), null);
+  });
+
+  test("unit: todo: an attachment without a name gets a fallback name through tr()", () => {
+    assert.deepEqual(m.normalizeAttachment({ id: "x" }, 1), { id: "x", name: "image 2" });
+    const prev = strings.getLocale();
+    strings.addStrings("qps-ploc", { "todo.attach.unnamed": "[Bild {n}]" });
+    strings.setLocale("qps-ploc");
+    try {
+      assert.deepEqual(m.normalizeAttachment({ id: "x" }, 1), { id: "x", name: "[Bild 2]" });
+    } finally {
+      strings.setLocale(prev);
+    }
   });
 
   test("unit: todo: display order puts not-completed first, each group in storage order", () => {

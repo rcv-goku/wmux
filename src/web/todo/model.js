@@ -7,6 +7,7 @@
  * stays inside the item's completion group, as `Checklist.move` clamps it.
  * No DOM, no bridge: unit-tested directly.
  */
+import { t } from "./strings.js";
 
 export const MAX_ITEMS = 50;
 export const MAX_TEXT_CHARS = 500;
@@ -73,7 +74,7 @@ export function normalizeAttachment(raw, index) {
   const id = typeof raw.id === "string" && raw.id ? raw.id : null;
   const name = typeof raw.name === "string" && raw.name ? raw.name : null;
   if (!id && !name) return null;
-  return { id: id || name, name: name || `image ${index + 1}` };
+  return { id: id || name, name: name || t("todo.attach.unnamed", { n: index + 1 }) };
 }
 
 /**

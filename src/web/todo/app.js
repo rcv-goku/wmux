@@ -328,7 +328,7 @@ export function createApp(options) {
     try {
       const result = await bridge.call("workspace.todo.list", withWorkspace({}));
       if (state.destroyed || seq !== state.loadSeq) return;
-      if (!applyList(result)) showError(t("todo.error.load", { message: "malformed reply" }));
+      if (!applyList(result)) showError(t("todo.error.load", { message: t("todo.error.malformed") }));
     } catch (err) {
       if (state.destroyed || seq !== state.loadSeq) return;
       if (GONE_CODES.has(errorCode(err))) setUnavailable();

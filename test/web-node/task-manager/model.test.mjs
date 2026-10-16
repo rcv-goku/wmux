@@ -8,6 +8,7 @@ import { topReply, memoryReply, IDS, MB } from "./fixture.mjs";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const web = path.resolve(here, "../../../src/web");
 const m = await import(pathToFileURL(path.join(web, "task-manager/model.js")).href);
+const strings = await import(pathToFileURL(path.join(web, "_shared/strings.js")).href);
 
 describe("unit: task manager model", () => {
   test("unit: task-manager: normalizes the system.top tree with kinds, owners and keys", () => {
@@ -189,6 +190,24 @@ describe("unit: task manager model", () => {
       7,
       "webview PIDs are not processes",
     );
+  });
+
+  test("unit: task-manager: a nameless program row reads its PID through tr()", () => {
+    const reply = {
+      windows: [
+        { id: "W", workspaces: [{ id: "S", panes: [{ surfaces: [{ id: "F", processes: [{ pid: 9 }] }] }] }] },
+      ],
+    };
+    const titles = () => m.programTotals(m.normalizeTop(reply)).map((r) => r.title);
+    assert.deepEqual(titles(), ["PID 9"]);
+    const prev = strings.getLocale();
+    strings.addStrings("qps-ploc", { "tm.pid": "[PID {pid}]" });
+    strings.setLocale("qps-ploc");
+    try {
+      assert.deepEqual(titles(), ["[PID 9]"]);
+    } finally {
+      strings.setLocale(prev);
+    }
   });
 
   test("unit: task-manager: system.memory shapes and aliases", () => {

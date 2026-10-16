@@ -40,12 +40,14 @@ export const STRINGS = Object.freeze({
   "todo.attach.none": "No images attached. Attach images.",
   "todo.attach.one": "1 image attached",
   "todo.attach.many": "{count} images attached",
+  "todo.attach.unnamed": "image {n}",
 
   "todo.error.full": "The checklist is full ({max} items).",
   "todo.error.empty": "Enter some text first.",
   "todo.error.invalid": "The text contains invalid characters.",
   "todo.error.failed": "Could not update the checklist: {message}",
   "todo.error.load": "Could not load the checklist: {message}",
+  "todo.error.malformed": "malformed reply",
   "todo.offline": "Not running inside wmux.",
 });
 

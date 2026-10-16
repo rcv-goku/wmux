@@ -365,6 +365,7 @@ describe("unit: task manager states", () => {
     assert.equal($("tm-state-body").textContent, "This wmux build does not support process diagnostics.");
     await startApp({ handlers: { "system.top": () => ({ nope: 1 }) } });
     assert.equal($("tm-state-title").textContent, "Unable to load resource usage");
+    assert.equal($("tm-state-body").textContent, "malformed system.top reply");
   });
 
   test("unit: task-manager: later failures keep the data and show the refresh banner", async () => {
