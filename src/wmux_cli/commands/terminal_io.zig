@@ -19,6 +19,8 @@
 //!   command proceed (cmux "Draft Guard").
 //! - `read-screen`/`capture-pane` print `surface.read_text` text;
 //!   `read-selection` prints the selection with its context lines.
+//! - `wait-for` latches signals in marker files; each signal is consumed
+//!   by exactly one waiter.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -384,6 +386,11 @@ pub fn markerName(arena: Allocator, name: []const u8) Allocator.Error![]const u8
     return buf;
 }
 
+/// How long `wait-for -S` keeps retrying while a waiter holds the marker
+/// (Windows sharing violation), and the pause between attempts.
+pub const signal_busy_ms = 2000;
+pub const signal_retry_ms = 5;
+
 /// The private per-user marker directory: `WMUX_WAIT_FOR_DIR` when set,
 /// else `%TEMP%\wmux-wait-for` (Windows) or `$TMPDIR/wmux-wait-for-<uid>`.
 pub fn waitDir(ctx: *Ctx) !?[]const u8 {
@@ -401,6 +408,8 @@ pub const WaitStore = struct {
     dir: std.fs.Dir,
 
     pub const Error = error{ NotPrivate, Unavailable };
+    /// `Busy`: a waiter holds the marker while it consumes it; retry shortly.
+    pub const SignalError = error{ Busy, Unavailable };
 
     /// Creates (if needed) and opens the marker directory; on POSIX it must
     /// be owned by the user and not accessible to others.
@@ -428,26 +437,55 @@ pub const WaitStore = struct {
         self.dir.close();
     }
 
-    /// Latches the signal (an existing marker stays).
-    pub fn signal(self: *WaitStore, file: []const u8) Error!void {
-        const f = self.dir.createFile(file, .{ .truncate = false }) catch return error.Unavailable;
+    /// Latches the signal (an existing marker stays). On Windows a waiter
+    /// consuming the marker holds it unshared for a moment (`consume`); the
+    /// sharing violation comes back as `error.Busy`.
+    pub fn signal(self: *WaitStore, file: []const u8) SignalError!void {
+        const f = self.dir.createFile(file, .{ .truncate = false }) catch |err| return switch (err) {
+            error.AccessDenied => error.Busy,
+            else => error.Unavailable,
+        };
         f.close();
     }
 
     /// Consumes the marker when it exists and is a regular file of the
-    /// user; true when this caller took it.
+    /// user; true when this caller took it. Of several waiters racing for
+    /// one marker exactly one gets it: POSIX `unlink` succeeds only once,
+    /// while a plain delete on Windows reports success to every racer
+    /// (delete-pending semantics), so there the marker is opened unshared
+    /// and deleted through that handle.
     pub fn consume(self: *WaitStore, file: []const u8) bool {
-        if (builtin.os.tag == .windows) {
-            const st = self.dir.statFile(file) catch return false;
-            if (st.kind != .file) return false;
-        } else {
-            const st = std.posix.fstatat(self.dir.fd, file, std.posix.AT.SYMLINK_NOFOLLOW) catch return false;
-            if (!std.posix.S.ISREG(st.mode) or st.uid != std.posix.getuid()) return false;
-        }
+        if (builtin.os.tag == .windows) return consumeWindows(self.dir, file);
+        const st = std.posix.fstatat(self.dir.fd, file, std.posix.AT.SYMLINK_NOFOLLOW) catch return false;
+        if (!std.posix.S.ISREG(st.mode) or st.uid != std.posix.getuid()) return false;
         self.dir.deleteFile(file) catch return false;
         return true;
     }
 };
+
+/// Windows `consume`: with no sharing allowed, opening the marker fails for
+/// everyone else while this handle exists (sharing violation, or not found
+/// once it is gone), so only its holder deletes it. A reparse point is
+/// opened as itself and refused (the O_NOFOLLOW analog).
+fn consumeWindows(dir: std.fs.Dir, file: []const u8) bool {
+    const w = std.os.windows;
+    const path_w = w.sliceToPrefixedFileW(dir.fd, file) catch return false;
+    const h = w.OpenFile(path_w.span(), .{
+        .dir = dir.fd,
+        .access_mask = w.SYNCHRONIZE | w.DELETE | w.FILE_READ_ATTRIBUTES,
+        .share_access = 0,
+        .creation = w.FILE_OPEN,
+        .filter = .file_only,
+        .follow_symlinks = false,
+    }) catch return false;
+    defer w.CloseHandle(h);
+    var io: w.IO_STATUS_BLOCK = undefined;
+    var basic: w.FILE_BASIC_INFORMATION = undefined;
+    if (w.ntdll.NtQueryInformationFile(h, &io, &basic, @sizeOf(w.FILE_BASIC_INFORMATION), .FileBasicInformation) != .SUCCESS) return false;
+    if (basic.FileAttributes & w.FILE_ATTRIBUTE_REPARSE_POINT != 0) return false;
+    var dispo: w.FILE_DISPOSITION_INFORMATION = .{ .DeleteFile = w.TRUE };
+    return w.ntdll.NtSetInformationFile(h, &io, &dispo, @sizeOf(w.FILE_DISPOSITION_INFORMATION), .FileDispositionInformation) == .SUCCESS;
+}
 
 const wait_usage = usageOf("wait-for");
 
@@ -472,8 +510,17 @@ fn runWaitFor(ctx: *Ctx) !u8 {
     defer store.close();
     const file = try markerName(ctx.arena, name);
     if (o.has("-S") or o.has("--signal")) {
-        store.signal(file) catch return ctx.runtimeError("wait-for: cannot signal '{s}' in {s}", .{ name, path });
-        return output.exit.ok;
+        const give_up = ctx.platform.nowMs() + signal_busy_ms;
+        while (true) {
+            if (store.signal(file)) |_| return output.exit.ok else |err| switch (err) {
+                error.Busy => if (ctx.platform.nowMs() < give_up) {
+                    ctx.platform.sleepMs(signal_retry_ms);
+                    continue;
+                },
+                error.Unavailable => {},
+            }
+            return ctx.runtimeError("wait-for: cannot signal '{s}' in {s}", .{ name, path });
+        }
     }
     const deadline = ctx.platform.nowMs() + timeout_ms;
     while (true) {
@@ -791,6 +838,42 @@ test "unit: cli-ps: wait-for signals are latched, consumed once, and time out" {
     const long = try h.alloc().alloc(u8, max_wait_name_bytes + 1);
     @memset(long, 'n');
     try pt.expectUsage(h.run(&.{ "cmux", "wait-for", long }), "wait-for name is longer than 180 bytes");
+}
+
+test "unit: cli-ps: wait-for gives each signal to exactly one of several racing waiters" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    // `close` is not called: the store borrows the test's directory.
+    var store: WaitStore = .{ .dir = tmp.dir };
+    const Race = struct {
+        store: *WaitStore,
+        wins: std.atomic.Value(u32) = .init(0),
+        taken: std.atomic.Value(bool) = .init(false),
+
+        fn waiter(r: *@This()) void {
+            var tries: usize = 0;
+            while (tries < 1_000_000 and !r.taken.load(.acquire)) : (tries += 1) {
+                if (r.store.consume("am9i.sig")) {
+                    _ = r.wins.fetchAdd(1, .acq_rel);
+                    r.taken.store(true, .release);
+                    return;
+                }
+            }
+        }
+    };
+    var round: usize = 0;
+    while (round < 40) : (round += 1) {
+        try store.signal("am9i.sig");
+        var race: Race = .{ .store = &store };
+        {
+            var threads: [6]std.Thread = undefined;
+            var started: usize = 0;
+            defer for (threads[0..started]) |t| t.join();
+            while (started < threads.len) : (started += 1) threads[started] = try std.Thread.spawn(.{}, Race.waiter, .{&race});
+        }
+        try testing.expectEqual(@as(u32, 1), race.wins.load(.acquire));
+        try testing.expect(!store.consume("am9i.sig"));
+    }
 }
 
 test "unit: cli-ps: terminal_io OK lines match goldens" {
