@@ -1,0 +1,4 @@
+Usage: cmux open-notification --id <uuid|notification:<uuid>> [--json]
+
+Focus the notification's window, workspace and surface and mark it read.
+Prints `OK <workspace> <surface>`.

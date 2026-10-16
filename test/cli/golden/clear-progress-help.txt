@@ -1,0 +1,3 @@
+Usage: cmux clear-progress [--workspace <id|ref|index>] [--window <id|ref|index>]
+
+Remove the workspace's sidebar progress bar. Prints `OK`.

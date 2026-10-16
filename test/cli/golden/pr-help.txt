@@ -1,0 +1,13 @@
+Usage: cmux pr <url|number|clear> [--workspace <id|ref|index>] [--window <id|ref|index>]
+
+Attach or replace the workspace's pull-request link, or remove it with
+`clear`. Needs a git repository on github.com and an authenticated GitHub CLI
+(gh): the pull request must belong to the repository or its parent. The link
+survives branch-watcher refreshes until replaced or cleared. Targets the
+caller's workspace (or the one open in this worktree); never changes focus.
+Prints `OK`.
+
+Examples:
+  cmux pr 123
+  cmux pr https://github.com/owner/repo/pull/123
+  cmux pr clear

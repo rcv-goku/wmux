@@ -1,0 +1,4 @@
+{"type":"ack","resume":{"after_seq":null,"oldest_seq":1,"latest_seq":4,"next_seq":5,"gap":false}}
+{"type":"heartbeat"}
+{"type":"event","seq":1,"id":"E1","name":"workspace.created","category":"workspace"}
+{"type":"event","seq":2,"id":"E2","name":"workspace.selected","category":"workspace"}

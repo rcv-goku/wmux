@@ -1,0 +1,3 @@
+Usage: cmux clear-log [--workspace <id|ref|index>] [--window <id|ref|index>]
+
+Clear the workspace's sidebar log. Prints `OK`.

@@ -1,0 +1,4 @@
+Usage: cmux simulate-app-active
+
+Run the app-became-active handling (marks the focused pane's notifications
+read), for tests. Prints `OK`.

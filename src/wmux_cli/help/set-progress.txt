@@ -1,0 +1,7 @@
+Usage: cmux set-progress <0.0-1.0> [--label <text>] [--workspace <id|ref|index>] [--window <id|ref|index>]
+
+Show a progress bar on the workspace's sidebar row. The value is clamped to
+0.0...1.0. Prints `OK`.
+
+Example:
+  cmux set-progress 0.5 --label Building...

@@ -1,0 +1,9 @@
+Usage: cmux log [--level info|progress|success|warning|error] [--source <name>] [--workspace <id|ref|index>] [--window <id|ref|index>] [--] <message>
+
+Append an entry to the workspace's sidebar log (default level: info). Words
+after the options form the message; everything after `--` is message text,
+even when it starts with `-`. Older entries drop off past
+sidebarMaxLogEntries (default 50). Prints `OK`.
+
+Example:
+  cmux log --level error --source build 'Compilation failed'
