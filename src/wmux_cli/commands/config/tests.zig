@@ -184,6 +184,37 @@ test "unit: cli-config: toggle, cycle, unset and preset share the mutation path"
     try harness.expectFail(h.run(&.{ "cmux", "config", "preset", "bad" }), 2, "names 'app.nope', which is not a setting");
 }
 
+test "unit: cli-config: a preset merges into object-typed settings key by key" {
+    var f: Fixture = undefined;
+    f.init();
+    defer f.deinit();
+    const h = &f.h;
+    const a = h.alloc();
+    // notifications.hooks is an object-typed setting: the preset adds one
+    // hook and must keep the existing one (cmux: nested objects merge).
+    h.addFile(f.wmux_json, "{\n  // hooks\n  \"notifications\": {\n    \"hooks\": { \"keep\": { \"cmd\": \"a\" } }\n  }\n}\n");
+    h.addFile(f.cmux_json, "{\"settingPresets\": {\"more\": {\"notifications\": {\"hooks\": {\"add\": {\"cmd\": \"b\"}}}, \"app\": {\"appearance\": \"dark\"}}}}");
+    const r = h.run(&.{ "cmux", "config", "preset", "more" });
+    try harness.expectOk(r);
+    try testing.expectEqualStrings(try std.fmt.allocPrint(a, "OK notifications.hooks = {{\"keep\":{{\"cmd\":\"a\"}},\"add\":{{\"cmd\":\"b\"}}}}\nOK app.appearance = \"dark\"\npath: {s}\n", .{f.wmux_json}), r.out);
+    const text = h.file(f.wmux_json).?;
+    try harness.expectContains(text, "\"keep\": { \"cmd\": \"a\" }");
+    try harness.expectContains(text, "\"add\"");
+    try harness.expectContains(text, "// hooks");
+    // Applying it again changes nothing and writes nothing.
+    const writes = h.writes;
+    const again = h.run(&.{ "cmux", "config", "preset", "more", "--json" });
+    try harness.expectOk(again);
+    try testing.expectEqual(writes, h.writes);
+    const js = try std.json.parseFromSliceLeaky(std.json.Value, a, again.out, .{});
+    const paths = js.object.get("paths").?.array.items;
+    try testing.expectEqual(@as(usize, 2), paths.len);
+    try testing.expectEqualStrings("notifications.hooks", paths[0].object.get("path").?.string);
+    try testing.expectEqual(false, paths[0].object.get("changed").?.bool);
+    try testing.expect(paths[0].object.get("value").?.object.get("keep") != null);
+    try testing.expectEqual(false, paths[1].object.get("changed").?.bool);
+}
+
 test "unit: cli-config: a missing wmux.json is created; policy-managed settings are refused" {
     var f: Fixture = undefined;
     f.init();

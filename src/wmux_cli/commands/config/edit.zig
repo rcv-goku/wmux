@@ -113,10 +113,36 @@ fn printGet(ctx: *Ctx, path: []const u8) !u8 {
     return output.exit.ok;
 }
 
+/// How `mutate` changes the file.
+const Mutation = union(enum) {
+    /// One `json_edit` set (value) or remove (null) per edit.
+    edits,
+    /// One deep merge of the JSON object `patch` (`json_edit.merge`: nested
+    /// objects merge key by key, cmux `settingPresets` semantics); the edits
+    /// only name the settings it touches, whose values are read back
+    /// afterwards. `label` names the patch in error messages.
+    merge: struct { patch: []const u8, label: []const u8 },
+};
+
 /// Applies `edits` to one file in a single validated write and prints
 /// `OK <path> = <json>` / `OK <path> unset` / `OK unchanged` lines plus
 /// `path: <file>` (or `{ok, file, paths: [{path, changed, value?}]}`).
 pub fn apply(ctx: *Ctx, verb: []const u8, which: files.Which, edits: []const Edit) !u8 {
+    return mutate(ctx, verb, which, edits, .edits);
+}
+
+fn editFailed(ctx: *Ctx, verb: []const u8, file: []const u8, what: []const u8, err: json_edit.Error, diag: jsonc.Diagnostic) error{OutOfMemory}!u8 {
+    return switch (err) {
+        error.OutOfMemory => error.OutOfMemory,
+        error.SyntaxError => ctx.runtimeError("config {s}: {s} does not parse ({f}); run 'cmux config doctor'", .{ verb, file, diag }),
+        error.RootNotObject => ctx.runtimeError("config {s}: {s} is not a JSON object", .{ verb, file }),
+        error.PathConflict => ctx.runtimeError("config {s}: '{s}' crosses a value that is not an object in {s}", .{ verb, what, file }),
+        error.InvalidPath => ctx.usageError("config {s}: '{s}' is not a valid setting path", .{ verb, what }),
+        error.InvalidValue => ctx.usageError("config {s}: the value for '{s}' is not a single JSON value", .{ verb, what }),
+    };
+}
+
+fn mutate(ctx: *Ctx, verb: []const u8, which: files.Which, edits: []const Edit, how: Mutation) !u8 {
     const loc = try files.locate(ctx);
     const file = loc.file(which) orelse return ctx.runtimeError("config {s}: no config directory (set USERPROFILE, XDG_CONFIG_HOME or WMUX_CONFIG_DIR)", .{verb});
     // Policy-managed settings refuse writes (ADR-5.1 row 7).
@@ -129,18 +155,32 @@ pub fn apply(ctx: *Ctx, verb: []const u8, which: files.Which, edits: []const Edi
     const before: []const u8 = if (std.mem.trim(u8, original, " \t\r\n").len == 0) "{}\n" else original;
     var text = before;
     const changed = try ctx.arena.alloc(bool, edits.len);
-    for (edits, 0..) |e, i| {
-        var diag: jsonc.Diagnostic = .{};
-        const r = (if (e.value) |v| json_edit.set(ctx.arena, text, e.path, v, &diag) else json_edit.remove(ctx.arena, text, e.path, &diag)) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            error.SyntaxError => return ctx.runtimeError("config {s}: {s} does not parse ({f}); run 'cmux config doctor'", .{ verb, file, diag }),
-            error.RootNotObject => return ctx.runtimeError("config {s}: {s} is not a JSON object", .{ verb, file }),
-            error.PathConflict => return ctx.runtimeError("config {s}: '{s}' crosses a value that is not an object in {s}", .{ verb, e.path, file }),
-            error.InvalidPath => return ctx.usageError("config {s}: '{s}' is not a valid setting path", .{ verb, e.path }),
-            error.InvalidValue => return ctx.usageError("config {s}: the value for '{s}' is not a single JSON value", .{ verb, e.path }),
-        };
-        changed[i] = r.changed;
-        text = r.text;
+    // The value each path ends up with (null after an unset).
+    const values = try ctx.arena.alloc(?[]const u8, edits.len);
+    switch (how) {
+        .edits => for (edits, 0..) |e, i| {
+            var diag: jsonc.Diagnostic = .{};
+            const r = (if (e.value) |v| json_edit.set(ctx.arena, text, e.path, v, &diag) else json_edit.remove(ctx.arena, text, e.path, &diag)) catch |err|
+                return editFailed(ctx, verb, file, e.path, err, diag);
+            changed[i] = r.changed;
+            values[i] = e.value;
+            text = r.text;
+        },
+        .merge => |m| {
+            var diag: jsonc.Diagnostic = .{};
+            const r = json_edit.merge(ctx.arena, text, m.patch, &diag) catch |err|
+                return editFailed(ctx, verb, file, m.label, err, diag);
+            text = r.text;
+            // Both texts parse: merge parsed `before` and wrote valid JSON.
+            const old_root = jsonc.parseInto(ctx.arena, before, .{}, null) catch |err| return editFailed(ctx, verb, file, "", err, .{});
+            const new_root = jsonc.parseInto(ctx.arena, text, .{}, null) catch |err| return editFailed(ctx, verb, file, "", err, .{});
+            for (edits, 0..) |e, i| {
+                const old = old_root.getDotted(e.path);
+                const new = new_root.getDotted(e.path);
+                changed[i] = if (old != null and new != null) !old.?.eql(new.?) else (old != null) != (new != null);
+                values[i] = if (new) |n| try n.toJsonAlloc(ctx.arena) else null;
+            }
+        },
     }
     const any = !std.mem.eql(u8, text, before);
     if (any) {
@@ -164,13 +204,13 @@ pub fn apply(ctx: *Ctx, verb: []const u8, which: files.Which, edits: []const Edi
         try s.write(file);
         try s.objectField("paths");
         try s.beginArray();
-        for (edits, changed) |e, c| {
+        for (edits, changed, values) |e, c, value| {
             try s.beginObject();
             try s.objectField("path");
             try s.write(e.path);
             try s.objectField("changed");
             try s.write(c);
-            if (e.value) |v| {
+            if (value) |v| {
                 try s.objectField("value");
                 try s.print("{s}", .{v});
             }
@@ -181,10 +221,10 @@ pub fn apply(ctx: *Ctx, verb: []const u8, which: files.Which, edits: []const Edi
         try ctx.out.writeByte('\n');
         return output.exit.ok;
     }
-    for (edits, changed) |e, c| {
+    for (edits, changed, values) |e, c, value| {
         if (!c) {
             try ctx.out.writeAll("OK unchanged\n");
-        } else if (e.value) |v| {
+        } else if (value) |v| {
             try ctx.out.print("OK {s} = {s}\n", .{ e.path, v });
         } else try ctx.out.print("OK {s} unset\n", .{e.path});
     }
@@ -284,17 +324,21 @@ pub fn runPreset(ctx: *Ctx, args: []const []const u8) !u8 {
     var edits: std.ArrayList(Edit) = .empty;
     if (try flatten(ctx, &edits, "", &p)) |bad| return ctx.usageError("config preset: settingPresets.{s} names '{s}', which is not a setting", .{ name, bad });
     if (edits.items.len == 0) return ctx.usageError("config preset: settingPresets.{s} is empty", .{name});
-    return apply(ctx, "preset", which, edits.items);
+    // One deep merge: nested objects merge key by key, including the keys
+    // of an object-typed setting (cmux), so a preset that adds one entry
+    // keeps the others.
+    return mutate(ctx, "preset", which, edits.items, .{ .merge = .{ .patch = try p.toJsonAlloc(ctx.arena), .label = try std.fmt.allocPrint(ctx.arena, "settingPresets.{s}", .{name}) } });
 }
 
-/// Preset members to setting edits: a declared setting takes the value as a
-/// whole; other objects merge key by key. Returns the first path that is
-/// neither, or null.
+/// The settings a preset names: a declared setting (an object-typed one
+/// included) ends the walk; other objects are sections walked key by key.
+/// Returns the first path that is neither, or null. The edits carry no
+/// value: `mutate` reads the merged values back.
 fn flatten(ctx: *Ctx, edits: *std.ArrayList(Edit), prefix: []const u8, node: *const jsonc.Node) !?[]const u8 {
     for (node.data.object) |m| {
         const path = if (prefix.len == 0) m.key else try std.fmt.allocPrint(ctx.arena, "{s}.{s}", .{ prefix, m.key });
         if (settings.spec.find(files.specs, path) != null) {
-            try edits.append(ctx.arena, .{ .path = path, .value = try m.value.toJsonAlloc(ctx.arena) });
+            try edits.append(ctx.arena, .{ .path = path, .value = null });
         } else if (m.value.data == .object) {
             if (try flatten(ctx, edits, path, &m.value)) |bad| return bad;
         } else return path;
