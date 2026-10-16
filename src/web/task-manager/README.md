@@ -84,6 +84,9 @@ enforces Trusted Types.
 - **Keyboard**: Up/Down/Home/End move within a section, Left/Right collapse,
   expand or go to the parent / first child, Enter jumps, Delete kills.
   Focus stays on the same row across refreshes.
+- **Row keys** (selection, focus, collapsed state): windows, workspaces, panes
+  and surfaces by id (else ref); processes, tags and webviews by PID within
+  their parent row, so a PID listed in two places gives two independent rows.
 
 ## Native contract
 

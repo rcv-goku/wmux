@@ -100,6 +100,32 @@ describe("unit: task manager model", () => {
     assert.equal(agents[0].owner.surface_id, IDS.surfTerm);
   });
 
+  test("unit: task-manager: row keys stay unique when PIDs repeat", () => {
+    const reply = topReply();
+    // Process 501 under its status tag and in a terminal; two browser surfaces
+    // whose webviews report the shared WebView2 browser process and no id.
+    reply.windows[1].workspaces[0].panes[0].surfaces[0].processes.push({ pid: 501, name: "watcher.exe" });
+    const browser = reply.windows[0].workspaces[1].panes[0].surfaces[0];
+    reply.windows[0].workspaces[1].panes[0].surfaces.push({
+      ...browser,
+      id: "D0000000-0000-4000-8000-0000000000FF",
+      ref: "surface:9",
+      webviews: [{ pid: 900, title: "second" }],
+    });
+    browser.webviews.push({ pid: 900, title: "same surface, same pid" });
+    const top = m.normalizeTop(reply);
+    const keys = [];
+    m.walk(top.windows, (n) => keys.push(n.key));
+    assert.equal(new Set(keys).size, keys.length, `duplicate keys in ${JSON.stringify(keys)}`);
+    // Nodes with ids keep plain, stable keys (saved collapsed state uses them).
+    assert.equal(top.windows[0].key, `window:${IDS.win1}`);
+    assert.equal(top.windows[0].children[0].key, `workspace:${IDS.wsApi}`);
+    // Unique keys survive sorting and a second normalization of the same reply.
+    const again = [];
+    m.walk(m.normalizeTop(reply).windows, (n) => again.push(n.key));
+    assert.deepEqual(again, keys);
+  });
+
   test("unit: task-manager: program totals group unique PIDs by executable", () => {
     const reply = topReply();
     // The same PID reported twice (tag + surface) counts once.
@@ -190,6 +216,27 @@ describe("unit: task manager model", () => {
     );
     assert.equal(m.defaultDirection("name"), "asc");
     assert.equal(m.defaultDirection("proc"), "desc");
+  });
+
+  test("unit: task-manager: processes sort by the name the row shows", () => {
+    const top = m.normalizeTop({
+      windows: [
+        {
+          processes: [
+            // Neither the full path nor a title the row does not show decides.
+            { pid: 1, name: "C:\\Windows\\System32\\conhost.exe", title: "aa" },
+            { pid: 2, name: "bash.exe" },
+            { pid: 3, name: "D:\\tools\\awk.exe" },
+          ],
+        },
+      ],
+    });
+    const procs = m.sortTree(top.windows, "name", "asc")[0].children;
+    assert.deepEqual(
+      procs.map((p) => p.pid),
+      [3, 2, 1],
+    );
+    assert.equal(m.sortName(procs[2]), "conhost.exe");
   });
 
   test("unit: task-manager: flatten honors collapsed keys and the Processes toggle", () => {

@@ -498,6 +498,48 @@ describe("unit: task manager actions", () => {
     assert.equal($("tm-banner").textContent, "Unable to kill process: process is protected");
   });
 
+  test("unit: task-manager: a PID listed in two places gives two rows with their own owners", async () => {
+    await startApp({ init: { state: { show_processes: true } } });
+    // The status-tag process 501 (window 1) also runs in the idle terminal (window 2).
+    top.windows[1].workspaces[0].panes[0].surfaces[0].processes.push({
+      pid: 501,
+      name: "watcher.exe",
+      cpu_percent: 0.5,
+      memory_bytes: 1024,
+    });
+    await app.refresh();
+    await settle();
+    const dupes = bodyRows("tm-tree").filter((tr) => {
+      const r = app.row(tr.dataset.key);
+      return r.kind === "process" && r.pid === 501;
+    });
+    assert.equal(dupes.length, 2);
+    assert.notEqual(dupes[0].dataset.key, dupes[1].dataset.key, "row keys are unique");
+    click(window, dupes[0]);
+    assert.equal(doc.querySelectorAll("#tm-tree tr.is-selected").length, 1);
+    // The tag's copy has no surface: it jumps to its workspace in window 1.
+    mouse(window, dupes[0], "dblclick");
+    await settle();
+    assert.deepEqual(host.calls("workspace.select").at(-1).params, {
+      workspace_id: IDS.wsApi,
+      window_id: IDS.win1,
+    });
+    assert.equal(host.calls("surface.focus").length, 0);
+    // The terminal's copy jumps to that terminal.
+    mouse(window, dupes[1], "dblclick");
+    await settle();
+    assert.deepEqual(host.calls("surface.focus").at(-1).params, {
+      surface_id: IDS.surfSleep,
+      window_id: IDS.win2,
+      workspace_id: IDS.wsIdle,
+    });
+    // Arrow keys move from the row that has focus, not from its twin.
+    click(window, dupes[1]);
+    const list = bodyRows("tm-tree");
+    key(window, dupes[1], { key: "ArrowUp" });
+    assert.equal(doc.activeElement, list[list.indexOf(dupes[1]) - 1]);
+  });
+
   test("unit: task-manager: arrow keys move, Left/Right collapse and expand", async () => {
     await startApp();
     const first = bodyRows("tm-tree")[0];

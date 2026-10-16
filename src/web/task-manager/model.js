@@ -23,6 +23,8 @@ const CHILD_KEYS = Object.freeze([
 
 export const KINDS = Object.freeze(["window", "workspace", "tag", "pane", "surface", "webview", "process"]);
 const KIND_SET = new Set(KINDS);
+/** Kinds whose id (UUID) or ref is unique across the whole reply. */
+const GLOBAL_ID_KINDS = new Set(["window", "workspace", "pane", "surface"]);
 
 /** Known coding agents by executable base name (lowercase, no `.exe`). */
 export const KNOWN_AGENTS = Object.freeze({
@@ -71,11 +73,17 @@ function idFor(kind, raw) {
   return str(raw[`${kind}_id`]) || str(raw.id);
 }
 
+/** `C:\x\pwsh.exe` -> `pwsh.exe`. */
+function baseName(name) {
+  return str(name).split(/[\\/]/).pop() || "";
+}
+
 /**
  * Normalize one raw node. `kind` comes from the array holding it; `owner`
- * carries the ids of the enclosing window / workspace / pane / surface.
+ * carries the ids of the enclosing window / workspace / pane / surface and
+ * `parentKey` the key of the enclosing node.
  */
-function normalizeNode(raw, kind, owner, path) {
+function normalizeNode(raw, kind, owner, path, parentKey) {
   if (!raw || typeof raw !== "object") return null;
   const k = KIND_SET.has(raw.kind) ? raw.kind : kind || "process";
   const node = {
@@ -106,13 +114,21 @@ function normalizeNode(raw, kind, owner, path) {
     children: [],
   };
   if (k !== "process" && k !== "webview" && k !== "tag" && node.id) node.owner[`${k}_id`] = node.id;
-  node.key = `${k}:${node.id || node.pid || node.ref || path}`;
+  // Windows, workspaces, panes and surfaces are keyed by their id or ref.
+  // Processes, tags and webviews are known by PID, and one PID can show up in
+  // several places (a status tag and the terminal running it, webviews sharing
+  // the WebView2 browser process), so their keys are scoped to the parent.
+  const ident = node.id || node.pid || node.ref || path;
+  node.key =
+    GLOBAL_ID_KINDS.has(k) && (node.id || node.ref)
+      ? `${k}:${ident}`
+      : `${parentKey ? `${parentKey}/` : ""}${k}:${ident}`;
   for (const [field, childKind] of CHILD_KEYS) {
     const list = raw[field];
     if (!Array.isArray(list)) continue;
     const ck = childKind || (k === "process" ? "process" : null);
     list.forEach((child, i) => {
-      const n = normalizeNode(child, ck, node.owner, `${path}/${field}.${i}`);
+      const n = normalizeNode(child, ck, node.owner, `${path}/${field}.${i}`, node.key);
       if (n) node.children.push(n);
     });
   }
@@ -134,8 +150,17 @@ export function normalizeTop(result) {
   if (!result || typeof result !== "object" || !Array.isArray(result.windows)) return null;
   const windows = [];
   result.windows.forEach((w, i) => {
-    const n = normalizeNode(w, "window", {}, `w${i}`);
+    const n = normalizeNode(w, "window", {}, `w${i}`, "");
     if (n) windows.push(n);
+  });
+  // Rows, selection, focus and collapsed state are looked up by key: make
+  // every key unique (a repeated PID under one parent, a repeated id).
+  const used = new Set();
+  walk(windows, (n) => {
+    let key = n.key;
+    for (let i = 2; used.has(key); i += 1) key = `${n.key}#${i}`;
+    used.add(key);
+    n.key = key;
   });
   const t = result.totals && typeof result.totals === "object" ? result.totals : null;
   const totals = t
@@ -304,9 +329,10 @@ export function normalizeMemory(result) {
   return { app, child, groups };
 }
 
-/** Name used for sorting by name. */
+/** Name used for sorting by name: what the row shows. */
 export function sortName(node) {
   if (node.kind === "tag") return `${node.tagKey} ${node.tagValue}`;
+  if (node.kind === "process") return baseName(node.name);
   return node.title || node.name || node.ref || "";
 }
 
