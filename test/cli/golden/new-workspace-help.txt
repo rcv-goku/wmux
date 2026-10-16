@@ -20,7 +20,8 @@ Options:
   --layout <json>               Split layout (JSON) or saved layout name
   --window <id|ref|index>       Window to create the workspace in
   --focus <true|false>          Select the new workspace (default: false,
-                                created in the background); --no-focus
+                                created in the background); a bare --focus
+                                means true, --no-focus means false
   --group <id|ref>              Add it to a workspace group
   --group-placement <where>     afterCurrent, top (default) or end
   --group-reference <workspace> Reference workspace for afterCurrent

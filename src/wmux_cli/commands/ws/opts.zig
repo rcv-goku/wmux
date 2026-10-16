@@ -2,7 +2,8 @@
 //! families: `--flag value`, `--flag=value`, boolean flags, repeatable
 //! flags, aliases and positionals. Everything after `--` is positional and
 //! verbatim. A value flag followed by another `--option` (or nothing) is a
-//! usage error, so `new-window --name --json` cannot take `--json` as a name.
+//! usage error, so `new-window --name --json` cannot take `--json` as a name,
+//! unless its value is optional (`--focus` alone records a null value).
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -10,6 +11,9 @@ const Allocator = std.mem.Allocator;
 pub const Def = struct {
     name: []const u8,
     takes_value: bool = true,
+    /// The value may be left out: with nothing, `--` or another `--option`
+    /// next, the entry records a null value instead of a usage error.
+    optional_value: bool = false,
     /// Alternate spellings recorded under `name`.
     aliases: []const []const u8 = &.{},
 };
@@ -92,6 +96,10 @@ pub fn parse(arena: Allocator, args: []const []const u8, defs: []const Def, msg:
             continue;
         }
         if (i + 1 >= args.len or looksLikeOption(args[i + 1]) or std.mem.eql(u8, args[i + 1], "--")) {
+            if (def.optional_value) {
+                try entries.append(arena, .{ .name = def.name, .value = null });
+                continue;
+            }
             msg.* = try std.fmt.allocPrint(arena, "{s} requires a value", .{name});
             return error.Usage;
         }
@@ -158,4 +166,27 @@ test "unit: cli-ws: opts usage errors" {
     try expectUsage(&.{ "--name", "--force" }, "--name requires a value");
     try expectUsage(&.{ "--name", "--" }, "--name requires a value");
     try expectUsage(&.{"--force=yes"}, "--force does not take a value");
+}
+
+test "unit: cli-ws: opts optional values stand alone before options, -- or the end" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const defs = [_]Def{ .{ .name = "--focus", .optional_value = true }, .{ .name = "--name" } };
+    var msg: []const u8 = "";
+    const bare = try parse(a, &.{"--focus"}, &defs, &msg);
+    try testing.expect(bare.has("--focus"));
+    try testing.expect(bare.get("--focus") == null);
+    const mixed = try parse(a, &.{ "--focus", "--name", "x", "--focus", "--", "pos" }, &defs, &msg);
+    try testing.expectEqual(@as(usize, 3), mixed.entries.len);
+    try testing.expect(mixed.entries[0].value == null);
+    try testing.expectEqualStrings("x", mixed.get("--name").?);
+    try testing.expect(mixed.entries[2].value == null);
+    try testing.expectEqual(@as(usize, 1), mixed.positionals.len);
+    const valued = try parse(a, &.{ "--focus", "false", "--focus=true" }, &defs, &msg);
+    try testing.expectEqualStrings("false", valued.entries[0].value.?);
+    try testing.expectEqualStrings("true", valued.get("--focus").?);
+    // Flags without an optional value still need one.
+    try testing.expectError(error.Usage, parse(a, &.{ "--name", "--focus" }, &defs, &msg));
+    try testing.expectEqualStrings("--name requires a value", msg);
 }

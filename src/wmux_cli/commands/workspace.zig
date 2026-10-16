@@ -375,6 +375,13 @@ test "unit: cli-workspace: new-workspace maps every flag onto workspace.create" 
     try h.expectLast("workspace.create", "{\"focus\":false}");
     _ = try testkit.expectOk(&h, &.{ "new-workspace", "--no-focus", "--focus", "1" });
     try h.expectLast("workspace.create", "{\"focus\":true}");
+    // A bare --focus (the `+workspace new --focus` spelling) means true.
+    _ = try testkit.expectOk(&h, &.{ "new-workspace", "--focus" });
+    try h.expectLast("workspace.create", "{\"focus\":true}");
+    _ = try testkit.expectOk(&h, &.{ "new-workspace", "--name", "N", "--focus", "--json" });
+    try h.expectLast("workspace.create", "{\"title\":\"N\",\"focus\":true}");
+    _ = try testkit.expectOk(&h, &.{ "+workspace", "new", "--focus", "--name", "N" });
+    try h.expectLast("workspace.create", "{\"title\":\"N\",\"focus\":true}");
     // Blank commands are dropped; --command=<text> works.
     _ = try testkit.expectOk(&h, &.{ "new-workspace", "--command", "   " });
     try h.expectLast("workspace.create", "{\"focus\":false}");
@@ -400,7 +407,7 @@ test "unit: cli-workspace: new-workspace usage errors" {
     try testkit.expectUsage(&h, &.{ "new-workspace", "--name", "" }, "--name requires a non-empty value");
     try testkit.expectUsage(&h, &.{ "new-workspace", "--cwd=" }, "--cwd requires a non-empty value");
     try testkit.expectUsage(&h, &.{ "new-workspace", "--focus", "maybe" }, "--focus must be true or false");
-    try testkit.expectUsage(&h, &.{ "new-workspace", "--focus" }, "--focus requires a value");
+    try testkit.expectUsage(&h, &.{ "new-workspace", "--focus=" }, "--focus must be true or false");
     try testkit.expectUsage(&h, &.{ "new-workspace", "--layout", "{bad" }, "--layout is not valid JSON");
     try testkit.expectUsage(&h, &.{ "new-workspace", "--layout", " " }, "--layout requires a non-empty value");
     try testkit.expectUsage(&h, &.{ "new-workspace", "--group-placement", "top" }, "--group-placement requires --group");

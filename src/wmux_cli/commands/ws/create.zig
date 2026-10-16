@@ -32,7 +32,8 @@ pub const create_defs = [_]Def{
     .{ .name = "--env-file" },
     .{ .name = "--layout" },
     .{ .name = "--window" },
-    .{ .name = "--focus" },
+    // A bare `--focus` (the `+workspace new --focus` spelling) means true.
+    .{ .name = "--focus", .optional_value = true },
     .{ .name = "--no-focus", .takes_value = false },
     .{ .name = "--group" },
     .{ .name = "--group-placement" },
@@ -74,12 +75,12 @@ fn parseFocus(s: []const u8) ?bool {
     return null;
 }
 
-/// Last focus flag wins (`--focus <bool>`, `--focus=<bool>`, `--no-focus`).
+/// Last focus flag wins (`--focus [<bool>]`, `--focus=<bool>`, `--no-focus`).
 fn focusValue(o: common.opts.Opts) error{Invalid}!bool {
     var v = false;
     for (o.entries) |e| {
         if (std.mem.eql(u8, e.name, "--no-focus")) v = false;
-        if (std.mem.eql(u8, e.name, "--focus")) v = parseFocus(e.value.?) orelse return error.Invalid;
+        if (std.mem.eql(u8, e.name, "--focus")) v = if (e.value) |s| parseFocus(s) orelse return error.Invalid else true;
     }
     return v;
 }
