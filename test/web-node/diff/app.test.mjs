@@ -402,6 +402,33 @@ describe("unit: diff app rendering", () => {
     assert.equal($("#dv-title").textContent, "Pushed");
   });
 
+  test("unit: diff: an overtaken refresh does not replace the newer diff", async () => {
+    const one = (name) => patch("--- a/" + name, "+++ b/" + name, "@@ -1 +1 @@", "-a", "+b");
+    const held = [];
+    let loads = 0;
+    let viewedCalls = 0;
+    await startApp({
+      params: { patch: one("start.txt") },
+      handlers: {
+        "panel.diff.load": () => ({ patch: one(["older.txt", "newer.txt"][loads++]) }),
+        // The first list (at start) answers at once; the refreshes wait for release.
+        "viewedFiles.list": () => (viewedCalls++ === 0 ? { files: [] } : new Promise((resolve) => held.push(() => resolve({ files: [] })))),
+      },
+    });
+    const older = app.load(true);
+    await settle();
+    const newer = app.load(true);
+    await settle();
+    assert.equal(held.length, 2, "both refreshes wait for viewedFiles.list");
+    held[1]();
+    await settle();
+    assert.deepEqual($$(".dv-path").map((p) => p.textContent), ["newer.txt"]);
+    held[0]();
+    await Promise.all([older, newer]);
+    await settle();
+    assert.deepEqual($$(".dv-path").map((p) => p.textContent), ["newer.txt"], "the older result is dropped");
+  });
+
   test("unit: diff: copy git apply command", async () => {
     const { store } = await startApp();
     click($("#dv-copy-apply"));

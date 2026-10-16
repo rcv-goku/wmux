@@ -580,7 +580,11 @@ export function createApp(options) {
     }
     if (seq !== state.loadSeq || state.destroyed) return;
     setStatus("");
-    if (refresh) await loadViewed();
+    if (refresh) {
+      await loadViewed();
+      // A newer load may have started (and finished) while this one waited.
+      if (seq !== state.loadSeq || state.destroyed) return;
+    }
     loadPatch(text, meta);
   }
 
