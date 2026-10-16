@@ -145,11 +145,11 @@ fn editFailed(ctx: *Ctx, verb: []const u8, file: []const u8, what: []const u8, e
 fn mutate(ctx: *Ctx, verb: []const u8, which: files.Which, edits: []const Edit, how: Mutation) !u8 {
     const loc = try files.locate(ctx);
     const file = loc.file(which) orelse return ctx.runtimeError("config {s}: no config directory (set USERPROFILE, XDG_CONFIG_HOME or WMUX_CONFIG_DIR)", .{verb});
-    // Policy-managed settings refuse writes (ADR-5.1 row 7).
-    var failure: ?files.ParseFailure = null;
-    if (try files.resolveAll(ctx, loc, &failure)) |r| {
-        for (edits) |e| if (r.isLocked(e.path)) return ctx.runtimeError("config {s}: '{s}' is managed by policy and cannot be changed", .{ verb, e.path });
-    }
+    // Policy-managed settings refuse writes (ADR-5.1 row 7). The lock comes
+    // from the policy values alone, so a config file that does not parse
+    // cannot hide it.
+    const policy = try files.policyValues(ctx);
+    for (edits) |e| if (resolve.policyValueFor(policy, e.path) != null) return ctx.runtimeError("config {s}: '{s}' is managed by policy and cannot be changed", .{ verb, e.path });
     const original = (files.readExisting(ctx, file) catch
         return ctx.runtimeError("config {s}: cannot read {s} (unreadable or larger than {d} MiB); it was not changed", .{ verb, file, files.max_file_bytes >> 20 })) orelse "";
     const before: []const u8 = if (std.mem.trim(u8, original, " \t\r\n").len == 0) "{}\n" else original;

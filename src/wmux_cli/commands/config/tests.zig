@@ -228,6 +228,13 @@ test "unit: cli-config: a missing wmux.json is created; policy-managed settings 
     try harness.expectFail(h.run(&.{ "cmux", "config", "set", "automation.socketControlMode", "off" }), 1, "is managed by policy");
     const get = h.run(&.{ "cmux", "config", "get", "automation.socketControlMode" });
     try testing.expectEqualStrings("\"allowAll\"  (managed by policy)\n", get.out);
+    // The lock holds even when another layer does not parse: the write
+    // target is fine, so nothing else would stop the write.
+    const writes = h.writes;
+    h.addFile(f.cmux_json, "{oops");
+    try harness.expectFail(h.run(&.{ "cmux", "config", "set", "automation.socketControlMode", "off" }), 1, "is managed by policy");
+    try harness.expectFail(h.run(&.{ "cmux", "config", "unset", "automation.socketControlMode" }), 1, "is managed by policy");
+    try testing.expectEqual(writes, h.writes);
 }
 
 test "unit: cli-config: a config file that exists but cannot be read is reported and never replaced" {

@@ -150,7 +150,7 @@ pub fn parseFile(ctx: *Ctx, path: ?[]const u8, failure: *?ParseFailure) !?Parsed
 
 /// Managed policy for `automation.socketControlMode` (the one value the
 /// CLI platform layer reads today).
-fn policyValues(ctx: *Ctx) ![]const settings.resolve.PolicyValue {
+pub fn policyValues(ctx: *Ctx) ![]const settings.resolve.PolicyValue {
     var list: std.ArrayList(settings.resolve.PolicyValue) = .empty;
     for ([_]platform_mod.PolicyHive{ .hklm, .hkcu }) |hive| switch (ctx.platform.policy(ctx.arena, hive)) {
         .string => |s| try list.append(ctx.arena, .{
