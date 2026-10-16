@@ -336,6 +336,46 @@ test "unit: remote-daemon: fs.put and fs.get over the protocol" {
     try testing.expectEqualStrings("invalid_params", badmode.code.?);
 }
 
+test "unit: remote-daemon: a max-size fs.get reply does not disconnect a streaming client" {
+    const gpa = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const home = try tmp.dir.realpathAlloc(gpa, ".");
+    defer gpa.free(home);
+    // A file at the fs.get limit: its reply is one ~22.4 MiB base64 line.
+    {
+        const big = try gpa.alloc(u8, msgs.max_fs_bytes);
+        defer gpa.free(big);
+        @memset(big, 'q');
+        try tmp.dir.writeFile(.{ .sub_path = "big.bin", .data = big });
+    }
+    const h = try StdioHarness.start(gpa, homeCfg(home));
+    defer h.stop();
+    const c = &h.client;
+    _ = try c.hello(true, timeout);
+    // A session that keeps producing output while the reply drains (the
+    // marker is computed by the shell, so the typed echo never matches).
+    const sid = try openSh(c, null, 80, 24);
+    const a = try ptyAttach(c, sid, 80, 24);
+    try typeLine(c, sid, "while :; do echo t-$((2+2)); sleep 0.02; done\n");
+    try c.waitData(a.channel, "t-4", timeout);
+    // Request the file, then stop reading for a while: the server can only
+    // flush a pipe buffer's worth, and PTY output queues behind the reply.
+    try c.writeAll("{\"id\":77,\"method\":\"fs.get\",\"params\":{\"path\":\"~/big.bin\"}}\n");
+    std.Thread.sleep(500 * std.time.ns_per_ms);
+    const r = try c.nextReply(120_000);
+    try testing.expect(r.ok);
+    try testing.expectEqual(@as(i64, 77), r.id.?.int);
+    try testing.expectEqual(@as(i64, msgs.max_fs_bytes), int(r.result, "size"));
+    // Still connected, and the session still streams to this client.
+    try testing.expect((try c.request(.ping, .{}, timeout)).ok);
+    const before = std.mem.count(u8, c.channelData(a.channel), "t-4");
+    var tries: usize = 0;
+    while (std.mem.count(u8, c.channelData(a.channel), "t-4") == before and tries < 100) : (tries += 1)
+        c.pump(std.time.milliTimestamp() + 100) catch |e| if (e != error.Timeout) return e;
+    try testing.expect(std.mem.count(u8, c.channelData(a.channel), "t-4") > before);
+}
+
 const persistent = @import("persistent.zig");
 
 /// A persistent slot server on a Unix socket under a temporary home.

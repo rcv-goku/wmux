@@ -29,7 +29,7 @@ pub const Config = struct {
     /// clients (0 disables).
     idle_exit_ms: i64 = 0,
     /// A client whose unsent output exceeds this is disconnected.
-    max_outbound: usize = 16 * 1024 * 1024,
+    max_outbound: usize = default_max_outbound,
     /// Stop when the last client leaves (`serve --stdio`).
     exit_when_no_clients: bool = true,
     /// Polled each tick; set from a signal handler to stop the loop.
@@ -40,6 +40,20 @@ pub const Config = struct {
 
 /// Bytes read from a PTY per read call (and the max data frame we send).
 pub const read_chunk = 64 * 1024;
+
+/// Default `Config.max_outbound`. Replies are queued without a check, so
+/// the cap must stay well above the largest one: an fs.get of
+/// `max_fs_bytes` is a single ~22.4 MiB base64 line, and with a smaller
+/// cap the first PTY data or event queued behind it disconnected the
+/// client (on the carrier, every terminal of the route at once).
+pub const default_max_outbound: usize = 64 * 1024 * 1024;
+
+comptime {
+    const max_reply = std.base64.standard.Encoder.calcSize(msgs.max_fs_bytes) + 64 * 1024;
+    // Room for the largest reply plus 16 MiB of output queued behind it.
+    if (default_max_outbound < max_reply + 16 * 1024 * 1024)
+        @compileError("default_max_outbound must exceed the largest reply plus headroom");
+}
 
 pub const Conn = struct {
     id: u64,
