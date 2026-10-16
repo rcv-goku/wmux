@@ -11,6 +11,7 @@ const Workspace = @This();
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
+const Group = @import("Group.zig");
 const Pane = @import("Pane.zig");
 const SplitTree = @import("../../../datastruct/split_tree.zig").SplitTree;
 const Surface = @import("../Surface.zig");
@@ -18,6 +19,8 @@ const Tab = @import("Tab.zig");
 const Title = @import("Title.zig");
 const Window = @import("../ui/Window.zig");
 const features_ext = @import("../features/ext.zig");
+const handle_registry = @import("logic/handle_registry.zig");
+const ids = @import("ids.zig");
 const titles = @import("logic/titles.zig");
 
 const TabStatus = Tab.TabStatus;
@@ -44,8 +47,18 @@ pub const DESCRIPTION_MAX_UNITS: usize = 256;
 /// renders a marker for the non-none states.
 pub const PrState = enum { none, open, draft, merged, closed };
 
+/// Identity (`workspace_id`, `workspace:N`; ADR-2), minted when the
+/// workspace is created and retired when it is destroyed.
+handle: ids.Handle = ids.no_handle,
+
+/// The registry `handle` is minted in (null while unregistered).
+registry: ?*handle_registry.HandleRegistry = null,
+
 /// The window whose `workspaces` list owns this workspace.
 window: *Window,
+
+/// The workspace group this row belongs to (W4-5), if any.
+group: ?*Group = null,
 
 /// The sidebar row name: a user rename is `title.custom`; an unnamed
 /// workspace shows "Workspace N".
@@ -118,6 +131,7 @@ pub fn create(gpa: Allocator, window: *Window) Allocator.Error!*Workspace {
 /// Tear the workspace down: its split tree (which unrefs every pane and
 /// so every tab), its strings and environment, then the object itself.
 pub fn destroy(self: *Workspace, gpa: Allocator) void {
+    if (self.registry) |r| r.retire(self.handle.uuid);
     self.tree.deinit();
     self.title.deinit(gpa);
     if (self.description) |d| gpa.free(d);

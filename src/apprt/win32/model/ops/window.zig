@@ -9,12 +9,44 @@ const std = @import("std");
 const Window = @import("../../ui/Window.zig");
 const Workspace = @import("../Workspace.zig");
 const arith_logic = @import("../logic/arith.zig");
+const ids = @import("../ids.zig");
+const model_registry = @import("../registry.zig");
 const w32 = @import("../../platform/win32.zig");
 
 const log = std.log.scoped(.win32);
 
 const canCreateWorkspace = arith_logic.canCreateWorkspace;
 const closeWorkspaceArith = arith_logic.closeWorkspaceArith;
+
+/// The model part of creating a window (ui/Window.zig init): mint the
+/// window's handle and create, register and select its first workspace.
+/// On failure nothing is left registered.
+pub fn initWindowModel(self: *Window) !void {
+    const gpa = self.app.core_app.alloc;
+    try model_registry.register(&self.app.handles, gpa, self);
+    errdefer model_registry.unregister(self);
+    const first_ws = try Workspace.create(gpa, self);
+    errdefer first_ws.destroy(gpa);
+    try model_registry.register(&self.app.handles, gpa, first_ws);
+    try self.workspaces.append(gpa, first_ws);
+    self.selected = first_ws;
+}
+
+/// The model part of freeing a window (final teardown, after its surfaces
+/// were cleaned up): destroy its workspaces and groups and retire its
+/// handle. Runs once per window (Window.deinit and the WM_DESTROY path
+/// are mutually exclusive).
+pub fn freeWindowModel(self: *Window) void {
+    const gpa = self.app.core_app.alloc;
+    self.selected = null;
+    for (self.workspaces.items) |ws| ws.destroy(gpa);
+    self.workspaces.deinit(gpa);
+    self.workspaces = .empty;
+    for (self.groups.items) |group| group.destroy(gpa);
+    self.groups.deinit(gpa);
+    self.groups = .empty;
+    model_registry.unregister(self);
+}
 
 /// Switch to the workspace at the given index. Hides the outgoing
 /// workspace's visible panes BEFORE making the new one active (so two
@@ -91,6 +123,10 @@ pub fn appendWorkspace(self: *Window) ?usize {
     if (!canCreateWorkspace(self.is_quick_terminal)) return null;
     const alloc = self.app.core_app.alloc;
     const ws = Workspace.create(alloc, self) catch return null;
+    model_registry.register(&self.app.handles, alloc, ws) catch {
+        ws.destroy(alloc);
+        return null;
+    };
     self.workspaces.append(alloc, ws) catch {
         ws.destroy(alloc);
         return null;

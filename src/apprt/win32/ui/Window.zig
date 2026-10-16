@@ -12,10 +12,13 @@ const App = @import("../App.zig");
 const AttentionRing = @import("overlays/AttentionRing.zig").AttentionRing;
 const FlashOverlay = @import("overlays/FlashOverlay.zig").FlashOverlay;
 const BrowserPane = @import("../web/BrowserPane.zig");
+const Group = @import("../model/Group.zig");
 const PaneButtonsMod = @import("overlays/PaneButtons.zig");
 const PaneButtons = PaneButtonsMod.PaneButtons;
 const Tab = @import("../model/Tab.zig");
 const Pane = @import("../model/Pane.zig");
+const ids = @import("../model/ids.zig");
+const model_registry = @import("../model/registry.zig");
 const RightSidebar = @import("right_sidebar/legacy_strip.zig");
 const Sidebar = @import("sidebar/legacy_gdi.zig");
 const right_sidebar = @import("right_sidebar/mod.zig");
@@ -202,6 +205,13 @@ pub const Loc = Workspace.Loc;
 /// The parent App.
 app: *App,
 
+/// Identity (`window_id`, `window:N`; ADR-2), minted in init and retired
+/// with the model when the window is freed.
+handle: ids.Handle = ids.no_handle,
+
+/// The registry `handle` is minted in (null while unregistered).
+registry: ?*model_registry.HandleRegistry = null,
+
 /// The top-level window handle.
 hwnd: ?w32.HWND = null,
 
@@ -209,6 +219,10 @@ hwnd: ?w32.HWND = null,
 /// Heap objects (ARCHITECTURE.md ADR-2.3): a live window always has at
 /// least one; they are destroyed with the window.
 workspaces: std.ArrayList(*Workspace) = .empty,
+
+/// Workspace groups of this window (W4-5 creates them; ADR-2.3). Heap
+/// objects destroyed with the window.
+groups: std.ArrayList(*Group) = .empty,
 
 /// The currently active (visible) workspace; always one of `workspaces`
 /// on a live window.
@@ -395,15 +409,11 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
     // overlay's bound owner pointer.
     PaneButtonsMod.on_click = onPaneButtonClick;
 
-    // Create the first workspace before any addTab(). Every init site
-    // (App.run, new_window, QuickTerminal.init) flows through here before
-    // its first addTab().
-    const gpa = app.core_app.alloc;
-    const first_ws = try Workspace.create(gpa, self);
-    errdefer first_ws.destroy(gpa);
-    try self.workspaces.append(gpa, first_ws);
-    errdefer self.workspaces.deinit(gpa);
-    self.selected = first_ws;
+    // Mint the window's handle and create its first workspace before any
+    // addTab(). Every init site (App.run, new_window, QuickTerminal.init)
+    // flows through here before its first addTab().
+    try ops_window.initWindowModel(self);
+    errdefer ops_window.freeWindowModel(self);
 
     const style: u32 = if (options.is_quick_terminal) w32.WS_POPUP else w32.WS_OVERLAPPEDWINDOW | w32.WS_CLIPCHILDREN;
     const ex_style: u32 = if (options.is_quick_terminal) w32.WS_EX_TOOLWINDOW else 0;
@@ -587,7 +597,7 @@ pub fn deinit(self: *Window) void {
     // The (already emptied) workspace objects go last.
     self.leaveSizeMove();
     self.detachSidebars();
-    self.freeWorkspaces();
+    ops_window.freeWindowModel(self);
 }
 
 /// The currently active workspace. Always valid on a live window: init
@@ -695,16 +705,6 @@ fn leaveSizeMove(self: *Window) void {
     self.app.modal.leave();
 }
 
-/// Free the workspace objects and their list (final teardown, after
-/// cleanupAllSurfaces).
-fn freeWorkspaces(self: *Window) void {
-    const alloc = self.app.core_app.alloc;
-    self.selected = null;
-    for (self.workspaces.items) |ws| ws.destroy(alloc);
-    self.workspaces.deinit(alloc);
-    self.workspaces = .empty;
-}
-
 /// Handle WM_DESTROY: remove this window from the App's list,
 /// free resources, and start the quit timer if no windows remain.
 /// Surfaces are already cleaned up by close() before DestroyWindow.
@@ -718,7 +718,7 @@ fn onDestroy(self: *Window) void {
     // Surfaces were cleaned up by close(); free the workspace objects.
     self.leaveSizeMove();
     self.detachSidebars();
-    self.freeWorkspaces();
+    ops_window.freeWindowModel(self);
 
     // Quick terminal windows are managed by QuickTerminal, not the windows list.
     if (self.is_quick_terminal) {
@@ -1200,6 +1200,9 @@ test {
     _ = Tab;
     _ = @import("../model/Title.zig");
     _ = @import("../model/TabContent.zig");
+    _ = @import("../model/Group.zig");
+    _ = ids;
+    _ = model_registry;
     _ = chrome;
     _ = menus;
     _ = @import("backend_picker.zig");

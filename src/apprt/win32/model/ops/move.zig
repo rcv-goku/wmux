@@ -8,6 +8,7 @@ const Pane = @import("../Pane.zig");
 const SplitTree = @import("../../../../datastruct/split_tree.zig").SplitTree;
 const Tab = @import("../Tab.zig");
 const Window = @import("../../ui/Window.zig");
+const model_registry = @import("../registry.zig");
 const ops_surface = @import("surface.zig");
 
 /// Break a tab out of a multi-tab Pane into a new Pane that becomes a
@@ -27,6 +28,11 @@ pub fn breakPane(self: *Window, tab: *Tab) void {
     // Create the new Pane first so a failure leaves the source intact.
     const new_container = Pane.create(alloc) catch return;
     new_container.tabs.ensureTotalCapacity(alloc, 1) catch {
+        alloc.destroy(new_container);
+        return;
+    };
+    model_registry.register(&self.app.handles, alloc, new_container) catch {
+        new_container.tabs.deinit(alloc);
         alloc.destroy(new_container);
         return;
     };
@@ -77,6 +83,7 @@ pub fn breakPane(self: *Window, tab: *Tab) void {
 /// unused new pane.
 fn undoBreak(alloc: std.mem.Allocator, src: *Pane, index: usize, new_pane: *Pane, tab: *Tab) void {
     _ = ops_surface.remove(new_pane, 0);
+    model_registry.unregister(new_pane);
     new_pane.tabs.deinit(alloc);
     alloc.destroy(new_pane);
     // Cannot fail: the source list kept the capacity of the removed tab.

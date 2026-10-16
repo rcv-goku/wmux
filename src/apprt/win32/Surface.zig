@@ -15,6 +15,7 @@ const internal_os = @import("../../os/main.zig");
 const App = @import("App.zig");
 const Tab = @import("model/Tab.zig");
 const Window = @import("ui/Window.zig");
+const ids = @import("model/ids.zig");
 const app_foreground = @import("app/foreground.zig");
 const app_modal = @import("app/modal.zig");
 const menus = @import("ui/menus.zig");
@@ -188,6 +189,12 @@ attention: bool = false,
 /// configured default shell.
 spawn_command: ?[]const []const u8 = null,
 
+/// The model identity the terminal is spawned with (window, workspace,
+/// pane, tab and lifecycle UUIDs; ADR-3.9), fixed by the caller before
+/// init because the tab and its pane are linked into the model only
+/// after the child process started. The spawn hooks read it.
+spawn_identity: ids.SpawnIdentity = .{},
+
 /// Initialize a new Surface by creating a Win32 window and WGL context,
 /// then initialize the core terminal surface (fonts, renderer, PTY, IO).
 /// `command` optionally overrides the configured command for this one
@@ -196,6 +203,7 @@ spawn_command: ?[]const []const u8 = null,
 /// overrides the working directory the child shell spawns in (a
 /// workspace bound to a git worktree); the path is copied into the
 /// surface config clone, so the caller's memory may be freed too.
+/// `spawn` is the model identity of the terminal (see `spawn_identity`).
 pub fn init(
     self: *Surface,
     app: *App,
@@ -203,10 +211,12 @@ pub fn init(
     context: apprt.surface.NewSurfaceContext,
     command: ?[]const []const u8,
     cwd: ?[]const u8,
+    spawn: ids.SpawnIdentity,
 ) !void {
     self.* = .{
         .app = app,
         .parent_window = parent,
+        .spawn_identity = spawn,
     };
 
     // Retain an owned deep copy of the command override so splits

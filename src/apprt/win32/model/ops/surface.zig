@@ -24,6 +24,8 @@ const Window = @import("../../ui/Window.zig");
 const Workspace = @import("../Workspace.zig");
 const app_foreground = @import("../../app/foreground.zig");
 const arith = @import("../logic/arith.zig");
+const ids = @import("../ids.zig");
+const model_registry = @import("../registry.zig");
 const titles = @import("../logic/titles.zig");
 const w32 = @import("../../platform/win32.zig");
 
@@ -52,14 +54,17 @@ pub fn initTitle(alloc: Allocator, tab: *Tab, title: ?[]const u8, default: []con
     try tab.title.setAuto(alloc, value, .auto, false);
 }
 
-/// The focused pane of `ws`, creating the workspace's first pane (and its
-/// split tree) when the workspace is still empty.
-fn focusedOrFirstPane(alloc: Allocator, ws: *Workspace) !*Pane {
+/// The focused pane of `ws`, creating (and registering) the workspace's
+/// first pane and its split tree when the workspace is still empty.
+fn focusedOrFirstPane(self: *Window, ws: *Workspace) !*Pane {
     if (ws.focusedPaneOrFirst()) |pane| return pane;
     // Empty workspace — create the first Pane and init the workspace
     // split tree with it.
+    const alloc = self.app.core_app.alloc;
     const pc = try Pane.create(alloc);
     errdefer alloc.destroy(pc);
+    try model_registry.register(&self.app.handles, alloc, pc);
+    errdefer model_registry.unregister(pc);
     const tree = try SplitTree(Pane).init(alloc, pc);
     pc.workspace = ws;
     ws.tree = tree;
@@ -69,22 +74,61 @@ fn focusedOrFirstPane(alloc: Allocator, ws: *Workspace) !*Pane {
 }
 
 /// Create a terminal tab running `command` (null = the configured default)
-/// in `cwd`, holding the reference its pane will own. On failure nothing
-/// is left behind.
+/// in `cwd` for workspace `ws`, to become a tab of the pane `pane_uuid`
+/// names (a split creates that pane after the tab, with that UUID),
+/// holding the reference its pane will own. The tab's identity is fixed
+/// before the terminal spawns (ids.SpawnIdentity, ADR-3.9) and its handle
+/// is minted with it. On failure nothing is left behind.
 pub fn createTerminalTab(
     self: *Window,
+    ws: *Workspace,
+    pane_uuid: ids.Uuid,
     context: apprt.surface.NewSurfaceContext,
     command: ?[]const []const u8,
     cwd: ?[]const u8,
 ) !*Tab {
     const alloc = self.app.core_app.alloc;
+    const spawn: ids.SpawnIdentity = .{
+        .window = self.handle.uuid,
+        .workspace = ws.handle.uuid,
+        .pane = pane_uuid,
+        .surface = ids.Uuid.v4(),
+        .lifecycle = ids.Uuid.v4(),
+    };
     const surface = try alloc.create(Surface);
     errdefer alloc.destroy(surface);
-    try surface.init(self.app, self, context, command, cwd);
+    try surface.init(self.app, self, context, command, cwd, spawn);
     errdefer surface.deinit();
     const tab = try Tab.create(alloc, surface);
+    errdefer {
+        surface.tab = null;
+        alloc.destroy(tab);
+    }
+    try model_registry.registerUuid(&self.app.handles, alloc, tab, spawn.surface);
+    tab.lifecycle_id = spawn.lifecycle;
+    // Legacy surface ids (GHOSTTY_SURFACE_ID) resolve through the registry.
+    self.app.handles.bindCoreId(alloc, tab.handle.uuid, surface.core_surface.id) catch |err| {
+        log.warn("failed to bind the core surface id err={}", .{err});
+    };
     // The tab is owned by its pane's tab list; ref it for that ownership.
     _ = tab.ref(alloc) catch unreachable;
+    return tab;
+}
+
+/// Wrap `browser` in a new registered tab holding the reference its pane
+/// will own. On failure the browser is destroyed and nothing is left
+/// behind.
+pub fn createBrowserTab(self: *Window, browser: *BrowserPane) !*Tab {
+    const alloc = self.app.core_app.alloc;
+    const tab = Tab.createBrowser(alloc, browser) catch |err| {
+        browser.destroy(alloc);
+        return err;
+    };
+    _ = tab.ref(alloc) catch unreachable;
+    model_registry.register(&self.app.handles, alloc, tab) catch |err| {
+        tab.unref(alloc);
+        return err;
+    };
     return tab;
 }
 
@@ -220,9 +264,9 @@ pub fn addTabWithCommand(
     const alloc = self.app.core_app.alloc;
 
     // Resolve or create the target container.
-    const container = try focusedOrFirstPane(alloc, ws);
+    const container = try focusedOrFirstPane(self, ws);
 
-    const tab = try createTerminalTab(self, .tab, command, ws.cwd);
+    const tab = try createTerminalTab(self, ws, container.handle.uuid, .tab, command, ws.cwd);
     errdefer tab.unref(alloc);
     const surface = tab.surface().?;
     try initTitle(alloc, tab, title, terminal_default_title);
@@ -282,9 +326,9 @@ pub fn addTabBackground(
 
     const alloc = self.app.core_app.alloc;
 
-    const container = try focusedOrFirstPane(alloc, ws);
+    const container = try focusedOrFirstPane(self, ws);
 
-    const tab = try createTerminalTab(self, .tab, command, ws.cwd);
+    const tab = try createTerminalTab(self, ws, container.handle.uuid, .tab, command, ws.cwd);
     errdefer tab.unref(alloc);
     try initTitle(alloc, tab, title, terminal_default_title);
 
@@ -328,15 +372,11 @@ pub fn addBrowserTab(self: *Window) !void {
 
     const alloc = self.app.core_app.alloc;
 
-    const container = try focusedOrFirstPane(alloc, ws);
+    const container = try focusedOrFirstPane(self, ws);
 
     const browser = try BrowserPane.create(alloc, self.app, self);
-    errdefer browser.destroy(alloc);
-    const browser_tab = try Tab.createBrowser(alloc, browser);
-    _ = browser_tab.ref(alloc) catch |err| {
-        alloc.destroy(browser_tab);
-        return err;
-    };
+    // From here the tab owns the browser: releasing the tab destroys it.
+    const browser_tab = try createBrowserTab(self, browser);
     errdefer browser_tab.unref(alloc);
     try initTitle(alloc, browser_tab, null, browser_default_title);
 
@@ -532,12 +572,17 @@ pub fn addFirstTabBackground(self: *Window, ws_idx: usize, command: ?[]const []c
     std.debug.assert(ws.paneCount() == 0);
 
     const alloc = self.app.core_app.alloc;
-    const tab = try createTerminalTab(self, .tab, command, ws.cwd);
+    // The pane is created after the tab; its UUID is fixed now so the
+    // terminal is spawned with it.
+    const pane_uuid = ids.Uuid.v4();
+    const tab = try createTerminalTab(self, ws, pane_uuid, .tab, command, ws.cwd);
     errdefer tab.unref(alloc);
     try initTitle(alloc, tab, null, terminal_default_title);
 
     const container = try Pane.create(alloc);
     errdefer alloc.destroy(container);
+    try model_registry.registerUuid(&self.app.handles, alloc, container, pane_uuid);
+    errdefer model_registry.unregister(container);
     try insert(alloc, container, tab, 0);
     errdefer {
         _ = remove(container, 0);

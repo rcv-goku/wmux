@@ -14,6 +14,8 @@ const Allocator = std.mem.Allocator;
 const Tab = @import("Tab.zig");
 const Workspace = @import("Workspace.zig");
 const features_ext = @import("../features/ext.zig");
+const handle_registry = @import("logic/handle_registry.zig");
+const ids = @import("ids.zig");
 const w32 = @import("../platform/win32.zig");
 
 const TabStatus = Tab.TabStatus;
@@ -21,6 +23,13 @@ const TabStatus = Tab.TabStatus;
 /// Reference count for SplitTree ownership. Starts at 0 because
 /// SplitTree.init() calls ref() to take initial ownership.
 ref_count: u32 = 0,
+
+/// Identity (`pane_id`, `pane:N`; ADR-2), minted when the pane joins its
+/// workspace and retired when it is destroyed.
+handle: ids.Handle = ids.no_handle,
+
+/// The registry `handle` is minted in (null while unregistered).
+registry: ?*handle_registry.HandleRegistry = null,
 
 /// The workspace whose split tree holds this pane (null for a pane that
 /// is not in a tree yet, and in the fake model graphs of the tests).
@@ -83,6 +92,7 @@ pub fn ref(self: *Pane, alloc: Allocator) Allocator.Error!*Pane {
 pub fn unref(self: *Pane, alloc: Allocator) void {
     self.ref_count -= 1;
     if (self.ref_count == 0) {
+        if (self.registry) |r| r.retire(self.handle.uuid);
         for (self.tabs.items) |tab| {
             tab.pane = null;
             tab.unref(alloc);

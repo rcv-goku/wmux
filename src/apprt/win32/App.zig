@@ -14,6 +14,7 @@ const agent_session = @import("features/agents/legacy_store.zig");
 const BrowserPane = @import("web/BrowserPane.zig");
 const Surface = @import("Surface.zig");
 const Window = @import("ui/Window.zig");
+const model_registry = @import("model/registry.zig");
 
 // app/ plumbing (ARCHITECTURE.md ADR-1.6).
 const app_clipboard = @import("app/clipboard.zig");
@@ -113,6 +114,11 @@ browser_host_class_atom: u16 = 0,
 
 /// List of active Window containers (tabbed windows).
 windows: std.ArrayList(*Window) = .empty,
+
+/// The process-wide handle registry: UUID and ref of every window,
+/// workspace, group, pane and tab (model/registry.zig, ADR-2.2). UI thread
+/// only; outlives every model object.
+handles: model_registry.HandleRegistry = .{},
 
 /// Background brush created from the configured background color.
 /// Used by WM_ERASEBKGND to fill exposed areas during resize,
@@ -530,6 +536,10 @@ pub fn terminate(self: *App) void {
         env.release();
         self.webview2_env = null;
     }
+
+    // Every model object is gone (their destroy paths retired their
+    // handles), so the registry can go too.
+    self.handles.deinit(alloc);
 
     if (self.bg_brush) |brush| {
         _ = w32.DeleteObject(@ptrCast(brush));

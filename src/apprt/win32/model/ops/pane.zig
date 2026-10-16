@@ -12,6 +12,8 @@ const Surface = @import("../../Surface.zig");
 const Tab = @import("../Tab.zig");
 const Window = @import("../../ui/Window.zig");
 const Workspace = @import("../Workspace.zig");
+const ids = @import("../ids.zig");
+const model_registry = @import("../registry.zig");
 const pane_layout = @import("../layout.zig");
 const ops_surface = @import("surface.zig");
 const w32 = @import("../../platform/win32.zig");
@@ -27,14 +29,17 @@ pub fn installTree(ws: *Workspace, new_tree: SplitTree(Pane)) void {
 }
 
 /// Split `src_handle` of `ws` in `direction` with a new pane holding the
-/// single `tab` (whose one reference moves into the new pane). On failure
+/// single `tab` (whose one reference moves into the new pane), registered
+/// in `reg` with `pane_uuid` (a fresh UUID when nil or taken). On failure
 /// the tab's reference is released.
 fn splitWithTab(
     alloc: std.mem.Allocator,
+    reg: *model_registry.HandleRegistry,
     ws: *Workspace,
     src_handle: SplitTree(Pane).Node.Handle,
     direction: SplitTree(Pane).Split.Direction,
     tab: *Tab,
+    pane_uuid: ids.Uuid,
 ) !*Pane {
     const new_container = Pane.create(alloc) catch |err| {
         tab.unref(alloc);
@@ -58,6 +63,10 @@ fn splitWithTab(
         return err;
     };
     defer insert_tree.deinit();
+
+    // A failure from here on unrefs the pane through insert_tree, whose
+    // destroy path retires the handle.
+    try model_registry.registerUuid(reg, alloc, new_container, pane_uuid);
 
     const new_tree = try ws.tree.split(
         alloc,
@@ -115,7 +124,10 @@ pub fn newSplitInWorkspace(
     const src_container = ws.focusedPaneOrFirst() orelse return error.UnknownPane;
     const src_handle = ws.paneHandle(src_container) orelse return error.UnknownPane;
 
-    const new_tab = try ops_surface.createTerminalTab(self, .split, command, null);
+    // The new pane is created after the tab; its UUID is fixed now so the
+    // terminal is spawned with it.
+    const pane_uuid = ids.Uuid.v4();
+    const new_tab = try ops_surface.createTerminalTab(self, ws, pane_uuid, .split, command, null);
     ops_surface.initTitle(alloc, new_tab, null, ops_surface.terminal_default_title) catch |err| {
         new_tab.unref(alloc);
         return err;
@@ -126,7 +138,7 @@ pub fn newSplitInWorkspace(
         if (new_tab.hwnd()) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
     }
 
-    const new_container = try splitWithTab(alloc, ws, src_handle, direction, new_tab);
+    const new_container = try splitWithTab(alloc, &self.app.handles, ws, src_handle, direction, new_tab, pane_uuid);
 
     if (focus) {
         ws.focused_pane = new_container;
@@ -158,17 +170,14 @@ pub fn newBrowserSplit(self: *Window, direction: SplitTree(Pane).Split.Direction
     const alloc = self.app.core_app.alloc;
 
     const browser = try BrowserPane.create(alloc, self.app, self);
-    const browser_tab = Tab.createBrowser(alloc, browser) catch |err| {
-        browser.destroy(alloc);
-        return err;
-    };
-    _ = browser_tab.ref(alloc) catch unreachable;
+    // From here the tab owns the browser: releasing the tab destroys it.
+    const browser_tab = try ops_surface.createBrowserTab(self, browser);
     ops_surface.initTitle(alloc, browser_tab, null, ops_surface.browser_default_title) catch |err| {
         browser_tab.unref(alloc);
         return err;
     };
 
-    const new_container = try splitWithTab(alloc, ws, src_handle, direction, browser_tab);
+    const new_container = try splitWithTab(alloc, &self.app.handles, ws, src_handle, direction, browser_tab, ids.Uuid.nil);
 
     ws.focused_pane = new_container;
     self.clearTabAttention(new_container, new_container.selected);

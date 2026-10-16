@@ -18,6 +18,8 @@ const Pane = @import("Pane.zig");
 const Surface = @import("../Surface.zig");
 const Title = @import("Title.zig");
 const features_ext = @import("../features/ext.zig");
+const handle_registry = @import("logic/handle_registry.zig");
+const ids = @import("ids.zig");
 const log_ring = @import("../features/status/log_ring.zig");
 const w32 = @import("../platform/win32.zig");
 
@@ -33,6 +35,17 @@ pub const MAX_STATUS_BYTES: usize = 96;
 
 /// Reference count. Starts at 0; the owning pane takes the first ref.
 ref_count: u32 = 0,
+
+/// Identity (`surface_id`, `surface:N`; ADR-2), minted when the tab is
+/// created and retired when it is destroyed.
+handle: ids.Handle = ids.no_handle,
+
+/// The registry `handle` is minted in (null while unregistered).
+registry: ?*handle_registry.HandleRegistry = null,
+
+/// The identity of the current terminal spawn (`CMUX_TERMINAL_LIFECYCLE_ID`),
+/// new for every spawn; nil for non-terminal content.
+lifecycle_id: ids.Uuid = ids.Uuid.nil,
 
 /// The pane whose tab list holds this tab (null while detached: before
 /// insertion, or after removal and before destruction).
@@ -159,6 +172,8 @@ pub fn unref(self: *Tab, alloc: Allocator) void {
             if (browser.host_hwnd) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
         },
         .destroy => {
+            // The handle stops resolving before the content goes away.
+            if (self.registry) |r| r.retire(self.handle.uuid);
             switch (self.content) {
                 .terminal => |surface_ptr| {
                     if (surface_ptr.hwnd) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
