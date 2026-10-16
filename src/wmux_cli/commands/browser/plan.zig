@@ -212,16 +212,26 @@ pub const C = struct {
         if (o.positionals.len > max) return c.usage("{s}: unexpected argument '{s}'", .{ c.label, o.positionals[max] });
     }
 
-    /// `~` expanded and made absolute against the working directory.
+    /// `~` expanded and made absolute against the working directory. A path
+    /// the user gives as absolute is kept as typed.
     pub fn absPath(c: *C, path: []const u8) Error![]const u8 {
         var p = path;
         if (c.in.home) |h| {
             if (eql(p, "~")) return h;
-            if (p.len >= 2 and p[0] == '~' and (p[1] == '/' or p[1] == '\\')) p = try paths.join(c.arena, c.in.style, &.{ h, p[2..] });
+            if (p.len >= 2 and p[0] == '~' and (p[1] == '/' or p[1] == '\\')) p = try c.joinPath(&.{ h, p[2..] });
         }
         if (isAbsolute(c.in.style, p)) return p;
         const cwd = c.in.cwd orelse return p;
-        return paths.join(c.arena, c.in.style, &.{ cwd, p });
+        return c.joinPath(&.{ cwd, p });
+    }
+
+    /// `paths.join`, with `\` throughout for the Windows style so that a
+    /// relative `shots/p.png` becomes `C:\work\shots\p.png` rather than a
+    /// mixed-separator path.
+    fn joinPath(c: *C, parts: []const []const u8) Error![]const u8 {
+        const out = try paths.join(c.arena, c.in.style, parts);
+        if (c.in.style == .windows) std.mem.replaceScalar(u8, out, '/', '\\');
+        return out;
     }
 
     pub fn joined(c: *C, words: []const []const u8) Error![]const u8 {

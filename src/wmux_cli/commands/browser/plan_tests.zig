@@ -199,6 +199,10 @@ test "unit: browser-cli: windows paths are absolutized with the windows style" {
     try t.expectCall(&.{ "surface:1", "state", "save", "s.json" }, "browser.state.save", "{\"surface_id\":\"surface:1\",\"path\":\"C:\\\\work\\\\s.json\"}");
     try t.expectCall(&.{ "surface:1", "state", "load", "~\\s.json" }, "browser.state.load", "{\"surface_id\":\"surface:1\",\"path\":\"C:\\\\Users\\\\u\\\\s.json\"}");
     try t.expectCall(&.{ "surface:1", "state", "load", "D:/x.json" }, "browser.state.load", "{\"surface_id\":\"surface:1\",\"path\":\"D:/x.json\"}");
+    // Paths the CLI builds use `\` throughout, even from `/`-separated input.
+    try t.expectCall(&.{ "surface:1", "state", "load", "~/sub/s.json" }, "browser.state.load", "{\"surface_id\":\"surface:1\",\"path\":\"C:\\\\Users\\\\u\\\\sub\\\\s.json\"}");
+    const s = try t.call(&.{ "surface:1", "screenshot", "--out", "shots/p.png" });
+    try testing.expectEqualStrings("C:\\work\\shots\\p.png", s.out_path.?);
     try testing.expect(plan_mod.isAbsolute(.windows, "\\\\server\\share"));
     try testing.expect(!plan_mod.isAbsolute(.windows, "C:rel"));
     try testing.expect(!plan_mod.isAbsolute(.posix, "C:\\x"));
