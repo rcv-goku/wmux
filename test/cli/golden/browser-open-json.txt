@@ -1,0 +1,9 @@
+{
+  "window_ref": "window:1",
+  "workspace_ref": "workspace:1",
+  "pane_ref": "pane:3",
+  "surface_ref": "surface:5",
+  "created_split": true,
+  "placement_strategy": "split_right",
+  "url": "https://example.com/"
+}
