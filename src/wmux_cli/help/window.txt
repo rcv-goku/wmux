@@ -12,7 +12,7 @@ Subcommands:
                             --window (or --window after the subcommand) only
                             that window moves. --list (-l) aliases displays.
   default-display [<name>|--clear]
-                            cmux dev-build placement setting; not supported
+                            macOS dev-build placement setting; not supported
                             on wmux
 
 Options:
