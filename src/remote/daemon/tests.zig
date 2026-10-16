@@ -334,7 +334,18 @@ test "unit: remote-daemon: fs.put and fs.get over the protocol" {
     try testing.expectEqualStrings("invalid_params", badpath.code.?);
     const badmode = try c.request(.fs_put, msgs.FsPutParams{ .path = "~/x", .data = "eA==", .mode = 0o17777 }, timeout);
     try testing.expectEqualStrings("invalid_params", badmode.code.?);
+
+    // A FIFO is refused at once instead of blocking the daemon.
+    const fifo = try std.fs.path.joinZ(gpa, &.{ home, "fifo" });
+    defer gpa.free(fifo);
+    try testing.expectEqual(@as(c_int, 0), mkfifo(fifo, 0o600));
+    const from_fifo = try c.request(.fs_get, msgs.FsGetParams{ .path = "~/fifo" }, timeout);
+    try testing.expectEqualStrings("invalid_params", from_fifo.code.?);
+    try testing.expectEqualStrings("not a regular file", from_fifo.message.?);
+    try testing.expect((try c.request(.ping, .{}, timeout)).ok);
 }
+
+extern "c" fn mkfifo(path: [*:0]const u8, mode: posix.mode_t) c_int;
 
 test "unit: remote-daemon: a max-size fs.get reply does not disconnect a streaming client" {
     const gpa = testing.allocator;

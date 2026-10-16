@@ -76,7 +76,7 @@ pub fn put(abs_path: []const u8, data: []const u8, opts: PutOptions) PutError!He
     return digest;
 }
 
-pub const GetError = error{ TooLarge, IsDir } || std.fs.File.OpenError || std.fs.File.ReadError ||
+pub const GetError = error{ TooLarge, IsDir, NotRegularFile } || std.fs.File.OpenError || std.fs.File.ReadError ||
     std.fs.File.StatError || Allocator.Error;
 
 pub const Got = struct {
@@ -84,12 +84,18 @@ pub const Got = struct {
     sha256: Hex,
 };
 
-/// Reads at most `max_bytes`; larger files fail with TooLarge.
+/// Reads at most `max_bytes` of a regular file; larger files fail with
+/// TooLarge. The open does not block and anything but a regular file is
+/// refused: opening a FIFO without a writer, or reading a device, would
+/// stall the daemon's only thread and every session with it.
 pub fn get(gpa: Allocator, abs_path: []const u8, max_bytes: usize) GetError!Got {
-    var file = try std.fs.cwd().openFile(abs_path, .{});
+    var flags: std.posix.O = .{ .ACCMODE = .RDONLY, .NONBLOCK = true, .NOCTTY = true, .CLOEXEC = true };
+    if (@hasField(std.posix.O, "LARGEFILE")) flags.LARGEFILE = true;
+    const file: std.fs.File = .{ .handle = try std.posix.openat(std.posix.AT.FDCWD, abs_path, flags, 0) };
     defer file.close();
     const st = try file.stat();
     if (st.kind == .directory) return error.IsDir;
+    if (st.kind != .file) return error.NotRegularFile;
     if (st.size > max_bytes) return error.TooLarge;
     var list: std.ArrayList(u8) = .empty;
     errdefer list.deinit(gpa);
@@ -185,4 +191,19 @@ test "unit: remote-daemon: fs.get enforces the size cap and rejects directories"
     defer gpa.free(missing);
     try testing.expectError(error.FileNotFound, get(gpa, missing, 10));
     try testing.expectError(error.InvalidPath, put("/", "x", .{}));
+}
+
+extern "c" fn mkfifo(path: [*:0]const u8, mode: std.posix.mode_t) c_int;
+
+test "unit: remote-daemon: fs.get refuses a FIFO without blocking" {
+    const gpa = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmp.dir.realpathAlloc(gpa, ".");
+    defer gpa.free(root);
+    const fifo = try std.fs.path.joinZ(gpa, &.{ root, "fifo" });
+    defer gpa.free(fifo);
+    try testing.expectEqual(@as(c_int, 0), mkfifo(fifo, 0o600));
+    // Opening a FIFO with no writer would block the daemon's only thread.
+    try testing.expectError(error.NotRegularFile, get(gpa, fifo, 10));
 }

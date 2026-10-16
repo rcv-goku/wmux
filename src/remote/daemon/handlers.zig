@@ -324,6 +324,8 @@ fn fsGet(srv: *Server, c: *Conn, a: Allocator, id: ?rpc.Id, params: std.json.Val
             error.TooLarge => .{ .too_large, "file too large" },
             error.FileNotFound => .{ .not_found, "file not found" },
             error.IsDir => .{ .invalid_params, "path is a directory" },
+            // NoDevice: open(2) of a socket path fails with ENXIO.
+            error.NotRegularFile, error.NoDevice => .{ .invalid_params, "not a regular file" },
             error.AccessDenied, error.PermissionDenied => .{ .io_error, "permission denied" },
             error.OutOfMemory => return error.OutOfMemory,
             else => .{ .io_error, std.fmt.allocPrint(a, "read failed: {s}", .{@errorName(err)}) catch "read failed" },
