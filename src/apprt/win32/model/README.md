@@ -25,9 +25,11 @@ the event bus and moves the legacy per-tab state into feature ext state.
   (`surface.insert`, the one way a tab enters a pane; `remove`,
   `moveInPane`, `selectInPane`, `closeTabAt`); the "focused pane"
   entry points only resolve their pane and delegate.
-- `logic/`: pure helpers (`arith.zig`, `titles.zig`) and `fake.zig`,
-  which builds window/workspace/pane/tab graphs without HWNDs for the
-  `unit: model:` tests.
+- `logic/`: std-only helpers (`arith.zig`, `titles.zig`, indexed by
+  `tests.zig`, the test-fast entry of CCR W0-A2-1) and `fake.zig`, which
+  builds window/workspace/pane/tab graphs without HWNDs for the
+  `unit: model:` tests (not std-only, so ui/Window.zig's test block
+  collects it for the full suite).
 
 Dependency rule (ADR-1.2): may import `platform/`, `features/ext.zig` and
 `wmux_proto`; never `rpc/` or feature internals. ADR-2.3 fields are the

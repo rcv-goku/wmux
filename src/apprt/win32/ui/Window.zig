@@ -1192,8 +1192,9 @@ const testing = std.testing;
 test {
     _ = WindowState;
     // The files W0-A2 split out of Window.zig: keep their tests collected.
-    _ = @import("../model/logic/arith.zig");
-    _ = @import("../model/logic/titles.zig");
+    // The std-only logic goes through its logic/tests.zig index (also the
+    // test-fast entry, CCR W0-A2-1).
+    _ = @import("../model/logic/tests.zig");
     _ = Workspace;
     _ = Pane;
     _ = Tab;
@@ -1211,8 +1212,10 @@ test {
     _ = sidebar_input;
     _ = tabbar_input;
     _ = tabbar_paint;
-    _ = @import("tabbar/logic/geometry.zig");
+    _ = @import("tabbar/logic/tests.zig");
     _ = @import("../model/layout.zig");
+    // Not std-only (it builds real model objects), so not in the logic
+    // index: the full suite collects it here.
     _ = @import("../model/logic/fake.zig");
     _ = ops_move;
     _ = ops_pane;
