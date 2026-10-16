@@ -225,7 +225,9 @@ passes the patch again (`panels-diff-session-restore`).
   in a group and nested lists (Tab order), not ARIA menu / tree widgets.
   Buttons whose label names the action ("Hide files", "Enable word wrap")
   carry no pressed state; the file and search toggles report `aria-expanded`
-  and the indicator choice `aria-pressed`.
+  and the indicator choice `aria-pressed`. Added and deleted lines carry a
+  visually hidden "Added:" / "Deleted:" label: bars and backgrounds are
+  color only, and the +/- sign is `aria-hidden` decoration.
 
 ## CSP
 

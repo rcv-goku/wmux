@@ -60,6 +60,8 @@ export const STRINGS = Object.freeze({
   "diff.loadDiff": "Load diff",
   "diff.noChanges": "No content changes",
   "diff.noNewline": "No newline at end of file",
+  "diff.lineAdded": "Added:",
+  "diff.lineDeleted": "Deleted:",
   "diff.whitespaceOnly": "Only whitespace changes",
   "diff.combined": "Combined diff ({parents} parents)",
   "diff.collapseFile": "Collapse file",

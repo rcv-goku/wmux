@@ -214,6 +214,27 @@ describe("unit: diff app rendering", () => {
     assert.match($("tr.dv-hunk td", sec).textContent, /^@@ -1,5 \+1,5 @@ function main\(\) \{$/);
   });
 
+  test("unit: diff: added and deleted lines name their change as text, not only color", async () => {
+    await startApp();
+    const check = (layout) => {
+      const sec = section("src/app.js");
+      const del = $("td.dv-code.dv-del", sec);
+      const add = $("td.dv-code.dv-add", sec);
+      const label = (cell) => $(".dv-change-label", cell);
+      assert.equal(label(del).textContent, "Deleted: ", layout);
+      assert.equal(label(add).textContent, "Added: ", layout);
+      assert.ok(label(add).classList.contains("wmux-visually-hidden"), layout);
+      assert.equal($(".dv-sign", add).getAttribute("aria-hidden"), "true", layout);
+      assert.equal($$("td.dv-code.dv-context .dv-change-label", sec).length, 0, layout);
+      assert.equal($(".dv-text", add).textContent, "const answer = 42;", "line text stays exact");
+    };
+    check("unified");
+    app.setPrefs({ layout: "split" });
+    check("split");
+    app.openFind("answer");
+    assert.deepEqual($$(".dv-find-hit", section("src/app.js")).map((s) => s.textContent), ["answer", "answer", "answer"]);
+  });
+
   test("unit: diff: no-newline marker and status filter labels go through tr()", async () => {
     const { addStrings, setLocale } = await importWeb("_shared/strings.js");
     addStrings("x-test", { "diff.noNewline": "[no newline]", "diff.filter.status": "[status]" });

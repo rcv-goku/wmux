@@ -621,6 +621,11 @@ body {
   color: var(--dv-del);
 }
 
+/* Visually hidden "Added:" / "Deleted:" label: never part of a copied selection. */
+.dv-change-label {
+  user-select: none;
+}
+
 .dv-hunk-cell {
   padding: 2px var(--wmux-space-2);
   background-color: var(--dv-hunk-bg);

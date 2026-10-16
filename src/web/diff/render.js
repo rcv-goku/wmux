@@ -171,7 +171,15 @@ export function createRenderer(env) {
     if (frag && frag.textContent === line.text) text.append(frag.cloneNode(true));
     else text.textContent = line.text;
     if (ranges && ranges.length) wrapRanges(text, ranges, "dv-word");
-    td.append(add, sign, text);
+    td.append(add, sign);
+    // The sign is decoration (not rendered in the bars and none styles), so
+    // without this label the change type reaches assistive technology only
+    // as a color.
+    if (line.type === "add" || line.type === "del") {
+      const label = t(line.type === "add" ? "diff.lineAdded" : "diff.lineDeleted") + " ";
+      td.append(el(doc, "span", "wmux-visually-hidden dv-change-label", label));
+    }
+    td.append(text);
     if (line.noNewline) {
       const mark = el(doc, "span", "dv-nonl", "⊘");
       mark.title = t("diff.noNewline");
