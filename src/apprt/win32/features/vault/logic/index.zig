@@ -593,11 +593,14 @@ pub const Section = enum {
 };
 
 /// Local-day difference based section; `tz_offset_min` is the local offset
-/// from UTC (e.g. +120 for UTC+2). Future timestamps count as Today.
+/// from UTC (e.g. +120 for UTC+2). Future timestamps count as Today. Total
+/// over all inputs: `modified_ms` includes the caller's file mtime, which
+/// the record timestamp range check does not cover, so the offset is added
+/// with saturation.
 pub fn sectionFor(modified_ms: i64, now_ms: i64, tz_offset_min: i32) Section {
     const off = @as(i64, tz_offset_min) * 60_000;
-    const day_now = @divFloor(now_ms + off, 86_400_000);
-    const day_mod = @divFloor(modified_ms + off, 86_400_000);
+    const day_now = @divFloor(now_ms +| off, 86_400_000);
+    const day_mod = @divFloor(modified_ms +| off, 86_400_000);
     const diff = day_now - day_mod;
     if (diff <= 0) return .today;
     if (diff == 1) return .yesterday;

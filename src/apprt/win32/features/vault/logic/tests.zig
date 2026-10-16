@@ -380,6 +380,23 @@ test "unit: vault: recency sections honor the local day" {
     try testing.expectEqualStrings("Last 7 days", index.Section.last_7_days.label());
 }
 
+test "unit: vault: recency sections and row dates never overflow on extreme inputs" {
+    const max = std.math.maxInt(i64);
+    const min = std.math.minInt(i64);
+    // The mtime comes from the caller and is not range-checked like record
+    // timestamps; the clock and the offset come from the OS.
+    try testing.expectEqual(index.Section.today, index.sectionFor(max, 0, std.math.maxInt(i32)));
+    try testing.expectEqual(index.Section.older, index.sectionFor(min, 0, std.math.minInt(i32)));
+    try testing.expectEqual(index.Section.older, index.sectionFor(min, max, 840));
+    try testing.expectEqual(index.Section.today, index.sectionFor(max, min, -840));
+    var buf: [64]u8 = undefined;
+    for ([_]i64{ min, -1, max }) |v| {
+        var w = std.Io.Writer.fixed(&buf);
+        try index.writeIso8601(&w, v);
+        try testing.expect(w.buffered().len >= "0000-01-01T00:00:00Z".len);
+    }
+}
+
 test "unit: vault: out-of-range record timestamps are ignored, never overflow" {
     const bad =
         \\{"type":"user","sessionId":"t","timestamp":-9223372036854775807,"message":{"role":"user","content":"a"}}
