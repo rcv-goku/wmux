@@ -767,6 +767,11 @@ describe("unit: markdown app", () => {
     assert.equal(host.calls("panel.read_file").length, 1);
     assert.deepEqual(host.calls("panel.set_title")[0].params, { title: "README.md" });
     assert.deepEqual(host.calls("panel.watch_file")[0].params, { on: true });
+    const order = host.sent.map((m) => m.method);
+    assert.ok(
+      order.indexOf("panel.watch_file") < order.indexOf("panel.read_file"),
+      "watching starts before the first read, so no change is missed in between",
+    );
     const content = doc.getElementById("mdv-content");
     assert.equal(content.querySelector("h1").id, "project");
     assert.ok(content.querySelector("table"));
@@ -974,6 +979,23 @@ describe("unit: markdown app", () => {
     assert.equal(count.getAttribute("data-empty"), "true");
   });
 
+  test("unit: markdown: reopening the find bar re-runs the query still in the field", async () => {
+    await startApp();
+    const viewport = doc.getElementById("mdv-viewport");
+    const input = doc.getElementById("mdv-find-input");
+    const count = doc.getElementById("mdv-find-count");
+    app.openFind("install");
+    assert.equal(count.textContent, "1/5");
+    key(input, { key: "Escape", code: "Escape", keyCode: 27 });
+    assert.equal(doc.querySelectorAll("mark.mdv-find-match").length, 0);
+    assert.equal(input.value, "install", "the field keeps the last query");
+    key(viewport, { key: "f", code: "KeyF", keyCode: 70, ctrlKey: true });
+    assert.equal(count.textContent, "1/5", "highlights come back with the bar");
+    assert.equal(doc.querySelectorAll("mark.mdv-find-match").length, 5);
+    key(input, { key: "Enter", code: "Enter", keyCode: 13 });
+    assert.equal(count.textContent, "2/5", "Enter moves to the next match");
+  });
+
   test("unit: markdown: global search pre-fills the find bar", async () => {
     await startApp();
     host.emit("panel.markdown.find", { query: "greeting" });
@@ -1049,6 +1071,7 @@ describe("unit: markdown app", () => {
     assert.equal(content.style.getPropertyValue("--mdv-font-family"), "");
     key(popover, { key: "Escape", code: "Escape", keyCode: 27 });
     assert.equal(popover.hidden, true);
+    assert.equal(doc.activeElement, doc.getElementById("mdv-typography"), "focus returns to the toolbar button");
   });
 
   test("unit: markdown: TextEdit mode edits, saves with Ctrl+S and refreshes the preview", async () => {

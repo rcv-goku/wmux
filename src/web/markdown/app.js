@@ -696,6 +696,10 @@ export function createApp(options) {
       ui.findInput.value = query;
       find.search(query);
       saveState();
+    } else if (!find.needle && ui.findInput.value) {
+      // Reopened (Ctrl+F after Escape): the field still shows the last query,
+      // so search for it again instead of showing it without highlights.
+      find.search(ui.findInput.value);
     }
     ui.findInput.focus();
     if (typeof ui.findInput.select === "function") ui.findInput.select();
@@ -880,8 +884,12 @@ export function createApp(options) {
       if (state.findOpen) find.previous();
     },
     hideFind: () => {
-      if (!ui.typoPopover.hidden) toggleTypography(false);
-      else closeFind();
+      if (!ui.typoPopover.hidden) {
+        toggleTypography(false);
+        ui.typoButton.focus(); // the focused control was inside the popover
+      } else {
+        closeFind();
+      }
     },
     saveFilePreview: () => save(),
     "wmux.markdownTogglePreview": () => setMode(state.mode === "text" ? "preview" : "text"),
@@ -1124,6 +1132,13 @@ export function createApp(options) {
     doc.title = title;
     bridge.panel.setTitle(title).catch(() => {});
 
+    // Watch before the first read: a change made while that read is in flight
+    // then triggers a fresh read (only the newest read is applied) instead of
+    // being missed until the next change.
+    call("panel.watch_file", { on: true }).catch((err) => {
+      console.warn("[markdown] panel.watch_file failed:", errorMessage(err));
+    });
+
     if (typeof state.params.text === "string") {
       state.diskText = state.params.text;
       state.available = true;
@@ -1134,10 +1149,6 @@ export function createApp(options) {
       showBody();
       await reload("initial");
     }
-
-    call("panel.watch_file", { on: true }).catch((err) => {
-      console.warn("[markdown] panel.watch_file failed:", errorMessage(err));
-    });
 
     const saved = ctx && ctx.state && typeof ctx.state === "object" ? ctx.state : null;
     let initialFind = "";
