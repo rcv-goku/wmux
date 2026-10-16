@@ -32,8 +32,13 @@ markdown-it 15.0.2 and DOMPurify 3.4.17, for plan text only.
 
 ## Native contract
 
-cmux method names where cmux has them (Appendix B, `feed.*`). Methods cmux
-does not name live under `wmux.feed.*` and are documented here.
+Names follow ADR-6.5: cmux method names where cmux has them (Appendix B,
+`feed.*`). Methods and events that cmux does not name live under the panel's
+own namespace, `panel.feed.*` (handled by the kind's `on_message`, like
+`panel.markdown.*`), and are documented here. The kind's allowlist therefore
+needs only `feed.list`, `feed.jump`, `feed.permission.reply`,
+`feed.exit_plan.reply` and `feed.question.reply` (`panel.*` is implicit),
+with the event category `feed`.
 
 ### `panel.init`
 
@@ -57,7 +62,7 @@ A later `panel.init` is applied in place. The page sets the title with
 | `feed.permission.reply` | `{request_id, mode: once\|always\|all\|bypass\|deny}` -> `{delivered}` | permission buttons |
 | `feed.exit_plan.reply` | `{request_id, mode: ultraplan\|bypassPermissions\|autoAccept\|manual\|deny, feedback?}` | plan buttons; "Send feedback" sends `mode: "deny"` with the trimmed `feedback` (badge "refined") |
 | `feed.question.reply` | `{request_id, selections: [string], answers?: [[string]]}` | option click (one single-choice question) or Submit / Submit All Answers. `answers` (wmux extension, only with several questions) keeps the per-question split that the flat `selections` loses |
-| `wmux.feed.stop_reply` | `{id, text, request_id?, session_id?, workspace_id?, surface_id?, source?}` -> `{delivered?}` | "Send to <Agent>" on a stop card. Native resolves the agent's surface (from the ids or the hook session map) and sends `text` as input with Enter (`ipcSendText(reply, true)`, or agent messages), then records `Resolution.reply` so the item reports `resolution {text, badge: "Sent"}` |
+| `panel.feed.stop_reply` | `{id, text, request_id?, session_id?, workspace_id?, surface_id?, source?}` -> `{delivered?}` | "Send to <Agent>" on a stop card. Native looks the item up by `id` (a stop item without a reply), resolves the agent's surface from the item's own ids or the hook session map, and sends `text` as input with Enter (`ipcSendText(reply, true)`, or agent messages), then records `Resolution.reply` so the item reports `resolution {text, badge: "Sent"}`. The other keys are informational: the page renders agent-supplied markdown, so native never routes the text by ids the page sends |
 | `feed.jump` | `{id, workspace_id?, surface_id?, session_id?, source?}` -> `{}` | double click on a card, the ↗ button, Enter on a focused card, a workstream chip. `not_found` = the agent is not in a wmux terminal (the page says so) |
 | `panel.open_in_browser` | `{url}` | http(s) links inside a rendered plan |
 | `panel.state_changed` | `{state: {v: 1, filter}}` | tab changes, debounced 400 ms |
@@ -83,9 +88,9 @@ decision: <message>". Either way the list reloads.
 | Event | Payload | Effect |
 |---|---|---|
 | `cmux.event` | events frame `{name, ...}` | `feed.item.received`, `feed.item.completed`, `feed.item.resolved` (any `feed.*`) reload the newest page. Payloads are redacted on the stream, so the page never reads item text from frames |
-| `wmux.feed.item` | `{item}` (or the item itself) | insert or replace one item without a round trip |
-| `wmux.feed.snapshot` | `feed.list` result | replaces the newest page |
-| `wmux.feed.command` | `{action, id?}` | `showActionable`, `showActivity`, `focus`, `refresh`, `review` (with `id`: show and focus that card, e.g. after a toast click) |
+| `panel.feed.item` | `{item}` (or the item itself) | insert or replace one item without a round trip |
+| `panel.feed.snapshot` | `feed.list` result | replaces the newest page |
+| `panel.feed.command` | `{action, id?}` | `showActionable`, `showActivity`, `focus`, `refresh`, `review` (with `id`: show and focus that card, e.g. after a toast click) |
 | `panel.init`, `theme`, `keymap`, `panel.key_sequence` | shared | handled here and by `_shared/` |
 
 ## Behavior notes

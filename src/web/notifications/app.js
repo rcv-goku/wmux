@@ -377,7 +377,7 @@ export function createApp(options) {
 
   function closePopover() {
     if (state.placement !== "popover") return;
-    bridge.call("wmux.notifications.close_popover", {}).catch(() => {});
+    bridge.call("panel.notifications.close_popover", {}).catch(() => {});
   }
 
   async function open(id) {
@@ -390,7 +390,7 @@ export function createApp(options) {
   function setRead(id, read) {
     const record = find(id);
     if (!record || record.read === read) return Promise.resolve(false);
-    const method = read ? "notification.mark_read" : "wmux.notifications.mark_unread";
+    const method = read ? "notification.mark_read" : "panel.notifications.mark_unread";
     return act(method, { notification_id: id }, () => (record.read = read));
   }
 
@@ -681,8 +681,8 @@ export function createApp(options) {
       if (!els.list.contains(doc.activeElement) && !state.menuFor) focusList();
     });
     cleanups.push(bridge.on("cmux.event", onFrame));
-    cleanups.push(bridge.on("wmux.notifications.snapshot", (p) => applySnapshot(p)));
-    cleanups.push(bridge.on("wmux.notifications.command", runCommand));
+    cleanups.push(bridge.on("panel.notifications.snapshot", (p) => applySnapshot(p)));
+    cleanups.push(bridge.on("panel.notifications.command", runCommand));
     cleanups.push(bridge.on("keymap", (km) => keys && (keys.setKeymap(km), renderHeader())));
     state.timeTimer = win.setInterval(() => state.records.length && render(), TIME_REFRESH_MS);
     render();

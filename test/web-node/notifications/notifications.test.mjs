@@ -60,7 +60,7 @@ async function startApp(opts = {}) {
       records = records.map((r) => (r.id === notification_id ? { ...r, read: true } : r));
       return {};
     },
-    "wmux.notifications.mark_unread": ({ notification_id }) => {
+    "panel.notifications.mark_unread": ({ notification_id }) => {
       records = records.map((r) => (r.id === notification_id ? { ...r, read: false } : r));
       return {};
     },
@@ -73,7 +73,7 @@ async function startApp(opts = {}) {
       return {};
     },
     "notification.jump_to_unread": () => ({}),
-    "wmux.notifications.close_popover": () => ({}),
+    "panel.notifications.close_popover": () => ({}),
     ...(opts.handlers || {}),
   };
   for (const [method, fn] of Object.entries(handlers)) host.handlers.set(method, fn);
@@ -279,7 +279,7 @@ describe("unit: notifications app", () => {
     click(window, rows()[0].querySelector(".ntf-row-primary"));
     await settle();
     assert.deepEqual(host.calls("notification.open").map((m) => m.params), [{ notification_id: uuid(1) }]);
-    assert.equal(host.calls("wmux.notifications.close_popover").length, 1);
+    assert.equal(host.calls("panel.notifications.close_popover").length, 1);
     assert.equal(rowById(uuid(1)).classList.contains("ntf-unread"), false);
   });
 
@@ -288,7 +288,7 @@ describe("unit: notifications app", () => {
     await app.open(uuid(3));
     await settle();
     assert.equal(host.calls("notification.open").length, 1);
-    assert.equal(host.calls("wmux.notifications.close_popover").length, 0);
+    assert.equal(host.calls("panel.notifications.close_popover").length, 0);
   });
 
   test("unit: notifications: hover X dismisses the row and moves focus to the next one", async () => {
@@ -316,7 +316,7 @@ describe("unit: notifications app", () => {
     click(window, toggle);
     await settle();
     assert.equal(menu.hidden, true);
-    assert.deepEqual(host.calls("wmux.notifications.mark_unread").map((m) => m.params), [{ notification_id: uuid(2) }]);
+    assert.deepEqual(host.calls("panel.notifications.mark_unread").map((m) => m.params), [{ notification_id: uuid(2) }]);
     assert.equal(rowById(uuid(2)).classList.contains("ntf-unread"), true);
     assert.equal($("ntf-count").textContent, "3");
 
@@ -364,7 +364,7 @@ describe("unit: notifications app", () => {
     key(window, items[3], { key: "Escape" });
     assert.equal($("ntf-menu").hidden, true);
     assert.equal(doc.activeElement, rowById(uuid(1)));
-    assert.equal(host.calls("wmux.notifications.close_popover").length, 0);
+    assert.equal(host.calls("panel.notifications.close_popover").length, 0);
   });
 
   test("unit: notifications: list keyboard navigation, Enter opens, Space toggles, Delete dismisses", async () => {
@@ -389,7 +389,7 @@ describe("unit: notifications app", () => {
 
     key(window, doc.activeElement, { key: " " });
     await settle();
-    assert.deepEqual(host.calls("wmux.notifications.mark_unread").map((m) => m.params.notification_id), [uuid(2)]);
+    assert.deepEqual(host.calls("panel.notifications.mark_unread").map((m) => m.params.notification_id), [uuid(2)]);
     key(window, doc.activeElement, { key: "Enter" });
     await settle();
     assert.deepEqual(host.calls("notification.open").map((m) => m.params.notification_id), [uuid(2)]);
@@ -415,7 +415,7 @@ describe("unit: notifications app", () => {
     await startApp({ params: { placement: "popover" } });
     key(window, doc.body, { key: "Escape" });
     await settle();
-    assert.equal(host.calls("wmux.notifications.close_popover").length, 1);
+    assert.equal(host.calls("panel.notifications.close_popover").length, 1);
   });
 
   test("unit: notifications: Clear All and Jump to Latest", async () => {
@@ -423,7 +423,7 @@ describe("unit: notifications app", () => {
     click(window, $("ntf-jump"));
     await settle();
     assert.equal(host.calls("notification.jump_to_unread").length, 1);
-    assert.equal(host.calls("wmux.notifications.close_popover").length, 1);
+    assert.equal(host.calls("panel.notifications.close_popover").length, 1);
     click(window, $("ntf-clear"));
     await settle();
     assert.equal(host.calls("notification.clear").length, 1);
@@ -462,7 +462,7 @@ describe("unit: notifications app", () => {
 
   test("unit: notifications: snapshot events replace the list without a round trip", async () => {
     await startApp();
-    host.emit("wmux.notifications.snapshot", { notifications: [rec(5, { workspace: WS2 })], workspaces: WORKSPACES.workspaces });
+    host.emit("panel.notifications.snapshot", { notifications: [rec(5, { workspace: WS2 })], workspaces: WORKSPACES.workspaces });
     await settle();
     assert.equal(rows().length, 1);
     assert.deepEqual(texts(doc, ".ntf-group-name"), ["web"]);
@@ -495,13 +495,13 @@ describe("unit: notifications app", () => {
 
   test("unit: notifications: commands from native run panel actions", async () => {
     await startApp();
-    host.emit("wmux.notifications.command", { action: "jumpToUnread" });
+    host.emit("panel.notifications.command", { action: "jumpToUnread" });
     await settle();
     assert.equal(host.calls("notification.jump_to_unread").length, 1);
-    host.emit("wmux.notifications.command", { action: "clearAllNotifications" });
+    host.emit("panel.notifications.command", { action: "clearAllNotifications" });
     await settle();
     assert.equal(host.calls("notification.clear").length, 1);
-    host.emit("wmux.notifications.command", { action: "bogus" });
+    host.emit("panel.notifications.command", { action: "bogus" });
     await settle();
   });
 

@@ -77,7 +77,7 @@ async function startApp(opts = {}) {
     "feed.permission.reply": () => ({ delivered: true }),
     "feed.exit_plan.reply": () => ({ delivered: true }),
     "feed.question.reply": () => ({ delivered: true }),
-    "wmux.feed.stop_reply": () => ({ delivered: true }),
+    "panel.feed.stop_reply": () => ({ delivered: true }),
     "feed.jump": () => ({}),
     ...(opts.handlers || {}),
   };
@@ -465,7 +465,7 @@ describe("unit: feed app", () => {
     type(area, "continue with tests");
     click(window, btn(card, "stop-reply"));
     await settle();
-    assert.deepEqual(host.calls("wmux.feed.stop_reply").map((m) => m.params), [
+    assert.deepEqual(host.calls("panel.feed.stop_reply").map((m) => m.params), [
       { id: uuid(1), text: "continue with tests", session_id: "sess-1", workspace_id: WS, surface_id: SF, source: "claude" },
     ]);
     const done = cardById(uuid(1));
@@ -515,14 +515,14 @@ describe("unit: feed app", () => {
     assert.equal(doc.activeElement, cardById(uuid(0.5)));
     assert.equal($("feed-banners").hidden, true);
 
-    host.emit("wmux.feed.item", { item: permission(0.2, { tool_name: "Write" }) });
+    host.emit("panel.feed.item", { item: permission(0.2, { tool_name: "Write" }) });
     await settle();
     assert.equal(doc.querySelector(".feed-banner-body").textContent, "Write needs approval");
-    host.emit("wmux.feed.item", { item: permission(0.2, { status: "resolved", resolution: { mode: "once", badge: "once" } }) });
+    host.emit("panel.feed.item", { item: permission(0.2, { status: "resolved", resolution: { mode: "once", badge: "once" } }) });
     await settle();
     assert.equal($("feed-banners").hidden, true, "banner withdrawn when resolved elsewhere");
 
-    host.emit("wmux.feed.item", { item: question(0.1, []) });
+    host.emit("panel.feed.item", { item: question(0.1, []) });
     await settle();
     click(window, btn(doc.querySelector(".feed-banner"), "banner-dismiss"));
     assert.equal($("feed-banners").hidden, true);
@@ -613,16 +613,16 @@ describe("unit: feed app", () => {
 
   test("unit: feed: commands, snapshots and load failures", async () => {
     await startApp();
-    host.emit("wmux.feed.command", { action: "showActivity" });
+    host.emit("panel.feed.command", { action: "showActivity" });
     assert.equal(app.state.filter, "activity");
-    host.emit("wmux.feed.command", { action: "showActionable" });
+    host.emit("panel.feed.command", { action: "showActionable" });
     assert.equal(app.state.filter, "actionable");
-    host.emit("wmux.feed.command", { action: "focus" });
+    host.emit("panel.feed.command", { action: "focus" });
     assert.equal(doc.activeElement, cardById(uuid(1)));
-    host.emit("wmux.feed.snapshot", { items: [item(7, "message")], has_more: false });
+    host.emit("panel.feed.snapshot", { items: [item(7, "message")], has_more: false });
     app.setFilter("activity");
     assert.deepEqual(cards().map((c) => c.dataset.id), [uuid(7)]);
-    host.emit("wmux.feed.command", { action: "nope" });
+    host.emit("panel.feed.command", { action: "nope" });
 
     await startApp({ handlers: { "feed.list": () => { throw hostError("internal_error", "store busy"); } } });
     assert.match($("feed-status").textContent, /Could not load the feed: store busy/);

@@ -27,8 +27,13 @@ adds `require-trusted-types-for 'script'; trusted-types 'none'`.
 
 ## Native contract
 
-cmux method names where cmux has them (ADR-7.8, Appendix B). Methods cmux does
-not name live under `wmux.notifications.*` and are documented here.
+Names follow ADR-6.5: cmux method names where cmux has them (ADR-7.8,
+Appendix B). Methods and events that cmux does not name live under the
+panel's own namespace, `panel.notifications.*` (handled by the kind's
+`on_message`, like `panel.markdown.*`), and are documented here. The kind's
+allowlist therefore needs only `notification.*` and `workspace.list`
+(`panel.*` is implicit), with the event categories `notification`,
+`workspace` and `wmux`.
 
 ### `panel.init`
 
@@ -51,13 +56,13 @@ applied in place. The page sets the title with `panel.set_title
 |---|---|---|
 | `notification.list` | `{}` -> `{notifications: [record], marker_count?}` | start and after every relevant event (debounced 40 ms; only the newest reply applies). A bare array is accepted too |
 | `workspace.list` | `{}` -> `{workspaces: [{id, title}]}` | live workspace titles; reloaded on `workspace.*` events |
-| `notification.open` | `{notification_id}` | row click, Enter, menu Open. In the popover the page then calls `wmux.notifications.close_popover` |
+| `notification.open` | `{notification_id}` | row click, Enter, menu Open. In the popover the page then calls `panel.notifications.close_popover` |
 | `notification.mark_read` | `{notification_id}` | menu Mark as Read, Space on an unread row |
-| `wmux.notifications.mark_unread` | `{notification_id}` -> `{}` | menu Mark as Unread, Space on a read row. Native: `Store.markUnread(id)` (record-level, not the workspace `toggleUnread`) |
+| `panel.notifications.mark_unread` | `{notification_id}` -> `{}` | menu Mark as Unread, Space on a read row. Native: `Store.markUnread(id)` (record-level, not the workspace `toggleUnread`) |
 | `notification.dismiss` | `{notification_id}` | hover X, Delete/Backspace, menu Dismiss |
 | `notification.clear` | `{}` | Clear All |
 | `notification.jump_to_unread` | `{}` | Jump to Latest (Unread), `jumpToUnread` key handler; popover closes after |
-| `wmux.notifications.close_popover` | `{}` -> `{}` | after open/jump from the popover, and Escape in the popover. Native hides the popup (keeps the warm host) |
+| `panel.notifications.close_popover` | `{}` -> `{}` | after open/jump from the popover, and Escape in the popover. Native hides the popup (keeps the warm host) |
 | `panel.clipboard_write` | `{text}` | Copy (Ctrl+C on a row, menu Copy) |
 | `panel.state_changed` | `{state: {v: 1, focused_id}}` | focus changes, debounced 400 ms |
 
@@ -79,8 +84,8 @@ not complete the action: <message>" and reloads the list.
 | Event | Payload | Effect |
 |---|---|---|
 | `cmux.event` | events frame `{name, ...}` | `notification.*`, `wmux.notification.unread_count.changed`, `wmux.attention.changed` reload the list; `workspace.*` reloads the titles. Payloads are redacted on the stream, so the page never reads record text from frames |
-| `wmux.notifications.snapshot` | `notification.list` result, optionally with `workspaces` | replaces the list without a round trip |
-| `wmux.notifications.command` | `{action}` | `jumpToUnread`, `clearAllNotifications`, `focus` (focus the list), `refresh` |
+| `panel.notifications.snapshot` | `notification.list` result, optionally with `workspaces` | replaces the list without a round trip |
+| `panel.notifications.command` | `{action}` | `jumpToUnread`, `clearAllNotifications`, `focus` (focus the list), `refresh` |
 | `panel.init`, `theme`, `keymap`, `panel.key_sequence` | shared | handled here and by `_shared/` |
 
 ## Behavior notes

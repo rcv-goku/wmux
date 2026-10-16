@@ -384,7 +384,7 @@ export function createApp(options) {
     }
   }
 
-  /** `wmux.feed.item {item}`: insert or replace one item. */
+  /** `panel.feed.item {item}`: insert or replace one item. */
   function upsert(payload) {
     const it = normalizeItem(payload && payload.item ? payload.item : payload);
     if (!it) return;
@@ -481,7 +481,7 @@ export function createApp(options) {
     const params = { id, text: body };
     for (const key of ["request_id", "session_id", "workspace_id", "surface_id"]) if (item[key]) params[key] = item[key];
     if (item.source) params.source = item.source;
-    return decide(id, "wmux.feed.stop_reply", params, { text: body });
+    return decide(id, "panel.feed.stop_reply", params, { text: body });
   }
 
   async function jump(id) {
@@ -741,9 +741,9 @@ export function createApp(options) {
     }
     listen(els.loadOlder, "click", () => loadOlder());
     cleanups.push(bridge.on("cmux.event", onFrame));
-    cleanups.push(bridge.on("wmux.feed.item", upsert));
-    cleanups.push(bridge.on("wmux.feed.snapshot", (p) => applyPage(p)));
-    cleanups.push(bridge.on("wmux.feed.command", runCommand));
+    cleanups.push(bridge.on("panel.feed.item", upsert));
+    cleanups.push(bridge.on("panel.feed.snapshot", (p) => applyPage(p)));
+    cleanups.push(bridge.on("panel.feed.command", runCommand));
     cleanups.push(bridge.on("keymap", (km) => keys && keys.setKeymap(km)));
     state.timeTimer = win.setInterval(() => state.items.length && render(), TIME_REFRESH_MS);
     render();
