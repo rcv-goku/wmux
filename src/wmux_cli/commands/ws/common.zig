@@ -307,6 +307,18 @@ pub fn rowHandle(ctx: *Ctx, v: std.json.Value, prefix: []const u8) ![]const u8 {
     };
 }
 
+/// A scalar result value as text: numbers as `writeNumber`, strings as
+/// they are, booleans and null spelled out; anything else as compact JSON.
+pub fn writeScalar(w: *Writer, v: std.json.Value) !void {
+    switch (v) {
+        .integer, .float, .number_string => try writeNumber(w, v),
+        .string => |s| try w.writeAll(s),
+        .bool => |b| try w.writeAll(if (b) "true" else "false"),
+        .null => try w.writeAll("null"),
+        else => try std.json.Stringify.value(v, .{}, w),
+    }
+}
+
 /// Writes a number as an integer when whole, else with up to two decimals.
 pub fn writeNumber(w: *Writer, v: std.json.Value) !void {
     switch (v) {

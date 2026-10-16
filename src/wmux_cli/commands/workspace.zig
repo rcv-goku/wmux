@@ -783,6 +783,7 @@ test "unit: cli-workspace: workspace-action actions, flags and errors" {
     try h.init();
     defer h.deinit();
     h.ok("workspace.action", "{\"workspace_ref\":\"workspace:2\"}");
+    // Every action goes out in cmux's wire spelling (`_` for `-`).
     for (reorder.actions) |a| {
         const argv: []const []const u8 = if (std.mem.eql(u8, a, "rename"))
             &.{ "workspace-action", a, "--title", "T" }
@@ -792,32 +793,58 @@ test "unit: cli-workspace: workspace-action actions, flags and errors" {
             &.{ "workspace-action", a, "--color", "teal" }
         else
             &.{ "workspace-action", "--action", a };
-        try testing.expectEqualStrings("OK\n", try testkit.expectOk(&h, argv));
-        try testing.expectEqualStrings(a, h.requests()[h.requestCount() - 1].params.object.get("action").?.string);
+        const wire = try std.mem.replaceOwned(u8, h.alloc(), a, "-", "_");
+        const want = try std.fmt.allocPrint(h.alloc(), "OK action={s} workspace=workspace:2\n", .{wire});
+        try testing.expectEqualStrings(want, try testkit.expectOk(&h, argv));
+        try testing.expectEqualStrings(wire, h.requests()[h.requestCount() - 1].params.object.get("action").?.string);
     }
-    try h.expectLast("workspace.action", "{\"action\":\"clear-color\"}");
+    try h.expectLast("workspace.action", "{\"action\":\"clear_color\"}");
     _ = try testkit.expectOk(&h, &.{ "workspace-action", "set-color", "--color", "teal" });
-    try h.expectLast("workspace.action", "{\"action\":\"set-color\",\"color\":\"Teal\"}");
+    try h.expectLast("workspace.action", "{\"action\":\"set_color\",\"color\":\"Teal\"}");
     _ = try testkit.expectOk(&h, &.{ "workspace-action", "set-color", "--color", "#1a2B3c", "--workspace", "workspace:4" });
-    try h.expectLast("workspace.action", "{\"action\":\"set-color\",\"workspace_id\":\"workspace:4\",\"color\":\"#1a2B3c\"}");
+    try h.expectLast("workspace.action", "{\"action\":\"set_color\",\"workspace_id\":\"workspace:4\",\"color\":\"#1a2B3c\"}");
     _ = try testkit.expectOk(&h, &.{ "workspace-action", "set-description", "two", "words\nkept" });
-    try h.expectLast("workspace.action", "{\"action\":\"set-description\",\"description\":\"two words\\nkept\"}");
+    try h.expectLast("workspace.action", "{\"action\":\"set_description\",\"description\":\"two words\\nkept\"}");
     _ = try testkit.expectOk(&h, &.{ "workspace-action", "close-others", "--force", "--window", "window:1" });
-    try h.expectLast("workspace.action", "{\"action\":\"close-others\",\"window_id\":\"window:1\",\"force\":true}");
+    try h.expectLast("workspace.action", "{\"action\":\"close_others\",\"window_id\":\"window:1\",\"force\":true}");
+    // Any case and either separator; rename and set-color also take the
+    // remaining words; surrounding whitespace is trimmed.
+    _ = try testkit.expectOk(&h, &.{ "workspace-action", "--action", " MOVE_Up " });
+    try h.expectLast("workspace.action", "{\"action\":\"move_up\"}");
+    _ = try testkit.expectOk(&h, &.{ "workspace-action", "Set_Description", "  padded\n", "text  " });
+    try h.expectLast("workspace.action", "{\"action\":\"set_description\",\"description\":\"padded\\n text\"}");
+    _ = try testkit.expectOk(&h, &.{ "workspace-action", "rename", "Build", "\u{1F680}" });
+    try h.expectLast("workspace.action", "{\"action\":\"rename\",\"title\":\"Build \u{1F680}\"}");
+    _ = try testkit.expectOk(&h, &.{ "workspace-action", "set-color", "navy" });
+    try h.expectLast("workspace.action", "{\"action\":\"set_color\",\"color\":\"Navy\"}");
     h.setEnv("CMUX_WORKSPACE_ID", "CALLER-UUID");
     _ = try testkit.expectOk(&h, &.{ "workspace-action", "rename", "--title", "Agent \u{1F916}" });
     try h.expectLast("workspace.action", "{\"action\":\"rename\",\"workspace_id\":\"CALLER-UUID\",\"title\":\"Agent \u{1F916}\"}");
+    // The summary lists what the result reports, per --id-format.
+    h.ok("workspace.action", "{\"workspace_id\":\"9B690000-0000-4000-8000-000000000002\",\"workspace_ref\":\"workspace:2\",\"window_ref\":\"window:1\",\"closed\":3,\"index\":0,\"color\":\"#AABBCC\"}");
+    try testing.expectEqualStrings("OK action=close_below workspace=workspace:2 window=window:1 closed=3 index=0 color=#AABBCC\n", try testkit.expectOk(&h, &.{ "workspace-action", "close-below" }));
+    try testing.expectEqualStrings("OK action=pin workspace=9B690000-0000-4000-8000-000000000002 window=window:1 closed=3 index=0 color=#AABBCC\n", try testkit.expectOk(&h, &.{ "workspace-action", "pin", "--id-format", "uuids" }));
+    h.ok("workspace.action", "{\"closed\":true,\"index\":null}");
+    try testing.expectEqualStrings("OK action=mark_read closed=true index=null\n", try testkit.expectOk(&h, &.{ "workspace-action", "mark-read" }));
+    h.ok("workspace.action", "{}");
+    try testing.expectEqualStrings("OK action=unpin\n", try testkit.expectOk(&h, &.{ "workspace-action", "unpin" }));
+    try testing.expectEqualStrings("{}\n", try testkit.expectOk(&h, &.{ "workspace-action", "unpin", "--json" }));
 
     try testkit.expectUsage(&h, &.{"workspace-action"}, "workspace-action requires --action <name>");
     try testkit.expectUsage(&h, &.{ "workspace-action", "explode" }, "Unknown workspace action: explode. Valid actions: pin, unpin, rename, clear-name, set-description, clear-description, move-up, move-down, move-top, close-others, close-above, close-below, mark-read, mark-unread, set-color, clear-color");
-    try testkit.expectUsage(&h, &.{ "workspace-action", "rename" }, "workspace-action rename requires --title <text>");
-    try testkit.expectUsage(&h, &.{ "workspace-action", "set-description" }, "workspace-action set-description requires --description <text> or trailing text");
+    try testkit.expectUsage(&h, &.{ "workspace-action", "--action", "move--up" }, "Unknown workspace action: move--up. Valid actions: pin, unpin, rename, clear-name, set-description, clear-description, move-up, move-down, move-top, close-others, close-above, close-below, mark-read, mark-unread, set-color, clear-color");
+    try testkit.expectUsage(&h, &.{ "workspace-action", "rename" }, "workspace-action rename requires --title <text> (or a trailing title)");
+    try testkit.expectUsage(&h, &.{ "workspace-action", "rename", "--title", " " }, "workspace-action rename requires --title <text> (or a trailing title)");
+    try testkit.expectUsage(&h, &.{ "workspace-action", "rename", "--title", "T", "extra" }, "unexpected argument 'extra'");
+    try testkit.expectUsage(&h, &.{ "workspace-action", "set-description" }, "workspace-action set-description requires --description <text> (or trailing text)");
     try testkit.expectUsage(&h, &.{ "workspace-action", "set-description", "--description", "a", "b" }, "unexpected argument 'b'");
-    try testkit.expectUsage(&h, &.{ "workspace-action", "set-color" }, "workspace-action set-color requires --color <name|#RRGGBB>");
+    try testkit.expectUsage(&h, &.{ "workspace-action", "set-color" }, "workspace-action set-color requires --color <name|#hex> (or a trailing color)");
     try testkit.expectUsage(&h, &.{ "workspace-action", "set-color", "--color", "#12345" }, "invalid color '#12345': use #RRGGBB or one of Red, Crimson, Orange, Amber, Olive, Green, Teal, Aqua, Blue, Navy, Indigo, Purple, Magenta, Rose, Brown, Charcoal");
+    try testkit.expectUsage(&h, &.{ "workspace-action", "set-color", "light", "blue" }, "invalid color 'light blue': use #RRGGBB or one of Red, Crimson, Orange, Amber, Olive, Green, Teal, Aqua, Blue, Navy, Indigo, Purple, Magenta, Rose, Brown, Charcoal");
     try testkit.expectUsage(&h, &.{ "workspace-action", "pin", "extra" }, "unexpected argument 'extra'");
     try testing.expectEqualStrings("Charcoal", reorder.normalizeColor(" CHARCOAL ").?);
     try testing.expect(reorder.normalizeColor("#GG0000") == null);
+    try testing.expect(reorder.isAction("close_others") and !reorder.isAction("close-others") and !reorder.isAction(""));
 }
 
 test "unit: cli-workspace: workspace status get, set, cycle and errors" {
