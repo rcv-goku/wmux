@@ -88,7 +88,7 @@ export const STRINGS = Object.freeze({
 
   "settings.resetAll.title": "Reset All Settings",
   "settings.resetAll.body":
-    "Clears every value the Settings window saved in wmux.json. Values from cmux.json and settings managed by your organization stay in effect.",
+    "Removes the settings in wmux.json, including ones you edited there by hand. Values from cmux.json and settings managed by your organization stay in effect.",
   "settings.resetAll.button": "Reset All Settings…",
   "settings.resetAll.confirm": "Reset all settings to their defaults? This cannot be undone.",
   "settings.resetAll.ok": "Reset All",

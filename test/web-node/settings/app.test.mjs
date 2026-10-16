@@ -525,6 +525,8 @@ describe("unit: persistence-settings-reset-all: Reset All", () => {
     const store = createStore({ wmux: { "terminal.scrollSpeed": 2 }, cmux: { "sidebar.showPorts": false } });
     const { app } = await startSettings({ store });
     app.navigate("reset");
+    // No separate preferences store (ADR-5.1): hand-edited wmux.json values go too, and the card says so.
+    assert.match($(".set-section[data-section='reset'] .set-card p").textContent, /edited there by hand/);
     $("#set-reset-all").click();
     assert.equal($("#set-confirm").hidden, false);
     assert.equal(doc.activeElement, $("#set-confirm-cancel"));
