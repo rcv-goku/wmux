@@ -422,15 +422,17 @@ fn runTriggerFlash(ctx: *Ctx) !u8 {
 
 // ----- feed -----
 
-/// cmux keeps Feed history in `~/.cmuxterm/workstream.jsonl`; wmux uses the
-/// same file under the user profile.
+/// Feed history file name (cmux: `~/.cmuxterm/workstream.jsonl`).
+pub const feed_history_file = "workstream.jsonl";
+
+/// wmux keeps cmux's `~/.cmuxterm` state under STATE (Appendix E D5, as
+/// `automations.json` does), so the Feed history is `STATE\workstream.jsonl`
+/// (`%LOCALAPPDATA%\wmux\<channel>`, or `WMUX_STATE_DIR`). The feed feature
+/// (W5a) owns the location; keep the two in step.
 pub fn feedHistoryPath(ctx: *Ctx) !?[]const u8 {
     const style = proto.paths.Style.native;
-    const order: []const []const u8 = if (style == .windows) &.{ "USERPROFILE", "HOME" } else &.{ "HOME", "USERPROFILE" };
-    for (order) |n| if (ctx.env.getNonEmpty(n)) |home| {
-        return try proto.paths.join(ctx.arena, style, &.{ home, ".cmuxterm", "workstream.jsonl" });
-    };
-    return null;
+    const state = (try proto.paths.stateDir(ctx.arena, ctx.env, style, ctx.channel)) orelse return null;
+    return try proto.paths.join(ctx.arena, style, &.{ state, feed_history_file });
 }
 
 const feed_usage = "Usage: cmux feed tui [--opentui|--legacy]\n       cmux feed clear [--yes|-y]";
@@ -454,7 +456,7 @@ fn feedClear(ctx: *Ctx, rest: []const []const u8) !u8 {
         if (std.mem.eql(u8, x, "--yes") or std.mem.eql(u8, x, "-y")) yes = true else try bad.append(ctx.arena, x);
     }
     if (bad.items.len > 0) return common.reportProblem(ctx, "feed clear", .{ .unexpected = bad.items });
-    const path = (try feedHistoryPath(ctx)) orelse return ctx.runtimeError("cannot locate the home directory (USERPROFILE and HOME are unset)", .{});
+    const path = (try feedHistoryPath(ctx)) orelse return ctx.runtimeError("cannot locate the wmux state directory (set WMUX_STATE_DIR)", .{});
     if (!ctx.platform.pathExists(path)) {
         try ctx.out.print("No Feed history to clear ({s} does not exist).\n", .{path});
         return output.exit.ok;

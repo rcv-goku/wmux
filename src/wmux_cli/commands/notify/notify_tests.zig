@@ -371,6 +371,19 @@ fn recordDelete(path: []const u8) anyerror!void {
 
 fn noWrite(_: []const u8, _: []const u8) anyerror!void {}
 
+/// Points STATE at a fake profile (LOCALAPPDATA on Windows, XDG_STATE_HOME
+/// elsewhere) and returns the Feed history path: cmux's `~/.cmuxterm` state
+/// lives under STATE on wmux (Appendix E D5).
+fn feedPath(h: *Harness) ![]const u8 {
+    const proto = @import("wmux_proto");
+    const windows = proto.paths.Style.native == .windows;
+    const base = if (windows) "C:\\Users\\u\\AppData\\Local" else "/home/u/.local/state";
+    h.setEnv(if (windows) "LOCALAPPDATA" else "XDG_STATE_HOME", base);
+    h.setEnv(if (windows) "USERPROFILE" else "HOME", if (windows) "C:\\Users\\u" else "/home/u");
+    // The harness pins WMUX_CHANNEL=stable.
+    return proto.paths.join(h.alloc(), proto.paths.Style.native, &.{ base, "wmux", "stable", "workstream.jsonl" });
+}
+
 test "unit: cli-notify: feed clear confirms, deletes and works offline" {
     var h: Harness = undefined;
     try h.init(notifyHandler);
@@ -380,10 +393,7 @@ test "unit: cli-notify: feed clear confirms, deletes and works offline" {
     common.files = .{ .delete = recordDelete, .write = noWrite };
     deleted_n = 0;
     delete_fails = false;
-    const proto = @import("wmux_proto");
-    const home = if (proto.paths.Style.native == .windows) "C:\\Users\\u" else "/home/u";
-    h.setEnv(if (proto.paths.Style.native == .windows) "USERPROFILE" else "HOME", home);
-    const path = try proto.paths.join(h.alloc(), proto.paths.Style.native, &.{ home, ".cmuxterm", "workstream.jsonl" });
+    const path = try feedPath(&h);
 
     const none = h.run(&.{ "cmux", "feed", "clear", "--yes" });
     try kit.expectResult(none, 0, try std.fmt.allocPrint(h.alloc(), "No Feed history to clear ({s} does not exist).\n", .{path}), "");
@@ -427,10 +437,7 @@ test "unit: cli-notify: feed clear takes one answer line, not stdin up to EOF" {
     common.files = .{ .delete = recordDelete, .write = noWrite };
     deleted_n = 0;
     delete_fails = false;
-    const proto = @import("wmux_proto");
-    const home = if (proto.paths.Style.native == .windows) "C:\\Users\\u" else "/home/u";
-    h.setEnv(if (proto.paths.Style.native == .windows) "USERPROFILE" else "HOME", home);
-    const path = try proto.paths.join(h.alloc(), proto.paths.Style.native, &.{ home, ".cmuxterm", "workstream.jsonl" });
+    const path = try feedPath(&h);
     try h.fp.addFile(path, "{}\n");
     // A console answers with one CRLF line and never sends EOF, so the
     // answer comes from the line hook (h.deinit restores it), not from the
@@ -442,11 +449,16 @@ test "unit: cli-notify: feed clear takes one answer line, not stdin up to EOF" {
     try testing.expectEqual(@as(usize, 1), deleted_n);
 }
 
-test "unit: cli-notify: feed clear without a home directory" {
+test "unit: cli-notify: feed clear needs a state directory and honors WMUX_STATE_DIR" {
     var h: Harness = undefined;
     try h.init(notifyHandler);
     defer h.deinit();
-    try kit.expectResult(h.run(&.{ "cmux", "feed", "clear", "-y" }), 1, "", "cmux: cannot locate the home directory (USERPROFILE and HOME are unset)\n");
+    try kit.expectResult(h.run(&.{ "cmux", "feed", "clear", "-y" }), 1, "", "cmux: cannot locate the wmux state directory (set WMUX_STATE_DIR)\n");
+    const proto = @import("wmux_proto");
+    const dir = if (proto.paths.Style.native == .windows) "D:\\wmux state" else "/srv/wmux state";
+    h.setEnv("WMUX_STATE_DIR", dir);
+    const path = try proto.paths.join(h.alloc(), proto.paths.Style.native, &.{ dir, "workstream.jsonl" });
+    try kit.expectResult(h.run(&.{ "cmux", "feed", "clear", "-y" }), 0, try std.fmt.allocPrint(h.alloc(), "No Feed history to clear ({s} does not exist).\n", .{path}), "");
 }
 
 test "unit: cli-notify: server errors and connection failures exit 1" {
