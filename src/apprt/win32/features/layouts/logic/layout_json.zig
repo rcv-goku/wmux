@@ -830,8 +830,8 @@ const BuildState = struct {
 
 /// Converts a definition into a buildable tree: cwds resolved, env merged,
 /// `setup` attached to the first terminal, `focus` resolved (the first
-/// surface with focus:true wins; every pane selects its focused tab or
-/// tab 0).
+/// surface with focus:true in the tree gets keyboard focus; every pane
+/// selects its own first focus:true tab, else tab 0).
 pub fn toTree(arena: Allocator, ws: Workspace, opts: BuildOptions) Allocator.Error!Tree {
     const own = opts.cwd_override orelse ws.cwd;
     const base = try resolveCwd(arena, opts.style, opts.inherited_cwd, opts.home, own);
@@ -859,7 +859,7 @@ fn buildNode(st: *BuildState, node: Node) Allocator.Error!TreeNode {
         },
         .pane => |p| {
             const tabs = try st.arena.alloc(TreeTab, p.surfaces.len);
-            var selected: usize = 0;
+            var selected: ?usize = null;
             for (p.surfaces, tabs, 0..) |s, *t, i| {
                 t.* = .{
                     .kind = switch (s.type) {
@@ -876,13 +876,15 @@ fn buildNode(st: *BuildState, node: Node) Allocator.Error!TreeNode {
                     t.setup = st.ws.setup;
                     st.setup_pending = false;
                 }
-                if (s.focus and !st.focus_taken) {
-                    t.focused = true;
-                    st.focus_taken = true;
-                    selected = i;
+                if (s.focus) {
+                    if (selected == null) selected = i;
+                    if (!st.focus_taken) {
+                        t.focused = true;
+                        st.focus_taken = true;
+                    }
                 }
             }
-            return .{ .pane = .{ .tabs = tabs, .selected = selected } };
+            return .{ .pane = .{ .tabs = tabs, .selected = selected orelse 0 } };
         },
     }
 }
@@ -1293,6 +1295,27 @@ test "unit: layouts: toTree resolves cwds, merges env, attaches setup and focus"
     try testing.expect(right.tabs[0].focused);
     try testing.expect(!right.tabs[1].focused);
     try testing.expectEqual(@as(usize, 0), right.selected);
+}
+
+test "unit: layouts: every pane shows its own focus tab and keyboard focus goes to the first" {
+    var ar = testArena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    var d: Diagnostics = .init(a);
+    const ws = try parseWorkspaceText(a,
+        \\{"layout":{"direction":"horizontal","children":[
+        \\  {"surfaces":[{},{"focus":true}]},
+        \\  {"direction":"vertical","children":[{"surfaces":[{},{},{"focus":true}]},{"surfaces":[{},{}]}]}]}}
+    , &d);
+    const t = try toTree(a, ws, .{ .style = .posix });
+    const left = t.root.split.a.pane;
+    const top_right = t.root.split.b.split.a.pane;
+    const bottom_right = t.root.split.b.split.b.pane;
+    try testing.expectEqual(@as(usize, 1), left.selected);
+    try testing.expect(left.tabs[1].focused);
+    try testing.expectEqual(@as(usize, 2), top_right.selected);
+    try testing.expect(!top_right.tabs[2].focused);
+    try testing.expectEqual(@as(usize, 0), bottom_right.selected);
 }
 
 test "unit: layouts: cwd override re-roots the layout (layout open --cwd)" {
