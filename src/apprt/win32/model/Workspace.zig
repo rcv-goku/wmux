@@ -13,6 +13,7 @@ const Allocator = std.mem.Allocator;
 
 const Pane = @import("Pane.zig");
 const SplitTree = @import("../../../datastruct/split_tree.zig").SplitTree;
+const Surface = @import("../Surface.zig");
 const Tab = @import("Tab.zig");
 const Title = @import("Title.zig");
 const Window = @import("../ui/Window.zig");
@@ -133,6 +134,42 @@ pub fn destroy(self: *Workspace, gpa: Allocator) void {
 // ---------------------------------------------------------------------------
 // Panes
 // ---------------------------------------------------------------------------
+
+/// A located tab: the workspace and pane that own it, plus the tab's
+/// index within that pane (Window.findLoc / findLocOfSurface).
+pub const Loc = struct {
+    ws: *Workspace,
+    pane: *Pane,
+    index: usize,
+};
+
+/// Find `tab` among the panes of `workspaces`, in order.
+pub fn locate(workspaces: []const *Workspace, tab: *const Tab) ?Loc {
+    for (workspaces) |ws| {
+        var it = ws.tree.iterator();
+        while (it.next()) |entry| {
+            const pane = entry.view;
+            if (pane.indexOf(tab)) |i| return .{ .ws = ws, .pane = pane, .index = i };
+        }
+    }
+    return null;
+}
+
+/// Find the tab holding the terminal `surface` among the panes of
+/// `workspaces`. Compares addresses only and never dereferences
+/// `surface`, so callers can validate a possibly dangling pointer.
+pub fn locateSurface(workspaces: []const *Workspace, surface: *const Surface) ?Loc {
+    for (workspaces) |ws| {
+        var it = ws.tree.iterator();
+        while (it.next()) |entry| {
+            const pane = entry.view;
+            for (pane.tabs.items, 0..) |t, i| {
+                if (t.surface() == surface) return .{ .ws = ws, .pane = pane, .index = i };
+            }
+        }
+    }
+    return null;
+}
 
 /// The number of leaf Panes in the workspace's split tree.
 pub fn paneCount(self: *const Workspace) usize {

@@ -200,13 +200,8 @@ pub const selectWorkspace = ops_window.selectWorkspace;
 pub const setWorkspaceDescription = ops_workspace.setWorkspaceDescription;
 pub const setWorkspaceName = ops_workspace.setWorkspaceName;
 
-/// A located tab: the workspace and Pane that own it, plus the tab's
-/// index within that pane. Returned by findLoc/findLocOfSurface.
-pub const Loc = struct {
-    ws: *Workspace,
-    pane: *Pane,
-    index: usize,
-};
+/// A located tab (moved to model/Workspace.zig in W0-A2).
+pub const Loc = Workspace.Loc;
 
 /// The parent App.
 app: *App,
@@ -639,16 +634,7 @@ pub fn getActiveSurface(self: *Window) ?*Surface {
 /// Find the workspace, pane and index of a given tab, scanning every
 /// workspace's panes.
 pub fn findLoc(self: *const Window, tab: *const Tab) ?Loc {
-    for (self.workspaces.items) |ws| {
-        var it = ws.tree.iterator();
-        while (it.next()) |entry| {
-            const pane = entry.view;
-            for (pane.tabs.items, 0..) |t, i| {
-                if (t == tab) return .{ .ws = ws, .pane = pane, .index = i };
-            }
-        }
-    }
-    return null;
+    return Workspace.locate(self.workspaces.items, tab);
 }
 
 /// Find the workspace, pane and index of the tab holding a given terminal
@@ -656,16 +642,7 @@ pub fn findLoc(self: *const Window, tab: *const Tab) ?Loc {
 /// against live tabs WITHOUT dereferencing `surface`, so callers
 /// validating possibly-dangling pointers (jumpToSurface) can use it safely.
 pub fn findLocOfSurface(self: *const Window, surface: *const Surface) ?Loc {
-    for (self.workspaces.items) |ws| {
-        var it = ws.tree.iterator();
-        while (it.next()) |entry| {
-            const pane = entry.view;
-            for (pane.tabs.items, 0..) |t, i| {
-                if (t.surface() == surface) return .{ .ws = ws, .pane = pane, .index = i };
-            }
-        }
-    }
-    return null;
+    return Workspace.locateSurface(self.workspaces.items, surface);
 }
 
 /// Handle WM_CLOSE: clean up all tabs, then destroy the window.
@@ -1236,6 +1213,7 @@ test {
     _ = tabbar_paint;
     _ = @import("tabbar/logic/geometry.zig");
     _ = @import("../model/layout.zig");
+    _ = @import("../model/logic/fake.zig");
     _ = ops_move;
     _ = ops_pane;
     _ = ops_surface;
