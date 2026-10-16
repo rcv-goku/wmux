@@ -513,6 +513,44 @@ test "unit: workspace_status: auto label reflects an active pin" {
     try testing.expectEqualStrings("Auto \u{2014} return to working", w.buffered());
 }
 
+test "unit: workspace_status: a stale pin is invisible before reconcile runs" {
+    var s: Status = .{};
+    s.set(.{ .lane = .review }, .working);
+    try testing.expect(s.showsGlyph(true, .working));
+    // Inference moved; nothing reports the pin even though it is still stored.
+    try testing.expect(s.override != null);
+    try testing.expect(!s.showsGlyph(true, .todo));
+    try testing.expectEqual(@as(?Override, null), s.payload(.todo).override);
+    var buf: [64]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    try writeAutoLabel(&w, s, .todo);
+    try testing.expectEqualStrings("Auto \u{2014} todo", w.buffered());
+    // A pin naming the inferred lane itself still holds until inference moves.
+    var same: Status = .{};
+    same.set(.{ .lane = .working }, .working);
+    try testing.expect(!same.reconcile(.working));
+    try testing.expect(same.showsGlyph(true, .working));
+    try testing.expect(same.reconcile(.review));
+    // reconcile without a pin is a no-op.
+    var plain: Status = .{};
+    try testing.expect(!plain.reconcile(.done));
+    try testing.expectEqual(Status{}, plain);
+}
+
+test "unit: workspace_status: cycle and set on a hidden workspace show it again" {
+    var s: Status = .new_workspace;
+    try testing.expectEqual(Lane.working, s.cycle(.todo));
+    try testing.expect(!s.hidden);
+    try testing.expect(s.showsGlyph(true, .todo));
+    // none keeps the pin; auto after none clears both.
+    s.set(.none, .todo);
+    try testing.expectEqual(Lane.working, s.effective(.todo));
+    s.set(.none, .todo);
+    try testing.expect(s.hidden);
+    s.set(.auto, .todo);
+    try testing.expectEqual(Status{}, s);
+}
+
 test "unit: workspace_status: done edge fires once per transition" {
     var e: DoneEdge = .{};
     try testing.expect(!e.observe(.todo));
