@@ -1,0 +1,16 @@
+Usage: cmux top [--json]
+
+Print CPU and memory use per window, workspace, pane and surface, headed by
+the app itself.
+
+Options:
+  --all                         Every window (not with --window)
+  --workspace <id|ref|index>    Only this workspace
+  --window <id|ref|index>       This window instead of the current one
+  --processes                   Include the process trees of each surface
+  --sort <cpu|mem|proc>         Order rows by CPU, memory or process count
+  --flat                        One row per node without indentation
+  --format <tree|tsv>           Text layout (tsv implies --flat; columns:
+                                kind, handle, name, cpu_percent, rss_bytes,
+                                process_count)
+  --json                        Print the full response

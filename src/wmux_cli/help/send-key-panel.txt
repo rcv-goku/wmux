@@ -1,0 +1,12 @@
+Usage: cmux send-key-panel [--panel <id|ref|index>] [--force] <key>
+
+The older, panel-addressed form of send-key: --panel is required, and key
+names, the dialog guard and --force work as they do for send-key.
+
+Options:
+  --panel <id|ref|index>        Target surface (required)
+  --workspace <id|ref|index>    Workspace context (default: $CMUX_WORKSPACE_ID)
+  --window <id|ref|index>       Window context for refs and indexes
+  --force                       Send even while an agent is asking a
+                                question or for a permission
+  --json                        Print the full response

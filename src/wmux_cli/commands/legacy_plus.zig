@@ -7,7 +7,8 @@
 //! `+hooks` other than `setup` (until W3) are relayed to `..\wmux.exe` with
 //! inherited handles and their exit code is propagated. No new `+verbs` are
 //! ever added (G8). Old flag spellings (`--workspace I`, `--pane P`,
-//! `--tab T`) pass through to the new commands unchanged.
+//! `--tab T`) pass through to the new commands unchanged (`+send` moves them
+//! in front of its text, where cmux's `send` reads options).
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -28,7 +29,8 @@ pub const Rule = struct {
     relay_other_subs: bool = false,
     /// Relay the whole verb to `wmux.exe`.
     relay: bool = false,
-    /// `+send --enter`: append a carriage return to the text.
+    /// `+send`: `--enter` appends a carriage return to the text and the
+    /// target flags move in front of it (`applyEnter`).
     enter_flag: bool = false,
 };
 
@@ -105,9 +107,20 @@ fn isValueFlag(a: []const u8) bool {
     return false;
 }
 
-/// `+send ... --enter`: drop `--enter` and append `\r` to the text (the last
-/// positional argument), or add `\r` as the text when there is none.
+/// `--pane=1`: a value flag with its value attached.
+fn isValueFlagAssign(a: []const u8) bool {
+    const eq = std.mem.indexOfScalar(u8, a, '=') orelse return false;
+    return isValueFlag(a[0..eq]);
+}
+
+/// `+send` arguments in cmux order. The old CLI read its flags anywhere
+/// (`+send <text> [--workspace I] [--tab J] [--pane P] [--enter]`), while
+/// cmux's `send` reads options only before the text, so the target flags
+/// (`--flag v` or `--flag=v`) move in front of the text. `--enter` is
+/// dropped and `\r` appended to the text (the last positional argument), or
+/// added as the text when there is none.
 fn applyEnter(arena: Allocator, rest: []const []const u8) Allocator.Error![]const []const u8 {
+    var flags: std.ArrayList([]const u8) = .empty;
     var out: std.ArrayList([]const u8) = .empty;
     var enter = false;
     var text_index: ?usize = null;
@@ -124,18 +137,24 @@ fn applyEnter(arena: Allocator, rest: []const []const u8) Allocator.Error![]cons
             enter = true;
             continue;
         }
+        if (isValueFlag(a) or isValueFlagAssign(a)) {
+            try flags.append(arena, a);
+            if (isValueFlag(a) and i + 1 < rest.len) {
+                i += 1;
+                try flags.append(arena, rest[i]);
+            }
+            continue;
+        }
         try out.append(arena, a);
-        if (isValueFlag(a) and i + 1 < rest.len) {
-            i += 1;
-            try out.append(arena, rest[i]);
-        } else if (!std.mem.startsWith(u8, a, "--")) text_index = out.items.len - 1;
+        if (!std.mem.startsWith(u8, a, "--")) text_index = out.items.len - 1;
     }
     if (enter) {
         if (text_index) |t| {
             out.items[t] = try std.mem.concat(arena, u8, &.{ out.items[t], "\r" });
         } else try out.append(arena, "\r");
     }
-    return out.items;
+    try flags.appendSlice(arena, out.items);
+    return flags.items;
 }
 
 fn joinWords(arena: Allocator, words: []const []const u8) Allocator.Error![]const u8 {
@@ -234,6 +253,18 @@ test "unit: cli-legacy-plus: send --enter appends a carriage return to the text"
     try expectRewrite(&.{ "+send", "--enter", "--", "--help" }, &.{ "send", "--", "--help\r" }, "+send", "send");
     try expectRewrite(&.{ "+send", "+workspace", "--version" }, &.{ "send", "+workspace", "--version" }, "+send", "send");
     try expectRewrite(&.{ "+send", "h\u{e9}llo \u{1F600}", "--enter" }, &.{ "send", "h\u{e9}llo \u{1F600}\r" }, "+send", "send");
+}
+
+test "unit: cli-legacy-plus: send moves the target flags in front of the text" {
+    // The old CLI read flags anywhere; cmux's send reads them only before
+    // the text, so a trailing --tab must not become typed text.
+    try expectRewrite(&.{ "+send", "ls", "--workspace", "1", "--tab", "2", "--enter" }, &.{ "send", "--workspace", "1", "--tab", "2", "ls\r" }, "+send", "send");
+    try expectRewrite(&.{ "+send", "--tab", "0", "pwd", "--pane", "3", "--enter" }, &.{ "send", "--tab", "0", "--pane", "3", "pwd\r" }, "+send", "send");
+    try expectRewrite(&.{ "+send", "echo hi", "--pane=1" }, &.{ "send", "--pane=1", "echo hi" }, "+send", "send");
+    // Other dash words stay text; a dangling flag still fails in send.
+    try expectRewrite(&.{ "+send", "ls", "-la", "--enter" }, &.{ "send", "ls", "-la\r" }, "+send", "send");
+    try expectRewrite(&.{ "+send", "echo", "--tab" }, &.{ "send", "--tab", "echo" }, "+send", "send");
+    try expectRewrite(&.{ "+send", "--", "--tab", "1" }, &.{ "send", "--", "--tab", "1" }, "+send", "send");
 }
 
 test "unit: cli-legacy-plus: relays and usage errors" {

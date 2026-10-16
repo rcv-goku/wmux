@@ -1,0 +1,2 @@
+* surface:1  pane:1  terminal  build  [focused]
+  surface:7  pane:2  browser  Docs

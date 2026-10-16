@@ -1,0 +1,12 @@
+Usage: cmux move-tab-to-new-workspace [--surface <id|ref|index>]
+
+Detach a tab into a workspace of its own (alias: detach-tab). The new
+workspace is not selected unless --focus true is given.
+
+Options:
+  --surface <id|ref|index>      Tab to move (alias --tab; default:
+                                $CMUX_SURFACE_ID)
+  --workspace <id|ref|index>    Workspace context (default: $CMUX_WORKSPACE_ID)
+  --window <id|ref|index>       Window context for refs and indexes
+  --focus <true|false>          Select the new workspace (default: false)
+  --json                        Print the full response

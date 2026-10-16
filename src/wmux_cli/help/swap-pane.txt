@@ -1,0 +1,11 @@
+Usage: cmux swap-pane --pane <id|ref|index> --target-pane <id|ref|index> [--workspace <id|ref|index>] [--window <id|ref|index>] [--focus <true|false>]
+
+Swap two panes.
+
+Options:
+  --pane <id|ref|index>         First pane (required)
+  --target-pane <id|ref|index>  Second pane (required)
+  --workspace <id|ref|index>    Workspace context (default: $CMUX_WORKSPACE_ID)
+  --window <id|ref|index>       Window context for refs and indexes
+  --focus <true|false>          Focus the moved pane (default: false)
+  --json                        Print the full response

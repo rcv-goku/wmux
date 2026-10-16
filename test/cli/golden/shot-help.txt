@@ -1,0 +1,21 @@
+Usage: cmux shot [flags]
+
+Capture one of the app's windows, or a rectangle inside it, as a PNG or
+JPEG image (alias: screenshot). Other applications are never captured.
+Output: "<width>x<height> <bytes> <path>". The file only appears once it is
+complete: the image is first written to a temporary file in the same folder,
+which then takes the target's place.
+
+Flags:
+  --format <png|jpg>            Image format (default: png)
+  --jpg                         Same as --format jpg
+  --scale <0.1-1>               Scale factor (default: 1)
+  --max-width <64-8192>         Largest output width in pixels
+  --quality <0.1-1>             JPEG quality (default: 0.8; ignored for png)
+  --region <x,y,w,h>            Window region in points
+  --out <path>                  Output file (default: a temporary directory)
+  --label <text>                Label stored with the capture
+  --caption <text>              Caption drawn into the image
+  --window <id|ref|index>       Window to capture (default: the frontmost
+                                wmux window)
+  --json                        Print the full response

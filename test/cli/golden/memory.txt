@@ -1,0 +1,6 @@
+App footprint:        150.0 MiB
+WebView2 processes:   80.0 MiB in 4 processes
+Terminal children:    1.2 GiB in 14 processes
+Top groups:
+  surface surface:2 "cargo"  921.6 MiB in 1 process
+  workspace workspace:1 "api"  1.0 GiB in 9 processes
