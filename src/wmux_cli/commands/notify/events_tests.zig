@@ -110,9 +110,11 @@ test "unit: cli-events: a closed stream exits 1 without --reconnect" {
 }
 
 test "unit: cli-events: --reconnect resumes after the last seq and drops replays" {
+    // The same app answers the second subscription (its numbering goes on).
+    const ack_resumed = "{\"type\":\"ack\",\"resume\":{\"after_seq\":6,\"requested_after_seq\":6,\"oldest_seq\":1,\"latest_seq\":7,\"next_seq\":8,\"gap\":false}}";
     var sc: Script = .{ .batches = &.{
         comptime lines(&.{ ack, ev("5", "a"), ev("6", "b") }),
-        comptime lines(&.{ ack, ev("6", "b"), ev("7", "c") }),
+        comptime lines(&.{ ack_resumed, ev("6", "b"), ev("7", "c") }),
     } };
     var h: Harness = undefined;
     try harness(&h, &sc);
@@ -122,6 +124,28 @@ test "unit: cli-events: --reconnect resumes after the last seq and drops replays
     try testing.expectEqual(@as(usize, 2), h.server.countMethod("events.stream"));
     try testing.expectEqualStrings("{\"after_seq\":6,\"include_heartbeats\":true}", h.last().params_json);
     try testing.expectEqual(@as(u64, 1000), h.fp.slept_ms);
+}
+
+test "unit: cli-events: --reconnect follows a restarted app's sequence numbers" {
+    // seq is process-local: a restarted app numbers its events from 1 again
+    // and echoes the stale after_seq it was asked for.
+    const ack_old = "{\"type\":\"ack\",\"resume\":{\"after_seq\":null,\"oldest_seq\":1,\"latest_seq\":6,\"next_seq\":7,\"gap\":false}}";
+    const ack_new = "{\"type\":\"ack\",\"resume\":{\"after_seq\":6,\"requested_after_seq\":6,\"oldest_seq\":null,\"latest_seq\":0,\"next_seq\":1,\"gap\":true}}";
+    const ack_same = "{\"type\":\"ack\",\"resume\":{\"after_seq\":1,\"requested_after_seq\":1,\"oldest_seq\":1,\"latest_seq\":1,\"next_seq\":2,\"gap\":false}}";
+    var sc: Script = .{ .batches = &.{
+        comptime lines(&.{ ack_old, ev("5", "a"), ev("6", "b") }),
+        comptime lines(&.{ ack_new, ev("1", "c") }),
+        comptime lines(&.{ ack_same, ev("1", "c"), ev("2", "d") }),
+    } };
+    var h: Harness = undefined;
+    try harness(&h, &sc);
+    defer h.deinit();
+    const r = h.run(&.{ "cmux", "events", "--reconnect", "--no-ack", "--limit", "4", "--timeout", "30" });
+    try kit.expectResult(r, 0, comptime lines(&.{ ev("5", "a"), ev("6", "b"), ev("1", "c"), ev("2", "d") }) ++ "\n", "");
+    try testing.expectEqual(@as(usize, 3), h.server.countMethod("events.stream"));
+    // The next subscription resumes in the restarted app's numbering, and a
+    // replay from the same app is still dropped.
+    try testing.expectEqualStrings("{\"after_seq\":1,\"include_heartbeats\":true}", h.last().params_json);
 }
 
 test "unit: cli-events: slow_consumer error frames are transient" {

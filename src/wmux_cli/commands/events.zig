@@ -139,6 +139,14 @@ pub fn isTransientCode(code: []const u8) bool {
     return false;
 }
 
+/// A non-negative integer field of `v`.
+fn seqField(v: std.json.Value, key: []const u8) ?u64 {
+    return switch (common.field(v, key) orelse return null) {
+        .integer => |i| if (i >= 0) @intCast(i) else null,
+        else => null,
+    };
+}
+
 const Outcome = union(enum) {
     /// `--limit` or `--snapshot` reached.
     done,
@@ -297,6 +305,7 @@ const Stream = struct {
         const ty = common.strField(frame, "type") orelse
             (if (raw == null) "ack" else if (frame.object.get("seq") != null) "event" else "");
         if (std.mem.eql(u8, ty, "ack")) {
+            self.onAck(frame);
             if (!self.o.no_ack or self.o.snapshot) try self.print(frame, raw);
             return if (self.o.snapshot) .done else .more;
         }
@@ -314,6 +323,19 @@ const Stream = struct {
         // Unknown frame kinds pass through (forward compatible).
         try self.print(frame, raw);
         return .more;
+    }
+
+    /// `seq` is process-local. After a reconnect, an ack whose next sequence
+    /// number does not pass the last printed one comes from a restarted app:
+    /// resume from that app's position (its effective `after_seq`, else its
+    /// latest seq) so its events are not dropped as replays of the old ones.
+    fn onAck(self: *Stream, ack: std.json.Value) void {
+        const last = self.last_seq orelse return;
+        const res = common.field(ack, "resume") orelse return;
+        const next = seqField(res, "next_seq") orelse ((seqField(res, "latest_seq") orelse return) +| 1);
+        if (next > last) return;
+        const after = seqField(res, "after_seq");
+        self.last_seq = if (after != null and after.? < next) after.? else next -| 1;
     }
 
     fn onEvent(self: *Stream, frame: std.json.Value, raw: ?[]const u8) !Outcome {
