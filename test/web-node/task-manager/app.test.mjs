@@ -146,6 +146,11 @@ describe("unit: task manager basics", () => {
     assert.equal(surface.getAttribute("aria-level"), "4");
     const hiddenWin = treeRow((r) => r.kind === "window" && r.ref === "window:2");
     assert.equal(hiddenWin.querySelector(".tm-detail").textContent, "hidden");
+    // cmux top: `window <ref> [key] [hidden]`.
+    const keyWin = treeRow((r) => r.kind === "window" && r.ref === "window:1");
+    assert.equal(keyWin.querySelector(".tm-detail").textContent, "key");
+    const tag = treeRow((r) => r.kind === "tag");
+    assert.equal(tag.querySelector(".tm-detail").textContent, "PID 501", "a tag's key is not a flag");
     // Titles are text, never markup.
     assert.equal(doc.querySelector("#tm-tree b, #tm-tree server"), null);
   });

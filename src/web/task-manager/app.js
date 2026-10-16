@@ -168,7 +168,10 @@ export function createApp(options) {
       case "window":
         return {
           name: row.title || `${t("tm.kind.window")} ${row.ref}`.trim(),
-          detail: flagList(row, [["hidden", "tm.flag.hidden"]]),
+          detail: flagList(row, [
+            ["key", "tm.flag.key"],
+            ["hidden", "tm.flag.hidden"],
+          ]),
         };
       case "workspace":
         return {

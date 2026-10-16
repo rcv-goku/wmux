@@ -41,8 +41,8 @@ enforces Trusted Types.
   workspace labels (no CPU column).
 - **Hierarchy**: window > workspace > tag / pane > surface > process / browser
   webview, as a `treegrid` with a disclosure per row. Detail text uses cmux's
-  flags: `hidden`, `selected`, `pinned`, `focused`, `pid-only`, surface type,
-  tty, `PID n`, agent, attribution.
+  flags: `key`, `hidden`, `selected`, `pinned`, `focused`, `pid-only`, surface
+  type, tty, `PID n`, agent, attribution.
 - **Columns**: Name, CPU (`%.1f%`), Memory (1024-based, `12.5 MB`, `345 MB`,
   `1.2 GB`), Proc.
 
@@ -124,7 +124,7 @@ Children arrays and the node kind they hold: `workspaces` (workspace),
 
 | Kind | Fields used |
 |---|---|
-| window | `id` or `window_id`, `ref`, `title`, `hidden` |
+| window | `id` or `window_id`, `ref`, `title`, `key` (`true` on the key window), `hidden` |
 | workspace | `id` or `workspace_id`, `ref`, `title`, `selected`, `pinned` |
 | tag | `key`, `value`, `pid`, `pid_only` |
 | pane | `id` or `pane_id`, `ref`, `focused` |

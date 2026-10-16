@@ -100,6 +100,8 @@ function normalizeNode(raw, kind, owner, path, parentKey) {
     tagValue: str(raw.value),
     tty: str(raw.tty),
     flags: {
+      // The key (active) window; on tags `key` is the tag name instead.
+      key: k === "window" && raw.key === true,
       hidden: raw.hidden === true,
       selected: raw.selected === true,
       pinned: raw.pinned === true,
