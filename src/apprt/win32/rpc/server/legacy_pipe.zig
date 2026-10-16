@@ -532,12 +532,12 @@ pub const Server = struct {
 
 // ---------------------------------------------------------------------------
 // App glue: start the server, hand requests to the UI thread, dispatch
-// them through the legacy command table. (Moved from App.zig in W0-A1;
+// them through the registry's legacy commands. (Moved from App.zig in W0-A1;
 // W1-1 replaces this with rpc/server/PipeServer.zig + rpc/dispatch.zig.)
 // ---------------------------------------------------------------------------
 
 const App = @import("../../App.zig");
-const legacy_table = @import("../compat/legacy_table.zig");
+const rpc_registry = @import("../registry.zig");
 const tasks = @import("../../app/tasks.zig");
 
 const app_log = std.log.scoped(.win32);
@@ -599,7 +599,7 @@ pub fn start(self: *App) void {
 fn onRequest(ctx: ?*anyopaque, req: *Request) void {
     const self: *App = @ptrCast(@alignCast(ctx.?));
 
-    if (legacy_table.lookup(req.cmd).prepare) |prepare| {
+    if (rpc_registry.legacyCommand(req.cmd).prepare) |prepare| {
         if (!prepare(self, req)) {
             // prepare already answered the client with the error; drop
             // the request.
@@ -617,15 +617,15 @@ fn onRequest(ctx: ?*anyopaque, req: *Request) void {
 }
 
 /// Handle one IPC request on the UI thread (from its RequestTask):
-/// look the command up in the legacy table, enforce read-only mode, run
-/// its handler (which answers via the server), name any returned error
-/// to the client, then destroy the request. Async handlers (eval,
-/// snapshot, click, fill) reply later from their WebView2/CDP completion,
-/// so they must NOT also answer here.
+/// look the command up in the registry (rpc/registry.zig), enforce
+/// read-only mode, run its handler (which answers via the server), name
+/// any returned error to the client, then destroy the request. Async
+/// handlers (eval, snapshot, click, fill) reply later from their
+/// WebView2/CDP completion, so they must NOT also answer here.
 pub fn handleRequest(self: *App, req: *Request) void {
     defer req.destroy();
     const server = self.ipc_server orelse return;
-    const command = legacy_table.lookup(req.cmd);
+    const command = rpc_registry.legacyCommand(req.cmd);
 
     // read-only mode: refuse any verb that would change state, spawn a
     // process, or inject input. The server still answers (with an error)

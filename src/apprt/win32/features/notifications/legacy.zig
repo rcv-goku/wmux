@@ -9,7 +9,7 @@ const std = @import("std");
 
 const App = @import("../../App.zig");
 const ipc = @import("../../rpc/compat/legacy_json.zig");
-const LegacyCommand = @import("../../rpc/compat/legacy_table.zig").LegacyCommand;
+const LegacyCommand = @import("../../rpc/types.zig").LegacyCommand;
 const targets = @import("../../rpc/compat/legacy_targets.zig");
 const ring = @import("legacy_ring.zig");
 

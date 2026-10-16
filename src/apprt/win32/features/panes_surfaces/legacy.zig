@@ -18,7 +18,7 @@ const App = @import("../../App.zig");
 const Pane = @import("../../model/Pane.zig");
 const SplitTree = @import("../../../../datastruct/split_tree.zig").SplitTree;
 const ipc = @import("../../rpc/compat/legacy_json.zig");
-const LegacyCommand = @import("../../rpc/compat/legacy_table.zig").LegacyCommand;
+const LegacyCommand = @import("../../rpc/types.zig").LegacyCommand;
 const targets = @import("../../rpc/compat/legacy_targets.zig");
 const ops_surface = @import("../../model/ops/surface.zig");
 

@@ -1105,6 +1105,8 @@ test {
     // The ipc.zig split (W0-A1): keep every moved test collected.
     _ = ipc;
     _ = legacy_pipe;
+    _ = @import("rpc/registry.zig");
+    _ = @import("rpc/types.zig");
     _ = @import("features/workspaces/worktree.zig");
     _ = @import("features/status/log_ring.zig");
     _ = @import("features/notifications/legacy_ring.zig");
