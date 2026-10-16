@@ -7,11 +7,15 @@
 //!
 //! Enabled via the `window-show-right-sidebar` config option. The right
 //! sidebar coexists with the left sidebar and tab bar.
+//!
+//! The legacy status strip (moved from RightSidebar.zig in W0-A2); W1-8
+//! turns it into the `wmux.status` mode of the right-sidebar host
+//! (ARCHITECTURE.md ADR-11.6).
 
 const std = @import("std");
-const w32 = @import("platform/win32.zig");
-const Window = @import("Window.zig");
-const log_ring = @import("features/status/log_ring.zig");
+const w32 = @import("../../platform/win32.zig");
+const Window = @import("../../Window.zig");
+const log_ring = @import("../../features/status/log_ring.zig");
 
 /// Unscaled layout constants.
 const HEADER_H_BASE: i32 = 32;

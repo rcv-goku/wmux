@@ -3,11 +3,14 @@
 //! "+ New workspace" row. Enabled via the `window-show-sidebar` config
 //! option. The top tab bar (showing the active workspace's tabs)
 //! coexists with the sidebar, offset to its right.
+//!
+//! The legacy GDI sidebar (moved from Sidebar.zig in W0-A2); W1-8 replaces
+//! it with the Direct2D sidebar child window (ARCHITECTURE.md ADR-11).
 
 const std = @import("std");
-const w32 = @import("platform/win32.zig");
-const Pane = @import("model/Pane.zig");
-const Window = @import("Window.zig");
+const w32 = @import("../../platform/win32.zig");
+const Pane = @import("../../model/Pane.zig");
+const Window = @import("../../Window.zig");
 const testing = std.testing;
 
 const ITEM_HEIGHT_BASE: i32 = 36;

@@ -26,8 +26,8 @@
 //! independent of GDI.
 
 const std = @import("std");
-const w32 = @import("platform/win32.zig");
-const Tab = @import("model/Tab.zig");
+const w32 = @import("../../platform/win32.zig");
+const Tab = @import("../../model/Tab.zig");
 const testing = std.testing;
 
 const log = std.log.scoped(.win32_pane_buttons);

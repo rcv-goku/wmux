@@ -3,9 +3,9 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
-const w32 = @import("platform/win32.zig");
-const terminal = @import("../../terminal/main.zig");
-const Surface = @import("Surface.zig");
+const w32 = @import("../../platform/win32.zig");
+const terminal = @import("../../../../terminal/main.zig");
+const Surface = @import("../../Surface.zig");
 const testing = std.testing;
 
 const log = std.log.scoped(.win32_scrollbar);

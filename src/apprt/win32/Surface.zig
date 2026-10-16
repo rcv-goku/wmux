@@ -18,7 +18,7 @@ const Window = @import("Window.zig");
 const app_foreground = @import("app/foreground.zig");
 const app_modal = @import("app/modal.zig");
 const w32 = @import("platform/win32.zig");
-const Scrollbar = @import("Scrollbar.zig").Scrollbar;
+const Scrollbar = @import("ui/overlays/Scrollbar.zig").Scrollbar;
 
 const log = std.log.scoped(.win32);
 
