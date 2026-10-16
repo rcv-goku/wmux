@@ -17,6 +17,7 @@ const command = @import("../../command.zig");
 const Ctx = command.Ctx;
 const output = @import("../../output.zig");
 const brand_mod = @import("../../brand.zig");
+const focus_default = @import("../../focus_default.zig");
 pub const opts = @import("opts.zig");
 
 /// `<prog>: <message>` and the usage line on stderr; exit 2.
@@ -116,6 +117,30 @@ pub fn putWorkspaceTarget(ctx: *Ctx, p: *Params, usage_line: []const u8, explici
     if (window_given) return null;
     if (callerWorkspace(ctx)) |ws| try p.str("workspace_id", ws);
     return null;
+}
+
+/// For a request that should raise wmux (ADR-3.11, ADR-4.6): an interactive,
+/// non-agent caller lets the app take the foreground with
+/// `AllowSetForegroundWindow(server_pid)` and marks the request
+/// `focus:true, foreground_grant:true`. The pipe is opened here when
+/// discovery did not already open it (`--socket`, `CMUX_SOCKET_PATH`), so the
+/// server PID is known; an open failure is left for the request to report.
+/// Returns false when discovery found no app (already reported; exit 1).
+pub fn grantForeground(ctx: *Ctx, p: *Params) !bool {
+    if (!ctx.platform.isInteractive() or focus_default.isAgentEnvironment(ctx.env, ctx.env_names)) return true;
+    const client = (try ctx.connect()) orelse return false;
+    if (client.conn == null) {
+        const t = ctx.platform.connect(client.gpa, client.opts.path, client.opts.connect_timeout_ms) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return true,
+        };
+        client.adopt(t);
+    }
+    const pid = client.conn.?.serverPid() orelse return true;
+    ctx.platform.allowForeground(pid);
+    try p.boolean("focus", true);
+    try p.boolean("foreground_grant", true);
+    return true;
 }
 
 pub const Reply = union(enum) {

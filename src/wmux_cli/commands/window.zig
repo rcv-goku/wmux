@@ -14,7 +14,6 @@ const command = @import("../command.zig");
 const CommandSpec = command.CommandSpec;
 const Ctx = command.Ctx;
 const output = @import("../output.zig");
-const focus_default = @import("../focus_default.zig");
 const common = @import("ws/common.zig");
 const Def = common.opts.Def;
 const Params = common.Params;
@@ -129,13 +128,7 @@ fn runFocus(ctx: *Ctx) !u8 {
     if (try requiredWindow(ctx, u_focus, o, &p)) |c| return c;
     // Bringing the window to front needs the foreground grant (ADR-3.11),
     // which only an interactive, non-agent caller hands over.
-    if (ctx.platform.isInteractive() and !focus_default.isAgentEnvironment(ctx.env, ctx.env_names)) {
-        const client = (try ctx.connect()) orelse return output.exit.runtime;
-        if (client.conn) |conn| if (conn.serverPid()) |pid| {
-            ctx.platform.allowForeground(pid);
-            try p.boolean("foreground_grant", true);
-        };
-    }
+    if (!try common.grantForeground(ctx, &p)) return output.exit.runtime;
     return common.simple(ctx, "window.focus", &p);
 }
 
@@ -405,14 +398,50 @@ test "unit: cli-window: focus-window hands the foreground grant only to interact
     try h.init();
     defer h.deinit();
     h.ok("window.focus", "{}");
+    _ = try testkit.expectOk(&h, &.{ "focus-window", "--window", "window:2" });
+    try h.expectLast("window.focus", "{\"window_id\":\"window:2\"}");
+    try testing.expectEqual(@as(usize, 0), h.fp.foreground_grants.items.len);
     h.fp.interactive = true;
     _ = try testkit.expectOk(&h, &.{ "focus-window", "--window", "window:2" });
-    try h.expectLast("window.focus", "{\"window_id\":\"window:2\",\"foreground_grant\":true}");
+    try h.expectLast("window.focus", "{\"window_id\":\"window:2\",\"focus\":true,\"foreground_grant\":true}");
     try testing.expectEqualSlices(u32, &.{4242}, h.fp.foreground_grants.items);
     h.setEnv("CLAUDECODE", "1");
     _ = try testkit.expectOk(&h, &.{ "focus-window", "--window", "window:2" });
     try h.expectLast("window.focus", "{\"window_id\":\"window:2\"}");
     try testing.expectEqual(@as(usize, 1), h.fp.foreground_grants.items.len);
+}
+
+test "unit: cli-window: focus-window grants the foreground through an explicit pipe" {
+    // Inside wmux terminals CMUX_SOCKET_PATH names the pipe, so discovery
+    // does not open it; the grant must still reach the server.
+    var h: testkit.Harness = undefined;
+    try h.init();
+    defer h.deinit();
+    h.ok("window.focus", "{}");
+    h.fp.interactive = true;
+    h.setEnv("CMUX_SOCKET_PATH", h.control);
+    _ = try testkit.expectOk(&h, &.{ "focus-window", "--window", "window:2" });
+    try h.expectLast("window.focus", "{\"window_id\":\"window:2\",\"focus\":true,\"foreground_grant\":true}");
+    try testing.expectEqualSlices(u32, &.{4242}, h.fp.foreground_grants.items);
+    // One connection carries the request.
+    try testing.expectEqual(@as(usize, 1), h.fp.connects);
+    h.unsetEnv("CMUX_SOCKET_PATH");
+    _ = try testkit.expectOk(&h, &.{ "--socket", h.control, "focus-window", "--window", "1" });
+    try h.expectLast("window.focus", "{\"window_id\":1,\"focus\":true,\"foreground_grant\":true}");
+    try testing.expectEqual(@as(usize, 2), h.fp.foreground_grants.items.len);
+    // A pipe that cannot be opened is reported by the request, once.
+    const r = h.run(&.{ "--socket", "wmux-missing", "focus-window", "--window", "1" });
+    try testing.expectEqual(@as(u8, 1), r.code);
+    try testing.expectEqual(@as(usize, 2), h.fp.foreground_grants.items.len);
+    try testing.expectEqualStrings("cannot connect to \\\\.\\pipe\\wmux-missing: no such pipe (is wmux running?)\n", r.err);
+    // Without any app the discovery failure prints once and exits 1.
+    h.fp.servers.clearRetainingCapacity();
+    for ([_]bool{ true, false }) |interactive| {
+        h.fp.interactive = interactive;
+        const none = h.run(&.{ "focus-window", "--window", "1" });
+        try testing.expectEqual(@as(u8, 1), none.code);
+        try testing.expectEqual(@as(usize, 1), std.mem.count(u8, none.err, "No live wmux socket found"));
+    }
 }
 
 test "unit: cli-window: resize-window reads or sets the frame and validates dimensions" {

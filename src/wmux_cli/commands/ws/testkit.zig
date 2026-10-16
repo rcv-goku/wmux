@@ -26,6 +26,8 @@ pub const Harness = struct {
     pairs: std.ArrayList(Env.Pair),
     pairs_slice: []const Env.Pair,
     env_map: std.process.EnvMap,
+    /// The fake server's control pipe (for `CMUX_SOCKET_PATH`/`--socket`).
+    control: []const u8,
 
     /// A harness with a live control pipe; `CMUX_QUIET=1` keeps legacy
     /// notices out of stderr unless a test clears it with `noisy`.
@@ -45,8 +47,8 @@ pub const Harness = struct {
         self.server.handler = handler;
         self.server.user = self;
         const h = proto.pipe_name.sidHash8(test_sid);
-        const control = try proto.pipe_name.controlName(a, "stable", &h, 1);
-        try self.fp.addServer(control, &self.server);
+        self.control = try proto.pipe_name.controlName(a, "stable", &h, 1);
+        try self.fp.addServer(self.control, &self.server);
     }
 
     pub fn deinit(self: *Harness) void {
