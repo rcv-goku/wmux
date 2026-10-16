@@ -1,0 +1,32 @@
+Usage: cmux todo <add|list|check|uncheck|start|edit|rm|clear|set|open> [args]
+
+Per-workspace checklist shared with the sidebar, the checklist popover and
+the Todos pane. Targets the caller's workspace by default.
+
+Commands:
+  add "text" [--state <pending|in-progress|completed>] [--origin <user|agent>]
+  list | ls                     Print '<n>. [ ] text' lines ([x] completed,
+                                [>] in progress, '  (agent)' for agent items)
+                                and '<c>/<t> completed', or 'No todo items.'
+  check <index|id>              Mark completed
+  uncheck <index|id>            Mark pending
+  start <index|id>              Mark in progress
+  edit <index|id> "text"        Replace the text
+  rm | remove <index|id>        Remove an item
+  move | mv <index|id> <new-index>
+                                Move an item (1-based)
+  clear                         Remove every item
+  set ['<json>']                Replace the whole list from a JSON array of
+                                {text, state?, id?, origin?} (or {"items":
+                                [...]}), inline or piped on stdin; items whose
+                                id matches keep their identity; at most 50
+  open                          Open or focus the workspace's Todos pane
+
+Flags:
+  --workspace <id|ref|index>    Target workspace (default: CMUX_WORKSPACE_ID)
+  --window <id|ref|index>       Window context for refs and indexes
+  --json                        Print the list payload
+
+<index> is the 1-based number from 'cmux todo list'; <id> is the item UUID
+from 'cmux todo list --json'. Mutations print 'OK (<c>/<t> completed)'.
+Coding agents should not manage the checklist unless the user asks them to.

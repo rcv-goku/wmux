@@ -1,0 +1,14 @@
+{
+  "name": "dev",
+  "workspace": {
+    "layout": {
+      "pane": {
+        "surfaces": [
+          {
+            "type": "terminal"
+          }
+        ]
+      }
+    }
+  }
+}
