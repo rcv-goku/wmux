@@ -1026,7 +1026,7 @@ fn surfaceWndProc(
             if (!win.closing) {
                 if (surface.tab) |tab| {
                     if (win.findLoc(tab)) |loc| {
-                        loc.ws.focused_container = loc.container;
+                        loc.ws.focused_pane = loc.pane;
                     }
                 }
                 win.repaintDividers();

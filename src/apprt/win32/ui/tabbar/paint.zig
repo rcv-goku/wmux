@@ -8,6 +8,7 @@ const std = @import("std");
 const Pane = @import("../../model/Pane.zig");
 const Window = @import("../Window.zig");
 const geometry = @import("logic/geometry.zig");
+const titles = @import("../../model/logic/titles.zig");
 const w32 = @import("../../platform/win32.zig");
 
 /// Paint the tab bar by dispatching to Pane rendering.
@@ -18,11 +19,11 @@ pub fn paintTabBar(self: *Window, hdc_screen: w32.HDC) void {
 
     // When splits exist, each Pane paints its own tab bar
     // within its layout_rect. The window-top bar is hidden.
-    if (ws.split_tree.isSplit()) {
-        var it = ws.split_tree.iterator();
+    if (ws.tree.isSplit()) {
+        var it = ws.tree.iterator();
         while (it.next()) |entry| {
             const container = entry.view;
-            const is_focused = if (ws.focused_container) |fc| container.eql(fc) else false;
+            const is_focused = if (ws.focused_pane) |fc| container.eql(fc) else false;
             _ = paintPane(
                 container,
                 hdc_screen,
@@ -43,7 +44,7 @@ pub fn paintTabBar(self: *Window, hdc_screen: w32.HDC) void {
 
     // Single-pane mode: delegate to the container's paintTabBar using
     // the window-top rect (offset by the sidebar width).
-    const container = ws.focusedContainerOrFirst() orelse return;
+    const container = ws.focusedPaneOrFirst() orelse return;
     if (!self.tab_bar_visible) return;
 
     const hwnd = self.hwnd orelse return;
@@ -87,17 +88,17 @@ pub fn paintTabBar(self: *Window, hdc_screen: w32.HDC) void {
 /// this, so input always agrees with what paintTabBar draws.
 pub fn barGeometry(self: *Window, pane: *const Pane) ?geometry.Geometry {
     const ws = self.activeWorkspace();
-    if (ws.split_tree.isSplit()) {
-        if (pane.tab_count <= 1) return null;
+    if (ws.tree.isSplit()) {
+        if (pane.tabCount() <= 1) return null;
         const lr = pane.layout_rect;
-        return geometry.compute(lr.left, lr.top, lr.right - lr.left, pane.tab_count, self.scale);
+        return geometry.compute(lr.left, lr.top, lr.right - lr.left, pane.tabCount(), self.scale);
     }
     if (!self.tab_bar_visible) return null;
     const hwnd = self.hwnd orelse return null;
     var client_rect: w32.RECT = undefined;
     if (w32.GetClientRect(hwnd, &client_rect) == 0) return null;
     const sidebar_w = self.sidebarWidth();
-    return geometry.compute(sidebar_w, 0, client_rect.right - sidebar_w, pane.tab_count, self.scale);
+    return geometry.compute(sidebar_w, 0, client_rect.right - sidebar_w, pane.tabCount(), self.scale);
 }
 
 /// The client rect of tab `index` in `pane`'s bar (inline rename overlay).
@@ -122,7 +123,7 @@ pub const barHeight = geometry.barHeight;
 /// `is_focused` controls visual treatment: focused gets brighter text and
 /// an accent underline on the active tab; unfocused is dimmed.
 pub fn paintPane(
-    self: *Pane,
+    self: *const Pane,
     hdc: w32.HDC,
     rect: w32.RECT,
     scale: f32,
@@ -135,7 +136,7 @@ pub fn paintPane(
     hovered_new_tab: bool,
     hovered_dropdown: bool,
 ) i32 {
-    if (!force_visible and self.tab_count <= 1) return 0;
+    if (!force_visible and self.tabCount() <= 1) return 0;
 
     const bar_h = barHeight(scale);
     if (bar_h <= 0) return 0;
@@ -199,14 +200,14 @@ pub fn paintPane(
     _ = w32.SetBkMode(mem_dc, w32.TRANSPARENT);
 
     // --- Tab geometry (shared with every hit-test: logic/geometry.zig) ---
-    const geo = geometry.compute(rect.left, rect.top, bar_w, self.tab_count, scale);
+    const geo = geometry.compute(rect.left, rect.top, bar_w, self.tabCount(), scale);
     const close_btn_w = geo.close_w;
     const text_pad = geo.text_pad;
     const accent_h: i32 = @intFromFloat(@round(2.0 * scale));
 
     // --- Draw each tab ---
-    for (0..self.tab_count) |i| {
-        const is_active = (i == self.active_tab);
+    for (self.tabs.items, 0..) |tab, i| {
+        const is_active = (i == self.selected);
         const is_hovered = if (hovered_tab) |ht| (ht == i) else false;
 
         // Local (bitmap) coordinates of this tab and its close glyph.
@@ -244,7 +245,7 @@ pub fn paintPane(
         }
 
         // Attention dot.
-        const attn_dot_w: i32 = if (self.tab_attention[i]) @intFromFloat(@round(12.0 * scale)) else 0;
+        const attn_dot_w: i32 = if (tab.legacy.attention) @intFromFloat(@round(12.0 * scale)) else 0;
         if (attn_dot_w > 0) {
             _ = w32.SetTextColor(mem_dc, accent_color);
             const dot_char = std.unicode.utf8ToUtf16LeStringLiteral("\u{25CF}");
@@ -264,7 +265,7 @@ pub fn paintPane(
         }
 
         // Sync indicator.
-        const sync_indicator_w: i32 = if (self.tab_synchronized[i]) @intFromFloat(@round(14.0 * scale)) else 0;
+        const sync_indicator_w: i32 = if (tab.legacy.synchronized) @intFromFloat(@round(14.0 * scale)) else 0;
         if (sync_indicator_w > 0) {
             _ = w32.SetTextColor(mem_dc, w32.RGB(0xE8, 0x9C, 0x20));
             const sync_char = std.unicode.utf8ToUtf16LeStringLiteral("\u{21C4}");
@@ -284,7 +285,8 @@ pub fn paintPane(
         }
 
         // Draw tab title text.
-        const title_len = self.tab_title_lens[i];
+        var title_buf: [256]u16 = undefined;
+        const title_len = titles.toUtf16(&title_buf, tab.titleText());
         if (title_len > 0) {
             _ = w32.SetTextColor(mem_dc, if (is_active) active_text_color else inactive_text_color);
             var text_rect = w32.RECT{
@@ -295,7 +297,7 @@ pub fn paintPane(
             };
             _ = w32.DrawTextW(
                 mem_dc,
-                @ptrCast(&self.tab_titles[i]),
+                @ptrCast(&title_buf),
                 @intCast(title_len),
                 &text_rect,
                 w32.DT_LEFT | w32.DT_VCENTER | w32.DT_SINGLELINE | w32.DT_END_ELLIPSIS | w32.DT_NOPREFIX,
@@ -402,6 +404,14 @@ const testing = std.testing;
 const test_hdc: w32.HDC = @ptrFromInt(1);
 const test_config = .{ .background = .{ .r = @as(u8, 30), .g = @as(u8, 30), .b = @as(u8, 30) } };
 
+const Tab = @import("../../model/Tab.zig");
+
+/// A pane over caller-owned placeholder tabs (read-only list).
+fn testPane(tabs: []Tab, ptrs: []*Tab) Pane {
+    for (tabs, 0..) |*t, i| ptrs[i] = t;
+    return .{ .tabs = .{ .items = ptrs[0..tabs.len], .capacity = tabs.len } };
+}
+
 test "unit: tabBarHeight returns scaled height" {
     try testing.expectEqual(@as(i32, 32), barHeight(1.0));
     try testing.expectEqual(@as(i32, 64), barHeight(2.0));
@@ -410,28 +420,31 @@ test "unit: tabBarHeight returns scaled height" {
 }
 
 test "unit: paintTabBar returns 0 for single tab not force visible" {
-    var pc: Pane = .{};
-    pc.tab_count = 1;
+    var tabs: [1]Tab = @splat(.{ .content = .placeholder });
+    var ptrs: [1]*Tab = undefined;
+    const pc = testPane(&tabs, &ptrs);
     const h = paintPane(&pc, test_hdc, .{ .left = 0, .top = 0, .right = 800, .bottom = 600 }, 1.0, test_config, true, null, null, null, false, false, false);
     try testing.expectEqual(@as(i32, 0), h);
 }
 
 test "unit: paintTabBar returns 0 for empty container" {
-    var pc: Pane = .{};
+    const pc: Pane = .{};
     const h = paintPane(&pc, test_hdc, .{ .left = 0, .top = 0, .right = 800, .bottom = 600 }, 1.0, test_config, true, null, null, null, false, false, false);
     try testing.expectEqual(@as(i32, 0), h);
 }
 
 test "unit: paintTabBar returns 0 for zero scale" {
-    var pc: Pane = .{};
-    pc.tab_count = 3;
+    var tabs: [3]Tab = @splat(.{ .content = .placeholder });
+    var ptrs: [3]*Tab = undefined;
+    const pc = testPane(&tabs, &ptrs);
     const h = paintPane(&pc, test_hdc, .{ .left = 0, .top = 0, .right = 800, .bottom = 600 }, 0.0, test_config, true, null, null, null, false, false, false);
     try testing.expectEqual(@as(i32, 0), h);
 }
 
 test "unit: paintTabBar returns 0 for zero-width rect" {
-    var pc: Pane = .{};
-    pc.tab_count = 3;
+    var tabs: [3]Tab = @splat(.{ .content = .placeholder });
+    var ptrs: [3]*Tab = undefined;
+    const pc = testPane(&tabs, &ptrs);
     const h = paintPane(&pc, test_hdc, .{ .left = 100, .top = 0, .right = 100, .bottom = 600 }, 1.0, test_config, true, null, null, null, false, false, false);
     try testing.expectEqual(@as(i32, 0), h);
 }

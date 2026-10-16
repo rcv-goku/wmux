@@ -99,9 +99,9 @@ pub fn showTabContextMenu(self: *Window, clicked_tab: ?usize, x: i32, y: i32) vo
 
     if (clicked_tab) |tab| {
         // Menu-construction reads only; never held across the modal
-        // menu loop below (workspaces[] can shift while it pumps).
-        const pre_container = self.activeWorkspace().focusedContainerOrFirst();
-        const pre_tc = if (pre_container) |c| c.tab_count else 0;
+        // menu loop below (the pane can close while it pumps).
+        const pre_container = self.activeWorkspace().focusedPaneOrFirst();
+        const pre_tc = if (pre_container) |c| c.tabCount() else 0;
         _ = w32.AppendMenuW(menu, w32.MF_STRING, TAB_CTX_CLOSE, std.unicode.utf8ToUtf16LeStringLiteral("Close Tab"));
         _ = w32.AppendMenuW(menu, if (pre_tc > 1) w32.MF_STRING else w32.MF_GRAYED, TAB_CTX_CLOSE_OTHERS, std.unicode.utf8ToUtf16LeStringLiteral("Close Other Tabs"));
         _ = w32.AppendMenuW(menu, if (tab + 1 < pre_tc) w32.MF_STRING else w32.MF_GRAYED, TAB_CTX_CLOSE_RIGHT, std.unicode.utf8ToUtf16LeStringLiteral("Close Tabs to the Right"));
@@ -123,19 +123,19 @@ pub fn showTabContextMenu(self: *Window, clicked_tab: ?usize, x: i32, y: i32) vo
     );
 
     // The modal menu loop dispatched arbitrary messages: tabs may have
-    // closed, workspaces may have shifted (closeWorkspace moves the
-    // array under any held pointer), the window may be closing. Re-fetch
-    // the active workspace and re-validate the clicked index before
-    // acting; closeTabByIndex additionally bounds-checks each call.
+    // closed (freeing their pane), workspaces may have closed, the
+    // window may be closing. Re-fetch the active workspace and
+    // re-validate the clicked index before acting; closeTabByIndex
+    // additionally bounds-checks each call.
     if (self.closing) return;
-    const post_container = self.activeWorkspace().focusedContainerOrFirst();
+    const post_container = self.activeWorkspace().focusedPaneOrFirst();
     switch (@as(usize, @intCast(cmd))) {
         TAB_CTX_CLOSE => {
             if (clicked_tab) |tab| self.closeTabByIndex(tab);
         },
         TAB_CTX_CLOSE_OTHERS => {
             if (clicked_tab) |tab| {
-                const tc = if (post_container) |c| c.tab_count else return;
+                const tc = if (post_container) |c| c.tabCount() else return;
                 if (tab >= tc) return;
                 var current = tab;
                 var i: usize = tc;
@@ -150,7 +150,7 @@ pub fn showTabContextMenu(self: *Window, clicked_tab: ?usize, x: i32, y: i32) vo
         },
         TAB_CTX_CLOSE_RIGHT => {
             if (clicked_tab) |tab| {
-                var i: usize = if (post_container) |c| c.tab_count else return;
+                var i: usize = if (post_container) |c| c.tabCount() else return;
                 while (i > tab + 1) {
                     i -= 1;
                     self.closeTabByIndex(i);
@@ -178,7 +178,7 @@ pub const WS_CTX_DESCRIPTION: usize = 9504;
 /// Show the workspace context menu for the workspace at `ws_idx` at
 /// client coordinates (x, y): Rename / Close workspace / New workspace.
 pub fn showWorkspaceContextMenu(self: *Window, ws_idx: usize, x: i32, y: i32) void {
-    if (self.is_quick_terminal or ws_idx >= self.workspace_count) return;
+    if (self.is_quick_terminal or ws_idx >= self.workspaces.items.len) return;
     const menu = w32.CreatePopupMenu() orelse return;
     defer _ = w32.DestroyMenu(menu);
 
@@ -202,7 +202,7 @@ pub fn showWorkspaceContextMenu(self: *Window, ws_idx: usize, x: i32, y: i32) vo
 
     // The modal menu loop dispatches arbitrary messages; re-check before
     // acting (a workspace may have closed) and re-validate the index.
-    if (self.closing or ws_idx >= self.workspace_count) return;
+    if (self.closing or ws_idx >= self.workspaces.items.len) return;
     switch (@as(usize, @intCast(cmd))) {
         WS_CTX_RENAME => self.renameWorkspace(ws_idx),
         WS_CTX_DESCRIPTION => self.editWorkspaceDescription(ws_idx),

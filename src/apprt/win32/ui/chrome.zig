@@ -12,6 +12,7 @@ const Sidebar = @import("sidebar/legacy_gdi.zig");
 const SplitTree = @import("../../../datastruct/split_tree.zig").SplitTree;
 const Window = @import("Window.zig");
 const tabbar_paint = @import("tabbar/paint.zig");
+const titles = @import("../model/logic/titles.zig");
 const w32 = @import("../platform/win32.zig");
 
 /// Width (unscaled px) of the thin re-show strip painted at the window's
@@ -174,7 +175,7 @@ pub fn invalidateRightSidebar(self: *Window) void {
 /// drag math assumes a single fixed row height).
 pub fn sidebarShowMetadata(self: *const Window) bool {
     if (!self.app.config.@"sidebar-metadata") return false;
-    for (self.workspaces[0..self.workspace_count]) |*ws| {
+    for (self.workspaces.items) |ws| {
         if (ws.hasMetadata()) return true;
     }
     return false;
@@ -216,7 +217,7 @@ pub fn surfaceRect(self: *const Window) w32.RECT {
 /// Layout split panes for the active workspace.
 pub fn layoutSplits(self: *Window) void {
     const ws = self.activeWorkspace();
-    const tree = ws.split_tree;
+    const tree = ws.tree;
     if (tree.isEmpty()) return;
     const rect = self.surfaceRect();
     if (tree.zoomed) |zoomed_handle| {
@@ -224,14 +225,14 @@ pub fn layoutSplits(self: *Window) void {
         while (it.next()) |entry| {
             entry.view.layout_rect = rect;
             if (entry.handle == zoomed_handle) {
-                if (entry.view.activeTabHwnd()) |h| {
+                if (entry.view.selectedHwnd()) |h| {
                     const w = @max(rect.right - rect.left, 1);
                     const ht = @max(rect.bottom - rect.top, 1);
                     _ = w32.MoveWindow(h, rect.left, rect.top, @intCast(w), @intCast(ht), 1);
                     _ = w32.ShowWindow(h, w32.SW_SHOW);
                 }
             } else {
-                if (entry.view.activeTabHwnd()) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
+                if (entry.view.selectedHwnd()) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
             }
         }
         return;
@@ -263,12 +264,12 @@ pub fn layoutNode(self: *Window, tree: SplitTree(Pane), handle: SplitTree(Pane).
             container.layout_rect = rect;
 
             var content_rect = rect;
-            if (tree.isSplit() and container.tab_count > 1) {
+            if (tree.isSplit() and container.tabCount() > 1) {
                 const bar_h = tabbar_paint.barHeight(self.scale);
                 content_rect.top += bar_h;
             }
 
-            if (container.activeTabHwnd()) |h| {
+            if (container.selectedHwnd()) |h| {
                 const w = @max(content_rect.right - content_rect.left, 1);
                 const ht = @max(content_rect.bottom - content_rect.top, 1);
                 _ = w32.MoveWindow(h, content_rect.left, content_rect.top, @intCast(w), @intCast(ht), 1);
@@ -300,7 +301,7 @@ pub fn layoutNode(self: *Window, tree: SplitTree(Pane), handle: SplitTree(Pane).
 /// plus a colored border around the focused pane.
 pub fn paintDividers(self: *Window, hdc: w32.HDC) void {
     const ws = self.activeWorkspace();
-    const tree = ws.split_tree;
+    const tree = ws.tree;
     if (tree.isEmpty()) return;
     if (!tree.isSplit()) return;
     if (tree.zoomed != null) return;
@@ -383,7 +384,7 @@ pub fn paintDividerNode(self: *Window, hdc: w32.HDC, tree: SplitTree(Pane), hand
 pub fn repaintDividers(self: *Window) void {
     const hwnd = self.hwnd orelse return;
     const ws = self.activeWorkspace();
-    const tree = ws.split_tree;
+    const tree = ws.tree;
     if (tree.isEmpty()) return;
     if (!tree.isSplit()) return;
     if (tree.zoomed != null) return;
@@ -405,7 +406,7 @@ pub const DividerHit = struct {
 
 pub fn hitTestDivider(self: *Window, x: i32, y: i32) ?DividerHit {
     const ws = self.activeWorkspace();
-    const tree = ws.split_tree;
+    const tree = ws.tree;
     if (tree.isEmpty()) return null;
     if (!tree.isSplit()) return null;
     if (tree.zoomed != null) return null;
@@ -480,7 +481,7 @@ pub fn updateDividerDrag(self: *Window, x: i32, y: i32) void {
     };
 
     const ws = self.activeWorkspace();
-    ws.split_tree.resizeInPlace(handle, new_ratio);
+    ws.tree.resizeInPlace(handle, new_ratio);
     self.layoutSplits();
 }
 
@@ -494,10 +495,10 @@ pub fn endDividerDrag(self: *Window) void {
 pub fn updateWindowTitle(self: *Window) void {
     const hwnd = self.hwnd orelse return;
     const ws = self.activeWorkspace();
-    const container = ws.focusedContainerOrFirst() orelse return;
-    const len = container.tab_title_lens[container.active_tab];
+    const pane = ws.focusedPaneOrFirst() orelse return;
+    const tab = pane.selectedTab() orelse return;
     var buf: [257]u16 = undefined;
-    @memcpy(buf[0..len], container.tab_titles[container.active_tab][0..len]);
+    const len = titles.toUtf16(buf[0..256], tab.titleText());
     buf[len] = 0;
     _ = w32.SetWindowTextW(hwnd, @ptrCast(&buf));
 }
@@ -511,7 +512,7 @@ pub fn updateTabBarVisibility(self: *Window) void {
     // When splits exist, the window-level tab bar is hidden — each
     // Pane paints its own tab bar within its layout_rect.
     const ws = self.activeWorkspace();
-    if (ws.split_tree.isSplit()) {
+    if (ws.tree.isSplit()) {
         if (self.tab_bar_visible) {
             self.tab_bar_visible = false;
             self.handleResize();
@@ -542,11 +543,11 @@ pub fn invalidateTabBar(self: *Window) void {
     const hwnd = self.hwnd orelse return;
     const ws = self.activeWorkspace();
 
-    if (ws.split_tree.isSplit()) {
-        var it = ws.split_tree.iterator();
+    if (ws.tree.isSplit()) {
+        var it = ws.tree.iterator();
         while (it.next()) |entry| {
             const container = entry.view;
-            if (container.tab_count > 1) {
+            if (container.tabCount() > 1) {
                 const bar_h = tabbar_paint.barHeight(self.scale);
                 var r = w32.RECT{
                     .left = container.layout_rect.left,

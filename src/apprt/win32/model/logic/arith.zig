@@ -1,25 +1,9 @@
 //! Pure index arithmetic of the window model (ARCHITECTURE.md ADR-1.2:
 //! std only, no Win32, no model pointers): tab insert position, the
-//! active-index fixups after a close or a move, and the close-workspace
-//! survivor rule. Moved out of Window.zig in W0-A2.
+//! selected-tab fixup after a close, the close-workspace survivor rule
+//! and the workspace create guard. Moved out of Window.zig in W0-A2.
 
 const std = @import("std");
-
-/// Maximum number of workspaces per window.
-pub const MAX_WORKSPACES: usize = 16;
-
-/// Pure attention aggregation: true iff any flag in `flags` is set. The
-/// caller passes the live tab slice (tab_attention[0..tab_count]) so
-/// stale slots past tab_count are never consulted. Factored out of
-/// Workspace.hasAttention so the cross-level "a workspace/tab shows the
-/// ring when a pane in it is waiting" rule is unit-testable without a
-/// live window.
-pub fn aggregateAttention(flags: []const bool) bool {
-    for (flags) |f| {
-        if (f) return true;
-    }
-    return false;
-}
 
 /// Where a newly created tab is inserted into a workspace's tab arrays,
 /// per the `window-new-tab-position` config: `.current` puts it right
@@ -38,48 +22,6 @@ pub fn newTabInsertPos(pos_cfg: anytype, count: usize, active: usize) usize {
     };
 }
 
-/// Shift entries [pos, count) right by one in every array of the
-/// tuple, opening a gap at pos. The caller fills the gap and bumps its
-/// count.
-pub fn tabArraysInsertGap(arrays: anytype, count: usize, pos: usize) void {
-    inline for (arrays) |arr| {
-        var i: usize = count;
-        while (i > pos) : (i -= 1) arr[i] = arr[i - 1];
-    }
-}
-
-/// Shift entries (idx, count) left by one in every array, overwriting
-/// idx. The caller decrements its count (and clears the now-duplicate
-/// last slot where stale pointers matter, e.g. tabs).
-pub fn tabArraysRemove(arrays: anytype, count: usize, idx: usize) void {
-    inline for (arrays) |arr| {
-        var i: usize = idx;
-        while (i + 1 < count) : (i += 1) arr[i] = arr[i + 1];
-    }
-}
-
-/// Move the entry at `from` to `to` in every array, shifting the
-/// entries between them one slot toward `from`.
-pub fn tabArraysMove(arrays: anytype, from: usize, to: usize) void {
-    inline for (arrays) |arr| {
-        const saved = arr[from];
-        var i: usize = from;
-        if (from < to) {
-            while (i < to) : (i += 1) arr[i] = arr[i + 1];
-        } else {
-            while (i > to) : (i -= 1) arr[i] = arr[i - 1];
-        }
-        arr[to] = saved;
-    }
-}
-
-/// Swap entries a and b in every array.
-pub fn tabArraysSwap(arrays: anytype, a: usize, b: usize) void {
-    inline for (arrays) |arr| {
-        std.mem.swap(@TypeOf(arr[a]), &arr[a], &arr[b]);
-    }
-}
-
 /// Pure active-tab fixup for closeTabInContainer: the tab at `idx` was
 /// removed (arrays already shifted left) leaving `new_count` >= 1 tabs;
 /// return the post-close active index. A surviving active tab follows
@@ -91,20 +33,19 @@ pub fn closeTabActiveFixup(new_count: usize, active: usize, idx: usize) usize {
     return active;
 }
 
-/// Pure guard for createAndSelectWorkspace: a new workspace slot may be
-/// created only on a non-QuickTerminal (multi-workspace) window with
-/// fewer than MAX_WORKSPACES slots in use.
-pub fn canCreateWorkspace(is_quick_terminal: bool, count: usize) bool {
-    return !is_quick_terminal and count < MAX_WORKSPACES;
+/// Pure guard for createAndSelectWorkspace: a new workspace may be
+/// created only on a non-QuickTerminal (multi-workspace) window. There is
+/// no workspace cap (G7; the former limit was 16).
+pub fn canCreateWorkspace(is_quick_terminal: bool) bool {
+    return !is_quick_terminal;
 }
 
 /// Pure index arithmetic for closeWorkspace, HWND-free so it can be
 /// unit tested exhaustively. Closing the only workspace closes the
-/// window. Otherwise the caller shifts slots [idx+1, count) left one
-/// (`for (idx..new_count) |i| slot[i] = slot[i+1]`), value-inits the
-/// now-duplicate slot at new_count, and selects new_active: a surviving
-/// active workspace follows its shifted slot, and closing the active
-/// one selects the workspace that slid into its slot, clamped to the
+/// window. Otherwise the caller removes the workspace from the list
+/// (the later ones shift down one) and selects new_active: a surviving
+/// active workspace follows its shifted position, and closing the active
+/// one selects the workspace that slid into its position, clamped to the
 /// new last index.
 pub const CloseWorkspaceArith = union(enum) {
     close_window,
@@ -126,122 +67,11 @@ pub fn closeWorkspaceArith(count: usize, active: usize, idx: usize) CloseWorkspa
     return .{ .survivors = .{ .new_count = new_count, .new_active = new_active } };
 }
 
-/// Pure active-index fixup for moveWorkspaceTo: the slot at `from`
-/// moved to `to`, shifting every slot between them one toward `from`;
-/// return where the index `active` lands so the same workspace stays
-/// active. Identity when from == to. HWND-free so it can be unit
-/// tested exhaustively.
-pub fn moveActiveFixup(active: usize, from: usize, to: usize) usize {
-    if (active == from) return to;
-    if (from < to and active > from and active <= to) return active - 1;
-    if (from > to and active >= to and active < from) return active + 1;
-    return active;
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 const testing = std.testing;
-
-test "unit: tab arrays insert gap at the end moves nothing" {
-    var ids = [_]u8{ 1, 2, 3, 0xAA };
-    var lens = [_]u16{ 10, 20, 30, 0xBBBB };
-    tabArraysInsertGap(.{ &ids, &lens }, 3, 3);
-    try testing.expectEqualSlices(u8, &.{ 1, 2, 3, 0xAA }, &ids);
-    try testing.expectEqualSlices(u16, &.{ 10, 20, 30, 0xBBBB }, &lens);
-}
-
-test "unit: tab arrays insert gap in the middle shifts the tail right" {
-    var ids = [_]u8{ 1, 2, 3, 0 };
-    var lens = [_]u16{ 10, 20, 30, 0 };
-    tabArraysInsertGap(.{ &ids, &lens }, 3, 1);
-    // The gap at 1 still holds its old value (the caller overwrites
-    // it); entries 2..3 are the old 1..2.
-    try testing.expectEqualSlices(u8, &.{ 1, 2, 2, 3 }, &ids);
-    try testing.expectEqualSlices(u16, &.{ 10, 20, 20, 30 }, &lens);
-}
-
-test "unit: tab arrays remove at both edges" {
-    const Status = enum { normal, bell };
-    // Right edge: pure count decrement, no movement.
-    {
-        var ids = [_]u8{ 1, 2, 3 };
-        var status = [_]Status{ .normal, .bell, .bell };
-        tabArraysRemove(.{ &ids, &status }, 3, 2);
-        try testing.expectEqualSlices(u8, &.{ 1, 2, 3 }, &ids);
-        try testing.expectEqualSlices(Status, &.{ .normal, .bell, .bell }, &status);
-    }
-    // Left edge: everything shifts down one (the last slot keeps a
-    // duplicate the caller clears where stale pointers matter).
-    {
-        var ids = [_]u8{ 1, 2, 3 };
-        var status = [_]Status{ .bell, .normal, .bell };
-        tabArraysRemove(.{ &ids, &status }, 3, 0);
-        try testing.expectEqualSlices(u8, &.{ 2, 3, 3 }, &ids);
-        try testing.expectEqualSlices(Status, &.{ .normal, .bell, .bell }, &status);
-    }
-}
-
-test "unit: tab arrays move right, left, and adjacent" {
-    {
-        var ids = [_]u8{ 1, 2, 3, 4 };
-        tabArraysMove(.{&ids}, 0, 3);
-        try testing.expectEqualSlices(u8, &.{ 2, 3, 4, 1 }, &ids);
-    }
-    {
-        var ids = [_]u8{ 1, 2, 3, 4 };
-        tabArraysMove(.{&ids}, 3, 0);
-        try testing.expectEqualSlices(u8, &.{ 4, 1, 2, 3 }, &ids);
-    }
-    {
-        var ids = [_]u8{ 1, 2, 3, 4 };
-        tabArraysMove(.{&ids}, 1, 2);
-        try testing.expectEqualSlices(u8, &.{ 1, 3, 2, 4 }, &ids);
-    }
-}
-
-test "unit: tab arrays swap" {
-    var ids = [_]u8{ 1, 2, 3 };
-    var lens = [_]u16{ 10, 20, 30 };
-    tabArraysSwap(.{ &ids, &lens }, 0, 2);
-    try testing.expectEqualSlices(u8, &.{ 3, 2, 1 }, &ids);
-    try testing.expectEqualSlices(u16, &.{ 30, 20, 10 }, &lens);
-}
-
-test "unit: tab arrays stay aligned across a mutation sequence" {
-    // The real invariant: entry i of every parallel array must describe
-    // the same logical tab after any mix of operations. Tab n carries
-    // id n and "title" n+100.
-    var ids: [5]u8 = undefined;
-    var titles: [5]u8 = undefined;
-    var count: usize = 0;
-    const arrays = .{ &ids, &titles };
-
-    // Insert 1 then 2 at the end, then 3 in the middle: order 1,3,2.
-    tabArraysInsertGap(arrays, count, 0);
-    ids[0] = 1;
-    titles[0] = 101;
-    count += 1;
-    tabArraysInsertGap(arrays, count, 1);
-    ids[1] = 2;
-    titles[1] = 102;
-    count += 1;
-    tabArraysInsertGap(arrays, count, 1);
-    ids[1] = 3;
-    titles[1] = 103;
-    count += 1;
-
-    tabArraysMove(arrays, 0, 2); // 3,2,1
-    tabArraysSwap(arrays, 0, 1); // 2,3,1
-    tabArraysRemove(arrays, count, 1); // 2,1
-    count -= 1;
-
-    try testing.expectEqualSlices(u8, &.{ 2, 1 }, ids[0..count]);
-    for (ids[0..count], titles[0..count]) |id, title| {
-        try testing.expectEqual(id + 100, title);
-    }
-}
 
 test "unit: new-tab insert position matches config" {
     const Pos = enum { current, end };
@@ -287,18 +117,6 @@ test "unit: tab new returns an index list shows and close accepts (BUG 2)" {
         // tab 0) is the active one.
         try testing.expectEqual(@as(usize, 0), post_active);
     }
-}
-
-test "unit: aggregateAttention is an OR over the slice" {
-    try testing.expect(!aggregateAttention(&.{}));
-    try testing.expect(!aggregateAttention(&.{ false, false, false }));
-    try testing.expect(aggregateAttention(&.{ false, true, false }));
-    try testing.expect(aggregateAttention(&.{true}));
-    // Trailing true outside a shorter slice the caller passes is never
-    // seen — the caller slices to tab_count.
-    const flags = [_]bool{ false, false, true };
-    try testing.expect(!aggregateAttention(flags[0..2]));
-    try testing.expect(aggregateAttention(flags[0..3]));
 }
 
 test "unit: workspace close survivor selection table" {
@@ -382,52 +200,6 @@ test "unit: workspace close arithmetic exhaustive over count 1..4" {
     }
 }
 
-test "unit: workspace move active fixup table" {
-    // Moving the active workspace tracks it to the destination.
-    try testing.expectEqual(@as(usize, 3), moveActiveFixup(0, 0, 3));
-    try testing.expectEqual(@as(usize, 0), moveActiveFixup(3, 3, 0));
-    // Rightward move: actives inside (from, to] shift down one.
-    try testing.expectEqual(@as(usize, 1), moveActiveFixup(2, 0, 3));
-    try testing.expectEqual(@as(usize, 2), moveActiveFixup(3, 0, 3));
-    // Leftward move: actives inside [to, from) shift up one.
-    try testing.expectEqual(@as(usize, 2), moveActiveFixup(1, 3, 0));
-    try testing.expectEqual(@as(usize, 2), moveActiveFixup(1, 2, 0));
-    // Actives outside the shifted span stay put.
-    try testing.expectEqual(@as(usize, 0), moveActiveFixup(0, 1, 3));
-    try testing.expectEqual(@as(usize, 3), moveActiveFixup(3, 0, 2));
-}
-
-test "unit: workspace move active fixup exhaustive over count 1..4" {
-    // Every (count, active, from, to) combination — including the
-    // from == to identity the call site early-returns — verified
-    // against an id simulation of the lift-shift-drop shuffle
-    // moveWorkspaceTo performs: the fixed-up index must stay in range
-    // and keep pointing at the same workspace id.
-    var count: usize = 1;
-    while (count <= 4) : (count += 1) {
-        for (0..count) |active| {
-            for (0..count) |from| {
-                for (0..count) |to| {
-                    var ids: [4]usize = .{ 0, 1, 2, 3 };
-                    const saved = ids[from];
-                    if (from < to) {
-                        var i: usize = from;
-                        while (i < to) : (i += 1) ids[i] = ids[i + 1];
-                    } else {
-                        var i: usize = from;
-                        while (i > to) : (i -= 1) ids[i] = ids[i - 1];
-                    }
-                    ids[to] = saved;
-
-                    const fixed = moveActiveFixup(active, from, to);
-                    try testing.expect(fixed < count);
-                    try testing.expectEqual(active, ids[fixed]);
-                }
-            }
-        }
-    }
-}
-
 test "unit: tab close active fixup table" {
     // Args are (new_count, active, idx): the POST-close tab count, the
     // pre-close active index, and the closed index.
@@ -446,14 +218,14 @@ test "unit: tab close active fixup table" {
 test "unit: tab close active fixup exhaustive over count 2..4" {
     // Every (count, active, idx) with count >= 2 (closing the last tab
     // takes the workspace-collapse/window-close paths before the fixup
-    // runs), verified against tabArraysRemove's real shift.
+    // runs), verified against the ordered removal the tab list does.
     var count: usize = 2;
     while (count <= 4) : (count += 1) {
         for (0..count) |active| {
             for (0..count) |idx| {
                 const new_count = count - 1;
                 var ids: [4]usize = .{ 0, 1, 2, 3 };
-                tabArraysRemove(.{&ids}, count, idx);
+                for (idx..new_count) |i| ids[i] = ids[i + 1];
 
                 const fixed = closeTabActiveFixup(new_count, active, idx);
                 // The new active index is always valid.
@@ -473,19 +245,8 @@ test "unit: tab close active fixup exhaustive over count 2..4" {
     }
 }
 
-test "unit: workspace create guard caps at 16 and blocks quick terminal" {
-    // Every count below the cap is allowed on a normal window.
-    for (0..MAX_WORKSPACES) |count| {
-        try testing.expect(canCreateWorkspace(false, count));
-    }
-    // At (and past) the cap: no new slot.
-    try testing.expect(!canCreateWorkspace(false, MAX_WORKSPACES));
-    try testing.expect(!canCreateWorkspace(false, MAX_WORKSPACES + 1));
-    // QuickTerminal is single-workspace regardless of count.
-    try testing.expect(!canCreateWorkspace(true, 0));
-    try testing.expect(!canCreateWorkspace(true, 1));
-    try testing.expect(!canCreateWorkspace(true, MAX_WORKSPACES));
-    // The sidebar's row math and the workspaces array size both assume
-    // this exact cap; a silent change must fail a test.
-    try testing.expectEqual(@as(usize, 16), MAX_WORKSPACES);
+test "unit: workspace create guard only blocks the quick terminal" {
+    try testing.expect(canCreateWorkspace(false));
+    // QuickTerminal is single-workspace.
+    try testing.expect(!canCreateWorkspace(true));
 }

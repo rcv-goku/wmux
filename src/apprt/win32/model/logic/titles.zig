@@ -1,6 +1,7 @@
 //! Pure title helpers of the window model (ARCHITECTURE.md ADR-1.2: std
-//! only): the initial tab title derived from a backend argv and the UTF-8
-//! title cap. Moved out of Window.zig in W0-A2.
+//! only): the initial tab title derived from a backend argv, the UTF-8
+//! title cap, and the UTF-16 transcoding the GDI chrome draws titles
+//! with. Moved out of Window.zig in W0-A2.
 
 const std = @import("std");
 
@@ -36,6 +37,31 @@ pub fn capUtf8(title: []const u8, max_bytes: usize) []const u8 {
     var len = max_bytes;
     while (len > 0 and (title[len] & 0xC0) == 0x80) len -= 1;
     return title[0..len];
+}
+
+/// Transcode `text` (UTF-8, or WTF-8 holding unpaired surrogates from a
+/// rename) into `out` as UTF-16 for GDI, stopping before the first code
+/// point that does not fit; returns the number of units written. Text
+/// that is not valid WTF-8 transcodes to nothing (the chrome showed an
+/// empty title for undecodable input before W0-A2 too).
+pub fn toUtf16(out: []u16, text: []const u8) usize {
+    const view = std.unicode.Wtf8View.init(text) catch return 0;
+    var it = view.iterator();
+    var n: usize = 0;
+    while (it.nextCodepoint()) |cp| {
+        if (cp < 0x10000) {
+            if (n + 1 > out.len) break;
+            out[n] = @intCast(cp);
+            n += 1;
+        } else {
+            if (n + 2 > out.len) break;
+            const v = cp - 0x10000;
+            out[n] = @intCast(0xD800 + (v >> 10));
+            out[n + 1] = @intCast(0xDC00 + (v & 0x3FF));
+            n += 2;
+        }
+    }
+    return n;
 }
 
 // ---------------------------------------------------------------------------
@@ -167,4 +193,39 @@ test "unit: inherit title only recognizes the exact two-token distro flag" {
         @as(?[]const u8, null),
         titleForCommand(&.{ "wsl.exe", "--distribution" }),
     );
+}
+
+test "unit: model: title toUtf16 transcodes and stops at the unit cap" {
+    var buf: [8]u16 = undefined;
+    // ASCII and BMP.
+    const n = toUtf16(&buf, "a\xC3\xA9b");
+    try testing.expectEqualSlices(u16, &.{ 'a', 0xE9, 'b' }, buf[0..n]);
+    // An astral code point is a surrogate pair; one that does not fit
+    // is dropped whole.
+    var two: [2]u16 = undefined;
+    try testing.expectEqual(@as(usize, 2), toUtf16(&two, "\xF0\x9F\x98\x80"));
+    try testing.expectEqualSlices(u16, &.{ 0xD83D, 0xDE00 }, &two);
+    var three: [3]u16 = undefined;
+    // "x" plus one pair fill 3 units; the second pair would need 2 more.
+    try testing.expectEqual(@as(usize, 3), toUtf16(&three, "x\xF0\x9F\x98\x80\xF0\x9F\x98\x80"));
+    // Exactly at the cap.
+    var cap: [3]u16 = undefined;
+    try testing.expectEqual(@as(usize, 3), toUtf16(&cap, "abcdef"));
+}
+
+test "unit: model: title toUtf16 round-trips WTF-8 surrogate halves" {
+    // A rename holding a lone high surrogate survives WTF-16 -> WTF-8 ->
+    // UTF-16 unchanged.
+    const units = [_]u16{ 'a', 0xD800, 'b' };
+    const wtf8 = try std.unicode.wtf16LeToWtf8Alloc(testing.allocator, &units);
+    defer testing.allocator.free(wtf8);
+    var buf: [8]u16 = undefined;
+    const n = toUtf16(&buf, wtf8);
+    try testing.expectEqualSlices(u16, &units, buf[0..n]);
+}
+
+test "unit: model: title toUtf16 of invalid text is empty" {
+    var buf: [8]u16 = undefined;
+    try testing.expectEqual(@as(usize, 0), toUtf16(&buf, "ab\xFFcd"));
+    try testing.expectEqual(@as(usize, 0), toUtf16(&buf, ""));
 }

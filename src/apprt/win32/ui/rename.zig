@@ -7,10 +7,11 @@ const std = @import("std");
 const Sidebar = @import("sidebar/legacy_gdi.zig");
 const Window = @import("Window.zig");
 const tabbar_paint = @import("tabbar/paint.zig");
+const titles = @import("../model/logic/titles.zig");
 const w32 = @import("../platform/win32.zig");
 
 /// What an in-progress inline rename writes back to. `.tab` is an index
-/// into the active workspace's tab arrays; `.workspace` is an index into
+/// into the tabs of the active workspace's focused pane; `.workspace` is an index into
 /// the window's workspaces; `.description` edits a workspace's description.
 pub const RenameTarget = union(enum) {
     tab: usize,
@@ -25,15 +26,16 @@ pub const RENAME_EDIT_ID: u16 = 300;
 /// overlay on the tab and pre-fills it with the current title.
 pub fn startTabRename(self: *Window, tab_idx: usize) void {
     const ws = self.activeWorkspace();
-    const container = ws.focusedContainerOrFirst() orelse return;
-    if (tab_idx >= container.tab_count) return;
+    const container = ws.focusedPaneOrFirst() orelse return;
+    const tab = container.tabAt(tab_idx) orelse return;
     // The tab's rect in the bar the pane shows (shared geometry). A pane
     // without a visible bar renames through a zero-size overlay, as the
     // never-painted cached rects did before W0-A2.
     const rect = tabbar_paint.tabRect(self, container, tab_idx) orelse
         w32.RECT{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
-    const tlen = container.tab_title_lens[tab_idx];
-    self.startRename(rect, container.tab_titles[tab_idx][0..tlen], .{ .tab = tab_idx });
+    var buf: [256]u16 = undefined;
+    const len = titles.toUtf16(&buf, tab.titleText());
+    self.startRename(rect, buf[0..len], .{ .tab = tab_idx });
 }
 
 /// Start inline editing of a workspace name. Overlays the Edit control
@@ -46,10 +48,12 @@ pub fn renameWorkspace(self: *Window, ws_idx: usize) void {
     // unreachable for QT (sidebarWidth()==0 gates every caller), but the
     // guard keeps the invariant explicit against future direct callers.
     if (self.is_quick_terminal) return;
-    if (ws_idx >= self.workspace_count) return;
-    const wsp = &self.workspaces[ws_idx];
+    if (ws_idx >= self.workspaces.items.len) return;
+    const wsp = self.workspaces.items[ws_idx];
     const rect = Sidebar.itemRect(ws_idx, self.sidebarWidth(), self.sidebarItemHeight());
-    self.startRename(rect, wsp.name[0..wsp.name_len], .{ .workspace = ws_idx });
+    var buf: [Window.Workspace.NAME_MAX_UNITS]u16 = undefined;
+    const len = titles.toUtf16(&buf, wsp.name() orelse "");
+    self.startRename(rect, buf[0..len], .{ .workspace = ws_idx });
 }
 
 /// Start inline editing of a workspace description. Overlays the Edit
@@ -58,10 +62,12 @@ pub fn renameWorkspace(self: *Window, ws_idx: usize) void {
 /// description text, which is empty when no description has been set).
 pub fn editWorkspaceDescription(self: *Window, ws_idx: usize) void {
     if (self.is_quick_terminal) return;
-    if (ws_idx >= self.workspace_count) return;
-    const wsp = &self.workspaces[ws_idx];
+    if (ws_idx >= self.workspaces.items.len) return;
+    const wsp = self.workspaces.items[ws_idx];
     const rect = Sidebar.itemRect(ws_idx, self.sidebarWidth(), self.sidebarItemHeight());
-    self.startRename(rect, wsp.description[0..wsp.description_len], .{ .description = ws_idx });
+    var buf: [Window.Workspace.DESCRIPTION_MAX_UNITS]u16 = undefined;
+    const len = titles.toUtf16(&buf, wsp.descriptionText());
+    self.startRename(rect, buf[0..len], .{ .description = ws_idx });
 }
 
 /// Create the inline rename Edit overlay at `rect`, pre-filled with
@@ -148,32 +154,29 @@ pub fn finishTabRename(self: *Window) void {
     // Read the edit control text
     var wbuf: [256]u16 = undefined;
     const wlen: usize = @intCast(w32.GetWindowTextW(edit, &wbuf, 256));
+    const gpa = self.app.core_app.alloc;
     if (wlen > 0) {
-        const len: u16 = @intCast(@min(wlen, 255));
+        const len: usize = @min(wlen, 255);
         switch (target) {
             .tab => |tab_idx| {
-                if (self.activeWorkspace().focusedContainerOrFirst()) |rename_container| {
-                    if (tab_idx < rename_container.tab_count) {
-                        @memcpy(rename_container.tab_titles[tab_idx][0..len], wbuf[0..len]);
-                        rename_container.tab_title_lens[tab_idx] = len;
-                        if (tab_idx == rename_container.active_tab) self.updateWindowTitle();
+                if (self.activeWorkspace().focusedPaneOrFirst()) |rename_container| {
+                    if (rename_container.tabAt(tab_idx)) |tab| {
+                        if (std.unicode.wtf16LeToWtf8Alloc(gpa, wbuf[0..len])) |text| {
+                            defer gpa.free(text);
+                            tab.title.setCustom(gpa, text) catch {};
+                        } else |_| {}
+                        if (tab_idx == rename_container.selected) self.updateWindowTitle();
                     }
                 }
             },
             .workspace => |ws_idx| {
-                if (ws_idx < self.workspace_count) {
-                    const wsp = &self.workspaces[ws_idx];
-                    const nlen: u16 = @intCast(@min(wlen, wsp.name.len));
-                    @memcpy(wsp.name[0..nlen], wbuf[0..nlen]);
-                    wsp.name_len = nlen;
+                if (ws_idx < self.workspaces.items.len) {
+                    self.workspaces.items[ws_idx].setNameUtf16(gpa, wbuf[0..wlen]) catch {};
                 }
             },
             .description => |ws_idx| {
-                if (ws_idx < self.workspace_count) {
-                    const wsp = &self.workspaces[ws_idx];
-                    const dlen: u16 = @intCast(@min(wlen, wsp.description.len));
-                    @memcpy(wsp.description[0..dlen], wbuf[0..dlen]);
-                    wsp.description_len = dlen;
+                if (ws_idx < self.workspaces.items.len) {
+                    self.workspaces.items[ws_idx].setDescriptionUtf16(gpa, wbuf[0..wlen]) catch {};
                 }
             },
         }
@@ -182,8 +185,8 @@ pub fn finishTabRename(self: *Window) void {
         // (allows the user to remove a description by blanking it).
         switch (target) {
             .description => |ws_idx| {
-                if (ws_idx < self.workspace_count) {
-                    self.workspaces[ws_idx].description_len = 0;
+                if (ws_idx < self.workspaces.items.len) {
+                    self.workspaces.items[ws_idx].setDescriptionUtf16(gpa, &.{}) catch {};
                 }
             },
             else => {},

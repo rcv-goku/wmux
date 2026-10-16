@@ -44,7 +44,7 @@ fn ipcResolveSessionTarget(self: *App, req: *ipc.Request) IpcError!SessionTarget
         return .{ .id = sid, .surface = loc.surface };
     }
     const target = try targets.ipcResolveTab(self, req);
-    const pane = target.container.activeTab() orelse return IpcError.UnknownPane;
+    const pane = target.container.selectedTab() orelse return IpcError.UnknownPane;
     const surface = pane.surface() orelse return IpcError.NotATerminal;
     if (!surface.core_surface_initialized) return IpcError.CoreNotReady;
     return .{ .id = surface.core_surface.id, .surface = surface };

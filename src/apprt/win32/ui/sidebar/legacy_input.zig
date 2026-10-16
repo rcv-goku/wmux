@@ -59,16 +59,17 @@ pub fn endSidebarRowDrag(self: *Window) void {
 /// midpoint the cursor has passed. Clamped to the valid workspace row
 /// range (the sidebar lists workspaces, one row each).
 pub fn sidebarDragTarget(self: *const Window, y: i32) usize {
-    if (self.workspace_count == 0) return 0;
+    const count = self.workspaces.items.len;
+    if (count == 0) return 0;
     const item_h = self.sidebarItemHeight();
     if (item_h <= 0) return 0;
     var target: usize = 0;
-    for (0..self.workspace_count) |i| {
+    for (0..count) |i| {
         const slot_top: i32 = @as(i32, @intCast(i)) * item_h;
         const slot_mid = slot_top + @divTrunc(item_h, 2);
         if (y >= slot_mid) target = i;
     }
-    if (target >= self.workspace_count) target = self.workspace_count - 1;
+    if (target >= count) target = count - 1;
     return target;
 }
 
@@ -94,7 +95,7 @@ pub fn sidebarHitTest(self: *Window, x: i32, y: i32) Sidebar.HitTarget {
     return Sidebar.hitTest(x, y, .{
         .item_h = self.sidebarItemHeight(),
         // The sidebar renders one row per workspace.
-        .workspace_count = self.workspace_count,
+        .workspace_count = self.workspaces.items.len,
         .client_h = rect.bottom - rect.top,
         .width = self.sidebarWidth(),
         .scale = self.scale,
@@ -132,7 +133,7 @@ pub fn handleSidebarClick(self: *Window, x: i32, y: i32) void {
             // (this row creates workspaces; the tab bar's ▾ is the
             // new-tab-in-active-workspace picker).
             const row = Sidebar.itemRect(
-                self.workspace_count,
+                self.workspaces.items.len,
                 self.sidebarWidth(),
                 self.sidebarItemHeight(),
             );

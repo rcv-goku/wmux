@@ -72,7 +72,7 @@ pub fn perform(
         .toggle_tab_overview => {},
         .toggle_sidebar => if (parentWindow(target)) |w| w.toggleSidebar(),
         .save_session => saveSession(app),
-        .edit_workspace_description => if (parentWindow(target)) |w| w.editWorkspaceDescription(w.active_workspace),
+        .edit_workspace_description => if (parentWindow(target)) |w| w.editWorkspaceDescription(w.activeIndex()),
         .toggle_right_sidebar => if (parentWindow(target)) |w| w.toggleRightSidebar(),
         .restore_session => restoreSession(app),
         .focus_right_sidebar => if (parentWindow(target)) |w| w.focusRightSidebar(),
@@ -551,8 +551,8 @@ fn presentTerminal(self: *App, target: apprt.Target) void {
                 // tab within it. Order matters.
                 if (win.findLocOfSurface(core_surface.rt_surface)) |loc| {
                     win.selectWorkspace(win.workspaceIndex(loc.ws));
-                    loc.ws.focused_container = loc.container;
-                    if (loc.tab != loc.container.active_tab) win.selectTabIndex(loc.tab);
+                    loc.ws.focused_pane = loc.pane;
+                    if (loc.index != loc.pane.selected) win.selectTabIndex(loc.index);
                 }
                 // Focus the surface's child HWND.
                 if (core_surface.rt_surface.hwnd) |sh| {
@@ -588,8 +588,8 @@ fn promptTitle(target: apprt.Target) void {
             // current tab. On Win32 there's no separate surface title
             // UI — the tab title IS the surface identity.
             const pw = core_surface.rt_surface.parent_window;
-            const rename_container = pw.activeWorkspace().focusedContainerOrFirst() orelse return;
-            pw.startTabRename(rename_container.active_tab);
+            const rename_container = pw.activeWorkspace().focusedPaneOrFirst() orelse return;
+            pw.startTabRename(rename_container.selected);
         },
     }
 }

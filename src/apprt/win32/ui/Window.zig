@@ -49,15 +49,13 @@ pub const RenameTarget = rename.RenameTarget;
 
 // Constants that moved to their model owners in W0-A2, aliased for the
 // existing callers (W0 aliases, ARCHITECTURE.md §0.4).
-pub const MAX_STATUS_BYTES = Pane.MAX_STATUS_BYTES;
-pub const MAX_TABS = Pane.MAX_TABS;
+pub const MAX_STATUS_BYTES = Tab.MAX_STATUS_BYTES;
 pub const MAX_BRANCH_BYTES = Workspace.MAX_BRANCH_BYTES;
 pub const MAX_PORTS = Workspace.MAX_PORTS;
 pub const PrState = Workspace.PrState;
 pub const TabStatus = Tab.TabStatus;
-const MAX_WORKSPACES = arith.MAX_WORKSPACES;
 const applyChromeTheme = chrome.applyChromeTheme;
-const arith = @import("../model/logic/arith.zig");
+const features_ext = @import("../features/ext.zig");
 
 // ---------------------------------------------------------------------------
 // W0 aliases (ARCHITECTURE.md §0.4): the functions W0-A2 moved out of this
@@ -205,12 +203,12 @@ pub const selectWorkspace = ops_window.selectWorkspace;
 pub const setWorkspaceDescription = ops_workspace.setWorkspaceDescription;
 pub const setWorkspaceName = ops_workspace.setWorkspaceName;
 
-/// A located pane: the workspace and Pane that own it, plus
-/// the tab index within that container. Returned by findLoc/findLocOfSurface.
+/// A located tab: the workspace and Pane that own it, plus the tab's
+/// index within that pane. Returned by findLoc/findLocOfSurface.
 pub const Loc = struct {
     ws: *Workspace,
-    container: *Pane,
-    tab: usize,
+    pane: *Pane,
+    index: usize,
 };
 
 /// The parent App.
@@ -219,17 +217,17 @@ app: *App,
 /// The top-level window handle.
 hwnd: ?w32.HWND = null,
 
-/// Workspaces owned by this window (sidebar rows). Each owns its own
-/// set of per-tab parallel arrays and top tab bar. Slots MUST be
-/// value-initialized before use (see Workspace doc comment); only
-/// workspaces[0..workspace_count] are live.
-workspaces: [MAX_WORKSPACES]Workspace = undefined,
+/// Workspaces owned by this window (sidebar rows), in sidebar order.
+/// Heap objects (ARCHITECTURE.md ADR-2.3): a live window always has at
+/// least one; they are destroyed with the window.
+workspaces: std.ArrayList(*Workspace) = .empty,
 
-/// Number of live workspaces.
-workspace_count: usize = 0,
+/// The currently active (visible) workspace; always one of `workspaces`
+/// on a live window.
+selected: ?*Workspace = null,
 
-/// Index of the currently active (visible) workspace.
-active_workspace: usize = 0,
+/// Per-window feature state (ADR-1.3).
+ext: features_ext.WindowExt = .{},
 
 /// Whether the tab bar is visible (shown when >1 tab).
 tab_bar_visible: bool = false,
@@ -305,7 +303,7 @@ is_quick_terminal: bool = false,
 /// bring-up: ShowWindow uses SW_SHOWMAXIMIZED that one time, then
 /// SW_SHOW thereafter. This matters because creating/selecting a
 /// workspace re-enters the first-tab show path on a fresh
-/// (tab_count==1) workspace; without consuming the flag every new
+/// (one-tab) workspace; without consuming the flag every new
 /// workspace would re-maximize the window. Always false for quick
 /// terminals and non-first windows. Only the main window
 /// persists/restores geometry.
@@ -404,14 +402,15 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
     // overlay's bound owner pointer.
     PaneButtonsMod.on_click = onPaneButtonClick;
 
-    // Value-init the first workspace before any addTab(): the workspaces
-    // array is `undefined`, and the tab_status @splat default only applies
-    // on value-init (`= .{}`), not on leaving the slot uninitialized.
-    // Every init site (App.run, new_window, QuickTerminal.init) flows
-    // through here before its first addTab().
-    self.workspaces[0] = .{};
-    self.workspace_count = 1;
-    self.active_workspace = 0;
+    // Create the first workspace before any addTab(). Every init site
+    // (App.run, new_window, QuickTerminal.init) flows through here before
+    // its first addTab().
+    const gpa = app.core_app.alloc;
+    const first_ws = try Workspace.create(gpa, self);
+    errdefer first_ws.destroy(gpa);
+    try self.workspaces.append(gpa, first_ws);
+    errdefer self.workspaces.deinit(gpa);
+    self.selected = first_ws;
 
     const style: u32 = if (options.is_quick_terminal) w32.WS_POPUP else w32.WS_OVERLAPPEDWINDOW | w32.WS_CLIPCHILDREN;
     const ex_style: u32 = if (options.is_quick_terminal) w32.WS_EX_TOOLWINDOW else 0;
@@ -587,30 +586,39 @@ pub fn deinit(self: *Window) void {
         _ = w32.DestroyWindow(hwnd);
         self.hwnd = null;
     }
+
+    // The (already emptied) workspace objects go last.
+    self.freeWorkspaces();
 }
 
-/// The currently active workspace. Always valid on a live window
-/// (workspace_count >= 1); only a partially-initialized window (before
-/// the init sites set workspace_count=1) has none, and no UI path runs
-/// against one.
-pub fn activeWorkspace(self: *Window) *Workspace {
-    return &self.workspaces[self.active_workspace];
+/// The currently active workspace. Always valid on a live window: init
+/// creates the first workspace and every close selects a survivor.
+pub fn activeWorkspace(self: *const Window) *Workspace {
+    return self.selected.?;
 }
 
-/// The index of a workspace pointer within this window's workspaces
-/// array. The pointer MUST belong to this window (as returned by
-/// findLoc/findLocOfSurface); used to turn a located workspace back into
-/// an index for selectWorkspace.
-pub fn workspaceIndex(self: *Window, ws: *Workspace) usize {
-    const base = @intFromPtr(&self.workspaces[0]);
-    return (@intFromPtr(ws) - base) / @sizeOf(Workspace);
+/// The sidebar position of the active workspace (the index the legacy
+/// IPC and the session file use).
+pub fn activeIndex(self: *const Window) usize {
+    const ws = self.selected orelse return 0;
+    return std.mem.indexOfScalar(*Workspace, self.workspaces.items, ws) orelse 0;
+}
+
+/// The sidebar position of a workspace of this window (as returned by
+/// findLoc/findLocOfSurface), or `workspaces.items.len` (an index every
+/// index-based operation rejects) when it is not one of them.
+pub fn workspaceIndex(self: *const Window, ws: *const Workspace) usize {
+    for (self.workspaces.items, 0..) |w, i| {
+        if (w == ws) return i;
+    }
+    return self.workspaces.items.len;
 }
 
 /// Returns the currently active Tab, or null if there are no tabs.
 pub fn getActiveTab(self: *Window) ?*Tab {
     const ws = self.activeWorkspace();
-    const container = ws.focusedContainerOrFirst() orelse return null;
-    return container.activeTab();
+    const pane = ws.focusedPaneOrFirst() orelse return null;
+    return pane.selectedTab();
 }
 
 /// Returns the currently active terminal Surface, or null if there are
@@ -620,32 +628,32 @@ pub fn getActiveSurface(self: *Window) ?*Surface {
     return pane.surface();
 }
 
-/// Find the workspace+container+tab containing a given pane, scanning
-/// every workspace's Panes.
-pub fn findLoc(self: *Window, pane: *Tab) ?Loc {
-    for (self.workspaces[0..self.workspace_count]) |*ws| {
-        var it = ws.split_tree.iterator();
+/// Find the workspace, pane and index of a given tab, scanning every
+/// workspace's panes.
+pub fn findLoc(self: *const Window, tab: *const Tab) ?Loc {
+    for (self.workspaces.items) |ws| {
+        var it = ws.tree.iterator();
         while (it.next()) |entry| {
-            const container = entry.view;
-            for (container.tabs[0..container.tab_count], 0..) |tab_pane, i| {
-                if (tab_pane == pane) return .{ .ws = ws, .container = container, .tab = i };
+            const pane = entry.view;
+            for (pane.tabs.items, 0..) |t, i| {
+                if (t == tab) return .{ .ws = ws, .pane = pane, .index = i };
             }
         }
     }
     return null;
 }
 
-/// Find the workspace+container+tab containing a given terminal surface,
-/// scanning every workspace's Panes. Compares by address
-/// against live panes WITHOUT dereferencing `surface`, so callers
+/// Find the workspace, pane and index of the tab holding a given terminal
+/// surface, scanning every workspace's panes. Compares by address
+/// against live tabs WITHOUT dereferencing `surface`, so callers
 /// validating possibly-dangling pointers (jumpToSurface) can use it safely.
-pub fn findLocOfSurface(self: *Window, surface: *Surface) ?Loc {
-    for (self.workspaces[0..self.workspace_count]) |*ws| {
-        var it = ws.split_tree.iterator();
+pub fn findLocOfSurface(self: *const Window, surface: *const Surface) ?Loc {
+    for (self.workspaces.items) |ws| {
+        var it = ws.tree.iterator();
         while (it.next()) |entry| {
-            const container = entry.view;
-            for (container.tabs[0..container.tab_count], 0..) |tab_pane, i| {
-                if (tab_pane.surface() == surface) return .{ .ws = ws, .container = container, .tab = i };
+            const pane = entry.view;
+            for (pane.tabs.items, 0..) |t, i| {
+                if (t.surface() == surface) return .{ .ws = ws, .pane = pane, .index = i };
             }
         }
     }
@@ -673,16 +681,29 @@ pub fn close(self: *Window) void {
     }
 }
 
-/// Deinit and free all tab trees (which unrefs and frees surfaces)
-/// across every workspace.
+/// Deinit and free all split trees (which unrefs and frees panes, tabs
+/// and surfaces) across every workspace. The workspace objects stay (with
+/// empty trees) until freeWorkspaces, so late messages during
+/// DestroyWindow still find a selected workspace.
 fn cleanupAllSurfaces(self: *Window) void {
     const alloc = self.app.core_app.alloc;
-    for (self.workspaces[0..self.workspace_count]) |*ws| {
-        ws.split_tree.deinit();
-        ws.split_tree = .empty;
-        ws.focused_container = null;
-        ws.freeWorkingDir(alloc);
+    for (self.workspaces.items) |ws| {
+        ws.tree.deinit();
+        ws.tree = .empty;
+        ws.syncZoomed();
+        ws.focused_pane = null;
+        ws.freeCwd(alloc);
     }
+}
+
+/// Free the workspace objects and their list (final teardown, after
+/// cleanupAllSurfaces).
+fn freeWorkspaces(self: *Window) void {
+    const alloc = self.app.core_app.alloc;
+    self.selected = null;
+    for (self.workspaces.items) |ws| ws.destroy(alloc);
+    self.workspaces.deinit(alloc);
+    self.workspaces = .empty;
 }
 
 /// Handle WM_DESTROY: remove this window from the App's list,
@@ -694,6 +715,9 @@ fn onDestroy(self: *Window) void {
     // Invalidate any in-flight desktop-notification click targets that
     // point at this window before its memory is freed.
     app.dropDesktopNotifsForWindow(self);
+
+    // Surfaces were cleaned up by close(); free the workspace objects.
+    self.freeWorkspaces();
 
     // Quick terminal windows are managed by QuickTerminal, not the windows list.
     if (self.is_quick_terminal) {
@@ -813,14 +837,15 @@ pub fn windowWndProc(
             // owner. Reposition every surface's scrollbar across all
             // workspaces and tabs so hidden tabs/workspaces don't surface a
             // stale position when activated.
-            for (window.workspaces[0..window.workspace_count]) |*ws| {
-                var tree_it = ws.split_tree.iterator();
+            for (window.workspaces.items) |ws| {
+                var tree_it = ws.tree.iterator();
                 while (tree_it.next()) |entry| {
-                    for (entry.view.tabs[0..entry.view.tab_count]) |tab_pane| switch (tab_pane.content) {
+                    for (entry.view.tabs.items) |tab| switch (tab.content) {
                         .terminal => |s| if (s.scrollbar) |sb| {
                             _ = sb.repositionAndResize();
                         },
                         .browser => |b| b.onParentWindowMoved(),
+                        .placeholder => {},
                     };
                 }
             }
@@ -847,25 +872,19 @@ pub fn windowWndProc(
         },
         w32.WM_ENTERSIZEMOVE => {
             const ws = window.activeWorkspace();
-            var it = ws.split_tree.iterator();
+            var it = ws.tree.iterator();
             while (it.next()) |entry| {
-                const pane = entry.view.activeTab() orelse continue;
-                switch (pane.content) {
-                    .terminal => |s| s.in_live_resize = true,
-                    .browser => {},
-                }
+                const tab = entry.view.selectedTab() orelse continue;
+                if (tab.surface()) |s| s.in_live_resize = true;
             }
             return 0;
         },
         w32.WM_EXITSIZEMOVE => {
             const ws = window.activeWorkspace();
-            var it = ws.split_tree.iterator();
+            var it = ws.tree.iterator();
             while (it.next()) |entry| {
-                const pane = entry.view.activeTab() orelse continue;
-                switch (pane.content) {
-                    .terminal => |s| s.in_live_resize = false,
-                    .browser => {},
-                }
+                const tab = entry.view.selectedTab() orelse continue;
+                if (tab.surface()) |s| s.in_live_resize = false;
             }
             // Resize/move drag settled — persist the new geometry. This
             // debounces saves: nothing is written during the live drag
@@ -984,7 +1003,7 @@ pub fn windowWndProc(
             if (tabbar_input.handleTabBarDoubleClick(window, x, y)) return 0;
             if (window.hitTestDivider(x, y)) |hit| {
                 const ws = window.activeWorkspace();
-                ws.split_tree.resizeInPlace(hit.handle, @as(f16, 0.5));
+                ws.tree.resizeInPlace(hit.handle, @as(f16, 0.5));
                 window.layoutSplits();
                 return 0;
             }
@@ -1057,7 +1076,7 @@ pub fn windowWndProc(
                 if (!window.sidebar_drag_active and dy > threshold) {
                     window.sidebar_drag_active = true;
                 }
-                if (window.sidebar_drag_active and window.workspace_count > 1) {
+                if (window.sidebar_drag_active and window.workspaces.items.len > 1) {
                     const from: usize = @intCast(window.sidebar_drag_row);
                     const target = window.sidebarDragTarget(y);
                     if (target != from) {
@@ -1089,7 +1108,7 @@ pub fn windowWndProc(
                 window.handleTabBarMouseMove(@truncate(x), @truncate(y));
             } else if (y < window.tabBarHeight()) {
                 window.handleTabBarMouseMove(@truncate(x), @truncate(y));
-            } else if (window.activeWorkspace().split_tree.isSplit()) {
+            } else if (window.activeWorkspace().tree.isSplit()) {
                 // Mouse left all container tab bars — clear per-container hover.
                 window.handleTabBarMouseMove(@truncate(x), @truncate(y));
             }
@@ -1171,6 +1190,8 @@ test {
     _ = Workspace;
     _ = Pane;
     _ = Tab;
+    _ = @import("../model/Title.zig");
+    _ = @import("../model/TabContent.zig");
     _ = chrome;
     _ = menus;
     _ = overlay_pools;

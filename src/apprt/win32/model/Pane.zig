@@ -1,91 +1,60 @@
 //! A Pane is a leaf of the workspace split tree (a cmux "pane"): a tab
-//! container with its own tab bar. It owns a set of tabs (each a Tab)
-//! and implements the SplitTree view protocol (ref/unref/eql —
-//! see the doc comment in src/datastruct/split_tree.zig). Splits create
-//! new Panes; tabs live within a single Pane. Formerly `PaneContainer`
-//! (renamed in W0-A2, ARCHITECTURE.md ADR-1.8).
+//! container with its own tab bar (ARCHITECTURE.md §0.2, ADR-2.3). It owns
+//! an ordered list of heap Tabs (one reference each) and implements the
+//! SplitTree view protocol (ref/unref/eql, see the doc comment in
+//! src/datastruct/split_tree.zig). Splits create new Panes; tabs live
+//! within a single Pane. Formerly `PaneContainer` (renamed in W0-A2,
+//! ADR-1.8), which kept up to 64 tabs in parallel per-tab arrays; there is
+//! no tab cap any more (G7).
 const Pane = @This();
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const Tab = @import("Tab.zig");
-const arith = @import("logic/arith.zig");
-const log_ring = @import("../features/status/log_ring.zig");
+const Workspace = @import("Workspace.zig");
+const features_ext = @import("../features/ext.zig");
 const w32 = @import("../platform/win32.zig");
 
 const TabStatus = Tab.TabStatus;
-
-/// Maximum bytes of a per-tab status string (set-status). Inline, like
-/// tab titles, so set-status never allocates; over-long text is byte
-/// truncated by the setter.
-pub const MAX_STATUS_BYTES: usize = 96;
-
-/// Maximum number of tabs per workspace.
-pub const MAX_TABS: usize = 64;
 
 /// Reference count for SplitTree ownership. Starts at 0 because
 /// SplitTree.init() calls ref() to take initial ownership.
 ref_count: u32 = 0,
 
-/// Number of live tabs in this container.
-tab_count: usize = 0,
+/// The workspace whose split tree holds this pane (null for a pane that
+/// is not in a tree yet, and in the fake model graphs of the tests).
+workspace: ?*Workspace = null,
 
-/// Index of the currently visible tab.
-active_tab: usize = 0,
+/// The tabs, in tab bar order. Each holds one reference owned by this
+/// pane.
+tabs: std.ArrayList(*Tab) = .empty,
 
-/// Each tab is a single Tab (terminal or browser). No per-tab split
-/// tree — in the new model, splits are between Panes.
-tabs: [MAX_TABS]*Tab = undefined,
-
-/// UTF-16 title buffers for each tab (for painting the tab bar).
-tab_titles: [MAX_TABS][256]u16 = undefined,
-
-/// Length of each tab title in UTF-16 code units.
-tab_title_lens: [MAX_TABS]u16 = undefined,
-
-/// Per-tab sidebar status. Cleared to .normal when the tab is selected.
-tab_status: [MAX_TABS]TabStatus = [_]TabStatus{.normal} ** MAX_TABS,
-
-/// Per-tab "needs attention" flag (the notification ring).
-tab_attention: [MAX_TABS]bool = @splat(false),
-
-/// Per-tab orchestration status string (set-status).
-tab_status_text: [MAX_TABS][MAX_STATUS_BYTES]u8 = undefined,
-tab_status_text_len: [MAX_TABS]u16 = @splat(0),
-
-/// Per-tab progress percent (set-progress), 0..100, or null for none.
-tab_progress: [MAX_TABS]?u8 = @splat(null),
-
-/// Per-tab ring log buffer (log).
-tab_log: [MAX_TABS]log_ring.LogRing = @splat(.{}),
-
-/// Per-tab synchronized input flag.
-tab_synchronized: [MAX_TABS]bool = @splat(false),
-
-// -------------------------------------------------------------------------
-// Layout
-// -------------------------------------------------------------------------
+/// Index of the visible (selected) tab.
+selected: usize = 0,
 
 /// Full layout rect assigned by layoutSplits (includes tab bar area).
 /// Used for painting per-pane tab bars and, through the shared tab bar
 /// geometry (ui/tabbar/logic/geometry.zig), for hit-testing them.
 layout_rect: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
 
+/// Per-pane feature state (ADR-1.3).
+ext: features_ext.PaneExt = .{},
+
 // -------------------------------------------------------------------------
-// Per-pane tab bar hover state (split mode only)
+// Per-pane tab bar hover state (split mode only; owned by ui/tabbar)
 // -------------------------------------------------------------------------
 
-/// Index of the tab being hovered in this container's tab bar (null = none).
+/// Index of the tab being hovered in this pane's tab bar (null = none).
 hovered_tab_idx: ?usize = null,
 
 /// Index of the tab whose close button is being hovered (null = none).
 hovered_close_idx: ?usize = null,
 
-/// Whether the "+" new-tab button in this container's tab bar is hovered.
+/// Whether the "+" new-tab button in this pane's tab bar is hovered.
 hovered_new_tab: bool = false,
 
-/// Whether the "▾" dropdown button in this container's tab bar is hovered.
+/// Whether the "▾" dropdown button in this pane's tab bar is hovered.
 hovered_dropdown: bool = false,
 
 // -------------------------------------------------------------------------
@@ -94,9 +63,9 @@ hovered_dropdown: bool = false,
 
 /// Heap-allocate a Pane with default-initialized fields.
 pub fn create(alloc: Allocator) Allocator.Error!*Pane {
-    const pc = try alloc.create(Pane);
-    pc.* = .{};
-    return pc;
+    const pane = try alloc.create(Pane);
+    pane.* = .{};
+    return pane;
 }
 
 // -------------------------------------------------------------------------
@@ -114,9 +83,11 @@ pub fn ref(self: *Pane, alloc: Allocator) Allocator.Error!*Pane {
 pub fn unref(self: *Pane, alloc: Allocator) void {
     self.ref_count -= 1;
     if (self.ref_count == 0) {
-        for (self.tabs[0..self.tab_count]) |tab| {
+        for (self.tabs.items) |tab| {
+            tab.pane = null;
             tab.unref(alloc);
         }
+        self.tabs.deinit(alloc);
         alloc.destroy(self);
     }
 }
@@ -130,52 +101,42 @@ pub fn eql(self: *const Pane, other: *const Pane) bool {
 // Accessors
 // -------------------------------------------------------------------------
 
-/// The active tab's content HWND, or null if empty.
-pub fn activeTabHwnd(self: *const Pane) ?w32.HWND {
-    if (self.tab_count == 0) return null;
-    return self.tabs[self.active_tab].hwnd();
+/// Number of tabs.
+pub fn tabCount(self: *const Pane) usize {
+    return self.tabs.items.len;
 }
 
-/// The active Tab, or null if empty.
-pub fn activeTab(self: *Pane) ?*Tab {
-    if (self.tab_count == 0) return null;
-    return self.tabs[self.active_tab];
+/// The selected tab's content HWND, or null if empty.
+pub fn selectedHwnd(self: *const Pane) ?w32.HWND {
+    const tab = self.selectedTab() orelse return null;
+    return tab.hwnd();
 }
 
-/// The parallel per-tab arrays as a tuple of array pointers, compatible
-/// with the tabArraysInsertGap/tabArraysRemove/tabArraysSwap helpers
-/// in model/logic/arith.zig.
-pub fn tabArrays(self: *Pane) struct {
-    *[MAX_TABS]*Tab,
-    *[MAX_TABS][256]u16,
-    *[MAX_TABS]u16,
-    *[MAX_TABS]TabStatus,
-    *[MAX_TABS]bool,
-    *[MAX_TABS][MAX_STATUS_BYTES]u8,
-    *[MAX_TABS]u16,
-    *[MAX_TABS]?u8,
-    *[MAX_TABS]log_ring.LogRing,
-    *[MAX_TABS]bool,
-} {
-    return .{
-        &self.tabs,
-        &self.tab_titles,
-        &self.tab_title_lens,
-        &self.tab_status,
-        &self.tab_attention,
-        &self.tab_status_text,
-        &self.tab_status_text_len,
-        &self.tab_progress,
-        &self.tab_log,
-        &self.tab_synchronized,
-    };
+/// The selected Tab, or null if empty.
+pub fn selectedTab(self: *const Pane) ?*Tab {
+    if (self.selected >= self.tabs.items.len) return null;
+    return self.tabs.items[self.selected];
 }
 
-/// The worst status across this container's tabs: exited > bell > normal.
+/// The tab at `index`, or null when out of range.
+pub fn tabAt(self: *const Pane, index: usize) ?*Tab {
+    if (index >= self.tabs.items.len) return null;
+    return self.tabs.items[index];
+}
+
+/// The position of `tab` in this pane, or null when it is not here.
+pub fn indexOf(self: *const Pane, tab: *const Tab) ?usize {
+    for (self.tabs.items, 0..) |t, i| {
+        if (t == tab) return i;
+    }
+    return null;
+}
+
+/// The worst status across this pane's tabs: exited > bell > normal.
 pub fn aggregateStatus(self: *const Pane) TabStatus {
     var worst: TabStatus = .normal;
-    for (self.tab_status[0..self.tab_count]) |s| {
-        switch (s) {
+    for (self.tabs.items) |tab| {
+        switch (tab.legacy.status) {
             .exited => return .exited,
             .bell => worst = .bell,
             .normal => {},
@@ -184,17 +145,17 @@ pub fn aggregateStatus(self: *const Pane) TabStatus {
     return worst;
 }
 
-/// Whether any tab in this container is flagged for attention.
+/// Whether any tab in this pane is flagged for attention.
 pub fn hasAttention(self: *const Pane) bool {
-    for (self.tab_attention[0..self.tab_count]) |f| {
-        if (f) return true;
+    for (self.tabs.items) |tab| {
+        if (tab.legacy.attention) return true;
     }
     return false;
 }
 
-/// Give keyboard focus to the active tab's content.
+/// Give keyboard focus to the selected tab's content.
 pub fn focus(self: *const Pane) void {
-    if (self.tab_count > 0) self.tabs[self.active_tab].focus();
+    if (self.selectedTab()) |tab| tab.focus();
 }
 
 // -------------------------------------------------------------------------
@@ -203,22 +164,34 @@ pub fn focus(self: *const Pane) void {
 
 const testing = std.testing;
 
+/// A pane over caller-owned placeholder tabs (read-only: the list borrows
+/// `ptrs`, so the test must not append to it or deinit it).
+fn testPane(tabs: []Tab, ptrs: []*Tab) Pane {
+    for (tabs, 0..) |*t, i| ptrs[i] = t;
+    return .{ .tabs = .{ .items = ptrs[0..tabs.len], .capacity = tabs.len } };
+}
+
+fn placeholderTabs(comptime n: usize) [n]Tab {
+    return @splat(.{ .content = .placeholder });
+}
+
 test "unit: Pane create returns default state" {
-    const pc = try Pane.create(testing.allocator);
-    defer testing.allocator.destroy(pc);
-    try testing.expectEqual(@as(u32, 0), pc.ref_count);
-    try testing.expectEqual(@as(usize, 0), pc.tab_count);
-    try testing.expectEqual(@as(usize, 0), pc.active_tab);
+    const pane = try Pane.create(testing.allocator);
+    defer testing.allocator.destroy(pane);
+    try testing.expectEqual(@as(u32, 0), pane.ref_count);
+    try testing.expectEqual(@as(usize, 0), pane.tabCount());
+    try testing.expectEqual(@as(usize, 0), pane.selected);
+    try testing.expectEqual(@as(?*Workspace, null), pane.workspace);
 }
 
 test "unit: Pane ref counts up and returns self" {
-    var pc: Pane = .{};
-    try testing.expectEqual(@as(u32, 0), pc.ref_count);
-    const p = try pc.ref(testing.allocator);
-    try testing.expectEqual(&pc, p);
-    try testing.expectEqual(@as(u32, 1), pc.ref_count);
-    _ = try pc.ref(testing.allocator);
-    try testing.expectEqual(@as(u32, 2), pc.ref_count);
+    var pane: Pane = .{};
+    try testing.expectEqual(@as(u32, 0), pane.ref_count);
+    const p = try pane.ref(testing.allocator);
+    try testing.expectEqual(&pane, p);
+    try testing.expectEqual(@as(u32, 1), pane.ref_count);
+    _ = try pane.ref(testing.allocator);
+    try testing.expectEqual(@as(u32, 2), pane.ref_count);
 }
 
 test "unit: Pane eql is identity" {
@@ -229,99 +202,225 @@ test "unit: Pane eql is identity" {
 }
 
 test "unit: Pane aggregateStatus returns worst" {
-    var pc: Pane = .{};
-    pc.tab_count = 3;
-    pc.tab_status[0] = .normal;
-    pc.tab_status[1] = .normal;
-    pc.tab_status[2] = .normal;
-    try testing.expectEqual(TabStatus.normal, pc.aggregateStatus());
+    var tabs = placeholderTabs(3);
+    var ptrs: [3]*Tab = undefined;
+    const pane = testPane(&tabs, &ptrs);
+    try testing.expectEqual(TabStatus.normal, pane.aggregateStatus());
 
-    pc.tab_status[1] = .bell;
-    try testing.expectEqual(TabStatus.bell, pc.aggregateStatus());
+    tabs[1].legacy.status = .bell;
+    try testing.expectEqual(TabStatus.bell, pane.aggregateStatus());
 
-    pc.tab_status[2] = .exited;
-    try testing.expectEqual(TabStatus.exited, pc.aggregateStatus());
+    tabs[2].legacy.status = .exited;
+    try testing.expectEqual(TabStatus.exited, pane.aggregateStatus());
 }
 
 test "unit: Pane aggregateStatus empty is normal" {
-    var pc: Pane = .{};
-    try testing.expectEqual(TabStatus.normal, pc.aggregateStatus());
+    const pane: Pane = .{};
+    try testing.expectEqual(TabStatus.normal, pane.aggregateStatus());
+}
+
+test "unit: Pane aggregate status exited beats bell" {
+    var tabs = placeholderTabs(4);
+    var ptrs: [4]*Tab = undefined;
+    const pane = testPane(&tabs, &ptrs);
+    tabs[1].legacy.status = .bell;
+    try testing.expectEqual(TabStatus.bell, pane.aggregateStatus());
+    tabs[3].legacy.status = .exited;
+    try testing.expectEqual(TabStatus.exited, pane.aggregateStatus());
+    tabs[3].legacy.status = .normal;
+    tabs[0].legacy.status = .exited;
+    try testing.expectEqual(TabStatus.exited, pane.aggregateStatus());
+}
+
+test "unit: Pane aggregate status has no tab cap" {
+    // 100 tabs: more than the former 64-slot MAX_TABS arrays held.
+    var tabs = placeholderTabs(100);
+    var ptrs: [100]*Tab = undefined;
+    const pane = testPane(&tabs, &ptrs);
+    try testing.expectEqual(TabStatus.normal, pane.aggregateStatus());
+    tabs[99].legacy.status = .bell;
+    try testing.expectEqual(TabStatus.bell, pane.aggregateStatus());
+    tabs[64].legacy.status = .exited;
+    try testing.expectEqual(TabStatus.exited, pane.aggregateStatus());
 }
 
 test "unit: Pane hasAttention" {
-    var pc: Pane = .{};
-    pc.tab_count = 2;
-    try testing.expect(!pc.hasAttention());
+    var tabs = placeholderTabs(2);
+    var ptrs: [2]*Tab = undefined;
+    const pane = testPane(&tabs, &ptrs);
+    try testing.expect(!pane.hasAttention());
+    tabs[1].legacy.attention = true;
+    try testing.expect(pane.hasAttention());
+    tabs[1].legacy.attention = false;
+    try testing.expect(!pane.hasAttention());
+}
 
-    pc.tab_attention[1] = true;
-    try testing.expect(pc.hasAttention());
+test "unit: Pane attention is orthogonal to bell/exited status" {
+    var tabs = placeholderTabs(3);
+    var ptrs: [3]*Tab = undefined;
+    const pane = testPane(&tabs, &ptrs);
+    tabs[0].legacy.status = .exited;
+    tabs[2].legacy.attention = true;
+    try testing.expectEqual(TabStatus.exited, pane.aggregateStatus());
+    try testing.expect(pane.hasAttention());
+    tabs[2].legacy.attention = false;
+    try testing.expectEqual(TabStatus.exited, pane.aggregateStatus());
+    try testing.expect(!pane.hasAttention());
+}
+
+test "unit: Pane progress and log store and clear per tab" {
+    var tabs = placeholderTabs(2);
+
+    try testing.expectEqual(@as(?u8, null), tabs[0].legacy.progress);
+    try testing.expect(tabs[0].legacy.log.latest() == null);
+
+    tabs[1].legacy.progress = 42;
+    try testing.expectEqual(@as(?u8, 42), tabs[1].legacy.progress);
+    tabs[1].legacy.progress = 100;
+    try testing.expectEqual(@as(?u8, 100), tabs[1].legacy.progress);
+    tabs[1].legacy.progress = null;
+    try testing.expectEqual(@as(?u8, null), tabs[1].legacy.progress);
+
+    tabs[0].legacy.log.push("line one");
+    tabs[0].legacy.log.push("line two");
+    try testing.expectEqualStrings("line two", tabs[0].legacy.log.latest().?);
+    try testing.expectEqualStrings("line one", tabs[0].legacy.log.at(1).?);
+    try testing.expect(tabs[1].legacy.log.latest() == null);
 }
 
 test "unit: Pane activePane null when empty" {
-    var pc: Pane = .{};
-    try testing.expectEqual(@as(?*Tab, null), pc.activeTab());
-    try testing.expectEqual(@as(?w32.HWND, null), pc.activeTabHwnd());
+    const pane: Pane = .{};
+    try testing.expectEqual(@as(?*Tab, null), pane.selectedTab());
+    try testing.expectEqual(@as(?w32.HWND, null), pane.selectedHwnd());
 }
 
 test "unit: Pane activePane returns active tab" {
-    var pane_a: Tab = .{ .content = .{ .terminal = undefined } };
-    var pane_b: Tab = .{ .content = .{ .terminal = undefined } };
-    var pc: Pane = .{};
-    pc.tabs[0] = &pane_a;
-    pc.tabs[1] = &pane_b;
-    pc.tab_count = 2;
-    pc.active_tab = 0;
-    try testing.expectEqual(&pane_a, pc.activeTab().?);
+    var tabs = placeholderTabs(2);
+    var ptrs: [2]*Tab = undefined;
+    var pane = testPane(&tabs, &ptrs);
+    pane.selected = 0;
+    try testing.expectEqual(&tabs[0], pane.selectedTab().?);
+    pane.selected = 1;
+    try testing.expectEqual(&tabs[1], pane.selectedTab().?);
+    // An out-of-range selection reads as no tab instead of past the list.
+    pane.selected = 2;
+    try testing.expectEqual(@as(?*Tab, null), pane.selectedTab());
+}
 
-    pc.active_tab = 1;
-    try testing.expectEqual(&pane_b, pc.activeTab().?);
+test "unit: Pane indexOf and tabAt agree" {
+    var tabs = placeholderTabs(3);
+    var ptrs: [3]*Tab = undefined;
+    const pane = testPane(&tabs, &ptrs);
+    for (0..3) |i| {
+        try testing.expectEqual(@as(?usize, i), pane.indexOf(&tabs[i]));
+        try testing.expectEqual(&tabs[i], pane.tabAt(i).?);
+    }
+    var stranger: Tab = .{ .content = .placeholder };
+    try testing.expectEqual(@as(?usize, null), pane.indexOf(&stranger));
+    try testing.expectEqual(@as(?*Tab, null), pane.tabAt(3));
 }
 
 test "unit: Pane focus is noop when empty" {
-    var pc: Pane = .{};
-    pc.focus();
+    const pane: Pane = .{};
+    pane.focus();
 }
 
 test "unit: Pane default hover state is cleared" {
-    const pc: Pane = .{};
-    try testing.expectEqual(@as(?usize, null), pc.hovered_tab_idx);
-    try testing.expectEqual(@as(?usize, null), pc.hovered_close_idx);
-    try testing.expect(!pc.hovered_new_tab);
-    try testing.expect(!pc.hovered_dropdown);
+    const pane: Pane = .{};
+    try testing.expectEqual(@as(?usize, null), pane.hovered_tab_idx);
+    try testing.expectEqual(@as(?usize, null), pane.hovered_close_idx);
+    try testing.expect(!pane.hovered_new_tab);
+    try testing.expect(!pane.hovered_dropdown);
 }
 
 test "unit: Pane default layout rect is zeroed" {
-    const pc: Pane = .{};
-    try testing.expectEqual(@as(i32, 0), pc.layout_rect.left);
-    try testing.expectEqual(@as(i32, 0), pc.layout_rect.right);
+    const pane: Pane = .{};
+    try testing.expectEqual(@as(i32, 0), pane.layout_rect.left);
+    try testing.expectEqual(@as(i32, 0), pane.layout_rect.right);
 }
 
 test "unit: Pane hover state is independently settable" {
-    var pc: Pane = .{};
-    pc.hovered_tab_idx = 2;
-    pc.hovered_close_idx = 1;
-    pc.hovered_new_tab = true;
-    pc.hovered_dropdown = true;
+    var pane: Pane = .{};
+    pane.hovered_tab_idx = 2;
+    pane.hovered_close_idx = 1;
+    pane.hovered_new_tab = true;
+    pane.hovered_dropdown = true;
 
-    try testing.expectEqual(@as(?usize, 2), pc.hovered_tab_idx);
-    try testing.expectEqual(@as(?usize, 1), pc.hovered_close_idx);
-    try testing.expect(pc.hovered_new_tab);
-    try testing.expect(pc.hovered_dropdown);
+    try testing.expectEqual(@as(?usize, 2), pane.hovered_tab_idx);
+    try testing.expectEqual(@as(?usize, 1), pane.hovered_close_idx);
+    try testing.expect(pane.hovered_new_tab);
+    try testing.expect(pane.hovered_dropdown);
 
     // Clear hover state (as clearAllContainerHover would).
-    pc.hovered_tab_idx = null;
-    pc.hovered_close_idx = null;
-    pc.hovered_new_tab = false;
-    pc.hovered_dropdown = false;
+    pane.hovered_tab_idx = null;
+    pane.hovered_close_idx = null;
+    pane.hovered_new_tab = false;
+    pane.hovered_dropdown = false;
 
-    try testing.expectEqual(@as(?usize, null), pc.hovered_tab_idx);
-    try testing.expectEqual(@as(?usize, null), pc.hovered_close_idx);
-    try testing.expect(!pc.hovered_new_tab);
-    try testing.expect(!pc.hovered_dropdown);
+    try testing.expectEqual(@as(?usize, null), pane.hovered_tab_idx);
+    try testing.expectEqual(@as(?usize, null), pane.hovered_close_idx);
+    try testing.expect(!pane.hovered_new_tab);
+    try testing.expect(!pane.hovered_dropdown);
+}
+
+test "unit: Pane tab bar visibility rule" {
+    // A split pane paints its own bar only with 2+ tabs (layoutNode,
+    // invalidateTabBar and the tab bar geometry all test tabCount() > 1).
+    var tabs = placeholderTabs(5);
+    var ptrs: [5]*Tab = undefined;
+    for ([_]usize{ 0, 1, 2, 5 }) |n| {
+        const pane = testPane(tabs[0..n], ptrs[0..n]);
+        try testing.expectEqual(n > 1, pane.tabCount() > 1);
+    }
+}
+
+test "unit: Pane aggregate status of an empty container is normal" {
+    var tabs = placeholderTabs(1);
+    tabs[0].legacy.status = .exited;
+    var ptrs = [_]*Tab{&tabs[0]};
+    // Spare list capacity holding a stale tab pointer is not a tab.
+    const pane: Pane = .{ .tabs = .{ .items = ptrs[0..0], .capacity = 1 } };
+    try testing.expectEqual(TabStatus.normal, pane.aggregateStatus());
+}
+
+test "unit: Pane aggregate status all-normal stays normal" {
+    var tabs = placeholderTabs(3);
+    var ptrs: [3]*Tab = undefined;
+    const pane = testPane(&tabs, &ptrs);
+    try testing.expectEqual(TabStatus.normal, pane.aggregateStatus());
+}
+
+test "unit: Pane hasAttention ignores slots past tab_count" {
+    var tabs = placeholderTabs(2);
+    var ptrs = [_]*Tab{ &tabs[0], &tabs[1] };
+    tabs[1].legacy.attention = true;
+    // Only the list's items are tabs; the second pointer is spare capacity.
+    var pane: Pane = .{ .tabs = .{ .items = ptrs[0..1], .capacity = 2 } };
+    try testing.expect(!pane.hasAttention());
+    pane.tabs.items = ptrs[0..2];
+    try testing.expect(pane.hasAttention());
+}
+
+test "unit: Pane aggregate status slot visibility at the count boundaries" {
+    // 64 tabs, the former MAX_TABS: the last tab counts exactly while it
+    // is inside the list.
+    const n = 64;
+    var tabs = placeholderTabs(n);
+    var ptrs: [n]*Tab = undefined;
+    var pane = testPane(&tabs, &ptrs);
+    tabs[n - 1].legacy.status = .exited;
+    try testing.expectEqual(TabStatus.exited, pane.aggregateStatus());
+    pane.tabs.items = ptrs[0 .. n - 1];
+    try testing.expectEqual(TabStatus.normal, pane.aggregateStatus());
+    tabs[n - 1].legacy.status = .bell;
+    pane.tabs.items = ptrs[0..n];
+    try testing.expectEqual(TabStatus.bell, pane.aggregateStatus());
+    pane.tabs.items = ptrs[0..0];
+    try testing.expectEqual(TabStatus.normal, pane.aggregateStatus());
 }
 
 test "unit: Pane layout_rect stores assigned position" {
-    // Simulate layoutSplits assigning rects to containers in a side-by-side split.
+    // Simulate layoutSplits assigning rects to panes in a side-by-side split.
     var left: Pane = .{};
     left.layout_rect = .{ .left = 0, .top = 0, .right = 400, .bottom = 300 };
     try testing.expectEqual(@as(i32, 0), left.layout_rect.left);
@@ -336,169 +435,4 @@ test "unit: Pane layout_rect stores assigned position" {
 
     // Non-overlapping: left.right <= right.left.
     try testing.expect(left.layout_rect.right <= right.layout_rect.left);
-}
-
-test "unit: Pane tab bar visibility rule" {
-    var pc: Pane = .{};
-
-    // 0 tabs: no bar (both forced and unforced)
-    pc.tab_count = 0;
-    try testing.expect(pc.tab_count <= 1);
-
-    // 1 tab: no bar unless forced
-    pc.tab_count = 1;
-    try testing.expect(pc.tab_count <= 1);
-
-    // 2+ tabs: bar shown regardless of force
-    pc.tab_count = 2;
-    try testing.expect(pc.tab_count > 1);
-
-    pc.tab_count = 5;
-    try testing.expect(pc.tab_count > 1);
-}
-
-test "unit: Pane aggregate status of an empty container is normal" {
-    var pc: Pane = .{};
-    try testing.expectEqual(TabStatus.normal, pc.aggregateStatus());
-    // Status slots past tab_count are ignored even when dirty.
-    pc.tab_status[0] = .exited;
-    try testing.expectEqual(TabStatus.normal, pc.aggregateStatus());
-}
-
-test "unit: Pane aggregate status all-normal stays normal" {
-    var pc: Pane = .{};
-    pc.tab_count = 3;
-    try testing.expectEqual(TabStatus.normal, pc.aggregateStatus());
-}
-
-test "unit: Pane aggregate status exited beats bell" {
-    var pc: Pane = .{};
-    pc.tab_count = 4;
-    pc.tab_status[1] = .bell;
-    try testing.expectEqual(TabStatus.bell, pc.aggregateStatus());
-    pc.tab_status[3] = .exited;
-    try testing.expectEqual(TabStatus.exited, pc.aggregateStatus());
-    pc.tab_status[3] = .normal;
-    pc.tab_status[0] = .exited;
-    try testing.expectEqual(TabStatus.exited, pc.aggregateStatus());
-    pc.tab_status[0] = .normal;
-    pc.tab_count = 1;
-    try testing.expectEqual(TabStatus.normal, pc.aggregateStatus());
-}
-
-test "unit: Pane hasAttention ignores slots past tab_count" {
-    var pc: Pane = .{};
-    pc.tab_attention[0] = true;
-    try testing.expect(!pc.hasAttention());
-    pc.tab_count = 1;
-    try testing.expect(pc.hasAttention());
-    pc.tab_attention[0] = false;
-    pc.tab_count = 2;
-    pc.tab_attention[5] = true;
-    try testing.expect(!pc.hasAttention());
-    pc.tab_attention[1] = true;
-    try testing.expect(pc.hasAttention());
-}
-
-test "unit: Pane attention is orthogonal to bell/exited status" {
-    var pc: Pane = .{};
-    pc.tab_count = 3;
-    pc.tab_status[0] = .exited;
-    pc.tab_attention[2] = true;
-    try testing.expectEqual(TabStatus.exited, pc.aggregateStatus());
-    try testing.expect(pc.hasAttention());
-    pc.tab_attention[2] = false;
-    try testing.expectEqual(TabStatus.exited, pc.aggregateStatus());
-    try testing.expect(!pc.hasAttention());
-}
-
-test "unit: Pane progress and log store and clear per tab" {
-    var pc: Pane = .{};
-    pc.tab_count = 2;
-
-    try testing.expectEqual(@as(?u8, null), pc.tab_progress[0]);
-    try testing.expect(pc.tab_log[0].latest() == null);
-
-    pc.tab_progress[1] = 42;
-    try testing.expectEqual(@as(?u8, 42), pc.tab_progress[1]);
-    pc.tab_progress[1] = 100;
-    try testing.expectEqual(@as(?u8, 100), pc.tab_progress[1]);
-    pc.tab_progress[1] = null;
-    try testing.expectEqual(@as(?u8, null), pc.tab_progress[1]);
-
-    pc.tab_log[0].push("line one");
-    pc.tab_log[0].push("line two");
-    try testing.expectEqualStrings("line two", pc.tab_log[0].latest().?);
-    try testing.expectEqualStrings("line one", pc.tab_log[0].at(1).?);
-    try testing.expect(pc.tab_log[1].latest() == null);
-}
-
-test "unit: tab arrays stress at workspace capacity" {
-    // Parallel arrays at the real MAX_TABS size: entry i of every array
-    // must keep describing the same logical tab through edge-position
-    // removes, a front re-insert, full-span moves, and an end swap.
-    var ids: [MAX_TABS]u16 = undefined;
-    var tags: [MAX_TABS]u32 = undefined;
-    const arrays = .{ &ids, &tags };
-    for (0..MAX_TABS) |i| {
-        ids[i] = @intCast(i);
-        tags[i] = @as(u32, @intCast(i)) + 1000;
-    }
-    var count: usize = MAX_TABS;
-
-    // Remove the first tab: everything shifts down one.
-    arith.tabArraysRemove(arrays, count, 0);
-    count -= 1; // 63 live: 1..63
-    try testing.expectEqual(@as(u16, 1), ids[0]);
-    try testing.expectEqual(@as(u16, 63), ids[count - 1]);
-
-    // Remove the last tab (idx == count - 1): pure count decrement.
-    arith.tabArraysRemove(arrays, count, count - 1);
-    count -= 1; // 62 live: 1..62
-    try testing.expectEqual(@as(u16, 62), ids[count - 1]);
-
-    // Re-insert at the front (gap at 0).
-    arith.tabArraysInsertGap(arrays, count, 0);
-    ids[0] = 0;
-    tags[0] = 1000;
-    count += 1; // 63 live: 0..62
-
-    // Front-to-back then back-to-front across the whole span: a full
-    // round trip must be the identity permutation.
-    arith.tabArraysMove(arrays, 0, count - 1);
-    arith.tabArraysMove(arrays, count - 1, 0);
-    for (0..count) |i| {
-        try testing.expectEqual(@as(u16, @intCast(i)), ids[i]);
-    }
-
-    // Swap the two ends, then verify every parallel slot still
-    // describes the same logical tab.
-    arith.tabArraysSwap(arrays, 0, count - 1);
-    try testing.expectEqual(@as(u16, 62), ids[0]);
-    try testing.expectEqual(@as(u16, 0), ids[count - 1]);
-    for (ids[0..count], tags[0..count]) |id, tag| {
-        try testing.expectEqual(@as(u32, id) + 1000, tag);
-    }
-}
-
-test "unit: Pane aggregate status slot visibility at the count boundaries" {
-    var pc: Pane = .{};
-
-    for (&pc.tab_status) |*s| s.* = .exited;
-    pc.tab_count = 0;
-    try testing.expectEqual(TabStatus.normal, pc.aggregateStatus());
-
-    for (&pc.tab_status) |*s| s.* = .normal;
-    pc.tab_status[MAX_TABS - 1] = .exited;
-    pc.tab_count = MAX_TABS;
-    try testing.expectEqual(TabStatus.exited, pc.aggregateStatus());
-
-    pc.tab_count = MAX_TABS - 1;
-    try testing.expectEqual(TabStatus.normal, pc.aggregateStatus());
-
-    pc.tab_status[MAX_TABS - 1] = .bell;
-    pc.tab_count = MAX_TABS;
-    try testing.expectEqual(TabStatus.bell, pc.aggregateStatus());
-    pc.tab_count = 0;
-    try testing.expectEqual(TabStatus.normal, pc.aggregateStatus());
 }

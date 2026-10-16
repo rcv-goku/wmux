@@ -56,9 +56,9 @@ fn ipcTabList(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const target = try targets.ipcResolveWorkspace(self, req);
     const container = if (ipcArgU32(req, "pane")) |p|
-        target.ws.containerAtIndex(p) orelse return IpcError.UnknownPane
+        target.ws.paneAt(p) orelse return IpcError.UnknownPane
     else
-        target.ws.focusedContainerOrFirst() orelse {
+        target.ws.focusedPaneOrFirst() orelse {
             server.sendOk(req.id, "[]") catch {};
             return;
         };
@@ -67,13 +67,13 @@ fn ipcTabList(self: *App, req: *ipc.Request) anyerror!void {
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(alloc);
     try buf.append(alloc, '[');
-    for (0..container.tab_count) |i| {
+    for (container.tabs.items, 0..) |tab, i| {
         if (i > 0) try buf.append(alloc, ',');
         try buf.writer(alloc).print("{{\"index\":{d},\"title\":", .{i});
-        try targets.ipcWriteJsonUtf16(self, &buf, container.tab_titles[i][0..container.tab_title_lens[i]]);
+        try targets.ipcWriteJsonText(self, &buf, tab.titleText());
         try buf.writer(alloc).print(
             ",\"active\":{}}}",
-            .{i == container.active_tab},
+            .{i == container.selected},
         );
     }
     try buf.append(alloc, ']');
@@ -108,11 +108,11 @@ fn ipcTabNew(self: *App, req: *ipc.Request) anyerror!void {
     // --pane targets a specific Pane by index. The tab creation
     // functions read the workspace's focused container, so redirect it.
     if (ipcArgU32(req, "pane")) |p| {
-        const ws = &window.workspaces[ws_idx];
-        ws.focused_container = ws.containerAtIndex(p) orelse return IpcError.UnknownPane;
+        const ws = window.workspaces.items[ws_idx];
+        ws.focused_pane = ws.paneAt(p) orelse return IpcError.UnknownPane;
     }
 
-    if (focus and ws_idx != window.active_workspace)
+    if (focus and ws_idx != window.activeIndex())
         window.selectWorkspace(ws_idx);
 
     // Parse an optional explicit command (split on whitespace) once; an
@@ -134,7 +134,7 @@ fn ipcTabNew(self: *App, req: *ipc.Request) anyerror!void {
         } else {
             _ = try window.addTabInherit();
         }
-        break :blk if (window.activeWorkspace().focusedContainerOrFirst()) |c| c.active_tab else 0;
+        break :blk if (window.activeWorkspace().focusedPaneOrFirst()) |c| c.selected else 0;
     } else if (command) |c|
         try window.addTabBackground(ws_idx, c, null)
     else
@@ -156,13 +156,13 @@ fn ipcTabSelect(self: *App, req: *ipc.Request) anyerror!void {
     const idx = ipcArgU32(req, "index") orelse return IpcError.MissingIndex;
 
     if (ipcArgU32(req, "pane")) |p| {
-        target.ws.focused_container = target.ws.containerAtIndex(p) orelse return IpcError.UnknownPane;
+        target.ws.focused_pane = target.ws.paneAt(p) orelse return IpcError.UnknownPane;
     }
 
-    const container = target.ws.focusedContainerOrFirst() orelse return IpcError.UnknownTab;
-    if (idx >= container.tab_count) return IpcError.UnknownTab;
+    const container = target.ws.focusedPaneOrFirst() orelse return IpcError.UnknownTab;
+    if (idx >= container.tabCount()) return IpcError.UnknownTab;
 
-    if (target.ws_idx != target.window.active_workspace)
+    if (target.ws_idx != target.window.activeIndex())
         target.window.selectWorkspace(target.ws_idx);
     target.window.selectTabIndex(idx);
     server.sendOk(req.id, null) catch {};
@@ -177,11 +177,11 @@ fn ipcTabClose(self: *App, req: *ipc.Request) anyerror!void {
     const idx = ipcArgU32(req, "index") orelse return IpcError.MissingIndex;
 
     if (ipcArgU32(req, "pane")) |p| {
-        target.ws.focused_container = target.ws.containerAtIndex(p) orelse return IpcError.UnknownPane;
+        target.ws.focused_pane = target.ws.paneAt(p) orelse return IpcError.UnknownPane;
     }
 
-    const container = target.ws.focusedContainerOrFirst() orelse return IpcError.UnknownTab;
-    if (idx >= container.tab_count) return IpcError.UnknownTab;
+    const container = target.ws.focusedPaneOrFirst() orelse return IpcError.UnknownTab;
+    if (idx >= container.tabCount()) return IpcError.UnknownTab;
     target.window.closeTabInWorkspaceForIpc(target.ws_idx, idx);
     server.sendOk(req.id, null) catch {};
 }
@@ -193,20 +193,20 @@ fn ipcSurfaceList(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const ws_target = try targets.ipcResolveWorkspace(self, req);
     const ws = ws_target.ws;
-    const focused_container = ws.focusedContainerOrFirst();
+    const focused_container = ws.focusedPaneOrFirst();
     const alloc = self.core_app.alloc;
 
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(alloc);
     try buf.append(alloc, '[');
     var first = true;
-    var tree_it = ws.split_tree.iterator();
+    var tree_it = ws.tree.iterator();
     var pane_idx: usize = 0;
     while (tree_it.next()) |tree_entry| {
         const container = tree_entry.view;
         const is_focused_container = if (focused_container) |fc| container == fc else false;
-        const active_pane = container.activeTab();
-        for (container.tabs[0..container.tab_count], 0..) |pane, t| {
+        const active_pane = container.selectedTab();
+        for (container.tabs.items, 0..) |pane, t| {
             if (!first) try buf.append(alloc, ',');
             first = false;
             const is_focused = is_focused_container and (if (active_pane) |ap| pane == ap else false);
@@ -217,7 +217,7 @@ fn ipcSurfaceList(self: *App, req: *ipc.Request) anyerror!void {
                         "{{\"pane\":{d},\"tab\":{d},\"id\":{d},\"type\":\"terminal\",\"focused\":{},\"title\":",
                         .{ pane_idx, t, sid, is_focused },
                     );
-                    try targets.ipcWriteJsonUtf16(self, &buf, container.tab_titles[t][0..container.tab_title_lens[t]]);
+                    try targets.ipcWriteJsonText(self, &buf, pane.titleText());
                     try buf.append(alloc, '}');
                 },
                 .browser => |browser| {
@@ -225,9 +225,11 @@ fn ipcSurfaceList(self: *App, req: *ipc.Request) anyerror!void {
                         "{{\"pane\":{d},\"tab\":{d},\"id\":{d},\"type\":\"browser\",\"focused\":{},\"title\":",
                         .{ pane_idx, t, browser.ipc_id, is_focused },
                     );
-                    try targets.ipcWriteJsonUtf16(self, &buf, container.tab_titles[t][0..container.tab_title_lens[t]]);
+                    try targets.ipcWriteJsonText(self, &buf, pane.titleText());
                     try buf.append(alloc, '}');
                 },
+                // Placeholder tabs exist only in the model tests.
+                .placeholder => {},
             }
         }
         pane_idx += 1;
@@ -247,9 +249,9 @@ fn ipcSurfaceFocus(self: *App, req: *ipc.Request) anyerror!void {
     if (ipcArgU64(req, "surface")) |sid| {
         const loc = targets.ipcFindSurfaceById(self, sid) orelse return IpcError.UnknownSurface;
         loc.window.selectWorkspace(loc.ws_idx);
-        if (loc.ws_idx < loc.window.workspace_count) {
-            const ws = &loc.window.workspaces[loc.ws_idx];
-            ws.focused_container = loc.container;
+        if (loc.ws_idx < loc.window.workspaces.items.len) {
+            const ws = loc.window.workspaces.items[loc.ws_idx];
+            ws.focused_pane = loc.container;
         }
         loc.window.selectTabIndex(loc.tab_idx);
         (loc.surface.tab orelse return IpcError.UnknownSurface).focus();
@@ -261,13 +263,13 @@ fn ipcSurfaceFocus(self: *App, req: *ipc.Request) anyerror!void {
     // the split tree, tab is the tab index within that container.
     const ws_target = try targets.ipcResolveWorkspace(self, req);
     const pane_idx = ipcArgU32(req, "pane") orelse return IpcError.MissingIndex;
-    const container = ws_target.ws.containerAtIndex(pane_idx) orelse return IpcError.UnknownPane;
-    const tab_idx: usize = ipcArgU32(req, "tab") orelse container.active_tab;
-    if (tab_idx >= container.tab_count) return IpcError.UnknownTab;
-    const pane = container.tabs[tab_idx];
+    const container = ws_target.ws.paneAt(pane_idx) orelse return IpcError.UnknownPane;
+    const tab_idx: usize = ipcArgU32(req, "tab") orelse container.selected;
+    if (tab_idx >= container.tabCount()) return IpcError.UnknownTab;
+    const pane = container.tabs.items[tab_idx];
     ws_target.window.selectWorkspace(ws_target.ws_idx);
-    ws_target.ws.focused_container = container;
-    container.active_tab = tab_idx;
+    ws_target.ws.focused_pane = container;
+    container.selected = tab_idx;
     pane.focus();
     server.sendOk(req.id, null) catch {};
 }
@@ -298,7 +300,7 @@ fn ipcNewSplit(self: *App, req: *ipc.Request) anyerror!void {
     if (window.is_quick_terminal) return IpcError.QuickTerminal;
 
     if (ipcArgU32(req, "pane")) |p| {
-        target.ws.focused_container = target.ws.containerAtIndex(p) orelse return IpcError.UnknownPane;
+        target.ws.focused_pane = target.ws.paneAt(p) orelse return IpcError.UnknownPane;
     }
 
     // Programmatic split defaults to NON-FOCUS: the split is created in the
@@ -308,7 +310,7 @@ fn ipcNewSplit(self: *App, req: *ipc.Request) anyerror!void {
     // the interactive split UX. Matches the "create != focus" policy.
     const focus = ipcArgBool(req, "focus") orelse false;
     if (focus) {
-        if (target.ws_idx != window.active_workspace) window.selectWorkspace(target.ws_idx);
+        if (target.ws_idx != window.activeIndex()) window.selectWorkspace(target.ws_idx);
     }
 
     // Parse an optional explicit command once (split on whitespace); an
@@ -321,8 +323,8 @@ fn ipcNewSplit(self: *App, req: *ipc.Request) anyerror!void {
     }
     const explicit: ?[]const []const u8 = if (argv.items.len > 0) argv.items else null;
     const command: ?[]const []const u8 = explicit orelse blk: {
-        const src_container = target.ws.focusedContainerOrFirst() orelse break :blk null;
-        const src_pane = src_container.activeTab() orelse break :blk null;
+        const src_container = target.ws.focusedPaneOrFirst() orelse break :blk null;
+        const src_pane = src_container.selectedTab() orelse break :blk null;
         const src = src_pane.surface() orelse break :blk null;
         break :blk src.spawn_command;
     };
@@ -356,7 +358,7 @@ fn ipcSwapSplit(self: *App, req: *ipc.Request) anyerror!void {
 fn ipcBreakPane(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const target = try targets.ipcResolveTab(self, req);
-    const pane = target.container.tabs[target.tab_idx];
+    const pane = target.container.tabs.items[target.tab_idx];
     target.window.breakPane(pane);
     server.sendOk(req.id, null) catch {};
 }
@@ -367,7 +369,7 @@ fn ipcBreakPane(self: *App, req: *ipc.Request) anyerror!void {
 fn ipcMovePaneToTab(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const target = try targets.ipcResolveTab(self, req);
-    const pane = target.container.tabs[target.tab_idx];
+    const pane = target.container.tabs.items[target.tab_idx];
 
     const dir_str: ?[]const u8 = if (req.args == .object)
         if (req.args.object.get("direction")) |v| switch (v) {

@@ -77,28 +77,27 @@ pub const IpcWorkspaceTarget = struct {
 
 pub fn ipcResolveWorkspace(self: *App, req: *ipc.Request) IpcError!IpcWorkspaceTarget {
     const window = ipcTargetWindow(self) orelse return IpcError.NoWindow;
-    const ws_idx: usize = if (ipcArgU32(req, "workspace")) |w| w else window.active_workspace;
-    if (ws_idx >= window.workspace_count) return IpcError.UnknownWorkspace;
+    const ws_idx: usize = if (ipcArgU32(req, "workspace")) |w| w else window.activeIndex();
+    if (ws_idx >= window.workspaces.items.len) return IpcError.UnknownWorkspace;
     return .{
         .window = window,
-        .ws = &window.workspaces[ws_idx],
+        .ws = window.workspaces.items[ws_idx],
         .ws_idx = ws_idx,
     };
 }
 
-/// Append a JSON string for a UTF-16 slice (a workspace name or tab
-/// title), escaping via std.json so embedded quotes/control chars are
-/// safe. Lossy on invalid UTF-16 (each bad unit becomes U+FFFD), which
-/// only affects display text, never protocol framing.
-pub fn ipcWriteJsonUtf16(
+/// Append a JSON string for a model text (a workspace name or tab title),
+/// escaping via std.json so embedded quotes/control chars are safe. Text
+/// that is not valid UTF-8 (a rename holding an unpaired surrogate) is
+/// written as "", as the former UTF-16 transcode did; this only affects
+/// display text, never protocol framing.
+pub fn ipcWriteJsonText(
     self: *App,
     w: *std.ArrayList(u8),
-    utf16: []const u16,
+    text: []const u8,
 ) !void {
     const alloc = self.core_app.alloc;
-    const utf8 = std.unicode.utf16LeToUtf8Alloc(alloc, utf16) catch
-        try alloc.dupe(u8, "");
-    defer alloc.free(utf8);
+    const utf8: []const u8 = if (std.unicode.utf8ValidateSlice(text)) text else "";
     var aw: std.Io.Writer.Allocating = .init(alloc);
     defer aw.deinit();
     try std.json.Stringify.value(utf8, .{}, &aw.writer);
@@ -119,11 +118,11 @@ pub const IpcTabTarget = struct {
 pub fn ipcResolveTab(self: *App, req: *ipc.Request) IpcError!IpcTabTarget {
     const t = try ipcResolveWorkspace(self, req);
     const container = if (ipcArgU32(req, "pane")) |p|
-        t.ws.containerAtIndex(p) orelse return IpcError.UnknownPane
+        t.ws.paneAt(p) orelse return IpcError.UnknownPane
     else
-        t.ws.focusedContainerOrFirst() orelse return IpcError.UnknownTab;
-    const tab_idx: usize = if (ipcArgU32(req, "tab")) |tab| tab else container.active_tab;
-    if (tab_idx >= container.tab_count) return IpcError.UnknownTab;
+        t.ws.focusedPaneOrFirst() orelse return IpcError.UnknownTab;
+    const tab_idx: usize = if (ipcArgU32(req, "tab")) |tab| tab else container.selected;
+    if (tab_idx >= container.tabCount()) return IpcError.UnknownTab;
     return .{ .window = t.window, .ws = t.ws, .ws_idx = t.ws_idx, .container = container, .tab_idx = tab_idx };
 }
 
@@ -144,15 +143,12 @@ pub const SurfaceLoc = struct {
 pub fn ipcFindSurfaceById(self: *App, want: u64) ?SurfaceLoc {
     for (self.windows.items) |w| {
         if (w.closing) continue;
-        for (w.workspaces[0..w.workspace_count], 0..) |*ws, wi| {
-            var tree_it = ws.split_tree.iterator();
+        for (w.workspaces.items, 0..) |ws, wi| {
+            var tree_it = ws.tree.iterator();
             while (tree_it.next()) |tree_entry| {
                 const container = tree_entry.view;
-                for (container.tabs[0..container.tab_count], 0..) |tab_pane, t| {
-                    const surface = switch (tab_pane.content) {
-                        .terminal => |s| s,
-                        .browser => continue,
-                    };
+                for (container.tabs.items, 0..) |tab, t| {
+                    const surface = tab.surface() orelse continue;
                     if (!surface.core_surface_initialized) continue;
                     if (surface.core_surface.id == want) {
                         return .{ .window = w, .ws_idx = wi, .container = container, .tab_idx = t, .surface = surface };

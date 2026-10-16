@@ -167,15 +167,16 @@ fn ipcWorkspaceList(self: *App, req: *ipc.Request) anyerror!void {
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(alloc);
     try buf.append(alloc, '[');
-    for (window.workspaces[0..window.workspace_count], 0..) |*ws, i| {
+    const active_idx = window.activeIndex();
+    for (window.workspaces.items, 0..) |ws, i| {
         if (i > 0) try buf.append(alloc, ',');
         try buf.writer(alloc).print("{{\"index\":{d},\"name\":", .{i});
-        try targets.ipcWriteJsonUtf16(self, &buf, ws.name[0..ws.name_len]);
-        const fc = ws.focusedContainerOrFirst();
-        const tc: usize = if (fc) |c| c.tab_count else 0;
+        try targets.ipcWriteJsonText(self, &buf, ws.name() orelse "");
+        const fc = ws.focusedPaneOrFirst();
+        const tc: usize = if (fc) |c| c.tabCount() else 0;
         try buf.writer(alloc).print(
             ",\"active\":{},\"tab_count\":{d}}}",
-            .{ i == window.active_workspace, tc },
+            .{ i == active_idx, tc },
         );
     }
     try buf.append(alloc, ']');
@@ -235,12 +236,12 @@ fn ipcWorkspaceNew(self: *App, req: *ipc.Request) anyerror!void {
             };
             break :blk ws_idx;
         }
-        const before = window.workspace_count;
+        const before = window.workspaces.items.len;
         window.newWorkspace();
-        // newWorkspace collapses the slot if its first tab fails to spawn,
-        // so confirm a workspace was actually added before reporting one.
-        if (window.workspace_count <= before) return IpcError.NoWindow;
-        break :blk window.workspace_count - 1;
+        // newWorkspace collapses the workspace if its first tab fails to
+        // spawn, so confirm one was actually added before reporting it.
+        if (window.workspaces.items.len <= before) return IpcError.NoWindow;
+        break :blk window.workspaces.items.len - 1;
     } else blk: {
         // Background path (default): create without changing the active
         // workspace. newWorkspaceBackground collapses the slot on failure.
@@ -268,7 +269,7 @@ fn ipcWorkspaceSelect(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const window = targets.ipcTargetWindow(self) orelse return IpcError.NoWindow;
     const idx = ipcArgU32(req, "index") orelse return IpcError.MissingIndex;
-    if (idx >= window.workspace_count) return IpcError.UnknownWorkspace;
+    if (idx >= window.workspaces.items.len) return IpcError.UnknownWorkspace;
     window.selectWorkspace(idx);
     server.sendOk(req.id, null) catch {};
 }
@@ -279,7 +280,7 @@ fn ipcWorkspaceClose(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const window = targets.ipcTargetWindow(self) orelse return IpcError.NoWindow;
     const idx = ipcArgU32(req, "index") orelse return IpcError.MissingIndex;
-    if (idx >= window.workspace_count) return IpcError.UnknownWorkspace;
+    if (idx >= window.workspaces.items.len) return IpcError.UnknownWorkspace;
     window.closeWorkspace(idx);
     server.sendOk(req.id, null) catch {};
 }
@@ -291,7 +292,7 @@ fn ipcWorkspaceSetDescription(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const window = targets.ipcTargetWindow(self) orelse return IpcError.NoWindow;
     const idx = ipcArgU32(req, "workspace") orelse return IpcError.MissingIndex;
-    if (idx >= window.workspace_count) return IpcError.UnknownWorkspace;
+    if (idx >= window.workspaces.items.len) return IpcError.UnknownWorkspace;
     const text = ipc.argString(req, "text") orelse "";
     window.setWorkspaceDescription(idx, text);
     server.sendOk(req.id, null) catch {};

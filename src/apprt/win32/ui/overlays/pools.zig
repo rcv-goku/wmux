@@ -29,12 +29,12 @@ pub fn updateAttentionRings(self: *Window) void {
     const hwnd = self.hwnd orelse return self.hideAllRings();
     if (self.closing) return self.hideAllRings();
     const ws = self.activeWorkspace();
-    const tree = ws.split_tree;
+    const tree = ws.tree;
     if (tree.isEmpty()) return self.hideAllRings();
     if (tree.zoomed != null) return self.hideAllRings();
 
-    const focused_container = ws.focusedContainerOrFirst() orelse return self.hideAllRings();
-    const focused = focused_container.activeTab() orelse return self.hideAllRings();
+    const focused_container = ws.focusedPaneOrFirst() orelse return self.hideAllRings();
+    const focused = focused_container.selectedTab() orelse return self.hideAllRings();
     var next: usize = 0;
     self.attentionRingNode(hwnd, tree, .root, self.surfaceRect(), focused, &next);
 
@@ -83,7 +83,7 @@ pub fn attentionRingNode(
     if (handle.idx() >= tree.nodes.len) return;
     switch (tree.nodes[handle.idx()]) {
         .leaf => |container| {
-            const pane = container.activeTab() orelse return;
+            const pane = container.selectedTab() orelse return;
             if (pane == focused) return;
             const surface = pane.surface() orelse return;
             if (!surface.attention) return;
@@ -132,11 +132,11 @@ pub fn updatePaneButtons(self: *Window) void {
     if (self.closing) return self.hideAllPaneButtons();
     if (self.is_quick_terminal) return self.hideAllPaneButtons();
     const ws = self.activeWorkspace();
-    const tree = ws.split_tree;
+    const tree = ws.tree;
     if (tree.isEmpty()) return self.hideAllPaneButtons();
 
-    const focused_container = ws.focusedContainerOrFirst() orelse return self.hideAllPaneButtons();
-    const focused = focused_container.activeTab() orelse return self.hideAllPaneButtons();
+    const focused_container = ws.focusedPaneOrFirst() orelse return self.hideAllPaneButtons();
+    const focused = focused_container.selectedTab() orelse return self.hideAllPaneButtons();
 
     var next: usize = 0;
 
@@ -207,7 +207,7 @@ pub fn paneButtonsNode(
     if (handle.idx() >= tree.nodes.len) return;
     switch (tree.nodes[handle.idx()]) {
         .leaf => |container| {
-            const pane = container.activeTab() orelse return;
+            const pane = container.selectedTab() orelse return;
             self.placePaneButton(hwnd, pane, rect, next);
         },
         .split => |s| {
@@ -245,10 +245,10 @@ pub fn onPaneButtonClick(window: *anyopaque, pane: *Tab, action: PaneButtonsMod.
     // actions (New Terminal/Browser/Split Right/Split Down) target it.
     const loc = self.findLoc(pane) orelse return;
     const ws_idx = self.workspaceIndex(loc.ws);
-    if (ws_idx != self.active_workspace) self.selectWorkspace(ws_idx);
-    if (loc.container.active_tab != loc.tab) self.selectTabIndex(loc.tab);
-    // Focus the container that owns the clicked pane.
-    loc.ws.focused_container = loc.container;
+    if (ws_idx != self.activeIndex()) self.selectWorkspace(ws_idx);
+    if (loc.pane.selected != loc.index) self.selectTabIndex(loc.index);
+    // Focus the pane that owns the clicked tab.
+    loc.ws.focused_pane = loc.pane;
     pane.focus();
 
     switch (action) {

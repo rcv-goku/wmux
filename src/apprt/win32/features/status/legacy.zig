@@ -7,7 +7,6 @@
 const std = @import("std");
 
 const App = @import("../../App.zig");
-const Window = @import("../../ui/Window.zig");
 const ipc = @import("../../rpc/compat/legacy_json.zig");
 const LegacyCommand = @import("../../rpc/compat/legacy_table.zig").LegacyCommand;
 const targets = @import("../../rpc/compat/legacy_targets.zig");
@@ -31,10 +30,7 @@ fn ipcSetStatus(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const target = try targets.ipcResolveTab(self, req);
     const text = ipcArgString(req, "text") orelse "";
-    const container = target.container;
-    const n: u16 = @intCast(@min(text.len, Window.MAX_STATUS_BYTES));
-    @memcpy(container.tab_status_text[target.tab_idx][0..n], text[0..n]);
-    container.tab_status_text_len[target.tab_idx] = n;
+    target.container.tabs.items[target.tab_idx].legacy.setStatusText(text);
     target.window.invalidateSidebar();
     server.sendOk(req.id, null) catch {};
 }
@@ -44,12 +40,12 @@ fn ipcSetStatus(self: *App, req: *ipc.Request) anyerror!void {
 fn ipcSetProgress(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const target = try targets.ipcResolveTab(self, req);
-    const container = target.container;
+    const tab = target.container.tabs.items[target.tab_idx];
     const value = ipc.argI64Named(req, "value") orelse -1;
     if (value < 0) {
-        container.tab_progress[target.tab_idx] = null;
+        tab.legacy.progress = null;
     } else if (value <= 100) {
-        container.tab_progress[target.tab_idx] = @intCast(value);
+        tab.legacy.progress = @intCast(value);
     } else {
         return IpcError.BadProgress;
     }
@@ -64,12 +60,11 @@ fn ipcLog(self: *App, req: *ipc.Request) anyerror!void {
     const server = self.ipc_server orelse return;
     const text = ipcArgString(req, "text") orelse return IpcError.MissingText;
     const target = try targets.ipcResolveTab(self, req);
-    const container = target.container;
-    container.tab_log[target.tab_idx].push(text);
+    const pane = target.container.tabs.items[target.tab_idx];
+    pane.legacy.log.push(text);
 
     // Also surface it in the global notif panel (reuses pushNotif), tied
     // to the addressed tab's pane when it is a terminal.
-    const pane = container.tabs[target.tab_idx];
     if (pane.surface()) |surface| {
         const alloc = self.core_app.alloc;
         const body_w = std.unicode.utf8ToUtf16LeAlloc(alloc, text[0..@min(text.len, 128)]) catch null;

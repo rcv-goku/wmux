@@ -11,6 +11,7 @@ const std = @import("std");
 const w32 = @import("../../platform/win32.zig");
 const Pane = @import("../../model/Pane.zig");
 const Window = @import("../Window.zig");
+const titles = @import("../../model/logic/titles.zig");
 const testing = std.testing;
 
 const ITEM_HEIGHT_BASE: i32 = 36;
@@ -437,7 +438,8 @@ pub fn paint(win: *Window, hdc_screen: w32.HDC) void {
     // --- Row geometry ---
     // The sidebar lists WORKSPACES, one row each. The "+ New workspace"
     // row sits directly below the last workspace row.
-    const ws_count = win.workspace_count;
+    const ws_count = win.workspaces.items.len;
+    const active_idx = win.activeIndex();
     // Single source of truth for the row stride (matches hitTest); taller
     // when the metadata second line is active.
     const show_meta = win.sidebarShowMetadata();
@@ -462,13 +464,12 @@ pub fn paint(win: *Window, hdc_screen: w32.HDC) void {
     const line1_h = if (show_meta) itemHeight(win.scale) else item_h;
 
     // --- Draw each workspace row ---
-    for (0..ws_count) |i| {
-        const wsp = &win.workspaces[i];
+    for (win.workspaces.items, 0..) |wsp, i| {
         var row = itemRect(i, sidebar_w, item_h);
         // The top band the name/dot/close occupy (== the whole row when
         // metadata is off).
         const line1_bottom = row.top + line1_h;
-        const is_active = (i == win.active_workspace);
+        const is_active = (i == active_idx);
         // The row reads as hovered when the cursor is over its body or
         // its close 'x'; the close glyph itself only appears in either
         // case (mirrors the tab bar revealing 'x' on hover).
@@ -571,18 +572,16 @@ pub fn paint(win: *Window, hdc_screen: w32.HDC) void {
             text_buf[2] = ' ';
             text_len = 3;
         }
-        if (wsp.name_len > 0) {
-            const name_len: usize = wsp.name_len;
-            @memcpy(text_buf[text_len .. text_len + name_len], wsp.name[0..name_len]);
-            text_len += name_len;
+        if (wsp.name()) |name| {
+            text_len += titles.toUtf16(text_buf[text_len..][0..Window.Workspace.NAME_MAX_UNITS], name);
         } else {
             // Fallback label: "Workspace <n>" (1-based).
             const fallback = std.unicode.utf8ToUtf16LeStringLiteral("Workspace ");
             @memcpy(text_buf[text_len .. text_len + fallback.len], fallback);
             text_len += fallback.len;
-            // Append the 1-based index. Workspaces cap at 16, so at most
-            // two digits.
-            var num_buf: [2]u8 = undefined;
+            // Append the 1-based index (there is no workspace cap, so
+            // size the buffer for any usize).
+            var num_buf: [20]u8 = undefined;
             const num_str = std.fmt.bufPrint(&num_buf, "{d}", .{i + 1}) catch num_buf[0..0];
             for (num_str) |c| {
                 text_buf[text_len] = c;
@@ -640,7 +639,8 @@ pub fn paint(win: *Window, hdc_screen: w32.HDC) void {
         // fall back to the auto-populated metadata line (git branch,
         // ports, status).
         if (show_meta) {
-            const desc = wsp.descriptionSlice();
+            var desc_buf: [Window.Workspace.DESCRIPTION_MAX_UNITS]u16 = undefined;
+            const desc = desc_buf[0..titles.toUtf16(&desc_buf, wsp.descriptionText())];
             if (desc.len > 0) {
                 _ = w32.SetTextColor(mem_dc, meta_text_color);
                 var desc_rect = w32.RECT{
@@ -1768,7 +1768,7 @@ test "sidebar hitTest matrix: sixteen workspaces row math at every scale" {
     for (scale_matrix) |g| {
         const width: i32 = 300;
         const ctx = matrixCtx(g, 16, 20, width, false, 0);
-        // All 16 rows (the MAX_WORKSPACES cap) hit at their rect bounds.
+        // All 16 rows (the former MAX_WORKSPACES cap) hit at their rect bounds.
         for (0..16) |i| {
             const r = itemRect(i, width, g.item_h);
             try testing.expectEqual(HitTarget{ .workspace = i }, hitTest(10, r.top, ctx));
@@ -1908,10 +1908,18 @@ test "sidebar hitTest agrees with the taller metadata row stride" {
 }
 
 /// A bare workspace for metadata-line composition tests: only the fields
-/// formatMetaLineUtf8 reads are set; tab_count stays 0 unless a test wants
-/// a status (the status scan walks tab_status_text[0..tab_count]).
+/// formatMetaLineUtf8 reads are set; it has no panes unless a test wants a
+/// status (the status scan walks the focused pane's tabs).
 fn metaTestWorkspace() Window.Workspace {
-    return .{};
+    return .{ .window = undefined };
+}
+
+const Tab = @import("../../model/Tab.zig");
+
+/// A pane over caller-owned placeholder tabs (read-only list).
+fn testPane(tabs: []Tab, ptrs: []*Tab) Pane {
+    for (tabs, 0..) |*t, i| ptrs[i] = t;
+    return .{ .tabs = .{ .items = ptrs[0..tabs.len], .capacity = tabs.len } };
 }
 
 test "sidebar formatMetaLineUtf8: empty workspace yields nothing" {
@@ -1934,9 +1942,10 @@ test "sidebar formatMetaLineUtf8: branch, ports, and status joined with separato
     var ws = metaTestWorkspace();
     ws.setGitBranch("main");
     ws.setPorts(&.{ 3000, 8080 });
-    var pc: Pane = .{};
-    pc.tab_count = 1;
-    ws.focused_container = &pc;
+    var tabs: [1]Tab = @splat(.{ .content = .placeholder });
+    var ptrs: [1]*Tab = undefined;
+    var pc = testPane(&tabs, &ptrs);
+    ws.focused_pane = &pc;
     ws.setTabStatusText(0, "running tests");
     var buf: [256]u8 = undefined;
     const n = formatMetaLineUtf8(&ws, &buf);
@@ -1973,9 +1982,10 @@ test "sidebar formatMetaLineUtf8: truncates without overflowing the buffer" {
     var ws = metaTestWorkspace();
     ws.setGitBranch("a-very-long-branch-name-that-keeps-going");
     ws.setPorts(&.{ 3000, 3001, 3002, 3003 });
-    var pc: Pane = .{};
-    pc.tab_count = 1;
-    ws.focused_container = &pc;
+    var tabs: [1]Tab = @splat(.{ .content = .placeholder });
+    var ptrs: [1]*Tab = undefined;
+    var pc = testPane(&tabs, &ptrs);
+    ws.focused_pane = &pc;
     ws.setTabStatusText(0, "a long status message that should be dropped");
     // Tiny buffer: composition must stop at the boundary, never overflow.
     var small: [12]u8 = undefined;

@@ -30,18 +30,18 @@ fn ipcSyncInput(self: *App, req: *ipc.Request) anyerror!void {
     const action_str = ipcArgString(req, "action") orelse "toggle";
     const target = try targets.ipcResolveWorkspace(self, req);
     const container = if (ipcArgU32(req, "pane")) |p|
-        target.ws.containerAtIndex(p) orelse return IpcError.UnknownPane
+        target.ws.paneAt(p) orelse return IpcError.UnknownPane
     else
-        target.ws.focusedContainerOrFirst() orelse return IpcError.UnknownTab;
-    const tab_idx: usize = if (ipcArgU32(req, "tab")) |t| t else container.active_tab;
-    if (tab_idx >= container.tab_count) return IpcError.UnknownTab;
+        target.ws.focusedPaneOrFirst() orelse return IpcError.UnknownTab;
+    const tab_idx: usize = if (ipcArgU32(req, "tab")) |t| t else container.selected;
+    const tab = container.tabAt(tab_idx) orelse return IpcError.UnknownTab;
 
     if (std.mem.eql(u8, action_str, "toggle")) {
-        container.tab_synchronized[tab_idx] = !container.tab_synchronized[tab_idx];
+        tab.legacy.synchronized = !tab.legacy.synchronized;
     } else if (std.mem.eql(u8, action_str, "on")) {
-        container.tab_synchronized[tab_idx] = true;
+        tab.legacy.synchronized = true;
     } else if (std.mem.eql(u8, action_str, "off")) {
-        container.tab_synchronized[tab_idx] = false;
+        tab.legacy.synchronized = false;
     } else {
         return IpcError.BadAction;
     }
