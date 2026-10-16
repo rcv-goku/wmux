@@ -6,6 +6,8 @@ Commands:
   toggle | show | hide          Change visibility (prints nothing on success)
   focus                         Focus the current right-sidebar mode
   set <mode>                    Show the sidebar in <mode> and focus it
+  set custom [<name>]           Show a custom sidebar (default: the last one)
+  set wmux.status               Show the legacy status strip
   files | find | vault | sessions | feed | dock
                                 Short for 'set <mode>'
   mode                          Print {"visible": ..., "mode": ...} as JSON

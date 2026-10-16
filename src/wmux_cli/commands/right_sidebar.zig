@@ -4,9 +4,11 @@
 //! `right-sidebar toggle|show|hide|focus` change visibility or focus and
 //! print nothing on success; `set <mode>` (and the mode words as short
 //! aliases) shows the sidebar in that mode and focuses it unless
-//! `--no-focus`; `mode` prints `{visible, mode}` JSON. `--window` targets a
-//! window, `--workspace` the window holding that workspace; without either
-//! the caller's workspace (`CMUX_WORKSPACE_ID`) picks the window. Methods:
+//! `--no-focus`; `set custom [<name>]` picks a custom sidebar and `set
+//! wmux.status` the legacy status strip; `mode` prints `{visible, mode}`
+//! JSON. `--window` targets a window, `--workspace` the window holding that
+//! workspace; without either the caller's workspace (`CMUX_WORKSPACE_ID`)
+//! picks the window. Methods:
 //! `wmux.right_sidebar.{toggle,show,hide,focus,set,get}` (Appendix B.3).
 //! cmux's Cloud modes (`cloud`, `devices` and their aliases) are refused.
 
@@ -26,6 +28,21 @@ pub const commands = [_]CommandSpec{
 
 /// wmux right-sidebar modes (ADR-11.6); `vault` and `sessions` share a host.
 pub const modes = [_][]const u8{ "files", "find", "vault", "sessions", "feed", "dock" };
+
+/// Modes only `set` takes (they have no bare alias): the legacy status strip
+/// (ADR-11.6) and custom sidebars. cmux spells the latter `set custom
+/// [<name>]` (no name: the last one); a name becomes the mode id
+/// `custom:<name>` (ADR-11.6), which `set` also accepts as is.
+pub const status_mode = "wmux.status";
+pub const custom_mode = "custom";
+const custom_prefix = custom_mode ++ ":";
+
+const modes_text = "files, find, vault, sessions, feed, dock, custom [<name>], " ++ status_mode;
+
+fn isSetOnlyMode(m: []const u8) bool {
+    if (std.mem.eql(u8, m, status_mode) or std.mem.eql(u8, m, custom_mode)) return true;
+    return std.mem.startsWith(u8, m, custom_prefix) and std.mem.trim(u8, m[custom_prefix.len..], " \t").len > 0;
+}
 
 /// cmux Cloud panel modes and their aliases (not available on Windows).
 pub const cloud_modes = [_][]const u8{ "cloud", "machines", "vms", "devices", "device", "macs" };
@@ -55,9 +72,15 @@ fn run(ctx: *Ctx) !u8 {
     } else if (std.mem.eql(u8, sub, "mode")) {
         method = "wmux.right_sidebar.get";
     } else if (std.mem.eql(u8, sub, "set")) {
-        if (pos.len < 2) return util.usageFail(ctx, usage, "right-sidebar set requires a mode ({s})", .{try std.mem.join(ctx.arena, ", ", &modes)});
+        if (pos.len < 2) return util.usageFail(ctx, usage, "right-sidebar set requires a mode ({s})", .{modes_text});
         mode = pos[1];
         extra = 2;
+        if (std.mem.eql(u8, pos[1], custom_mode) and pos.len > 2) {
+            const name = std.mem.trim(u8, pos[2], " \t");
+            if (name.len == 0) return util.usageFail(ctx, usage, "right-sidebar set custom: the sidebar name is empty", .{});
+            mode = try std.fmt.allocPrint(ctx.arena, "{s}{s}", .{ custom_prefix, name });
+            extra = 3;
+        }
         method = "wmux.right_sidebar.set";
     } else if (isIn(&modes, sub) or isIn(&cloud_modes, sub)) {
         mode = sub;
@@ -71,7 +94,7 @@ fn run(ctx: *Ctx) !u8 {
             try ctx.err.print("{s} right-sidebar {s}: not supported on wmux (requires cmux cloud/macOS)\n", .{ ctx.brand.name(), m });
             return output.exit.usage;
         }
-        if (!isIn(&modes, m)) return util.usageFail(ctx, usage, "unknown right-sidebar mode '{s}' (expected one of: {s})", .{ m, try std.mem.join(ctx.arena, ", ", &modes) });
+        if (!isIn(&modes, m) and !isSetOnlyMode(m)) return util.usageFail(ctx, usage, "unknown right-sidebar mode '{s}' (expected one of: {s})", .{ m, modes_text });
     } else if (flags.has("--no-focus")) {
         return util.usageFail(ctx, usage, "--no-focus is only valid with right-sidebar set", .{});
     }
@@ -149,6 +172,32 @@ test "unit: cli-right-sidebar: set, mode aliases and --no-focus" {
     const js = h.run(&.{ "cmux", "right-sidebar", "vault", "--json" });
     try harness.expectOk(js);
     try harness.expectContains(js.out, "\"echo\"");
+}
+
+test "unit: cli-right-sidebar: custom sidebars and the legacy status strip" {
+    var h: harness.Harness = undefined;
+    h.init();
+    defer h.deinit();
+    h.serve(echoHandler);
+    // cmux `set custom [<name>]`: no name keeps the last custom sidebar.
+    try harness.expectOk(h.run(&.{ "cmux", "right-sidebar", "set", "custom" }));
+    try testing.expectEqualStrings("{\"mode\":\"custom\",\"focus\":true}", h.last().params_json);
+    try harness.expectOk(h.run(&.{ "cmux", "right-sidebar", "set", "custom", "panel-info", "--no-focus" }));
+    try testing.expectEqualStrings("{\"mode\":\"custom:panel-info\",\"focus\":false}", h.last().params_json);
+    // The ADR-11.6 mode id is accepted as is, and so is the status strip.
+    try harness.expectOk(h.run(&.{ "cmux", "right-sidebar", "set", "custom:panel-info" }));
+    try testing.expectEqualStrings("{\"mode\":\"custom:panel-info\",\"focus\":true}", h.last().params_json);
+    try harness.expectOk(h.run(&.{ "cmux", "right-sidebar", "set", "wmux.status" }));
+    try testing.expectEqualStrings("{\"mode\":\"wmux.status\",\"focus\":true}", h.last().params_json);
+    const n = h.requestCount();
+    try harness.expectFail(h.run(&.{ "cmux", "right-sidebar", "set", "custom", "a", "b" }), 2, "right-sidebar set: unexpected argument 'b'");
+    try harness.expectFail(h.run(&.{ "cmux", "right-sidebar", "set", "custom", " " }), 2, "the sidebar name is empty");
+    try harness.expectFail(h.run(&.{ "cmux", "right-sidebar", "set", "custom:" }), 2, "unknown right-sidebar mode 'custom:'");
+    try harness.expectFail(h.run(&.{ "cmux", "right-sidebar", "set", "files", "x" }), 2, "right-sidebar set: unexpected argument 'x'");
+    // Neither has a bare alias (cmux lists none for custom).
+    try harness.expectFail(h.run(&.{ "cmux", "right-sidebar", "custom" }), 2, "unknown right-sidebar command 'custom'");
+    try harness.expectFail(h.run(&.{ "cmux", "right-sidebar", "wmux.status" }), 2, "unknown right-sidebar command 'wmux.status'");
+    try testing.expectEqual(n, h.requestCount());
 }
 
 test "unit: cli-right-sidebar: mode prints visible and mode JSON" {
