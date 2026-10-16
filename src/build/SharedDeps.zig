@@ -616,6 +616,30 @@ pub fn add(
                     step.linkSystemLibrary2("imm32", .{});
                     step.linkSystemLibrary2("shell32", .{});
                     step.linkSystemLibrary2("wininet", .{});
+
+                    // Pre-linked for Wave 1 and later (ARCHITECTURE.md
+                    // ADR-14.3): Direct2D sidebar and WIC images, DPAPI and
+                    // crypto (socket capability, password file), common
+                    // controls (tooltips), property store (AUMID), IP
+                    // helper (listening ports), sounds, shell path
+                    // helpers, VARIANT/BSTR and UI Automation.
+                    // `runtimeobject` and `combase` are NOT linked: Zig
+                    // 0.15.2's x64 mingw has no import library for them
+                    // (spike S1, docs/arch/spikes/S1-toasts.md). WinRT
+                    // comes from `extern "api-ms-win-core-winrt-*"`
+                    // declarations, which link their api-set DLL
+                    // themselves, and COM from ole32.
+                    step.linkSystemLibrary2("d2d1", .{});
+                    step.linkSystemLibrary2("windowscodecs", .{});
+                    step.linkSystemLibrary2("crypt32", .{});
+                    step.linkSystemLibrary2("bcrypt", .{});
+                    step.linkSystemLibrary2("comctl32", .{});
+                    step.linkSystemLibrary2("propsys", .{});
+                    step.linkSystemLibrary2("iphlpapi", .{});
+                    step.linkSystemLibrary2("winmm", .{});
+                    step.linkSystemLibrary2("shlwapi", .{});
+                    step.linkSystemLibrary2("oleaut32", .{});
+                    step.linkSystemLibrary2("uiautomationcore", .{});
                 }
             },
         }
