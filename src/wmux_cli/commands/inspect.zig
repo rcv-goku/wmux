@@ -704,14 +704,17 @@ test "unit: cli-ps: shot params, validation and text output" {
     var h: Harness = undefined;
     try h.init();
     defer h.deinit();
-    h.fp.cwd_path = "/work";
+    // A relative --out is joined to the CLI's cwd with the native separator.
+    const windows = @import("builtin").os.tag == .windows;
+    h.fp.cwd_path = if (windows) "C:\\work" else "/work";
+    const out_json = if (windows) "C:\\\\work\\\\shots/b.jpg" else "/work/shots/b.jpg";
     h.ok("window.screenshot", "{\"width\":1600,\"height\":1000,\"bytes\":48213,\"path\":\"/tmp/a.png\",\"format\":\"png\"}");
     const r = h.run(&.{ "cmux", "shot", "--out", "/tmp/a.png" });
     try pt.expectOk(r);
     try h.expectLast("window.screenshot", "{\"out\":\"/tmp/a.png\"}");
     try pt.expectGolden(h.alloc(), "shot.txt", r.out);
     _ = h.run(&.{ "cmux", "screenshot", "--jpg", "--scale", "0.5", "--max-width", "800", "--quality", "0.9", "--region", "0,0,100,100", "--label", "l", "--caption", "Build \u{2713}", "--out", "shots/b.jpg", "--window", "window:2" });
-    try h.expectLast("window.screenshot", "{\"format\":\"jpg\",\"scale\":0.5,\"max_width\":800,\"quality\":0.9,\"region\":{\"x\":0,\"y\":0,\"width\":100,\"height\":100},\"label\":\"l\",\"caption\":\"Build \u{2713}\",\"out\":\"/work/shots/b.jpg\",\"window\":\"window:2\"}");
+    try h.expectLast("window.screenshot", "{\"format\":\"jpg\",\"scale\":0.5,\"max_width\":800,\"quality\":0.9,\"region\":{\"x\":0,\"y\":0,\"width\":100,\"height\":100},\"label\":\"l\",\"caption\":\"Build \u{2713}\",\"out\":\"" ++ out_json ++ "\",\"window\":\"window:2\"}");
     _ = h.run(&.{ "cmux", "--window", "1", "shot", "--format", "jpg", "--jpg" });
     try h.expectLast("window.screenshot", "{\"format\":\"jpg\",\"window\":1}");
     h.clearRequests();
