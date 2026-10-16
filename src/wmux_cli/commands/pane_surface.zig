@@ -2,8 +2,9 @@
 //! new-split, new-pane, new-surface, close-surface, list-panes, list-pane-surfaces,
 //! list-panels, focus-pane, focus-panel, move-surface, reorder-surface, split-off,
 //! drag-surface-to-split, tab-action, rename-tab, move-tab-to-new-workspace
-//! (detach-tab), resize-pane, swap-pane, break-pane, join-pane, last-pane (W2-2);
-//! trigger-flash (W2-7).
+//! (detach-tab), resize-pane, swap-pane, break-pane, join-pane, last-pane (W2-2).
+//! trigger-flash (Appendix C: here, W2-7) ships in notify.zig with WP
+//! CLI-fam-notify, which owns it in this program.
 //!
 //! Every command maps its flags onto one v2 method (`surface.*`, `pane.*`,
 //! `tab.action`), defaults its targets to the caller (ADR-4.6, ps_common.zig)
@@ -62,7 +63,6 @@ pub const commands = [_]CommandSpec{
     spec("break-pane", .navigate, runBreakPane),
     spec("join-pane", .navigate, runJoinPane),
     spec("last-pane", .navigate, runLastPane),
-    spec("trigger-flash", .navigate, runTriggerFlash),
 };
 
 pub const directions = [_][]const u8{ "left", "right", "up", "down" };
@@ -552,15 +552,6 @@ fn runLastPane(ctx: *Ctx) !u8 {
     return ps.callRender(ctx, "pane.last", &p, ps.renderOk);
 }
 
-fn runTriggerFlash(ctx: *Ctx) !u8 {
-    const usage = usageOf("trigger-flash");
-    const o = (try ps.parseArgs(ctx, usage, .{ .values = &.{ "--workspace", "--surface", "--panel", "--window" } })) orelse return output.exit.usage;
-    if (o.positionals.len > 0) return unexpected(ctx, usage, o.positionals[0]);
-    var p = Params.init(ctx.arena);
-    if (!try ps.addTargets(ctx, &p, o, .{ .surface_flags = &.{ "--surface", "--panel" } })) return output.exit.usage;
-    return ps.callRender(ctx, "surface.trigger_flash", &p, ps.renderOk);
-}
-
 // ----- tests -----
 
 const testing = std.testing;
@@ -750,7 +741,7 @@ test "unit: cli-ps: tab-action, rename-tab and detach-tab params" {
     try testing.expectEqual(@as(usize, 0), h.requests().len);
 }
 
-test "unit: cli-ps: resize, swap, break, join, last-pane and trigger-flash params" {
+test "unit: cli-ps: resize, swap, break, join and last-pane params" {
     var h: Harness = undefined;
     try h.init();
     defer h.deinit();
@@ -769,8 +760,6 @@ test "unit: cli-ps: resize, swap, break, join, last-pane and trigger-flash param
     try h.expectLast("pane.join", "{\"workspace_id\":\"" ++ ws_uuid ++ "\",\"surface_id\":\"surface:4\",\"target_pane_id\":\"pane:1\",\"focus\":true}");
     _ = h.run(&.{ "cmux", "last-pane" });
     try h.expectLast("pane.last", "{\"workspace_id\":\"" ++ ws_uuid ++ "\"}");
-    _ = h.run(&.{ "cmux", "trigger-flash", "--surface", "surface:9" });
-    try h.expectLast("surface.trigger_flash", "{\"workspace_id\":\"" ++ ws_uuid ++ "\",\"surface_id\":\"surface:9\"}");
 
     h.clearRequests();
     try pt.expectUsage(h.run(&.{ "cmux", "resize-pane", "--amount", "0" }), "--amount must be at least 1");
@@ -816,7 +805,6 @@ test "unit: cli-ps: pane_surface OK lines match goldens" {
         .{ "break-pane", "pane.break", &.{ "cmux", "break-pane" } },
         .{ "join-pane", "pane.join", &.{ "cmux", "join-pane", "--target-pane", "pane:2" } },
         .{ "last-pane", "pane.last", &.{ "cmux", "last-pane" } },
-        .{ "trigger-flash", "surface.trigger_flash", &.{ "cmux", "trigger-flash" } },
     };
     for (cases) |c| {
         h.ok(c[1], reply);
