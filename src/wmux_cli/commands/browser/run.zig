@@ -5,6 +5,7 @@ const std = @import("std");
 const proto = @import("wmux_proto");
 const env_names = proto.env_names;
 const paths = proto.paths;
+const idformat = proto.idformat;
 const command = @import("../../command.zig");
 const Ctx = command.Ctx;
 const output = @import("../../output.zig");
@@ -154,6 +155,12 @@ fn strField(v: std.json.Value, key: []const u8) ?[]const u8 {
     return if (f == .string) f.string else null;
 }
 
+/// The handle printed as `browser.surface`: the ref unless `--id-format
+/// uuids` asked for UUIDs, like the `*_id`/`*_ref` pairs of the payload.
+fn shownHandle(mode: idformat.Mode, ref: ?[]const u8, uuid: ?[]const u8) ?[]const u8 {
+    return if (mode == .uuids) uuid orelse ref else ref orelse uuid;
+}
+
 /// `browser identify [--surface <h>]`: `system.identify` (with the caller)
 /// plus `browser: {surface, url, title}` for the given surface, or for the
 /// focused surface when it is a browser.
@@ -163,21 +170,32 @@ fn runIdentify(ctx: *Ctx, explicit: ?[]const u8) !u8 {
         .ok => |ok| ok.result,
         else => return ctx.reportError("system.identify", out),
     };
+    const mode = ctx.parsed.globals.id_format;
+    // `surface` addresses the calls; `shown` is what `browser.surface`
+    // prints. A typed handle prints as typed until the app names the
+    // surface's ref and UUID.
     var surface = explicit;
+    var shown = explicit;
     if (surface == null) if (field(result, "focused")) |f| {
         const kind = strField(f, "surface_type") orelse "";
-        if (std.mem.eql(u8, kind, "browser")) surface = strField(f, "surface_id") orelse strField(f, "surface_ref");
+        if (std.mem.eql(u8, kind, "browser")) {
+            surface = strField(f, "surface_id") orelse strField(f, "surface_ref");
+            shown = shownHandle(mode, strField(f, "surface_ref"), strField(f, "surface_id"));
+        }
     };
     if (surface) |s| if (result == .object) {
         const params = try std.json.Stringify.valueAlloc(ctx.arena, .{ .surface_id = s }, .{});
         var browser = std.json.ObjectMap.init(ctx.arena);
-        try browser.put("surface", .{ .string = s });
+        try browser.put("surface", .{ .string = shown orelse s });
         inline for (.{ .{ "browser.url.get", "url" }, .{ "browser.get.title", "title" } }) |m| {
             const r = (try callWith(ctx, m[0], params, null)) orelse return output.exit.runtime;
             switch (r) {
                 .ok => |ok| {
                     const v = field(ok.result, m[1]) orelse field(ok.result, "value") orelse std.json.Value.null;
                     try browser.put(m[1], v);
+                    if (shownHandle(mode, strField(ok.result, "surface_ref"), strField(ok.result, "surface_id"))) |h| {
+                        try browser.put("surface", .{ .string = h });
+                    }
                 },
                 // A named surface must be a browser; the focused one is best effort.
                 else => if (explicit != null) return ctx.reportError(m[0], r),

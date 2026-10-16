@@ -46,8 +46,13 @@ fn isLoopbackPattern(e: []const u8) bool {
     var host = e;
     if (std.mem.indexOf(u8, host, "://")) |i| host = host[i + 3 ..];
     if (std.mem.indexOfAny(u8, host, "/")) |i| host = host[0..i];
+    // Drop a `:port`: after the `]` of a bracketed IPv6 literal, or after a
+    // host with a single colon. Several colons without brackets are a bare
+    // IPv6 address (`::1`), which has no port to drop.
     if (std.mem.lastIndexOfScalar(u8, host, ':')) |i| {
-        if (std.mem.indexOfScalar(u8, host, ']') == null or i > std.mem.indexOfScalar(u8, host, ']').?) host = host[0..i];
+        if (std.mem.indexOfScalar(u8, host, ']')) |close| {
+            if (i > close) host = host[0..i];
+        } else if (std.mem.indexOfScalar(u8, host, ':') == i) host = host[0..i];
     }
     for ([_][]const u8{ "localhost", "127.0.0.1", "[::1]", "::1", "*.localhost" }) |l| {
         if (std.ascii.eqlIgnoreCase(host, l)) return true;
@@ -149,6 +154,23 @@ test "unit: browser-cli: availability status from settings files" {
     const m = try status(a, "{\"wmux\":{\"browser\":{\"enabled\":true}}}", null, "x", true);
     try testing.expect(m.managed and !m.enabled);
     try testing.expect(isLoopbackPattern("[::1]:8080") and isLoopbackPattern("LOCALHOST") and !isLoopbackPattern("localhost.evil.com"));
+}
+
+test "unit: browser-cli: availability recognizes bare and bracketed IPv6 loopback" {
+    // A bare IPv6 literal has no port; its colons are part of the address.
+    try testing.expect(isLoopbackPattern("::1"));
+    try testing.expect(isLoopbackPattern("http://[::1]:3000/app"));
+    try testing.expect(isLoopbackPattern("[::1]"));
+    try testing.expect(isLoopbackPattern("localhost:3000"));
+    try testing.expect(isLoopbackPattern("https://127.0.0.1:8443/x"));
+    try testing.expect(!isLoopbackPattern("::2"));
+    try testing.expect(!isLoopbackPattern("[::2]:80"));
+    try testing.expect(!isLoopbackPattern(""));
+    try testing.expect(!isLoopbackPattern(":"));
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const s = try status(arena_state.allocator(), "{\"browser\":{\"urlAllowlist\":[\"example.com\",\"::1\"]}}", null, "x", null);
+    try testing.expect(s.allowlistActive() and s.allowsLocalhost());
 }
 
 test "unit: browser-cli: availability edits are lossless and idempotent" {
