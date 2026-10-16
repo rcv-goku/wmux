@@ -175,19 +175,24 @@ const Script = struct {
     var n: usize = 0;
     var repo_json: []const u8 = "{\"nameWithOwner\":\"me/fork\",\"url\":\"https://github.com/me/fork\",\"parent\":{\"nameWithOwner\":\"Owner/Repo\"}}";
     var gh_missing = false;
+    var git_missing = false;
     var pr_fails = false;
 
     fn reset() void {
         n = 0;
         repo_json = "{\"nameWithOwner\":\"me/fork\",\"url\":\"https://github.com/me/fork\",\"parent\":{\"nameWithOwner\":\"Owner/Repo\"}}";
         gh_missing = false;
+        git_missing = false;
         pr_fails = false;
     }
 
     fn run(arena: std.mem.Allocator, argv: []const []const u8) anyerror!pr.RunResult {
         calls[n] = try std.mem.join(arena, " ", argv);
         n += 1;
-        if (std.mem.eql(u8, argv[0], "git")) return .{ .code = 0, .stdout = "C:/src/api\n", .stderr = "" };
+        if (std.mem.eql(u8, argv[0], "git")) {
+            if (git_missing) return error.FileNotFound;
+            return .{ .code = 0, .stdout = "C:/src/api\n", .stderr = "" };
+        }
         if (gh_missing) return error.FileNotFound;
         if (std.mem.eql(u8, argv[1], "repo")) return .{ .code = 0, .stdout = repo_json, .stderr = "" };
         if (pr_fails) return .{ .code = 1, .stdout = "", .stderr = "GraphQL: Could not resolve to a PullRequest\nmore\n" };
@@ -276,6 +281,10 @@ test "unit: cli-sidebar: pr finds the workspace open in this worktree" {
     try kit.expectResult(h.run(&.{ "cmux", "pr", "clear" }), 0, "OK\n", "");
     try testing.expectEqualStrings("git rev-parse --show-toplevel", Script.calls[0]);
     try testing.expectEqualStrings("{\"workspace_id\":\"W1\"}", params(&h));
+    // Without git the worktree lookup names git, not the GitHub CLI.
+    Script.reset();
+    Script.git_missing = true;
+    try kit.expectResult(h.run(&.{ "cmux", "pr", "clear" }), 1, "", "cmux pr: requires git on PATH\n");
 }
 
 test "unit: cli-sidebar: goldens for help" {

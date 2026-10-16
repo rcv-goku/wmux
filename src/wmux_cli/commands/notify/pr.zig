@@ -103,7 +103,10 @@ fn firstLine(s: []const u8) []const u8 {
 fn exec(ctx: *Ctx, argv: []const []const u8, code: *u8) ?RunResult {
     const r = runner(ctx.arena, argv) catch |err| {
         code.* = if (err == error.FileNotFound)
-            fail(ctx, "cmux pr: requires the GitHub CLI ({s}) on PATH", .{argv[0]})
+            (if (std.mem.eql(u8, argv[0], "gh"))
+                fail(ctx, "cmux pr: requires the GitHub CLI (gh) on PATH", .{})
+            else
+                fail(ctx, "cmux pr: requires {s} on PATH", .{argv[0]}))
         else
             fail(ctx, "cmux pr: cannot run {s}: {s}", .{ argv[0], @errorName(err) });
         return null;
