@@ -1336,6 +1336,76 @@ test "unit: sidebar: derived texts stay within the text cap" {
     try testing.expectEqualStrings("zsh (beta)", rows[3].body.workspace.title.title);
 }
 
+test "unit: sidebar: markdown parser survives random marker soup" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var scratch = std.heap.ArenaAllocator.init(testing.allocator);
+    defer scratch.deinit();
+    const pieces = [_][]const u8{
+        "*",         "**",                 "_",          "__",           "~~",   "~",        "`",          "[",
+        "]",         "(",                  ")",          "\\",           "# ",   "#",        "> ",         "- ",
+        "+ ",        " ",                  "\n",         "\r\n",         "a",    "b c",      "snake_case", "\u{65e5}",
+        "\u{1F680}", "https://x.example/", "mailto:m@x", "javascript:z", "\xff", "\xe2\x82",
+    };
+    var prng = std.Random.DefaultPrng.init(0x5eed_51de);
+    const rand = prng.random();
+    var src: std.ArrayList(u8) = .empty;
+    for (0..4000) |_| {
+        _ = scratch.reset(.retain_capacity);
+        const s = scratch.allocator();
+        src.clearRetainingCapacity();
+        for (0..rand.uintLessThan(usize, 24)) |_| try src.appendSlice(arena.allocator(), pieces[rand.uintLessThan(usize, pieces.len)]);
+        const lines = std.mem.count(u8, src.items, "\n") + 1;
+        for ([_]MarkdownMode{ .keep, .strip }) |mode| {
+            const runs = try parseInlineMarkdown(s, src.items, mode);
+            if (mode == .strip) try testing.expect(runs.len <= 1);
+            var total: usize = 0;
+            for (runs) |r| {
+                try testing.expect(r.text.len > 0);
+                if (r.link) |l| try testing.expect(mode == .keep and isSafeUrl(l));
+                if (mode == .strip) try testing.expectEqual(RunStyle{}, r.style);
+                total += r.text.len;
+            }
+            // Markup only disappears, except list bullets ("- " -> "• ").
+            try testing.expect(total <= src.items.len + 2 * lines);
+        }
+    }
+}
+
+test "unit: sidebar: expanded groups, zero max_visible and forged toggles" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // Members of an expanded group reveal their own row; only a collapsed
+    // header carries the members' unread sum.
+    const groups = [_]Node{.{ .group = .{ .id = testId(10), .title = "G", .members = &.{
+        .{ .id = testId(4), .details = .{ .badge = 2 } },
+        .{ .id = testId(5), .details = .{ .badge = 1 } },
+    } } }};
+    const rows = try build(a, .{ .nodes = &groups });
+    try testing.expectEqual(@as(usize, 3), rows.len);
+    try testing.expectEqual(@as(?usize, 2), revealTarget(rows, testId(5)));
+    try testing.expect(rows[0].body.group_header.badge == null);
+
+    // max_visible = 0 collapses a slot down to its toggle.
+    var b = RowBuilder.init(a);
+    b.beginSlot(.status_entries);
+    try b.text(null, "a", null);
+    try b.text(null, "b", null);
+    try b.collapsible(0, null);
+    const ws = [_]Node{.{ .workspace = .{ .id = testId(1), .details = b.finish() } }};
+    const collapsed = try build(a, .{ .nodes = &ws });
+    const items = collapsed[0].body.workspace.items;
+    try testing.expectEqual(@as(usize, 1), items.len);
+    try testing.expectEqualStrings(default_more_label, items[0].body.toggle.label);
+
+    // Toggles come only from build: one passed in by a contributor is dropped.
+    const forged = [_]Node{.{ .workspace = .{ .id = testId(2), .details = .{ .items = &.{
+        .{ .slot = .log, .body = .{ .toggle = .{ .slot = .log, .expanded = false, .label = "x" } } },
+    } } } }};
+    try testing.expectEqual(@as(usize, 0), (try build(a, .{ .nodes = &forged }))[0].body.workspace.items.len);
+}
+
 test "unit: sidebar: color spec maps the cmux accent sentinel" {
     try testing.expectEqual(ColorSpec.accent, try ColorSpec.parseHex("#4C8DFF"));
     try testing.expectEqual(ColorSpec.accent, try ColorSpec.parseHex("#4c8dff"));

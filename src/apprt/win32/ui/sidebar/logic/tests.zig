@@ -808,6 +808,30 @@ test "unit: sidebar: layout cache never serves a stale group rail or link action
     try testing.expectEqualStrings(try dump(a, rows_after, fresh), try dump(a, rows_after, cached));
 }
 
+fn layoutWithCache(gpa: std.mem.Allocator, rows: []const model.Row) !void {
+    var cache = layout.Cache.init(gpa, 2);
+    defer cache.deinit();
+    var out = std.heap.ArenaAllocator.init(gpa);
+    defer out.deinit();
+    var fake: text_style.FakeMeasurer = .{};
+    const params: layout.Params = .{ .width = 240, .dpi = Dpi.fromScale(1.25) };
+    // Misses with evictions (capacity 2 < 5 rows), then hits.
+    _ = try layout.layoutRows(out.allocator(), &cache, rows, fake.measurer(), params);
+    _ = try layout.layoutRows(out.allocator(), &cache, rows[rows.len - 2 ..], fake.measurer(), params);
+    try testing.expectEqual(@as(usize, 2), cache.count());
+}
+
+test "unit: sidebar: layout cache frees everything when allocations fail" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const rows = try model.build(a, .{ .nodes = try fixture(a) });
+    // Every allocation (entry, arena, key, LRU growth, scratch, output)
+    // fails once in turn; the testing allocator flags any leak or double
+    // free on those error paths.
+    try testing.checkAllAllocationFailures(testing.allocator, layoutWithCache, .{rows});
+}
+
 test "unit: sidebar: thousands of rows lay out and virtualize" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -890,6 +914,42 @@ test "unit: sidebar: debug snapshot is valid JSON with rows and geometry" {
         try testing.expectEqualStrings("Pinned and busy", e.object.get("text").?.string);
     };
     try testing.expect(saw_title);
+}
+
+test "unit: sidebar: snapshot escapes text; mute, pills and chips have tooltips" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var b = model.RowBuilder.init(a);
+    b.beginSlot(.agent_status);
+    try b.pills(&.{.{ .text = "Claude", .tooltip = "Agent: Claude Code" }});
+    b.beginSlot(.ports);
+    try b.chips(&.{.{ .text = ":8000", .link = "http://localhost:8000", .tooltip = "Open localhost port" }});
+    const title = "say \"hi\" \\ \x01 tab\there";
+    const nodes = [_]model.Node{.{ .workspace = .{ .id = testId(1), .custom_title = title, .muted = true, .details = b.finish() } }};
+    const rows = try model.build(a, .{ .nodes = &nodes });
+    var fake: text_style.FakeMeasurer = .{};
+    const lay = try layout.layoutRows(a, null, rows, fake.measurer(), .{ .width = 400 });
+    const g = lay.rows[0];
+    try testing.expectEqualStrings("Notifications muted for this workspace", (try layout.elementTooltip(a, &rows[0], findKind(g, .mute).?)).?);
+    try testing.expectEqualStrings("Agent: Claude Code", (try layout.elementTooltip(a, &rows[0], findKind(g, .pill).?)).?);
+    try testing.expectEqualStrings("Open localhost port", (try layout.elementTooltip(a, &rows[0], findKind(g, .chip).?)).?);
+    // The pointer over a pill's label finds the label, which tooltips too.
+    const over = vlist.elementAt(lay.rows, g.absRect(findKind(g, .pill_text).?).center(), .{}).?;
+    try testing.expectEqual(layout.ElementKind.pill_text, g.elements[over.element].kind);
+    try testing.expectEqualStrings("Agent: Claude Code", (try layout.elementTooltip(a, &rows[0], g.elements[over.element])).?);
+
+    // Quotes, backslashes and control characters survive the JSON hook.
+    var aw: std.Io.Writer.Allocating = .init(a);
+    try layout.writeSnapshot(a, &aw.writer, rows, lay);
+    const parsed = try std.json.parseFromSlice(std.json.Value, a, aw.written(), .{});
+    var saw = false;
+    for (parsed.value.object.get("rows").?.array.items[0].object.get("elements").?.array.items) |e| {
+        if (!std.mem.eql(u8, e.object.get("kind").?.string, "title")) continue;
+        saw = true;
+        try testing.expectEqualStrings(title, e.object.get("text").?.string);
+    }
+    try testing.expect(saw);
 }
 
 test "unit: sidebar: empty model lays out to nothing" {
