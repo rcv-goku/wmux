@@ -34,8 +34,10 @@ pub fn decodePng(arena: std.mem.Allocator, b64: ?[]const u8) !?[]u8 {
     return buf;
 }
 
-/// `surface-<id8>-<ms>.png` with only [A-Za-z0-9] kept from the handle.
-pub fn tempName(arena: std.mem.Allocator, surface: ?[]const u8, ms: i64) ![]const u8 {
+/// `surface-<id8>-<ms>-<rand8>.png` with only [A-Za-z0-9] kept from the
+/// handle. The random part keeps two captures in the same millisecond (or
+/// from two CLI processes) from overwriting each other.
+pub fn tempName(arena: std.mem.Allocator, surface: ?[]const u8, ms: i64, rand: u32) ![]const u8 {
     var id: [8]u8 = undefined;
     var n: usize = 0;
     for (surface orelse "") |ch| {
@@ -45,7 +47,7 @@ pub fn tempName(arena: std.mem.Allocator, surface: ?[]const u8, ms: i64) ![]cons
             n += 1;
         }
     }
-    return std.fmt.allocPrint(arena, "surface-{s}-{d}.png", .{ if (n == 0) "unknown" else id[0..n], ms });
+    return std.fmt.allocPrint(arena, "surface-{s}-{d}-{x:0>8}.png", .{ if (n == 0) "unknown" else id[0..n], ms, rand });
 }
 
 pub fn finish(ctx: *Ctx, c: plan_mod.Call, result_in: std.json.Value, surface: ?[]const u8) !u8 {
@@ -67,7 +69,8 @@ pub fn finish(ctx: *Ctx, c: plan_mod.Call, result_in: std.json.Value, surface: ?
         shown = where;
     } else if (png) |bytes| {
         const tmp_root = ctx.env.first(&.{ "TEMP", "TMP", "TMPDIR" }) orelse ctx.platform.cwd(ctx.arena) orelse ".";
-        const name = try tempName(ctx.arena, surface, ctx.platform.nowMs());
+        // Wall-clock milliseconds (Platform.nowMs is monotonic per process).
+        const name = try tempName(ctx.arena, surface, std.time.milliTimestamp(), std.crypto.random.int(u32));
         const path = try paths.join(ctx.arena, paths.Style.native, &.{ tmp_root, "wmux-browser-screenshots", name });
         if (!files.writer.write(path, bytes)) return ctx.runtimeError("browser screenshot: cannot write {s}", .{path});
         shown = path;
@@ -91,7 +94,8 @@ test "unit: browser-cli: screenshot helpers" {
     try std.testing.expectEqualStrings("\x89PNG", (try decodePng(a, "iVBORw==")).?);
     try std.testing.expectEqual(@as(?[]u8, null), try decodePng(a, null));
     try std.testing.expectError(error.Invalid, decodePng(a, "!!!"));
-    try std.testing.expectEqualStrings("surface-0b6e5c1a-42.png", try tempName(a, "0B6E5C1A-3F0D-4C4B", 42));
-    try std.testing.expectEqualStrings("surface-surface2-7.png", try tempName(a, "surface:2", 7));
-    try std.testing.expectEqualStrings("surface-unknown-7.png", try tempName(a, null, 7));
+    try std.testing.expectEqualStrings("surface-0b6e5c1a-42-0000beef.png", try tempName(a, "0B6E5C1A-3F0D-4C4B", 42, 0xbeef));
+    try std.testing.expectEqualStrings("surface-surface2-7-ffffffff.png", try tempName(a, "surface:2", 7, 0xffffffff));
+    try std.testing.expectEqualStrings("surface-unknown-7-00000000.png", try tempName(a, null, 7, 0));
+    try std.testing.expectEqualStrings("surface-unknown-7-00000001.png", try tempName(a, "\u{1F600}:-", 7, 1));
 }

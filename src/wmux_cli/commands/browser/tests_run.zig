@@ -385,6 +385,37 @@ test "unit: browser-cli: availability never rewrites a wmux.json it cannot read"
     try testing.expectEqualStrings("enabled\n", h.run(&.{ "cmux", "browser-status" }).out);
 }
 
+fn pngOnlyHandler(server: *fake.Server, req: fake.Request) fake.Action {
+    if (std.mem.eql(u8, req.method, "browser.screenshot")) return ok(server, "{\"png_base64\":\"iVBORw==\",\"surface_ref\":\"surface:2\"}");
+    return appHandler(server, req);
+}
+
+test "unit: browser-cli: screenshot without an app file goes to a fresh temp file" {
+    var h: Harness = undefined;
+    try h.init(pngOnlyHandler);
+    defer h.deinit();
+    const windows = builtin.os.tag == .windows;
+    const tmp = if (windows) "C:\\tmp" else "/tmp";
+    const sep: u8 = if (windows) '\\' else '/';
+    h.setEnv("TEMP", tmp);
+    const r = h.run(&.{ "cmux", "browser", "surface:2", "screenshot" });
+    try testing.expectEqual(@as(u8, 0), r.code);
+    const prefix = try std.fmt.allocPrint(h.alloc(), "OK {s}{c}wmux-browser-screenshots{c}surface-surface2-", .{ tmp, sep, sep });
+    try testing.expect(std.mem.startsWith(u8, r.out, prefix));
+    try testing.expect(std.mem.endsWith(u8, r.out, ".png\n"));
+    const path = r.out["OK ".len .. r.out.len - 1];
+    try testing.expectEqualStrings("\x89PNG", h.mem.get(path).?);
+    // A second capture gets its own file instead of overwriting the first.
+    const again = h.run(&.{ "cmux", "browser", "surface:2", "screenshot" });
+    try testing.expect(!std.mem.eql(u8, r.out, again.out));
+    try testing.expectEqualStrings("\x89PNG", h.mem.get(path).?);
+    // JSON names the file and drops the base64 data.
+    const j = h.run(&.{ "cmux", "browser", "surface:2", "screenshot", "--json" });
+    try testing.expectEqual(@as(u8, 0), j.code);
+    try testing.expect(!contains(j.out, "png_base64"));
+    try expectContains(j.out, "wmux-browser-screenshots");
+}
+
 test "unit: browser-cli: view verb handles are checked before connecting" {
     var h: Harness = undefined;
     try live(&h);
