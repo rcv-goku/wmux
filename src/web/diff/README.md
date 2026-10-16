@@ -124,6 +124,9 @@ replaces the `diff` block. Fences grow when the excerpt contains backticks.
 Native forwards the find chords (Ctrl+F / F3 / Shift+F3 and Escape) for a
 focused diff panel as `panel.diff.command` when its KeyRouter consumes them
 (`isDiffViewerFindOwner` parity); otherwise the page's own bindings handle them.
+An Escape that reaches the page closes its overlays even when the keymap has
+no `hideFind` binding, so native does not need to evaluate `findVisible` for
+the page's find bar.
 
 ### Session state (`panel.state_changed`)
 

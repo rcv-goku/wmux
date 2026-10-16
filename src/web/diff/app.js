@@ -1627,6 +1627,15 @@ export function createApp(options) {
     listen(doc, "click", (e) => {
       if (!ui.menu.hidden && !ui.menu.contains(e.target)) closeMenu();
     });
+    // Escape normally reaches handleEscape through keys.js (hideFind), which
+    // consumes it. The host keymap replaces the defaults and may lack that
+    // binding (its when-clause is findVisible, which native cannot see for
+    // the page's own find bar), so the page's overlays still close here.
+    // Fields with their own Escape handling mark the event handled first.
+    listen(doc, "keydown", (e) => {
+      if (e.key !== "Escape" || e.defaultPrevented || e.isComposing) return;
+      if (handleEscape()) e.preventDefault();
+    });
     listen(ui.filterInput, "input", () => setFilter({ query: ui.filterInput.value }));
     for (const box of ui.statusBoxes) {
       listen(box, "change", () => setFilter({ statuses: ui.statusBoxes.filter((b) => b.checked).map((b) => b.dataset.status) }));

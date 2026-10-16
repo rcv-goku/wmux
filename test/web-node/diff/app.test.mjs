@@ -573,6 +573,25 @@ describe("unit: diff app find and file search", () => {
     assert.equal($$(".dv-find-hit").length, 0);
   });
 
+  test("unit: diff: Escape closes overlays when the host keymap has no hideFind", async () => {
+    await startApp({ init: { keymap: { diffViewerOpenFileSearch: ["/"] } } });
+    click($("#dv-options"));
+    assert.equal($("#dv-options-menu").hidden, false);
+    const e = key($('#dv-options-menu [data-menu="wordWrap"]'), { key: "Escape", code: "Escape", keyCode: 27 });
+    assert.equal($("#dv-options-menu").hidden, true);
+    assert.equal(e.defaultPrevented, true);
+    assert.equal(doc.activeElement, $("#dv-options"));
+    app.openFind("render");
+    key($("#dv-viewport"), { key: "Escape", code: "Escape", keyCode: 27 });
+    assert.equal($("#dv-find").hidden, true);
+    click($('td.dv-num-new[data-line="2"]', section("src/app.js")));
+    assert.equal($$("td.dv-code.dv-selected").length, 1);
+    key($("#dv-viewport"), { key: "Escape", code: "Escape", keyCode: 27 });
+    assert.equal($$("td.dv-code.dv-selected").length, 0);
+    const idle = key($("#dv-viewport"), { key: "Escape", code: "Escape", keyCode: 27 });
+    assert.equal(idle.defaultPrevented, false, "nothing left to close");
+  });
+
   test("unit: diff: native find events and Ctrl+F open the find bar", async () => {
     await startApp();
     host.emit("panel.diff.find", { query: "answer" });
