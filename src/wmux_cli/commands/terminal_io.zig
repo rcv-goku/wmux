@@ -773,6 +773,9 @@ test "unit: cli-ps: legacy +send, +read-screen and +capture-pane spellings" {
     try h.expectLast("surface.send_text", "{\"text\":\"ls\\r\",\"workspace_id\":\"W-UUID\",\"pane_id\":1,\"surface_id\":2}");
     _ = h.run(&.{ "wmux", "+send", "--pane", "0", "pwd" });
     try h.expectLast("surface.send_text", "{\"text\":\"pwd\",\"workspace_id\":\"W-UUID\",\"pane_id\":0}");
+    // The old text-first order: the flags still target, they are not typed.
+    _ = h.run(&.{ "wmux", "+send", "echo hi", "--workspace", "1", "--tab", "0", "--enter" });
+    try h.expectLast("surface.send_text", "{\"text\":\"echo hi\\r\",\"workspace_id\":1,\"surface_id\":0}");
     _ = h.run(&.{ "wmux", "+read-screen", "--workspace", "0", "--tab", "1", "--lines", "5" });
     try h.expectLast("surface.read_text", "{\"workspace_id\":0,\"surface_id\":1,\"scrollback\":true,\"lines\":5}");
     _ = h.run(&.{ "wmux", "+capture-pane", "--pane", "2", "--scrollback" });
