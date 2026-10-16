@@ -1,0 +1,4 @@
+OK app.minimalMode = false
+OK app.appearance = "dark"
+OK sidebar.showPorts = false
+path: /t/cfg/wmux.json

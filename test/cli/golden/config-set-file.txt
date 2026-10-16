@@ -1,0 +1,8 @@
+{
+  // keep me
+  "app": {
+    "minimalMode": true,
+    "appearance": "dark"
+  },
+  "terminal": { "scrollSpeed": 1.2 }
+}

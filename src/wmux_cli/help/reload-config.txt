@@ -1,0 +1,5 @@
+Usage: cmux reload-config
+
+Ask the running app to reload its configuration: wmux.json, the shared
+cmux.json, project files and the Ghostty config. Terminals refresh and a
+config.reloaded event is emitted. Same as 'cmux config reload'.

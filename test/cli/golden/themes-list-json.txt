@@ -1,0 +1,31 @@
+{
+  "themes": [
+    {
+      "name": "Catppuccin Mocha",
+      "current_light": false,
+      "current_dark": false
+    },
+    {
+      "name": "dracula",
+      "current_light": false,
+      "current_dark": true
+    },
+    {
+      "name": "Mine é",
+      "current_light": false,
+      "current_dark": false
+    },
+    {
+      "name": "nord",
+      "current_light": true,
+      "current_dark": false
+    }
+  ],
+  "current": {
+    "raw_value": "light:nord,dark:dracula",
+    "light": "nord",
+    "dark": "dracula",
+    "source_path": "/t/cfg/config.ghostty"
+  },
+  "config_path": "/t/cfg/config.ghostty"
+}

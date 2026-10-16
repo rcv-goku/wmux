@@ -1,0 +1,43 @@
+{
+  "ok": false,
+  "error_count": 1,
+  "findings": [
+    {
+      "label": "wmux.json",
+      "display_path": "/t/cfg/wmux.json",
+      "path": "/t/cfg/wmux.json",
+      "status": "ok",
+      "ok": true,
+      "keys": 2,
+      "bytes": 94
+    },
+    {
+      "label": "cmux.json",
+      "display_path": "/t/xdg/cmux/cmux.json",
+      "path": "/t/xdg/cmux/cmux.json",
+      "status": "error",
+      "ok": false,
+      "keys": 2,
+      "bytes": 42,
+      "issues": [
+        {
+          "path": "$.app.appearance",
+          "message": "\"neon\" is not one of: system, light, dark",
+          "severity": "error",
+          "line": 1,
+          "column": 24
+        },
+        {
+          "path": "$.nope",
+          "message": "unknown key",
+          "severity": "warning",
+          "line": 1,
+          "column": 33
+        }
+      ]
+    }
+  ],
+  "reload_command": "cmux reload-config",
+  "docs_url": "docs/wmux/features/settings.md",
+  "schema_url": "share\\wmux\\schema\\wmux.schema.json"
+}
