@@ -567,6 +567,9 @@ body {
   background-color: color-mix(in srgb, var(--wmux-fg) 4%, transparent);
 }
 
+/* Unified rows carry the tint too (it shows behind the line numbers). */
+.dv-no-backgrounds .dv-line.dv-add,
+.dv-no-backgrounds .dv-line.dv-del,
 .dv-no-backgrounds .dv-code.dv-add,
 .dv-no-backgrounds .dv-code.dv-del,
 .dv-no-backgrounds .dv-empty {

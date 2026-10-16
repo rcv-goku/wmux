@@ -2,7 +2,9 @@
 // driven through the mock bridge host (see harness.mjs).
 import { test, describe, afterEach, after } from "node:test";
 import assert from "node:assert/strict";
-import { click, doc, host, hostError, importWeb, key, libs, patch, pristineBody, settle, typeInto, window } from "./harness.mjs";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { click, doc, host, hostError, importWeb, key, libs, patch, pristineBody, settle, typeInto, web, window } from "./harness.mjs";
 
 await importWeb("_shared/theme.js");
 const { createApp, gitApplyCommand } = await importWeb("diff/app.js");
@@ -240,6 +242,26 @@ describe("unit: diff app rendering", () => {
     assert.equal(doc.documentElement.dataset.dvLayout, "split");
     await startApp({ params: { prefs: store.prefs } });
     assert.ok($("table.dv-split", section("src/app.js")), "next viewer opens split");
+  });
+
+  test("unit: diff: Hide backgrounds clears unified rows, not only their cells", async () => {
+    const style = doc.createElement("style");
+    style.textContent = readFileSync(path.join(web, "diff/diff.css"), "utf8");
+    doc.head.append(style);
+    try {
+      await startApp({ params: { patch: patch("--- a/x.txt", "+++ b/x.txt", "@@ -1,2 +1,2 @@", "-old", "+new", " same") } });
+      const clear = "rgba(0, 0, 0, 0)";
+      const bg = (el) => window.getComputedStyle(el).backgroundColor;
+      const rows = $$("table.dv-unified tr.dv-line.dv-add, table.dv-unified tr.dv-line.dv-del");
+      assert.equal(rows.length, 2);
+      assert.ok(rows.every((tr) => bg(tr) !== clear), "rows are tinted while backgrounds show");
+      app.setPrefs({ showBackgrounds: false });
+      for (const tr of rows) {
+        for (const el of [tr, ...tr.children]) assert.equal(bg(el), clear, el.className);
+      }
+    } finally {
+      style.remove();
+    }
   });
 
   test("unit: diff: options menu toggles line numbers, wrap, indicators and persists", async () => {
