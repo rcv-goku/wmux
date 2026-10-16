@@ -278,7 +278,8 @@ pub const TargetSpec = struct {
     /// Default the workspace to `CMUX_WORKSPACE_ID` (neither --workspace nor
     /// --window given).
     env_workspace: bool = true,
-    /// Accept `--pane`.
+    /// Accept `--pane`; an explicit pane also drops the `CMUX_SURFACE_ID`
+    /// default.
     pane: bool = false,
     /// Param key for the surface (`surface_id`, `tab_id`).
     surface_key: []const u8 = "surface_id",
@@ -307,13 +308,14 @@ pub fn addTargets(ctx: *Ctx, p: *Params, o: Opts, spec: TargetSpec) !bool {
     } else if (window == null and spec.env_workspace) {
         if (envWorkspace(ctx)) |w| try p.str("workspace_id", w);
     }
-    if (spec.pane) if (o.get(&.{"--pane"})) |pn| {
-        if (!try putHandle(ctx, p, "pane_id", .pane, pn)) return false;
-    };
+    const pane_flag: ?[]const u8 = if (spec.pane) o.get(&.{"--pane"}) else null;
+    if (pane_flag) |pn| if (!try putHandle(ctx, p, "pane_id", .pane, pn)) return false;
     if (spec.surface_flags.len > 0) {
         if (o.get(spec.surface_flags)) |s| {
             if (!try putHandle(ctx, p, spec.surface_key, .surface, s)) return false;
-        } else if (spec.env_surface and ws_flag == null and window == null) {
+        } else if (spec.env_surface and ws_flag == null and window == null and pane_flag == null) {
+            // An explicit --pane names the target; the caller's surface would
+            // outrank it (server precedence surface_id before pane_id, ADR-2.6).
             if (envSurface(ctx)) |s| try p.str(spec.surface_key, s);
         }
     }

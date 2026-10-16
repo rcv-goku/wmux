@@ -160,7 +160,11 @@ pub const GuardMode = enum {
 };
 
 /// Selector keys copied from a write request into `surface.input_state`.
-const guard_keys = [_][]const u8{ "window_id", "workspace_id", "surface_id" };
+const guard_keys = [_][]const u8{ "window_id", "workspace_id", "pane_id", "surface_id" };
+
+/// Legacy `+send`, `+read-screen` and `+capture-pane` spellings (ADR-4.11):
+/// `--tab T` names the surface, `--pane P` the pane.
+const legacy_targets: ps.TargetSpec = .{ .surface_flags = &.{ "--surface", "--tab" }, .pane = true };
 
 /// Asks `surface.input_state` for the request's target. Returns an exit code
 /// when the write must not happen (refusal or no connection), null to go
@@ -201,7 +205,7 @@ fn runSendPanel(ctx: *Ctx) !u8 {
 }
 
 fn sendText(ctx: *Ctx, verb: []const u8, usage: []const u8, panel: bool) !u8 {
-    const values: []const []const u8 = if (panel) &.{ "--panel", "--workspace", "--window" } else &.{ "--workspace", "--surface", "--window" };
+    const values: []const []const u8 = if (panel) &.{ "--panel", "--workspace", "--window" } else &.{ "--workspace", "--surface", "--window", "--tab", "--pane" };
     const o = (try ps.parseArgs(ctx, usage, .{
         .values = values,
         .bools = if (panel) &.{"--force"} else &.{ "--paste", "--force" },
@@ -212,7 +216,7 @@ fn sendText(ctx: *Ctx, verb: []const u8, usage: []const u8, panel: bool) !u8 {
     const raw = try std.mem.join(ctx.arena, " ", o.positionals);
     const paste = o.has("--paste");
     var target = Params.init(ctx.arena);
-    const tspec: ps.TargetSpec = if (panel) .{ .surface_flags = &.{"--panel"}, .env_surface = false } else .{};
+    const tspec: ps.TargetSpec = if (panel) .{ .surface_flags = &.{"--panel"}, .env_surface = false } else legacy_targets;
     if (!try ps.addTargets(ctx, &target, o, tspec)) return output.exit.usage;
     const text = if (paste) raw else try unescape(ctx.arena, raw);
     if (!o.has("--force")) {
@@ -329,13 +333,13 @@ fn linesFlag(ctx: *Ctx, usage: []const u8, o: Opts) !?i64 {
 /// read-screen and capture-pane: `surface.read_text`.
 fn readText(ctx: *Ctx, usage: []const u8, allow_selection: bool) !u8 {
     const o = (try ps.parseArgs(ctx, usage, .{
-        .values = &.{ "--workspace", "--surface", "--window", "--lines" },
+        .values = &.{ "--workspace", "--surface", "--window", "--lines", "--tab", "--pane" },
         .bools = if (allow_selection) &.{ "--scrollback", "--selection" } else &.{"--scrollback"},
     })) orelse return output.exit.usage;
     if (o.positionals.len > 0) return unexpected(ctx, usage, o.positionals[0]);
     const lines = linesFlag(ctx, usage, o) catch return output.exit.usage;
     var p = Params.init(ctx.arena);
-    if (!try ps.addTargets(ctx, &p, o, .{})) return output.exit.usage;
+    if (!try ps.addTargets(ctx, &p, o, legacy_targets)) return output.exit.usage;
     if (o.has("--selection")) {
         if (o.has("--scrollback") or lines != null) return ps.usageWithLine(ctx, usage, "--selection cannot be combined with --scrollback or --lines", .{});
         return ps.callRender(ctx, "surface.read_selection", &p, renderText);
@@ -749,6 +753,33 @@ test "unit: cli-ps: read-screen, capture-pane and read-selection" {
     try pt.expectUsage(h.run(&.{ "cmux", "read-screen", "--selection", "--scrollback" }), "--selection cannot be combined with --scrollback or --lines");
     try pt.expectUsage(h.run(&.{ "cmux", "capture-pane", "--selection" }), "unknown flag '--selection'");
     try pt.expectUsage(h.run(&.{ "cmux", "read-selection", "x" }), "unexpected argument 'x'");
+    try testing.expectEqual(@as(usize, 0), h.requests().len);
+}
+
+test "unit: cli-ps: legacy +send, +read-screen and +capture-pane spellings" {
+    var h: Harness = undefined;
+    try h.init();
+    defer h.deinit();
+    h.setEnv("CMUX_QUIET", "1");
+    h.setEnv("CMUX_WORKSPACE_ID", "W-UUID");
+    h.setEnv("CMUX_SURFACE_ID", sf_uuid);
+    // ADR-4.11: --tab T names the surface and --pane P the pane. An explicit
+    // pane drops the caller's surface, and the draft guard asks about the
+    // same target the write goes to.
+    const r = h.run(&.{ "wmux", "+send", "--pane", "1", "--tab", "2", "ls", "--enter" });
+    try pt.expectOk(r);
+    try testing.expectEqualStrings("surface.input_state", h.requests()[0].method);
+    try testing.expectEqualStrings("{\"workspace_id\":\"W-UUID\",\"pane_id\":1,\"surface_id\":2}", h.requests()[0].params_json);
+    try h.expectLast("surface.send_text", "{\"text\":\"ls\\r\",\"workspace_id\":\"W-UUID\",\"pane_id\":1,\"surface_id\":2}");
+    _ = h.run(&.{ "wmux", "+send", "--pane", "0", "pwd" });
+    try h.expectLast("surface.send_text", "{\"text\":\"pwd\",\"workspace_id\":\"W-UUID\",\"pane_id\":0}");
+    _ = h.run(&.{ "wmux", "+read-screen", "--workspace", "0", "--tab", "1", "--lines", "5" });
+    try h.expectLast("surface.read_text", "{\"workspace_id\":0,\"surface_id\":1,\"scrollback\":true,\"lines\":5}");
+    _ = h.run(&.{ "wmux", "+capture-pane", "--pane", "2", "--scrollback" });
+    try h.expectLast("surface.read_text", "{\"workspace_id\":\"W-UUID\",\"pane_id\":2,\"scrollback\":true}");
+    h.clearRequests();
+    try pt.expectUsage(h.run(&.{ "wmux", "+capture-pane", "--tab", "x" }), "Invalid surface handle: x");
+    try pt.expectUsage(h.run(&.{ "wmux", "+send", "--pane", "", "hi" }), "Pane handle is blank");
     try testing.expectEqual(@as(usize, 0), h.requests().len);
 }
 

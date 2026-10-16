@@ -129,14 +129,15 @@ fn requiredSurface(ctx: *Ctx, usage: []const u8, o: Opts, flags: []const []const
 const split_usage = usageOf("new-split");
 
 fn runNewSplit(ctx: *Ctx) !u8 {
+    // `--pane` is the legacy `+split <dir> --pane P` spelling (ADR-4.11).
     const o = (try ps.parseArgs(ctx, split_usage, .{
-        .values = &.{ "--workspace", "--surface", "--panel", "--window", "--command" },
+        .values = &.{ "--workspace", "--surface", "--panel", "--window", "--command", "--pane" },
         .focus = true,
     })) orelse return output.exit.usage;
     const dir = direction(ctx, split_usage, o, "new-split") orelse return output.exit.usage;
     var p = Params.init(ctx.arena);
     try p.str("direction", dir);
-    if (!try ps.addTargets(ctx, &p, o, .{ .surface_flags = &.{ "--surface", "--panel" } })) return output.exit.usage;
+    if (!try ps.addTargets(ctx, &p, o, .{ .surface_flags = &.{ "--surface", "--panel" }, .pane = true })) return output.exit.usage;
     try addInitialInput(ctx, &p, o);
     try p.boolean("focus", o.focus orelse false);
     return ps.callRender(ctx, "surface.split", &p, ps.renderOk);
@@ -228,10 +229,18 @@ fn runDragToSplit(ctx: *Ctx) !u8 {
 
 fn runCloseSurface(ctx: *Ctx) !u8 {
     const usage = usageOf("close-surface");
-    const o = (try ps.parseArgs(ctx, usage, .{ .values = &.{ "--surface", "--panel", "--workspace", "--window" } })) orelse return output.exit.usage;
-    if (o.positionals.len > 0) return unexpected(ctx, usage, o.positionals[0]);
+    // `--tab`, `--pane` and a positional handle are the legacy
+    // `+tab close <index> [--pane P]` spellings (ADR-4.11).
+    const flags: []const []const u8 = &.{ "--surface", "--panel", "--tab" };
+    const o = (try ps.parseArgs(ctx, usage, .{ .values = &.{ "--surface", "--panel", "--tab", "--pane", "--workspace", "--window" } })) orelse return output.exit.usage;
+    var opts = o;
+    if (o.get(flags) == null and o.positionals.len == 1) {
+        opts.values = try std.mem.concat(ctx.arena, ps.Opt, &.{ o.values, &.{.{ .name = "--surface", .value = o.positionals[0] }} });
+        opts.positionals = &.{};
+    }
+    if (opts.positionals.len > 0) return unexpected(ctx, usage, opts.positionals[0]);
     var p = Params.init(ctx.arena);
-    if (!try ps.addTargets(ctx, &p, o, .{ .surface_flags = &.{ "--surface", "--panel" } })) return output.exit.usage;
+    if (!try ps.addTargets(ctx, &p, opts, .{ .surface_flags = flags, .pane = true })) return output.exit.usage;
     return ps.callRender(ctx, "surface.close", &p, ps.renderOk);
 }
 
@@ -337,7 +346,10 @@ fn runFocusPane(ctx: *Ctx) !u8 {
 
 fn runFocusPanel(ctx: *Ctx) !u8 {
     const usage = usageOf("focus-panel");
-    const o = (try ps.parseArgs(ctx, usage, .{ .values = &.{ "--panel", "--surface", "--tab", "--workspace", "--window" } })) orelse return output.exit.usage;
+    // `--pane` is the legacy `+tab select <index> --pane P` / `+surface focus
+    // --pane P [--tab T]` spelling (ADR-4.11); alone it names the pane's
+    // selected surface.
+    const o = (try ps.parseArgs(ctx, usage, .{ .values = &.{ "--panel", "--surface", "--tab", "--pane", "--workspace", "--window" } })) orelse return output.exit.usage;
     var opts = o;
     if (o.get(&.{ "--panel", "--surface", "--tab" }) == null and o.positionals.len == 1) {
         opts.values = try std.mem.concat(ctx.arena, ps.Opt, &.{ o.values, &.{.{ .name = "--panel", .value = o.positionals[0] }} });
@@ -345,9 +357,9 @@ fn runFocusPanel(ctx: *Ctx) !u8 {
     }
     if (opts.positionals.len > 0) return unexpected(ctx, usage, opts.positionals[0]);
     const flags: []const []const u8 = &.{ "--panel", "--surface", "--tab" };
-    if (requiredSurface(ctx, usage, opts, flags, "focus-panel", "--panel") == null) return output.exit.usage;
+    if (opts.get(&.{"--pane"}) == null and requiredSurface(ctx, usage, opts, flags, "focus-panel", "--panel") == null) return output.exit.usage;
     var p = Params.init(ctx.arena);
-    if (!try ps.addTargets(ctx, &p, opts, .{ .surface_flags = flags })) return output.exit.usage;
+    if (!try ps.addTargets(ctx, &p, opts, .{ .surface_flags = flags, .pane = true })) return output.exit.usage;
     return ps.callRender(ctx, "surface.focus", &p, ps.renderOk);
 }
 
@@ -701,7 +713,39 @@ test "unit: cli-ps: close, focus, move, reorder, split-off and drag params" {
     try pt.expectUsage(h.run(&.{ "cmux", "reorder-surface", "--surface", "surface:2", "--index", "two" }), "--index must be an integer");
     try pt.expectUsage(h.run(&.{ "cmux", "split-off", "right" }), "split-off requires --surface <id|ref|index>");
     try pt.expectUsage(h.run(&.{ "cmux", "drag-surface-to-split", "--surface", "surface:1" }), "drag-surface-to-split requires a direction");
-    try pt.expectUsage(h.run(&.{ "cmux", "close-surface", "x" }), "unexpected argument 'x'");
+    try pt.expectUsage(h.run(&.{ "cmux", "close-surface", "x", "y" }), "unexpected argument 'x'");
+    try testing.expectEqual(@as(usize, 0), h.requests().len);
+}
+
+test "unit: cli-ps: legacy +split, +tab and +surface spellings reach the commands" {
+    var h: Harness = undefined;
+    try h.init();
+    defer h.deinit();
+    h.setEnv("CMUX_QUIET", "1");
+    h.setEnv("CMUX_WORKSPACE_ID", ws_uuid);
+    h.setEnv("CMUX_SURFACE_ID", sf_uuid);
+    // ADR-4.11: --pane P, --tab T and `+tab close <index>` stay accepted. An
+    // explicit pane drops the caller's surface, which the server would prefer.
+    _ = h.run(&.{ "wmux", "+split", "down", "--pane", "1", "--focus" });
+    try h.expectLast("surface.split", "{\"direction\":\"down\",\"workspace_id\":\"" ++ ws_uuid ++ "\",\"pane_id\":1,\"focus\":true}");
+    _ = h.run(&.{ "wmux", "+tab", "close", "2" });
+    try h.expectLast("surface.close", "{\"workspace_id\":\"" ++ ws_uuid ++ "\",\"surface_id\":2}");
+    _ = h.run(&.{ "wmux", "+tab", "close", "0", "--workspace", "1", "--pane", "2" });
+    try h.expectLast("surface.close", "{\"workspace_id\":1,\"pane_id\":2,\"surface_id\":0}");
+    _ = h.run(&.{ "wmux", "+tab", "select", "1", "--pane", "0" });
+    try h.expectLast("surface.focus", "{\"workspace_id\":\"" ++ ws_uuid ++ "\",\"pane_id\":0,\"surface_id\":1}");
+    _ = h.run(&.{ "wmux", "+surface", "focus", "--workspace", "0", "--pane", "1", "--tab", "2" });
+    try h.expectLast("surface.focus", "{\"workspace_id\":0,\"pane_id\":1,\"surface_id\":2}");
+    _ = h.run(&.{ "wmux", "+surface", "focus", "--pane", "1" });
+    try h.expectLast("surface.focus", "{\"workspace_id\":\"" ++ ws_uuid ++ "\",\"pane_id\":1}");
+    // The pane movers follow the same rule.
+    _ = h.run(&.{ "cmux", "break-pane", "--pane", "pane:3" });
+    try h.expectLast("pane.break", "{\"workspace_id\":\"" ++ ws_uuid ++ "\",\"pane_id\":\"pane:3\",\"focus\":false}");
+
+    h.clearRequests();
+    try pt.expectUsage(h.run(&.{ "cmux", "close-surface", "x" }), "Invalid surface handle: x");
+    try pt.expectUsage(h.run(&.{ "cmux", "close-surface", "--surface", "surface:1", "2" }), "unexpected argument '2'");
+    try pt.expectUsage(h.run(&.{ "wmux", "+split", "right", "--pane", "surface:1" }), "Invalid pane handle: surface:1");
     try testing.expectEqual(@as(usize, 0), h.requests().len);
 }
 
