@@ -167,6 +167,10 @@ test "unit: browser-cli: availability edits are lossless and idempotent" {
     try testing.expect(!again.changed);
     try testing.expectError(error.SyntaxError, edit(a, "{oops", true));
     try testing.expectError(error.RootNotObject, edit(a, "[1]", true));
+    try testing.expectError(error.PathConflict, edit(a, "{\"wmux\":{\"browser\":true}}", false));
+    try testing.expectError(error.PathConflict, edit(a, "{\"wmux\":5}", false));
+    // A null parent is replaced (json_edit), not a conflict.
+    try testing.expect(!(try status(a, (try edit(a, "{\"wmux\":null}", false)).text, null, "x", null)).enabled);
     try testing.expect((try edit(a, "\xEF\xBB\xBF  \n", true)).changed);
     try testing.expectEqualStrings("Browser availability is managed by your organization (MDM policy for domain HKLM\\Software\\Policies\\wmux); it cannot be changed from the CLI.", try managedMessage(a, "HKLM\\Software\\Policies\\wmux"));
 }

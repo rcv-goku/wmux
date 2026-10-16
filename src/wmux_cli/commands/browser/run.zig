@@ -223,10 +223,19 @@ pub fn runAvailability(ctx: *Ctx, l: plan_mod.Local) !u8 {
     var st = try availability.status(ctx.arena, wmux_bytes, cmux_bytes, wmux_path, null);
     if (l != .status) {
         if (st.managed) return runtime(ctx, "{s}", .{try availability.managedMessage(ctx.arena, st.domain)});
+        // A settings file that exists but cannot be read (locked, denied or
+        // over the size cap) is not "missing": rewriting it from `{}` would
+        // drop every other setting.
+        if (wmux_bytes == null and ctx.platform.pathExists(wmux_path)) {
+            return runtime(ctx, "cannot update {s}: it exists but cannot be read (locked, access denied or larger than 4 MiB)", .{wmux_path});
+        }
         const want = l == .enable;
         const edited = availability.edit(ctx.arena, wmux_bytes, want) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             error.RootNotObject => return runtime(ctx, "cannot update {s}: its top level is not a JSON object", .{wmux_path}),
+            // Valid JSON whose "wmux" or "wmux.browser" holds a non-object:
+            // say so instead of suggesting the file be removed.
+            error.PathConflict => return runtime(ctx, "cannot update {s}: \"wmux\" or \"wmux.browser\" is not an object", .{wmux_path}),
             else => return runtime(ctx, "cannot update {s}: it is not valid JSON (fix or remove it first)", .{wmux_path}),
         };
         if (edited.changed and !files.writer.write(wmux_path, edited.text)) return runtime(ctx, "cannot write {s}", .{wmux_path});

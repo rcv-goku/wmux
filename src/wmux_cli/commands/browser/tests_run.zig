@@ -342,6 +342,14 @@ test "unit: browser-cli: availability refuses to clobber a broken wmux.json" {
     try expectContains(r.err, "it is not valid JSON (fix or remove it first)");
     try testing.expectEqual(@as(?[]const u8, null), h.mem.get(wmuxJson()));
     try testing.expectEqualStrings("enabled\n", h.run(&.{ "cmux", "browser-status" }).out);
+    // Valid JSON with a non-object "wmux.browser" gets an accurate message
+    // (it is not "invalid JSON", and removing the file is not the fix).
+    h.fp.files.clearRetainingCapacity();
+    try h.fp.addFile(wmuxJson(), "{ \"font\": 12, \"wmux\": { \"browser\": true } }");
+    const conflict = h.run(&.{ "cmux", "disable-browser" });
+    try testing.expectEqual(@as(u8, 1), conflict.code);
+    try expectContains(conflict.err, "\"wmux\" or \"wmux.browser\" is not an object");
+    try testing.expectEqual(@as(?[]const u8, null), h.mem.get(wmuxJson()));
     // A write failure is reported, not ignored.
     var h2: Harness = undefined;
     try h2.init(fake.pingHandler);
@@ -351,6 +359,30 @@ test "unit: browser-cli: availability refuses to clobber a broken wmux.json" {
     const f = h2.run(&.{ "cmux", "enable-browser" });
     try testing.expectEqual(@as(u8, 1), f.code);
     try expectContains(f.err, "cannot write ");
+}
+
+test "unit: browser-cli: availability never rewrites a wmux.json it cannot read" {
+    var h: Harness = undefined;
+    try h.init(fake.pingHandler);
+    defer h.deinit();
+    h.setEnv("WMUX_CONFIG_DIR", cfgDir());
+    // Present but unreadable (here: over the 4 MiB read cap; on Windows also
+    // a sharing violation or a denied ACL): starting over from `{}` would
+    // silently drop every other setting in the file.
+    const huge = try h.alloc().alloc(u8, 4 * 1024 * 1024 + 1);
+    @memset(huge, ' ');
+    try h.fp.addFile(wmuxJson(), huge);
+    for ([_][]const u8{ "disable-browser", "enable-browser" }) |cmd| {
+        const r = h.run(&.{ "cmux", cmd });
+        try testing.expectEqual(@as(u8, 1), r.code);
+        try testing.expectEqualStrings("", r.out);
+        try expectContains(r.err, "it exists but cannot be read");
+    }
+    const b = h.run(&.{ "cmux", "browser", "disable", "--json" });
+    try testing.expectEqual(@as(u8, 1), b.code);
+    try testing.expectEqual(@as(?[]const u8, null), h.mem.get(wmuxJson()));
+    // Reading the status stays possible (defaults apply).
+    try testing.expectEqualStrings("enabled\n", h.run(&.{ "cmux", "browser-status" }).out);
 }
 
 test "unit: browser-cli: offline help, docs and skill (goldens)" {
