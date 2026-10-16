@@ -247,9 +247,11 @@ pub fn resolveTarget(ctx: *Ctx, s: Scanned, rules: TargetRules, code: *u8) ?Targ
     }
     if (ws) |w| {
         if (std.mem.trim(u8, w, " \t\r\n").len == 0) {
-            // A blank --workspace falls back to the caller's workspace.
-            t.workspace = envWorkspace(ctx) orelse {
-                code.* = ctx.usageError("No workspace selected: --workspace was blank and CMUX_WORKSPACE_ID is unset", .{});
+            // A blank --workspace is the caller's workspace. Like every
+            // caller default (ADR-4.6) that applies only when no window is
+            // named; otherwise the selection fails closed.
+            t.workspace = (if (win == null) envWorkspace(ctx) else null) orelse {
+                code.* = ctx.usageError("{s}", .{proto.errors.msg.no_workspace_selected});
                 return null;
             };
         } else {
@@ -422,15 +424,26 @@ pub fn printOpened(ctx: *Ctx, result: std.json.Value) !void {
 }
 
 /// For focus-intent requests from an interactive, non-agent caller: lets the
-/// app take the foreground (ADR-3.11) and marks the request accordingly.
-/// False when the app cannot be reached; the error is already printed and
-/// the caller exits 1 (connecting again would print it twice).
+/// app take the foreground with `AllowSetForegroundWindow(server_pid)` and
+/// marks the request `focus:true, foreground_grant:true` (ADR-3.11). The
+/// pipe is opened here when discovery did not open it (`--socket`, or
+/// `CMUX_SOCKET_PATH`, which every wmux terminal sets), so the server PID is
+/// known; an open failure is left for the request to report. False when
+/// discovery found no app; the error is already printed and the caller exits
+/// 1 (connecting again would print it twice).
 pub fn grantForeground(ctx: *Ctx, p: *Params) !bool {
     if (!focus_default.defaultFocus(ctx.platform.isInteractive(), ctx.env, ctx.env_names)) return true;
     const c = (try ctx.connect()) orelse return false;
-    const t = c.conn orelse return true;
-    const pid = t.serverPid() orelse return true;
+    if (c.conn == null) {
+        const t = ctx.platform.connect(c.gpa, c.opts.path, c.opts.connect_timeout_ms) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return true,
+        };
+        c.adopt(t);
+    }
+    const pid = c.conn.?.serverPid() orelse return true;
     ctx.platform.allowForeground(pid);
+    try p.boolean("focus", true);
     try p.boolean("foreground_grant", true);
     return true;
 }

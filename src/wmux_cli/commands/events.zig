@@ -217,14 +217,21 @@ const Stream = struct {
             scanned = self.buf.items.len;
             if (self.buf.items.len > max_frame_bytes) return .too_large;
             var wait: u32 = idle_timeout_ms;
+            // A wait cut short by --timeout ends at the deadline even when
+            // the OS wakes up a clock tick early and a few milliseconds
+            // still seem to be left.
+            var until_deadline = false;
             if (self.remaining()) |r| {
                 if (r == 0) return .deadline;
-                wait = @intCast(@min(r, wait));
+                if (r <= wait) {
+                    wait = @intCast(r);
+                    until_deadline = true;
+                }
             }
             try self.buf.ensureUnusedCapacity(std.heap.page_allocator, 64 * 1024);
             const spare = self.buf.unusedCapacitySlice();
             const n = conn.read(spare, wait) catch |err| switch (err) {
-                error.Timeout => return if (self.remaining() == @as(?u64, 0)) .deadline else .idle,
+                error.Timeout => return if (until_deadline or self.remaining() == @as(?u64, 0)) .deadline else .idle,
                 error.Unexpected => return .io,
             };
             if (n == 0) return .closed;
@@ -253,6 +260,16 @@ const Stream = struct {
     fn fatal(self: *Stream, comptime fmt: []const u8, args: anytype) Outcome {
         _ = self.ctx.runtimeError(fmt, args);
         return .fatal;
+    }
+
+    /// `<code>: <message>` of an error the server sent, reduced to
+    /// printable text like every other error line (ADR-4.7): the message
+    /// may echo input such as a category name.
+    fn serverErrorText(self: *Stream, code: []const u8, message: []const u8) ![]const u8 {
+        const scratch = self.a();
+        const c = try proto.utf8.sanitizePrintableAlloc(scratch, code);
+        const m = try proto.utf8.sanitizePrintableAlloc(scratch, message);
+        return std.fmt.allocPrint(scratch, "{s}: {s}", .{ c, m });
     }
 
     /// One connection: connect if needed, subscribe, then frames until the
@@ -316,9 +333,9 @@ const Stream = struct {
         if (std.mem.eql(u8, ty, "event")) return self.onEvent(frame, raw);
         if (std.mem.eql(u8, ty, "error")) {
             const code = common.strField(frame, "code") orelse "error";
-            const msg = common.strField(frame, "message") orelse code;
-            if (isTransientCode(code)) return self.transient("{s}: {s}", .{ code, msg });
-            return self.fatal("{s}: {s}", .{ code, msg });
+            const text = try self.serverErrorText(code, common.strField(frame, "message") orelse code);
+            if (isTransientCode(code)) return .{ .transient = text };
+            return self.fatal("{s}", .{text});
         }
         // Unknown frame kinds pass through (forward compatible).
         try self.print(frame, raw);
@@ -367,7 +384,7 @@ const Stream = struct {
             self.auth_tried = true;
             return self.login();
         }
-        if (isTransientCode(e.code)) return self.transient("{s}: {s}", .{ e.code, e.message });
+        if (isTransientCode(e.code)) return .{ .transient = try self.serverErrorText(e.code, e.message) };
         _ = try self.ctx.reportError("events.stream", .{ .rpc_error = .{ .err = e, .raw = line } });
         return .fatal;
     }

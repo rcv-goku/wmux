@@ -200,6 +200,39 @@ test "unit: cli-notify: created_at formats" {
     try testing.expectEqualStrings("1970-01-01T00:00:00Z2025-10-16T08:00:00Z2000-02-29T00:00:00Z1970-01-01T00:00:00Z", aw.written());
 }
 
+test "unit: cli-notify: created_at beyond year 9999 clamps instead of overflowing" {
+    // std.time.epoch counts years in a u16: an app that sends nanoseconds
+    // or garbage must not crash list-notifications.
+    var aw: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer aw.deinit();
+    const last = "9999-12-31T23:59:59Z";
+    try notify.writeCreatedAt(&aw.writer, .{ .integer = std.math.maxInt(i64) });
+    try testing.expectEqualStrings(last, aw.written());
+    aw.clearRetainingCapacity();
+    try notify.writeCreatedAt(&aw.writer, .{ .integer = 1_760_601_600_123_456_789 });
+    try testing.expectEqualStrings(last, aw.written());
+    aw.clearRetainingCapacity();
+    try notify.writeCreatedAt(&aw.writer, .{ .float = 1e15 });
+    try testing.expectEqualStrings(last, aw.written());
+    aw.clearRetainingCapacity();
+    try notify.writeCreatedAt(&aw.writer, .{ .integer = std.math.minInt(i64) });
+    try testing.expectEqualStrings("1970-01-01T00:00:00Z", aw.written());
+    aw.clearRetainingCapacity();
+    try notify.writeIso8601(&aw.writer, std.math.maxInt(i64));
+    try notify.writeIso8601(&aw.writer, notify.max_iso8601_secs);
+    try notify.writeIso8601(&aw.writer, notify.max_iso8601_secs + 1);
+    try testing.expectEqualStrings(last ++ last ++ last, aw.written());
+    // A list with such a record still prints every line.
+    var h: Harness = undefined;
+    try h.init(struct {
+        fn f(_: *fake.Server, _: fake.Request) fake.Action {
+            return .{ .ok = "{\"notifications\":[{\"id\":\"" ++ nid ++ "\",\"workspace_id\":\"" ++ ws_uuid ++ "\",\"title\":\"t\",\"created_at\":9223372036854775807,\"is_read\":false}]}" };
+        }
+    }.f);
+    defer h.deinit();
+    try kit.expectResult(h.run(&.{ "cmux", "list-notifications" }), 0, "0:" ++ nid ++ "|" ++ ws_uuid ++ "|none|unread|t|||" ++ last ++ "|\n", "");
+}
+
 test "unit: cli-notify: notification ids accept the handle prefix in any case" {
     try testing.expect(notify.parseNotificationId(nid) != null);
     try testing.expect(notify.parseNotificationId("notification:" ++ nid) != null);
@@ -228,6 +261,9 @@ test "unit: cli-notify: dismiss-notification selectors" {
     try kit.expectResult(h.run(&.{ "cmux", "dismiss-notification", "--id", nid, "--all-read" }), 2, "", req);
     try kit.expectResult(h.run(&.{ "cmux", "dismiss-notification", "--id", "bogus" }), 2, "", "cmux: dismiss-notification: invalid notification id 'bogus' (expected <uuid> or notification:<uuid>)\n");
     try kit.expectResult(h.run(&.{ "cmux", "dismiss-notification", "a", "b" }), 2, "", "cmux: dismiss-notification: unexpected arguments: b\n");
+    // A second id next to --id is not dismissed silently.
+    try kit.expectResult(h.run(&.{ "cmux", "dismiss-notification", "--id", nid, "55555555-5555-4555-8555-555555555555" }), 2, "", "cmux: dismiss-notification: unexpected arguments: 55555555-5555-4555-8555-555555555555\n");
+    try kit.expectResult(h.run(&.{ "cmux", "dismiss-notification", "x", "--id", nid, "y" }), 2, "", "cmux: dismiss-notification: unexpected arguments: x y\n");
     try testing.expectEqual(n, h.requestCount());
     const missing = h.run(&.{ "cmux", "dismiss-notification", "--id", "44444444-4444-4444-8444-444444444444" });
     try kit.expectResult(missing, 1, "", "not_found: Notification not found\n");
@@ -279,13 +315,39 @@ test "unit: cli-notify: focus-intent commands grant the foreground only to inter
     defer h.deinit();
     h.fp.interactive = true;
     _ = h.run(&.{ "cmux", "jump-to-unread" });
-    try testing.expectEqualStrings("{\"foreground_grant\":true}", params(&h));
+    try testing.expectEqualStrings("{\"focus\":true,\"foreground_grant\":true}", params(&h));
     try testing.expectEqual(@as(usize, 1), h.fp.foreground_grants.items.len);
     try testing.expectEqual(@as(u32, 4242), h.fp.foreground_grants.items[0]);
     h.setEnv("CLAUDECODE", "1");
     _ = h.run(&.{ "cmux", "jump-to-unread" });
     try testing.expectEqualStrings("{}", params(&h));
     try testing.expectEqual(@as(usize, 1), h.fp.foreground_grants.items.len);
+}
+
+test "unit: cli-notify: focus-intent commands grant the foreground through an explicit pipe" {
+    // Inside wmux terminals CMUX_SOCKET_PATH names the pipe, so discovery
+    // does not open it; the grant must still reach the server.
+    var h: Harness = undefined;
+    try h.init(notifyHandler);
+    defer h.deinit();
+    h.fp.interactive = true;
+    const pipe = h.control();
+    try kit.expectResult(h.run(&.{ "cmux", "--socket", pipe, "open-notification", "--id", nid }), 0, "OK workspace:1 surface:2\n", "");
+    try testing.expectEqualStrings("{\"id\":\"" ++ nid ++ "\",\"focus\":true,\"foreground_grant\":true}", params(&h));
+    try testing.expectEqualSlices(u32, &.{4242}, h.fp.foreground_grants.items);
+    // One connection carries the grant and the request.
+    try testing.expectEqual(@as(usize, 1), h.fp.connects);
+    h.setEnv("CMUX_SOCKET_PATH", pipe);
+    _ = h.run(&.{ "cmux", "jump-to-last-prompt" });
+    try testing.expectEqualStrings("{\"focus\":true,\"foreground_grant\":true}", params(&h));
+    _ = h.run(&.{ "cmux", "jump-to-unread" });
+    try testing.expectEqualStrings("{\"focus\":true,\"foreground_grant\":true}", params(&h));
+    try testing.expectEqual(@as(usize, 3), h.fp.foreground_grants.items.len);
+    try testing.expectEqual(@as(usize, 3), h.fp.connects);
+    // A pipe that cannot be opened is reported by the request, once.
+    const r = h.run(&.{ "cmux", "--socket", "wmux-missing", "jump-to-unread" });
+    try kit.expectResult(r, 1, "", "cannot connect to \\\\.\\pipe\\wmux-missing: no such pipe (is wmux running?)\n");
+    try testing.expectEqual(@as(usize, 3), h.fp.foreground_grants.items.len);
 }
 
 test "unit: cli-notify: an interactive focus command reports a missing app once" {
@@ -315,12 +377,34 @@ test "unit: cli-notify: clear-notifications scopes" {
     try kit.expectResult(h.run(&.{ "cmux", "clear-notifications", "--surface", "surface:1" }), 2, "", "cmux: clear-notifications --surface requires a workspace or window context\n");
     _ = h.run(&.{ "cmux", "clear-notifications", "--window", "window:1", "--workspace", "workspace:1", "--panel", "surface:1" });
     try testing.expectEqualStrings("{\"window_id\":\"window:1\",\"workspace_id\":\"workspace:1\",\"surface_id\":\"surface:1\"}", params(&h));
+    // A window alone is enough context for a surface.
+    _ = h.run(&.{ "cmux", "clear-notifications", "--window", "window:1", "--surface", "surface:3" });
+    try testing.expectEqualStrings("{\"window_id\":\"window:1\",\"surface_id\":\"surface:3\"}", params(&h));
     h.setEnv("CMUX_WORKSPACE_ID", ws_uuid);
     _ = h.run(&.{ "cmux", "clear-notifications" });
     try testing.expectEqualStrings("{\"workspace_id\":\"" ++ ws_uuid ++ "\"}", params(&h));
     _ = h.run(&.{ "cmux", "clear-notifications", "--window", "window:2" });
     try testing.expectEqualStrings("{\"window_id\":\"window:2\"}", params(&h));
     try kit.expectResult(h.run(&.{ "cmux", "clear-notifications", "--all" }), 2, "", "cmux: clear-notifications: unexpected arguments: --all\n");
+}
+
+test "unit: cli-notify: a blank --workspace is the caller's workspace only when no window is named" {
+    var h: Harness = undefined;
+    try h.init(notifyHandler);
+    defer h.deinit();
+    h.setEnv("CMUX_WORKSPACE_ID", ws_uuid);
+    try kit.expectResult(h.run(&.{ "cmux", "clear-notifications", "--workspace", " " }), 0, "OK\n", "");
+    try testing.expectEqualStrings("{\"workspace_id\":\"" ++ ws_uuid ++ "\"}", params(&h));
+    _ = h.run(&.{ "cmux", "mark-notification-read", "--workspace", "", "--surface", "surface:2" });
+    try testing.expectEqualStrings("{\"workspace_id\":\"" ++ ws_uuid ++ "\",\"surface_id\":\"surface:2\"}", params(&h));
+    // The caller's workspace may live in another window: fail closed.
+    const n = h.requestCount();
+    const msg = "cmux: No workspace selected: --workspace was blank and CMUX_WORKSPACE_ID is unset\n";
+    try kit.expectResult(h.run(&.{ "cmux", "clear-notifications", "--workspace", "", "--window", "window:1" }), 2, "", msg);
+    try kit.expectResult(h.run(&.{ "cmux", "--window", "window:1", "notify", "--workspace", "\t" }), 2, "", msg);
+    try kit.expectResult(h.run(&.{ "cmux", "mark-notification-read", "--workspace", "", "--window", "window:1" }), 2, "", msg);
+    try kit.expectResult(h.run(&.{ "cmux", "set-status", "k", "v", "--workspace", " ", "--window", "window:2" }), 2, "", msg);
+    try testing.expectEqual(n, h.requestCount());
 }
 
 test "unit: cli-notify: app focus overrides" {

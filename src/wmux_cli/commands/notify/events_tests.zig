@@ -165,6 +165,23 @@ test "unit: cli-events: slow_consumer error frames are transient" {
     try kit.expectResult(h.run(&.{ "cmux", "events", "--no-ack", "--reconnect" }), 1, "", "cmux: invalid_params: Unknown category\n");
 }
 
+test "unit: cli-events: server error text is printed as printable characters only" {
+    // ADR-4.7: control and bidi characters a message may echo never reach
+    // the terminal, whether the error ends the stream or would be retried.
+    const fatal = "{\"type\":\"error\",\"code\":\"invalid_params\",\"message\":\"Unknown category: \\u001b]0;pwned\\u0007x\\u202e\\ny\"}";
+    const slow = "{\"type\":\"error\",\"code\":\"slow_consumer\",\"message\":\"Slow\\u0007 consumer\\u001b[2J\"}";
+    const busy = "{\"id\":null,\"ok\":false,\"error\":{\"code\":\"overloaded\",\"message\":\"Busy\\u001b[31m\\r\\n\"}}";
+    var sc: Script = .{ .batches = &.{comptime lines(&.{ ack, fatal })} };
+    var h: Harness = undefined;
+    try harness(&h, &sc);
+    defer h.deinit();
+    try kit.expectResult(fresh(&h, &.{ "cmux", "events", "--no-ack" }), 1, "", "cmux: invalid_params: Unknown category: ]0;pwnedx y\n");
+    sc.batches = &.{comptime lines(&.{ ack, slow })};
+    try kit.expectResult(fresh(&h, &.{ "cmux", "events", "--no-ack" }), 1, "", "cmux: slow_consumer: Slow consumer[2J\n");
+    sc.batches = &.{busy};
+    try kit.expectResult(fresh(&h, &.{ "cmux", "events" }), 1, "", "cmux: overloaded: Busy[31m  \n");
+}
+
 test "unit: cli-events: an error reply to the subscription is reported" {
     var sc: Script = .{ .batches = &.{"{\"id\":null,\"ok\":false,\"error\":{\"code\":\"invalid_params\",\"message\":\"Unknown category: bogus\"}}"} };
     var h: Harness = undefined;
@@ -282,6 +299,21 @@ test "unit: cli-events: --timeout fails on the monotonic clock" {
     h.server.connections = 0;
     const r = fresh(&h, &.{ "cmux", "events", "--reconnect", "--no-ack", "--timeout", "3" });
     try kit.expectResult(r, 1, "", "cmux: " ++ events.timeout_message ++ "\n");
+}
+
+test "unit: cli-events: a read that wakes before the --timeout deadline still reports the timeout" {
+    // Windows wait timeouts can expire up to a clock tick early, so the
+    // monotonic clock may still show a few milliseconds left. A read cut
+    // short by --timeout is the deadline, not 60 s of silence.
+    var sc: Script = .{ .batches = &.{ack}, .close = false };
+    var h: Harness = undefined;
+    try harness(&h, &sc);
+    defer h.deinit();
+    // Reads time out without moving the fake clock.
+    h.server.clock = null;
+    try kit.expectResult(fresh(&h, &.{ "cmux", "events", "--timeout", "2.5", "--limit", "1" }), 1, ack ++ "\n", "cmux: " ++ events.timeout_message ++ "\n");
+    try kit.expectResult(fresh(&h, &.{ "cmux", "events", "--reconnect", "--no-ack", "--timeout", "2.5" }), 1, "", "cmux: " ++ events.timeout_message ++ "\n");
+    try testing.expectEqual(@as(usize, 1), h.server.connections);
 }
 
 test "unit: cli-events: event frames need a numeric seq" {

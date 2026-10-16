@@ -177,9 +177,15 @@ fn notifyClear(ctx: *Ctx, t: common.Target) !u8 {
 
 // ----- list-notifications -----
 
-/// `YYYY-MM-DDTHH:MM:SSZ` for epoch seconds (negative clamps to 1970).
+/// The last instant `writeIso8601` renders, 9999-12-31T23:59:59Z.
+pub const max_iso8601_secs: i64 = 253_402_300_799;
+
+/// `YYYY-MM-DDTHH:MM:SSZ` for epoch seconds. Negative values clamp to 1970
+/// and values past `max_iso8601_secs` to 9999-12-31T23:59:59Z, so a bogus
+/// `created_at` from the app can neither overflow `std.time.epoch`'s u16
+/// year nor print a five-digit year.
 pub fn writeIso8601(w: *std.Io.Writer, epoch_s: i64) std.Io.Writer.Error!void {
-    const secs: u64 = @intCast(@max(epoch_s, 0));
+    const secs: u64 = @intCast(std.math.clamp(epoch_s, 0, max_iso8601_secs));
     const es: std.time.epoch.EpochSeconds = .{ .secs = secs };
     const yd = es.getEpochDay().calculateYearDay();
     const md = yd.calculateMonthDay();
@@ -276,9 +282,12 @@ fn runDismiss(ctx: *Ctx) !u8 {
     const cmd = "dismiss-notification";
     var code: u8 = 0;
     const s = (try common.scanOrReport(ctx, cmd, &dismiss_opts, .{}, &code)) orelse return code;
-    if (s.positionals.len > 1) return common.reportProblem(ctx, cmd, .{ .unexpected = s.positionals[1..] });
-    // A lone positional id is accepted like `--id` (older usage line).
-    const id = s.get("--id") orelse (if (s.positionals.len == 1) s.positionals[0] else null);
+    const pos = s.positionals;
+    // A lone positional id is accepted like `--id` (older usage line); next
+    // to `--id` any positional is a stray argument, never silently dropped.
+    const extra = if (s.has("--id")) pos else if (pos.len > 1) pos[1..] else pos[0..0];
+    if (extra.len > 0) return common.reportProblem(ctx, cmd, .{ .unexpected = extra });
+    const id = s.get("--id") orelse (if (pos.len == 1) pos[0] else null);
     const all_read = s.has("--all-read");
     if ((id != null) == all_read) return ctx.usageError("dismiss-notification requires exactly one of --id or --all-read", .{});
     var p = Params.init(ctx.arena);
