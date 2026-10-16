@@ -1,0 +1,757 @@
+/*
+ * Diff panel. Layout and chrome use the --wmux-* tokens from ../_shared/;
+ * additions/deletions derive from the terminal palette (--wmux-success,
+ * --wmux-danger). Display preferences arrive as classes and data attributes
+ * on <html>: data-dv-layout, data-dv-indicators (bars | classic | none),
+ * .dv-wrap, .dv-no-line-numbers, .dv-no-backgrounds, and --dv-font-size.
+ */
+
+:root {
+  --dv-font-size: 13.33px;
+  --dv-add: var(--wmux-success);
+  --dv-del: var(--wmux-danger);
+  --dv-add-bg: color-mix(in srgb, var(--dv-add) 14%, transparent);
+  --dv-del-bg: color-mix(in srgb, var(--dv-del) 14%, transparent);
+  --dv-add-word: color-mix(in srgb, var(--dv-add) 38%, transparent);
+  --dv-del-word: color-mix(in srgb, var(--dv-del) 38%, transparent);
+  --dv-hunk-bg: color-mix(in srgb, var(--wmux-info) 10%, transparent);
+  --dv-find-match: rgb(255 214 0 / 0.45);
+  --dv-find-current: #ff9632;
+  --dv-toolbar-height: 36px;
+  --dv-sidebar-width: 280px;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Toolbar --------------------------------------------------------------- */
+
+.dv-toolbar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--wmux-space-2);
+  min-height: var(--dv-toolbar-height);
+  padding: var(--wmux-space-1) var(--wmux-space-2);
+  border-bottom: 1px solid var(--wmux-border);
+  background-color: var(--wmux-surface);
+}
+
+.dv-toolbar-group {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: var(--wmux-space-1);
+  min-width: 0;
+}
+
+.dv-toolbar-title {
+  flex: 0 1 auto;
+  overflow: hidden;
+}
+
+.dv-title {
+  margin: 0;
+  overflow: hidden;
+  font-size: var(--wmux-font-size-ui);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dv-stats,
+.dv-progress {
+  flex: none;
+  color: var(--wmux-fg-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.dv-stats > span + span {
+  margin-left: var(--wmux-space-1);
+}
+
+.dv-plus {
+  color: var(--dv-add);
+}
+
+.dv-minus {
+  color: var(--dv-del);
+}
+
+.dv-status {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--wmux-fg-muted);
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dv-status[data-kind="error"] {
+  color: var(--wmux-danger);
+}
+
+.dv-menu-overflow {
+  display: none;
+}
+
+/* Narrow panes: secondary toolbar buttons move into the Options menu. */
+@media (max-width: 760px) {
+  .dv-overflowable {
+    display: none;
+  }
+
+  .dv-menu-overflow {
+    display: contents;
+  }
+}
+
+.dv-menu {
+  position: fixed;
+  top: calc(var(--dv-toolbar-height) + 2px);
+  right: var(--wmux-space-2);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 240px;
+  max-height: calc(100vh - var(--dv-toolbar-height) - 8px);
+  overflow: auto;
+  padding: var(--wmux-space-1);
+  border: 1px solid var(--wmux-border-strong);
+  border-radius: var(--wmux-radius);
+  background-color: var(--wmux-surface-raised);
+  box-shadow: var(--wmux-shadow);
+}
+
+.dv-menu[hidden] {
+  display: none;
+}
+
+.dv-menu button {
+  justify-content: flex-start;
+  border-color: transparent;
+  background: transparent;
+  text-align: left;
+}
+
+.dv-menu button:hover {
+  background-color: var(--wmux-hover);
+}
+
+.dv-menu button[aria-checked="true"]::before {
+  content: "✓ ";
+}
+
+.dv-menu-sep {
+  width: 100%;
+  margin: var(--wmux-space-1) 0;
+  border: 0;
+  border-top: 1px solid var(--wmux-border);
+}
+
+.dv-menu-field,
+.dv-menu-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wmux-space-1);
+  padding: var(--wmux-space-1) var(--wmux-space-2);
+}
+
+.dv-menu-field input {
+  width: 5em;
+}
+
+.dv-menu-label {
+  width: 100%;
+  color: var(--wmux-fg-muted);
+}
+
+/* File search and find bar --------------------------------------------- */
+
+.dv-filesearch,
+.dv-find {
+  position: fixed;
+  top: calc(var(--dv-toolbar-height) + 2px);
+  z-index: 15;
+  display: flex;
+  gap: var(--wmux-space-1);
+  padding: var(--wmux-space-1);
+  border: 1px solid var(--wmux-border-strong);
+  border-radius: var(--wmux-radius);
+  background-color: var(--wmux-surface-raised);
+  box-shadow: var(--wmux-shadow);
+}
+
+.dv-filesearch[hidden],
+.dv-find[hidden] {
+  display: none;
+}
+
+.dv-filesearch {
+  left: 50%;
+  flex-direction: column;
+  width: min(560px, calc(100vw - 32px));
+  transform: translateX(-50%);
+}
+
+.dv-filesearch-list {
+  max-height: 50vh;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.dv-filesearch-list li {
+  padding: 2px var(--wmux-space-2);
+  overflow: hidden;
+  border-radius: var(--wmux-radius-sm);
+  cursor: pointer;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dv-filesearch-list li[aria-selected="true"] {
+  background-color: var(--wmux-sidebar-active-bg);
+  color: var(--wmux-sidebar-active-fg);
+}
+
+.dv-find {
+  right: var(--wmux-space-3);
+  align-items: center;
+}
+
+.dv-find-count {
+  min-width: 5em;
+  color: var(--wmux-fg-muted);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.dv-icon-button {
+  min-width: 28px;
+  padding: 2px 6px;
+}
+
+/* Body: sidebar, viewport, comments ------------------------------------- */
+
+.dv-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.dv-sidebar,
+.dv-comments {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  width: var(--dv-sidebar-width);
+  min-height: 0;
+  overflow: auto;
+  padding: var(--wmux-space-2);
+  background-color: var(--wmux-sidebar-bg);
+  color: var(--wmux-sidebar-fg);
+}
+
+.dv-sidebar {
+  border-right: 1px solid var(--wmux-sidebar-border);
+}
+
+.dv-comments {
+  border-left: 1px solid var(--wmux-sidebar-border);
+}
+
+.dv-sidebar[hidden],
+.dv-comments[hidden] {
+  display: none;
+}
+
+.dv-sidebar-title {
+  margin: 0 0 var(--wmux-space-2);
+  font-size: var(--wmux-font-size-ui);
+  font-weight: 600;
+}
+
+.dv-filter {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wmux-space-1);
+  margin-bottom: var(--wmux-space-2);
+}
+
+.dv-filter-statuses {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wmux-space-1) var(--wmux-space-2);
+}
+
+.dv-filter-empty {
+  padding: var(--wmux-space-3);
+  color: var(--wmux-fg-muted);
+  text-align: center;
+}
+
+.dv-tree,
+.dv-tree ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.dv-tree ul {
+  padding-left: var(--wmux-space-3);
+}
+
+.dv-tree-dirname {
+  display: block;
+  padding: 2px 0;
+  color: var(--wmux-fg-muted);
+}
+
+.dv-tree-file {
+  display: flex;
+  gap: var(--wmux-space-1);
+  align-items: center;
+  width: 100%;
+  border-color: transparent;
+  background: transparent;
+  text-align: left;
+}
+
+.dv-tree-file:hover {
+  background-color: var(--wmux-hover);
+}
+
+.dv-tree-name {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dv-tree-stats {
+  display: flex;
+  gap: 4px;
+  font-size: 0.85em;
+  font-variant-numeric: tabular-nums;
+}
+
+.dv-tree-viewed {
+  width: 1em;
+  color: var(--dv-add);
+}
+
+.dv-viewport {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: auto;
+  padding: var(--wmux-space-2);
+}
+
+.dv-viewport:focus {
+  outline: none;
+}
+
+.dv-message:empty,
+.dv-message[hidden] {
+  display: none;
+}
+
+.dv-message {
+  padding: var(--wmux-space-5);
+  color: var(--wmux-fg-muted);
+  text-align: center;
+}
+
+.dv-message[data-kind="error"] {
+  color: var(--wmux-danger);
+}
+
+.dv-muted {
+  color: var(--wmux-fg-muted);
+}
+
+/* File sections -------------------------------------------------------- */
+
+.dv-file {
+  margin-bottom: var(--wmux-space-3);
+  border: 1px solid var(--wmux-border);
+  border-radius: var(--wmux-radius);
+  content-visibility: auto;
+  contain-intrinsic-size: auto 200px;
+}
+
+.dv-file-header {
+  position: sticky;
+  top: calc(-1 * var(--wmux-space-2));
+  z-index: 2;
+  display: flex;
+  gap: var(--wmux-space-2);
+  align-items: center;
+  padding: var(--wmux-space-1) var(--wmux-space-2);
+  border-bottom: 1px solid var(--wmux-border);
+  background-color: var(--wmux-surface);
+}
+
+.dv-collapsed .dv-file-header {
+  border-bottom: 0;
+}
+
+.dv-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--wmux-font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dv-file-stats {
+  display: flex;
+  gap: var(--wmux-space-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.dv-badge {
+  display: inline-block;
+  min-width: 1.4em;
+  border-radius: var(--wmux-radius-sm);
+  font-size: 0.8em;
+  font-weight: 700;
+  text-align: center;
+}
+
+.dv-badge-added,
+.dv-badge-copied {
+  color: var(--dv-add);
+}
+
+.dv-badge-deleted {
+  color: var(--dv-del);
+}
+
+.dv-badge-renamed,
+.dv-badge-modified {
+  color: var(--wmux-warning);
+}
+
+.dv-changed-since,
+.dv-tag {
+  padding: 0 6px;
+  border: 1px solid currentcolor;
+  border-radius: 999px;
+  font-size: 0.8em;
+  white-space: nowrap;
+}
+
+.dv-changed-since,
+.dv-tag-outdated,
+.dv-tag-moved {
+  color: var(--wmux-warning);
+}
+
+.dv-tag-absent,
+.dv-tag-delivered {
+  color: var(--wmux-fg-muted);
+}
+
+.dv-changed-since[hidden] {
+  display: none;
+}
+
+.dv-viewed {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.dv-file-notes:empty,
+.dv-deferred[hidden] {
+  display: none;
+}
+
+.dv-file-notes,
+.dv-deferred {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wmux-space-2);
+  align-items: center;
+  padding: var(--wmux-space-1) var(--wmux-space-2);
+  color: var(--wmux-fg-muted);
+}
+
+.dv-file-body {
+  overflow-x: auto;
+}
+
+/* Line tables ---------------------------------------------------------- */
+
+.dv-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--wmux-font-mono);
+  font-size: var(--dv-font-size);
+  line-height: 1.45;
+  tab-size: 4;
+}
+
+.dv-split {
+  table-layout: fixed;
+}
+
+.dv-num {
+  width: 1%;
+  min-width: 3.5em;
+  padding: 0 var(--wmux-space-1);
+  color: var(--wmux-fg-muted);
+  text-align: right;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  vertical-align: top;
+}
+
+.dv-split .dv-num {
+  width: 4.5em;
+}
+
+.dv-no-line-numbers .dv-num {
+  display: none;
+}
+
+.dv-code {
+  position: relative;
+  padding: 0 var(--wmux-space-2) 0 1.6em;
+  white-space: pre;
+  vertical-align: top;
+}
+
+.dv-wrap .dv-code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.dv-split .dv-code {
+  overflow: hidden;
+}
+
+.dv-wrap .dv-split .dv-code {
+  overflow: visible;
+}
+
+.dv-line .dv-add,
+.dv-unified .dv-add {
+  background-color: var(--dv-add-bg);
+}
+
+.dv-line .dv-del,
+.dv-unified .dv-del {
+  background-color: var(--dv-del-bg);
+}
+
+.dv-empty {
+  background-color: color-mix(in srgb, var(--wmux-fg) 4%, transparent);
+}
+
+.dv-no-backgrounds .dv-code.dv-add,
+.dv-no-backgrounds .dv-code.dv-del,
+.dv-no-backgrounds .dv-empty {
+  background-color: transparent;
+}
+
+.dv-word {
+  border-radius: 2px;
+}
+
+.dv-add .dv-word {
+  background-color: var(--dv-add-word);
+}
+
+.dv-del .dv-word {
+  background-color: var(--dv-del-word);
+}
+
+/* Indicators: bars (left edge), classic (+/- column), none. */
+.dv-sign {
+  position: absolute;
+  left: 0.5em;
+  display: none;
+  user-select: none;
+}
+
+[data-dv-indicators="classic"] .dv-sign {
+  display: inline;
+}
+
+[data-dv-indicators="classic"] .dv-add .dv-sign {
+  color: var(--dv-add);
+}
+
+[data-dv-indicators="classic"] .dv-del .dv-sign {
+  color: var(--dv-del);
+}
+
+[data-dv-indicators="bars"] .dv-code.dv-add {
+  box-shadow: inset 3px 0 0 var(--dv-add);
+}
+
+[data-dv-indicators="bars"] .dv-code.dv-del {
+  box-shadow: inset 3px 0 0 var(--dv-del);
+}
+
+.dv-nonl {
+  margin-left: var(--wmux-space-1);
+  color: var(--dv-del);
+}
+
+.dv-hunk-cell {
+  padding: 2px var(--wmux-space-2);
+  background-color: var(--dv-hunk-bg);
+  color: var(--wmux-fg-muted);
+  white-space: pre;
+}
+
+.dv-gap-cell {
+  padding: 0;
+  background-color: var(--dv-hunk-bg);
+}
+
+.dv-gap-button {
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--wmux-link);
+  font-size: var(--wmux-font-size-ui);
+}
+
+.dv-add-comment {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: none;
+  width: 1.4em;
+  min-width: 0;
+  height: 1.4em;
+  padding: 0;
+  border-radius: var(--wmux-radius-sm);
+  background-color: var(--wmux-accent);
+  color: var(--wmux-accent-fg);
+  font-size: 0.9em;
+  line-height: 1;
+}
+
+.dv-code:hover .dv-add-comment,
+.dv-add-comment:focus-visible {
+  display: block;
+}
+
+.dv-code.dv-selected {
+  background-color: color-mix(in srgb, var(--wmux-accent) 22%, transparent);
+}
+
+.dv-find-hit {
+  background-color: var(--dv-find-match);
+  color: inherit;
+}
+
+.dv-find-hit.dv-find-current {
+  background-color: var(--dv-find-current);
+  color: #000;
+}
+
+/* Comments ------------------------------------------------------------- */
+
+.dv-comment-cell {
+  padding: var(--wmux-space-1) var(--wmux-space-2);
+  font-family: var(--wmux-font-ui);
+  font-size: var(--wmux-font-size-ui);
+  white-space: normal;
+}
+
+.dv-thread {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wmux-space-1);
+  max-width: 820px;
+}
+
+.dv-comment,
+.dv-composer {
+  padding: var(--wmux-space-2);
+  border: 1px solid var(--wmux-border);
+  border-radius: var(--wmux-radius);
+  background-color: var(--wmux-surface-raised);
+}
+
+.dv-comment-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wmux-space-1);
+  align-items: center;
+  color: var(--wmux-fg-muted);
+}
+
+.dv-comment-actions {
+  display: flex;
+  gap: var(--wmux-space-1);
+  margin-left: auto;
+}
+
+.dv-comment-body {
+  margin-top: var(--wmux-space-1);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.dv-composer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wmux-space-1);
+}
+
+.dv-composer-input {
+  min-height: 5em;
+  resize: vertical;
+  font-family: var(--wmux-font-ui);
+}
+
+.dv-composer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--wmux-space-1);
+}
+
+.dv-comments-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wmux-space-2);
+  margin: 0 0 var(--wmux-space-2);
+  padding: 0;
+  list-style: none;
+}
+
+.dv-comment-jump {
+  max-width: 100%;
+  overflow: hidden;
+  border-color: transparent;
+  background: transparent;
+  color: var(--wmux-link);
+  font-family: var(--wmux-font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
