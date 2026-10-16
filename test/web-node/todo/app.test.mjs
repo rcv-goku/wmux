@@ -264,6 +264,29 @@ describe("unit: todo pane interaction", () => {
     assert.equal(store.items[0].state, "pending");
   });
 
+  test("unit: todo: focus stays on the list when a re-render removes the focused child", async () => {
+    await startApp({ items: [item("a"), item("b")] });
+    const list = $("todo-list");
+    // WebView2 focuses a checkbox on mouse click (tabindex -1 only keeps it out of Tab order).
+    const box = rows()[0].querySelector(".todo-check");
+    box.focus();
+    assert.equal(doc.activeElement, box);
+    click(window, box);
+    await settle();
+    assert.equal(store.items[0].state, "completed");
+    assert.equal(doc.activeElement, list, "focus did not fall to <body>");
+    key(window, list, { key: "ArrowDown" });
+    assert.equal(app.highlightId, store.items[1].id);
+    // Same when a live update removes the item being edited.
+    app.startEdit(store.items[1].id);
+    assert.equal(doc.activeElement, doc.querySelector(".todo-editor"));
+    store.items.splice(1, 1);
+    host.emit("panel.todo.changed", { workspace_id: WS, ...listReply() });
+    await settle();
+    assert.equal(app.editingId, null);
+    assert.equal(doc.activeElement, list);
+  });
+
   test("unit: todo: click selects, click again edits, Return commits, Escape cancels", async () => {
     await startApp({ items: [item("first"), item("second")] });
     click(window, rowOf("first").querySelector(".todo-text"));

@@ -246,7 +246,10 @@ export function createApp(options) {
     const draft = editor
       ? { value: editor.value, start: editor.selectionStart, end: editor.selectionEnd }
       : null;
-    const hadFocus = editor && doc.activeElement === editor;
+    const focused = doc.activeElement;
+    const hadFocus = editor && focused === editor;
+    // Focus on the list or inside it (the editor, a clicked checkbox).
+    const listHadFocus = Boolean(focused) && ui.list.contains(focused);
     if (state.editingId && !itemById(state.editingId)) state.editingId = null;
 
     // Chromium (WebView2) fires focusout, relatedTarget null, while
@@ -282,6 +285,9 @@ export function createApp(options) {
         }
       }
     }
+    // Removing a focused child (a checkbox WebView2 focused on click, the editor
+    // of an item that went away) drops focus to <body>; keep it on the list.
+    if (listHadFocus && state.available && !ui.list.contains(doc.activeElement)) ui.list.focus();
   }
 
   function scrollHighlightIntoView() {
