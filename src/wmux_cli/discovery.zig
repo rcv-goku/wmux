@@ -4,8 +4,9 @@
 //! 1. `--socket` (explicit, used verbatim, never probed or rerouted).
 //! 2. `WMUX_SOCKET_PATH`, then `CMUX_SOCKET_PATH` (explicit). `CMUX_SOCKET` is
 //!    the deprecated alias: used when neither is set, and an error when it is
-//!    set non-empty and differs from the effective path (checked before any
-//!    connection; `--socket` skips the check).
+//!    set non-empty and differs from `CMUX_SOCKET_PATH` (or from
+//!    `WMUX_SOCKET_PATH` when only the twin is set); checked before any
+//!    connection, and `--socket` skips the check.
 //! 3. The marker `STATE\run\instance.json` of the CLI's channel.
 //! 4. The computed control name of the CLI's channel (the expected default),
 //!    then of `stable`.
@@ -98,21 +99,27 @@ pub const Outcome = union(enum) {
 /// name.
 pub fn explicitPath(arena: Allocator, in: Inputs) Allocator.Error!?Outcome {
     if (in.explicit_socket) |s| return try normalized(arena, s, .flag, "--socket");
-    const env_path = in.env.getNonEmpty(env_names.WMUX_SOCKET_PATH) orelse in.env.getNonEmpty(env_names.CMUX_SOCKET_PATH);
-    const alias = in.env.getNonEmpty(env_names.CMUX_SOCKET);
-    if (env_path) |p| {
-        if (alias) |a| {
-            if (!samePipe(a, p)) {
-                return .{ .rejected = try std.fmt.allocPrint(
-                    arena,
-                    "CMUX_SOCKET ({s}) and CMUX_SOCKET_PATH ({s}) are both set and differ; unset the deprecated CMUX_SOCKET or make them equal",
-                    .{ a, p },
-                ) };
-            }
+    const wmux_path = in.env.getNonEmpty(env_names.WMUX_SOCKET_PATH);
+    const cmux_path = in.env.getNonEmpty(env_names.CMUX_SOCKET_PATH);
+    if (in.env.getNonEmpty(env_names.CMUX_SOCKET)) |alias| {
+        // cmux rule: the deprecated alias must agree with CMUX_SOCKET_PATH
+        // (with the WMUX_ twin when only that one is set).
+        const name: []const u8, const value: []const u8 = if (cmux_path) |p|
+            .{ env_names.CMUX_SOCKET_PATH, p }
+        else if (wmux_path) |p|
+            .{ env_names.WMUX_SOCKET_PATH, p }
+        else
+            return try normalized(arena, alias, .env, env_names.CMUX_SOCKET);
+        if (!samePipe(alias, value)) {
+            return .{ .rejected = try std.fmt.allocPrint(
+                arena,
+                "CMUX_SOCKET ({s}) and {s} ({s}) are both set and differ; unset the deprecated CMUX_SOCKET or make them equal",
+                .{ alias, name, value },
+            ) };
         }
-        return try normalized(arena, p, .env, "CMUX_SOCKET_PATH");
     }
-    if (alias) |a| return try normalized(arena, a, .env, "CMUX_SOCKET");
+    if (wmux_path) |p| return try normalized(arena, p, .env, env_names.WMUX_SOCKET_PATH);
+    if (cmux_path) |p| return try normalized(arena, p, .env, env_names.CMUX_SOCKET_PATH);
     return null;
 }
 
@@ -330,6 +337,29 @@ test "unit: cli-discovery: CMUX_SOCKET mismatch fails before connecting" {
     // --socket overrides both variables and skips the check.
     const o2 = try resolve(a, fp.platform(), .{ .explicit_socket = "y", .env = Env.fromPairs(&pairs), .channel = "stable" });
     try testing.expectEqualStrings("\\\\.\\pipe\\y", o2.explicit.path);
+}
+
+test "unit: cli-discovery: CMUX_SOCKET is checked against CMUX_SOCKET_PATH, then the WMUX twin" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    // The alias agrees with CMUX_SOCKET_PATH: no conflict; WMUX_ still wins.
+    const agree: []const Env.Pair = &.{ .{ "WMUX_SOCKET_PATH", "w" }, .{ "CMUX_SOCKET_PATH", "c" }, .{ "CMUX_SOCKET", "c" } };
+    try testing.expectEqualStrings("\\\\.\\pipe\\w", (try explicitPath(a, .{ .env = Env.fromPairs(&agree), .channel = "stable" })).?.explicit.path);
+    // The alias disagrees with CMUX_SOCKET_PATH even though it equals the twin.
+    const disagree: []const Env.Pair = &.{ .{ "WMUX_SOCKET_PATH", "w" }, .{ "CMUX_SOCKET_PATH", "c" }, .{ "CMUX_SOCKET", "w" } };
+    try testing.expectEqualStrings(
+        "CMUX_SOCKET (w) and CMUX_SOCKET_PATH (c) are both set and differ; unset the deprecated CMUX_SOCKET or make them equal",
+        (try explicitPath(a, .{ .env = Env.fromPairs(&disagree), .channel = "stable" })).?.rejected,
+    );
+    // Only the twin is set: the message names it.
+    const twin: []const Env.Pair = &.{ .{ "WMUX_SOCKET_PATH", "w" }, .{ "CMUX_SOCKET", "x" } };
+    try testing.expect(std.mem.startsWith(u8, (try explicitPath(a, .{ .env = Env.fromPairs(&twin), .channel = "stable" })).?.rejected, "CMUX_SOCKET (x) and WMUX_SOCKET_PATH (w) are both set"));
+    // Malformed values name the variable they came from.
+    const bad_twin: []const Env.Pair = &.{.{ "WMUX_SOCKET_PATH", "a\\b" }};
+    try testing.expectEqualStrings("WMUX_SOCKET_PATH is not a valid pipe name: a\\b", (try explicitPath(a, .{ .env = Env.fromPairs(&bad_twin), .channel = "stable" })).?.rejected);
+    const bad_alias: []const Env.Pair = &.{.{ "CMUX_SOCKET", "\\\\.\\pipe\\" }};
+    try testing.expectEqualStrings("CMUX_SOCKET is empty", (try explicitPath(a, .{ .env = Env.fromPairs(&bad_alias), .channel = "stable" })).?.rejected);
 }
 
 test "unit: cli-discovery: malformed explicit names are rejected" {
