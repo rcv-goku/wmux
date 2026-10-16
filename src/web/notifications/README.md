@@ -81,7 +81,9 @@ workspace title, so it is the `workspace_title` fallback) and `created_at` /
 so the markers-only state can show "N unread notifications".
 
 Actions are optimistic: the row changes at once; a failed call shows "Could
-not complete the action: <message>" and reloads the list.
+not complete the action: <message>" and reloads the list. A
+`notification.list` reply that was in flight when an action started is
+dropped (it predates the action), and the list reloads after the action.
 
 ### Events pushed by native
 

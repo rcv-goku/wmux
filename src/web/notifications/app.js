@@ -368,15 +368,20 @@ export function createApp(options) {
 
   /**
    * Runs a bridge call after an optimistic local change; a failure shows the
-   * error and reloads the authoritative list.
+   * error and reloads the authoritative list. A `notification.list` reply
+   * still in flight was taken before this action and would undo it on
+   * screen (a dismissed row coming back), so it is dropped and the list
+   * reloads once the action is done.
    */
   async function act(method, params, optimistic) {
+    state.loadSeq += 1;
     if (optimistic) {
       optimistic();
       render();
     }
     try {
       await bridge.call(method, params);
+      scheduleReload();
       return true;
     } catch (err) {
       setStatus(t("notifications.status.actionFailed", { message: errorMessage(err) }));

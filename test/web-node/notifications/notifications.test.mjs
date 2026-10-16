@@ -623,6 +623,30 @@ describe("unit: notifications app", () => {
     assert.equal(rows().length, 3, "the row comes back from the reload");
   });
 
+  test("unit: notifications: a list reply in flight during an action does not undo it", async () => {
+    const h = await startApp();
+    let release = null;
+    host.handlers.set("notification.list", async () => {
+      // Answered from the store as it was before the dismiss below.
+      const snapshot = { notifications: h.records.map((r) => ({ ...r })) };
+      if (release === null) await new Promise((resolve) => (release = resolve));
+      return snapshot;
+    });
+    host.emit("cmux.event", { name: "notification.created" });
+    await sleep(60);
+    assert.equal(typeof release, "function", "a reload is in flight");
+    await app.dismiss(uuid(1));
+    assert.equal(rowById(uuid(1)), undefined);
+    release();
+    await settle();
+    assert.equal(rowById(uuid(1)), undefined, "the stale reply does not bring the dismissed row back");
+    await sleep(60);
+    await settle();
+    assert.equal(rowById(uuid(1)), undefined);
+    assert.equal(rows().length, 2, "the list reloads after the action");
+    assert.ok(host.calls("notification.list").length >= 3);
+  });
+
   test("unit: notifications: load failure shows a status and the empty state", async () => {
     await startApp({ handlers: { "notification.list": () => { throw hostError("internal_error", "boom"); } } });
     assert.match($("ntf-status").textContent, /Could not load notifications: boom/);
