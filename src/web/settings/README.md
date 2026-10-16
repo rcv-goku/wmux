@@ -122,7 +122,9 @@ keep the current section and show "“x” is not available on Windows."
   link, schema change) cancels; a recorder never keeps capturing keys for a
   row that is gone (same for `strokes` rows). Checks: a modifier is required
   except for F-keys, mouse buttons and viewer actions ("Shortcuts must
-  include Ctrl, Alt or Shift");
+  include Ctrl, Alt or Shift"); Shift alone only with keys that type no text,
+  because the KeyRouter never matches Shift+<letter, digit, punctuation or
+  space> (ADR-8.2; "Shift+A types text; add Ctrl or Alt.");
   Win and Alt+Tab / Ctrl+Esc / Ctrl+Shift+Esc / Ctrl+Alt+Delete / Alt+Esc are
   "reserved by Windows"; Alt+Space, Alt+F4, Ctrl+Alt+Tab and F1 warn;
   numbered actions need 1-9 and store digit 1; conflicts with an action in an

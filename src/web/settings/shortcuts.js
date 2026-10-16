@@ -55,6 +55,14 @@ const WINDOWS_SHORTCUTS = Object.freeze({
   f1: "Help",
 });
 
+/** Punctuation keys of the stroke grammar (ADR-8.3); they type text. */
+const TEXT_PUNCTUATION = new Set([",", ".", "/", ";", "'", "[", "]", "\\", "-", "=", "`"]);
+
+/** Keys that type text alone or with Shift (strokes.zig `Key.isPrintable`). */
+function typesText(key) {
+  return /^[a-z0-9]$/.test(key) || key === "space" || TEXT_PUNCTUATION.has(key);
+}
+
 /** Built-in when-clause labels; other clauses show "When: <clause>". */
 const WHEN_KEYS = Object.freeze([
   "terminalFocus",
@@ -260,14 +268,19 @@ export function validateBinding(actions, action, strokes) {
     return { binding: null, errors: [t("settings.shortcuts.invalid")], warnings, conflicts: [] };
   }
   const first = parsed[0];
+  const pressed = displayStroke(formatStroke(first)); // before digit normalization
   if (action && action.numbered) {
     const last = parsed[parsed.length - 1];
     if (!/^[1-9]$/.test(last.key)) errors.push(t("settings.shortcuts.digit"));
     else last.key = "1";
   }
+  const bareOk = Boolean(action && action.bareOk);
   const hasModifier = first.ctrl || first.alt || first.shift || first.win;
-  if (!hasModifier && !/^f\d+$/.test(first.key) && !first.key.startsWith("mouse") && !(action && action.bareOk)) {
+  if (!hasModifier && !/^f\d+$/.test(first.key) && !first.key.startsWith("mouse") && !bareOk) {
     errors.push(t("settings.shortcuts.needsModifier"));
+  } else if (first.shift && !first.ctrl && !first.alt && !first.win && typesText(first.key) && !bareOk) {
+    // Shift+<text key> types text: the KeyRouter never matches it (ADR-8.2).
+    errors.push(t("settings.shortcuts.shiftText", { keys: pressed }));
   }
   const canon = parsed.map(formatStroke);
   for (const s of canon) {

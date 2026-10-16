@@ -134,6 +134,7 @@ export const STRINGS = Object.freeze({
   "settings.shortcuts.managed.policy": "Managed by your organization",
   "settings.shortcuts.invalid": "Not a valid shortcut.",
   "settings.shortcuts.needsModifier": "Shortcuts must include Ctrl, Alt or Shift",
+  "settings.shortcuts.shiftText": "{keys} types text; add Ctrl or Alt.",
   "settings.shortcuts.digit": "Use a digit from 1 through 9.",
   "settings.shortcuts.reserved": "This keystroke is reserved by Windows.",
   "settings.shortcuts.osShortcut": "{keys} is also a Windows shortcut ({name}). Windows may handle it before wmux.",

@@ -405,6 +405,24 @@ describe("unit: core-shortcuts-settings-ui: validation", () => {
     assert.deepEqual(sc.validateBinding(actions, get("newSurface"), ["shift+f9"]).errors, []);
   });
 
+  test("unit: core-shortcuts-settings-ui: Shift alone only with keys that type no text (ADR-8.2)", () => {
+    for (const s of ["shift+a", "Shift+7", "shift+/", "shift+space"]) {
+      assert.deepEqual(
+        sc.validateBinding(actions, get("newSurface"), [s]).errors,
+        [`${sc.displayStroke(s)} types text; add Ctrl or Alt.`],
+        s,
+      );
+    }
+    for (const s of ["shift+f9", "shift+tab", "shift+enter", "shift+pgdn", "ctrl+shift+a", "alt+shift+a"]) {
+      assert.deepEqual(sc.validateBinding(actions, get("newSurface"), [s]).errors, [], s);
+    }
+    assert.deepEqual(sc.validateBinding(actions, get("diffViewerScrollDown"), ["shift+g"]).errors, []);
+    // Numbered actions name the key that was pressed, not the stored digit 1.
+    assert.deepEqual(sc.validateBinding(actions, get("selectWorkspaceByNumber"), ["shift+7"]).errors, [
+      "Shift+7 types text; add Ctrl or Alt.",
+    ]);
+  });
+
   test("unit: core-shortcuts-settings-ui: numbered actions need a digit and store digit 1", () => {
     const ok = sc.validateBinding(actions, get("selectWorkspaceByNumber"), ["ctrl+shift+7"]);
     assert.equal(ok.binding, "ctrl+shift+1");
