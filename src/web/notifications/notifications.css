@@ -1,0 +1,332 @@
+/* Notifications panel: popover (owned popup) and pane tab layouts on the
+   --wmux-* tokens. `html[data-placement]` selects the layout. */
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  overflow: hidden;
+  background-color: var(--wmux-bg);
+  color: var(--wmux-fg);
+  font-family: var(--wmux-font-ui);
+  font-size: var(--wmux-font-size-ui);
+}
+
+.ntf-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--wmux-space-2);
+  padding: var(--wmux-space-3) var(--wmux-space-4);
+  border-bottom: 1px solid var(--wmux-border);
+}
+
+.ntf-title {
+  display: flex;
+  align-items: center;
+  gap: var(--wmux-space-2);
+  margin: 0;
+  font-size: 1.1em;
+  font-weight: 600;
+}
+
+.ntf-count {
+  min-width: 1.6em;
+  padding: 0 0.5em;
+  border-radius: 999px;
+  background-color: var(--wmux-accent);
+  color: var(--wmux-accent-fg);
+  font-size: 0.8em;
+  font-weight: 600;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.ntf-actions {
+  display: flex;
+  gap: var(--wmux-space-2);
+}
+
+.ntf-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wmux-space-2);
+}
+
+.ntf-chip {
+  font-size: 0.8em;
+  opacity: 0.85;
+}
+
+.ntf-status {
+  min-height: 0;
+  padding: 0 var(--wmux-space-4);
+  color: var(--wmux-fg-muted);
+  font-size: 0.9em;
+}
+
+.ntf-status:empty {
+  display: none;
+}
+
+.ntf-viewport {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.ntf-list {
+  display: flex;
+  flex-direction: column;
+}
+
+html[data-placement="tab"] .ntf-list {
+  gap: var(--wmux-space-2);
+  padding: var(--wmux-space-4);
+}
+
+.ntf-group {
+  display: flex;
+  flex-direction: column;
+}
+
+html[data-placement="tab"] .ntf-group {
+  gap: var(--wmux-space-2);
+}
+
+.ntf-group-title {
+  display: flex;
+  align-items: center;
+  gap: var(--wmux-space-2);
+  padding: var(--wmux-space-2) var(--wmux-space-4) var(--wmux-space-1);
+  color: var(--wmux-fg-muted);
+  font-size: 0.85em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+html[data-placement="tab"] .ntf-group-title {
+  padding-inline: 0;
+}
+
+.ntf-group-count {
+  padding: 0 0.45em;
+  border-radius: 999px;
+  background-color: var(--wmux-accent);
+  color: var(--wmux-accent-fg);
+  font-size: 0.85em;
+}
+
+/* Rows. Popover: dividers, unread accent bar. Pane: cards with a dot. */
+.ntf-row {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--wmux-space-3);
+  min-height: 56px;
+  padding: var(--wmux-space-2) var(--wmux-space-4);
+  border-bottom: 1px solid var(--wmux-border);
+  cursor: pointer;
+  outline-offset: -2px;
+}
+
+.ntf-row:hover {
+  background-color: var(--wmux-hover);
+}
+
+.ntf-row[aria-selected="true"] {
+  background-color: var(--wmux-hover);
+}
+
+html[data-placement="popover"] .ntf-indicator {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  width: 3px;
+  background-color: transparent;
+}
+
+html[data-placement="popover"] .ntf-row.ntf-unread .ntf-indicator {
+  background-color: var(--wmux-accent);
+}
+
+html[data-placement="tab"] .ntf-row {
+  padding: var(--wmux-space-4);
+  border: 1px solid var(--wmux-border);
+  border-radius: var(--wmux-radius);
+  background-color: var(--wmux-surface);
+}
+
+html[data-placement="tab"] .ntf-row:hover,
+html[data-placement="tab"] .ntf-row[aria-selected="true"] {
+  background-color: var(--wmux-surface-raised);
+}
+
+html[data-placement="tab"] .ntf-indicator {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  margin-top: 0.45em;
+  border: 1.5px solid var(--wmux-accent);
+  border-radius: 50%;
+}
+
+html[data-placement="tab"] .ntf-row.ntf-unread .ntf-indicator {
+  background-color: var(--wmux-accent);
+}
+
+.ntf-row-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ntf-row-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--wmux-space-2);
+}
+
+.ntf-row-primary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ntf-row-time {
+  flex: 0 0 auto;
+  color: var(--wmux-fg-muted);
+  font-size: 0.85em;
+}
+
+.ntf-row-secondary,
+.ntf-row-body,
+.ntf-row-caption {
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.ntf-row-secondary {
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ntf-row-body {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  color: var(--wmux-fg-muted);
+  white-space: pre-line;
+}
+
+html[data-placement="tab"] .ntf-row-body {
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+
+.ntf-row-caption {
+  margin-top: var(--wmux-space-1);
+  color: var(--wmux-fg-muted);
+  font-size: 0.85em;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ntf-row-clear {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 0.75em;
+  line-height: 1;
+  visibility: hidden;
+}
+
+.ntf-row:hover .ntf-row-clear,
+.ntf-row:focus-within .ntf-row-clear,
+html[data-placement="tab"] .ntf-row-clear {
+  visibility: visible;
+}
+
+/* Empty and markers-only states. */
+.ntf-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--wmux-space-2);
+  min-height: 100%;
+  padding: var(--wmux-space-6);
+  color: var(--wmux-fg-muted);
+  text-align: center;
+}
+
+.ntf-empty h2 {
+  margin: 0;
+  color: var(--wmux-fg);
+  font-size: 1.05em;
+}
+
+.ntf-empty p {
+  margin: 0;
+}
+
+.ntf-empty-icon .ntf-bell,
+.ntf-empty-icon .ntf-slash {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.ntf-empty-icon .ntf-badge-dot {
+  fill: var(--wmux-accent);
+}
+
+/* Context menu (WebView2 default menus are off; pages draw their own). */
+.ntf-menu {
+  position: fixed;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  min-width: 180px;
+  padding: var(--wmux-space-1);
+  border: 1px solid var(--wmux-border-strong);
+  border-radius: var(--wmux-radius);
+  background-color: var(--wmux-surface-raised);
+  box-shadow: var(--wmux-shadow);
+}
+
+.ntf-menu [role="menuitem"] {
+  justify-content: flex-start;
+  border: 0;
+  background: transparent;
+  text-align: start;
+}
+
+.ntf-menu [role="menuitem"]:hover,
+.ntf-menu [role="menuitem"]:focus {
+  background-color: var(--wmux-hover);
+}
+
+@media (forced-colors: active) {
+  html[data-placement="popover"] .ntf-row.ntf-unread .ntf-indicator,
+  html[data-placement="tab"] .ntf-row.ntf-unread .ntf-indicator {
+    background-color: Highlight;
+  }
+  .ntf-row[aria-selected="true"] {
+    outline: 1px solid Highlight;
+  }
+}
