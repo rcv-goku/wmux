@@ -176,6 +176,38 @@ test "unit: vault: unicode content, paths and titles survive" {
     try testing.expectEqual(ms("2026-10-15T16:00:00Z"), e.session.created_ms);
 }
 
+test "unit: vault: cwd stays the launch directory when later records cd elsewhere" {
+    const claude =
+        \\{"type":"summary","summary":"s"}
+        \\{"type":"user","sessionId":"s","cwd":"C:\\src\\wmux","gitBranch":"main","message":{"role":"user","content":"start"}}
+        \\{"type":"assistant","sessionId":"s","cwd":"C:\\src\\wmux\\sub","gitBranch":"feat","message":{"role":"assistant","content":"moved"}}
+        \\
+    ;
+    var idx = index.Index.init(testing.allocator);
+    defer idx.deinit();
+    const path = "/p/s.jsonl";
+    const e = try idx.ingest(path, "claude", .{ .size = claude.len, .mtime_ms = 1 }, 0, claude, true);
+    // The first cwd named (records without one are skipped) is where Claude
+    // Code files and resumes the session; the branch follows the latest record.
+    try testing.expectEqualStrings("C:\\src\\wmux", e.session.cwd);
+    try testing.expectEqualStrings("feat", e.session.branch);
+    try testing.expectEqualStrings("wmux", index.basename(e.session.cwd));
+    // An appended record in yet another directory does not move it.
+    const more = "{\"type\":\"user\",\"sessionId\":\"s\",\"cwd\":\"D:\\\\other\",\"message\":{\"role\":\"user\",\"content\":\"next\"}}\n";
+    const f = try idx.ingest(path, "claude", .{ .size = claude.len + more.len, .mtime_ms = 2 }, e.consumed, more, true);
+    try testing.expectEqualStrings("C:\\src\\wmux", f.session.cwd);
+    try testing.expectEqual(@as(u32, 2), f.session.turns);
+
+    // Codex: the session_meta cwd wins over a later turn_context.
+    const codex =
+        \\{"timestamp":"2026-10-02T10:00:00Z","type":"session_meta","payload":{"id":"44444444-4444-4444-8444-444444444444","cwd":"/home/dev/wmux"}}
+        \\{"timestamp":"2026-10-02T10:05:00Z","type":"turn_context","payload":{"cwd":"/tmp"}}
+        \\
+    ;
+    const c = try idx.ingest("/x/c.jsonl", "codex", .{ .size = codex.len, .mtime_ms = 1 }, 0, codex, true);
+    try testing.expectEqualStrings("/home/dev/wmux", c.session.cwd);
+}
+
 test "unit: vault: incremental ingest appends only complete lines" {
     var idx = index.Index.init(testing.allocator);
     defer idx.deinit();

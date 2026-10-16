@@ -104,7 +104,11 @@ pub const Session = struct {
     id: []u8,
     /// Transcript path as given by the caller.
     path: []u8,
+    /// Directory the agent was started in: the first cwd any record names.
+    /// Later records follow `cd`s, but Claude Code files the transcript under
+    /// the slug of the launch directory and resumes only from there.
     cwd: []u8,
+    /// Git branch of the latest record that names one.
     branch: []u8,
     /// First user prompt (one line, capped); empty when none yet.
     title: []u8,
@@ -904,7 +908,7 @@ fn apply(gpa: Allocator, s: *Session, info: LineInfo) Allocator.Error!void {
         return;
     }
     if (info.session_id) |id| if (id.len > 0) try setField(gpa, &s.id, id);
-    if (info.cwd) |c| if (c.len > 0) try setField(gpa, &s.cwd, c);
+    if (info.cwd) |c| if (c.len > 0 and s.cwd.len == 0) try setField(gpa, &s.cwd, c);
     if (info.branch) |b| if (b.len > 0) try setField(gpa, &s.branch, b);
     if (info.timestamp_ms) |ts| {
         if (s.created_ms == 0 or ts < s.created_ms) s.created_ms = ts;
