@@ -19,8 +19,8 @@
 //! pane be ringed" decision lives in Window.updateAttentionRings.
 
 const std = @import("std");
-const w32 = @import("platform/win32.zig");
-const Surface = @import("Surface.zig");
+const w32 = @import("../../platform/win32.zig");
+const Surface = @import("../../Surface.zig");
 const testing = std.testing;
 
 /// Ring border thickness in unscaled pixels (DPI-scaled at use time).

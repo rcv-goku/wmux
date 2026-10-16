@@ -15,11 +15,11 @@ const BrowserPane = @This();
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const App = @import("App.zig");
-const Pane = @import("Pane.zig");
-const Window = @import("Window.zig");
-const w32 = @import("platform/win32.zig");
-const wv2 = @import("platform/webview2.zig");
+const App = @import("../App.zig");
+const Tab = @import("../model/Tab.zig");
+const Window = @import("../ui/Window.zig");
+const w32 = @import("../platform/win32.zig");
+const wv2 = @import("../platform/webview2.zig");
 
 const log = std.log.scoped(.win32);
 
@@ -63,13 +63,13 @@ parent_window: *Window,
 /// window before create() finishes initializing the struct.
 ipc_id: u32 = 0,
 
-/// The Pane wrapping this browser in its tab's SplitTree. Set by
-/// Pane.createBrowser immediately after create(); valid until the
-/// pane unrefs to zero (which destroys us). Null in the window
+/// The Tab wrapping this browser (its tab bar slot). Set by
+/// Tab.createBrowser immediately after create(); valid until the
+/// tab unrefs to zero (which destroys us). Null in the window
 /// between create() (which publishes us in the host HWND's
-/// GWLP_USERDATA) and Pane.createBrowser — messages arriving in that
+/// GWLP_USERDATA) and Tab.createBrowser — messages arriving in that
 /// gap must not dereference it.
-pane: ?*Pane = null,
+tab: ?*Tab = null,
 
 /// The WS_CHILD host window (GhosttyBrowserHost class).
 host_hwnd: ?w32.HWND = null,
@@ -206,9 +206,9 @@ pub fn create(alloc: Allocator, app: *App, parent: *Window) !*BrowserPane {
 /// or controller completion).
 pub fn startCreation(self: *BrowserPane) void {
     const alloc = self.app.core_app.alloc;
-    const pane = self.pane orelse return;
+    const tab = self.tab orelse return;
     // Pane.ref never fails (the allocator parameter is unused).
-    _ = pane.ref(alloc) catch unreachable;
+    _ = tab.ref(alloc) catch unreachable;
     self.app.requestWebView2Env(self);
 }
 
@@ -249,9 +249,9 @@ pub fn destroy(self: *BrowserPane, alloc: Allocator) void {
 /// continuation, which carries it to onControllerCreated.
 pub fn onEnvironment(self: *BrowserPane, env_opt: ?*wv2.ICoreWebView2Environment) void {
     const alloc = self.app.core_app.alloc;
-    const pane = self.pane orelse return;
+    const tab = self.tab orelse return;
     if (self.state == .closing) {
-        pane.unref(alloc);
+        tab.unref(alloc);
         return;
     }
     // The pane was closed out of every tab while environment creation
@@ -260,31 +260,31 @@ pub fn onEnvironment(self: *BrowserPane, env_opt: ?*wv2.ICoreWebView2Environment
     // of building a controller for a zombie host. parent_window is
     // valid whenever state != .closing (the host's WM_DESTROY flags
     // closing before the window can go away).
-    if (self.parent_window.findLoc(pane) == null) {
-        pane.unref(alloc);
+    if (self.parent_window.findLoc(tab) == null) {
+        tab.unref(alloc);
         return;
     }
     const env = env_opt orelse {
         log.warn("browser pane: WebView2 environment unavailable", .{});
         self.setFailed();
-        pane.unref(alloc);
+        tab.unref(alloc);
         return;
     };
     const host = self.host_hwnd orelse {
-        pane.unref(alloc);
+        tab.unref(alloc);
         return;
     };
     const handler = ControllerHandler.create(alloc, self, onControllerCreated) catch {
         log.warn("browser pane: oom creating controller handler", .{});
         self.setFailed();
-        pane.unref(alloc);
+        tab.unref(alloc);
         return;
     };
     env.createController(host, handler) catch {
         handler.unref();
         log.warn("browser pane: CreateCoreWebView2Controller failed", .{});
         self.setFailed();
-        pane.unref(alloc);
+        tab.unref(alloc);
         return;
     };
     handler.unref();
@@ -296,14 +296,14 @@ fn onControllerCreated(
     controller_opt: ?*wv2.ICoreWebView2Controller,
 ) void {
     const alloc = self.app.core_app.alloc;
-    const pane = self.pane orelse {
+    const tab = self.tab orelse {
         if (controller_opt) |c| c.close() catch {};
         return;
     };
     // End of the creation chain: drop the in-flight ref. This may free
     // self (and the pane) when the pane closed during creation, so it
     // must be the very last thing that runs.
-    defer pane.unref(alloc);
+    defer tab.unref(alloc);
 
     const controller = controller_opt orelse {
         log.warn("browser pane: controller creation failed hr=0x{x:0>8}", .{
@@ -319,7 +319,7 @@ fn onControllerCreated(
         controller.close() catch {};
         return;
     }
-    if (self.parent_window.findLoc(pane) == null) {
+    if (self.parent_window.findLoc(tab) == null) {
         // The tab closed while controller creation was in flight; the
         // host HWND survived (the in-flight ref kept the pane alive)
         // so state is still .creating. Don't wire up a zombie: shut
@@ -375,14 +375,14 @@ fn onGotFocus(self: *BrowserPane, sender: ?*wv2.ICoreWebView2Controller, args: ?
     _ = sender;
     _ = args;
     if (self.state == .closing) return;
-    const pane = self.pane orelse return;
+    const tab = self.tab orelse return;
     const win = self.parent_window;
     if (win.closing) return;
     // Only record the pane as active for the tab that actually owns
     // it; a stale focus event must never plant a dangling pointer in
     // another tab's slot.
-    const loc = win.findLoc(pane) orelse return;
-    loc.ws.focused_container = loc.container;
+    const loc = win.findLoc(tab) orelse return;
+    loc.ws.focused_pane = loc.pane;
     win.repaintDividers();
 }
 
@@ -439,7 +439,7 @@ fn onNavigationCompleted(
 fn onDocumentTitleChanged(self: *BrowserPane, sender: ?*wv2.ICoreWebView2, args: ?*wv2.IUnknown) void {
     _ = args; // Always null per the IDL.
     if (self.state == .closing) return;
-    const pane = self.pane orelse return;
+    const tab = self.tab orelse return;
     const webview = sender orelse (self.webview orelse return);
     const title16 = webview.getDocumentTitle() catch return;
     defer wv2.CoTaskMemFree(title16);
@@ -451,7 +451,7 @@ fn onDocumentTitleChanged(self: *BrowserPane, sender: ?*wv2.ICoreWebView2, args:
     const span = capUtf16(std.mem.span(title16), (self.title_buf.len - 1) / 3);
     const len = std.unicode.utf16LeToUtf8(self.title_buf[0 .. self.title_buf.len - 1], span) catch return;
     self.title_buf[len] = 0;
-    self.parent_window.onPaneTitleChanged(pane, self.title_buf[0..len :0]);
+    self.parent_window.onPaneTitleChanged(tab, self.title_buf[0..len :0]);
 }
 
 /// Cap a UTF-16 string at `max_units` code units without leaving a
@@ -1200,9 +1200,9 @@ pub fn hostWndProc(
                 // Same guard as onGotFocus: only write the slot of the
                 // tab that owns this pane (a zombie host or a pane not
                 // yet in a tree must not be recorded anywhere).
-                if (self.pane) |pane| {
-                    if (win.findLoc(pane)) |loc| {
-                        loc.ws.focused_container = loc.container;
+                if (self.tab) |tab| {
+                    if (win.findLoc(tab)) |loc| {
+                        loc.ws.focused_pane = loc.pane;
                     }
                 }
                 win.repaintDividers();
@@ -1278,12 +1278,12 @@ pub fn hostWndProc(
             // Close only when both the press and the release landed on
             // the button, and the window isn't already tearing down.
             if (pressed and self.pointInClose(x, y) and !self.parent_window.closing) {
-                if (self.pane) |pane| {
+                if (self.tab) |tab| {
                     // closeSplitPane synchronously destroys this host
-                    // HWND and frees `self` (via Pane.unref ->
+                    // HWND and frees `self` (via Tab.unref ->
                     // BrowserPane.destroy). Nothing below may touch
                     // `self` or `hwnd` after this call.
-                    self.parent_window.closeSplitPane(pane);
+                    self.parent_window.closeSplitPane(tab);
                     return 0;
                 }
             }
@@ -1292,8 +1292,8 @@ pub fn hostWndProc(
 
         WM_BROWSER_CLOSE => {
             if (!self.parent_window.closing) {
-                if (self.pane) |pane| {
-                    self.parent_window.closeSplitPane(pane);
+                if (self.tab) |tab| {
+                    self.parent_window.closeSplitPane(tab);
                     return 0;
                 }
             }

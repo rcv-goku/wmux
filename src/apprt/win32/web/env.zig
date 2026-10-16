@@ -10,7 +10,7 @@
 const std = @import("std");
 
 const App = @import("../App.zig");
-const BrowserPane = @import("../BrowserPane.zig");
+const BrowserPane = @import("BrowserPane.zig");
 const paths = @import("../app/paths.zig");
 const wv2 = @import("../platform/webview2.zig");
 

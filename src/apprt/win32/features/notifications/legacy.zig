@@ -69,13 +69,13 @@ fn ipcNotify(self: *App, req: *ipc.Request) anyerror!void {
 
     const target = try targets.ipcResolveWorkspace(self, req);
     const container = if (ipcArgU32(req, "pane")) |p|
-        target.ws.containerAtIndex(p) orelse return IpcError.UnknownPane
+        target.ws.paneAt(p) orelse return IpcError.UnknownPane
     else
-        target.ws.focusedContainerOrFirst() orelse return IpcError.UnknownTab;
-    const tab_idx: usize = if (ipcArgU32(req, "tab")) |t| t else container.active_tab;
-    if (tab_idx >= container.tab_count) return IpcError.UnknownTab;
+        target.ws.focusedPaneOrFirst() orelse return IpcError.UnknownTab;
+    const tab_idx: usize = if (ipcArgU32(req, "tab")) |t| t else container.selected;
+    if (tab_idx >= container.tabCount()) return IpcError.UnknownTab;
 
-    const pane = container.tabs[tab_idx];
+    const pane = container.tabs.items[tab_idx];
     const surface = pane.surface() orelse return IpcError.NotATerminal;
     target.window.setAttentionForSurface(surface, on);
     server.sendOk(req.id, null) catch {};

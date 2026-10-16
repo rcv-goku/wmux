@@ -13,12 +13,13 @@ const CoreSurface = @import("../../Surface.zig");
 const internal_os = @import("../../os/main.zig");
 
 const App = @import("App.zig");
-const Pane = @import("Pane.zig");
-const Window = @import("Window.zig");
+const Tab = @import("model/Tab.zig");
+const Window = @import("ui/Window.zig");
 const app_foreground = @import("app/foreground.zig");
 const app_modal = @import("app/modal.zig");
+const menus = @import("ui/menus.zig");
 const w32 = @import("platform/win32.zig");
-const Scrollbar = @import("Scrollbar.zig").Scrollbar;
+const Scrollbar = @import("ui/overlays/Scrollbar.zig").Scrollbar;
 
 const log = std.log.scoped(.win32);
 
@@ -159,13 +160,13 @@ palette_count: u16 = 0,
 /// Indices into palette_entries for the current filter.
 palette_filtered: [palette_entries.len]u16 = undefined,
 
-/// The Pane that wraps this surface in its tab's SplitTree. Set by
-/// Pane.create immediately after Surface.init; valid for the surface's
-/// lifetime (the pane unrefs to zero only when it destroys us). Null
+/// The Tab that wraps this surface (its tab bar slot). Set by
+/// Tab.create immediately after Surface.init; valid for the surface's
+/// lifetime (the tab unrefs to zero only when it destroys us). Null
 /// in the window between Surface.init (which publishes us in the
-/// HWND's GWLP_USERDATA) and Pane.create — message handlers running
+/// HWND's GWLP_USERDATA) and Tab.create — message handlers running
 /// in that gap must not dereference it.
-pane: ?*Pane = null,
+tab: ?*Tab = null,
 
 title: ?[:0]const u8 = null,
 
@@ -1326,25 +1327,25 @@ pub fn paintPalette(self: *Surface, hwnd: w32.HWND) void {
     }
 }
 
-/// Build the "Close Pane" context-menu label, appending a tab-separated
-/// keybind hint (e.g. "Close Pane\tCtrl+Shift+W") when `trigger` is set.
-/// Win32 renders the text after the tab right-aligned as the accelerator.
-/// Returns a NUL-terminated UTF-16 slice backed by `buf`.
-fn closePaneLabel(trigger: ?input.Binding.Trigger, buf: []u16) [:0]const u16 {
-    const base = std.unicode.utf8ToUtf16LeStringLiteral("Close Pane");
+/// Build the "Close Pane" context-menu label (UTF-8), appending a
+/// tab-separated keybind hint (e.g. "Close Pane\tCtrl+Shift+W") when
+/// `trigger` is set. Win32 renders the text after the tab right-aligned as
+/// the accelerator. Returns a slice of `buf`.
+fn closePaneLabel(trigger: ?input.Binding.Trigger, buf: []u8) []const u8 {
+    const base = "Close Pane";
     @memcpy(buf[0..base.len], base);
     var len: usize = base.len;
     if (trigger) |t| {
         var kb_buf: [48]u8 = undefined;
         const kb_len = formatTrigger(t, &kb_buf);
-        if (kb_len > 0 and len + 1 + kb_len < buf.len) {
+        if (kb_len > 0 and len + 1 + kb_len <= buf.len) {
             buf[len] = '\t';
             len += 1;
-            len += std.unicode.utf8ToUtf16Le(buf[len..], kb_buf[0..kb_len]) catch 0;
+            @memcpy(buf[len..][0..kb_len], kb_buf[0..kb_len]);
+            len += kb_len;
         }
     }
-    buf[len] = 0;
-    return buf[0..len :0];
+    return buf[0..len];
 }
 
 /// Format a keybinding trigger as a human-readable string (e.g. "Ctrl+Shift+T").
@@ -1882,106 +1883,90 @@ pub fn handleMouseButton(
     }
 }
 
-// Terminal context menu command IDs (tab bar context menu uses 9001+).
-// 9107 (Open Browser Split) was retired in favor of the "Split ...
-// With..." backend picker entries below; Browser lives in that menu.
-const CTX_COPY: usize = 9101;
-const CTX_PASTE: usize = 9102;
-const CTX_SELECT_ALL: usize = 9103;
-const CTX_SPLIT_RIGHT: usize = 9104;
-const CTX_SPLIT_DOWN: usize = 9105;
-const CTX_NEW_TAB: usize = 9106;
-// "Split ... With..." open the window backend picker (whose own IDs
-// are 9300-9320) targeting a split; allocated past 9320 to keep the
-// documented 9320+ range contiguous.
-const CTX_SPLIT_RIGHT_WITH: usize = 9321;
-const CTX_SPLIT_DOWN_WITH: usize = 9322;
-// Close this pane (or the whole tab if it's the only pane). 9400+ is the
-// reserved range for tab-UI feature work (Stage 2).
-const CTX_CLOSE_PANE: usize = 9400;
-
-/// Show the terminal context menu at the screen cursor and run the
-/// chosen command through the core binding-action path (the same
-/// mechanism the command palette uses).
-fn showContextMenu(self: *Surface) void {
-    if (self.parent_window.closing) return;
-    const hwnd = self.hwnd orelse return;
-
-    const menu = w32.CreatePopupMenu() orelse return;
-    defer _ = w32.DestroyMenu(menu);
-
-    const L = std.unicode.utf8ToUtf16LeStringLiteral;
-    const copy_flags: u32 = if (self.core_surface.hasSelection()) w32.MF_STRING else w32.MF_GRAYED;
-    _ = w32.AppendMenuW(menu, copy_flags, CTX_COPY, L("Copy"));
-    _ = w32.AppendMenuW(menu, w32.MF_STRING, CTX_PASTE, L("Paste"));
-    _ = w32.AppendMenuW(menu, w32.MF_STRING, CTX_SELECT_ALL, L("Select All"));
-    _ = w32.AppendMenuW(menu, w32.MF_SEPARATOR, 0, null);
-    _ = w32.AppendMenuW(menu, w32.MF_STRING, CTX_SPLIT_RIGHT, L("Split Right"));
-    _ = w32.AppendMenuW(menu, w32.MF_STRING, CTX_SPLIT_DOWN, L("Split Down"));
+/// The terminal context menu items (ARCHITECTURE.md ADR-1.6, site
+/// `terminal`), contributed to ui/menus.zig. Each runs through the core
+/// binding-action path (the same mechanism the command palette uses) on
+/// the right-clicked surface, re-resolved after the menu's modal loop.
+pub const menu_items = [_]menus.MenuItem{
+    .{ .site = .terminal, .group = 0, .order = 0, .title = "Copy", .callback = menuBinding, .arg = @intFromEnum(MenuBinding.copy), .enabled = menuHasSelection },
+    .{ .site = .terminal, .group = 0, .order = 1, .title = "Paste", .callback = menuBinding, .arg = @intFromEnum(MenuBinding.paste) },
+    .{ .site = .terminal, .group = 0, .order = 2, .title = "Select All", .callback = menuBinding, .arg = @intFromEnum(MenuBinding.select_all) },
+    .{ .site = .terminal, .group = 1, .order = 0, .title = "Split Right", .callback = menuBinding, .arg = @intFromEnum(MenuBinding.split_right) },
+    .{ .site = .terminal, .group = 1, .order = 1, .title = "Split Down", .callback = menuBinding, .arg = @intFromEnum(MenuBinding.split_down) },
     // The backend picker refuses quick terminals (showBackendMenu's
     // guard); gray its entries so that isn't a silent no-op.
-    const with_flags: u32 = if (self.parent_window.is_quick_terminal) w32.MF_GRAYED else w32.MF_STRING;
-    _ = w32.AppendMenuW(menu, with_flags, CTX_SPLIT_RIGHT_WITH, L("Split Right With..."));
-    _ = w32.AppendMenuW(menu, with_flags, CTX_SPLIT_DOWN_WITH, L("Split Down With..."));
-    _ = w32.AppendMenuW(menu, w32.MF_SEPARATOR, 0, null);
-    _ = w32.AppendMenuW(menu, w32.MF_STRING, CTX_NEW_TAB, L("New Tab"));
-    _ = w32.AppendMenuW(menu, w32.MF_SEPARATOR, 0, null);
+    .{ .site = .terminal, .group = 1, .order = 2, .title = "Split Right With...", .callback = menuSplitWith, .arg = 0, .enabled = menuNotQuickTerminal },
+    .{ .site = .terminal, .group = 1, .order = 3, .title = "Split Down With...", .callback = menuSplitWith, .arg = 1, .enabled = menuNotQuickTerminal },
+    .{ .site = .terminal, .group = 2, .order = 0, .title = "New Tab", .callback = menuBinding, .arg = @intFromEnum(MenuBinding.new_tab) },
+    // "Close Pane" closes this pane, or the whole tab when it is the only
+    // pane (the close-surface semantics), labeled with the close_surface
+    // keybind when one is configured (e.g. "Close Pane\tCtrl+Shift+W").
+    .{ .site = .terminal, .group = 3, .order = 0, .title = "Close Pane", .label = menuClosePaneLabel, .callback = menuBinding, .arg = @intFromEnum(MenuBinding.close_pane) },
+};
 
-    // "Close Pane" — closes this pane via closeSplitSurface, which falls
-    // back to closing the whole tab when this is the only pane (matching
-    // the existing close-surface semantics). Append the close_surface
-    // keybind as a hint when one is configured (e.g. "Close Pane\tCtrl+Shift+W").
-    var close_label_buf: [64]u16 = undefined;
-    const close_label = closePaneLabel(self.app.config.keybind.set.getTrigger(.close_surface), &close_label_buf);
-    _ = w32.AppendMenuW(menu, w32.MF_STRING, CTX_CLOSE_PANE, close_label);
+/// The core binding actions the terminal menu runs.
+const MenuBinding = enum(usize) {
+    copy,
+    paste,
+    select_all,
+    split_right,
+    split_down,
+    new_tab,
+    close_pane,
 
-    var pt: w32.POINT = undefined;
-    if (w32.GetCursorPos_(&pt) == 0) return;
-
-    const cmd = w32.TrackPopupMenuEx(
-        menu,
-        w32.TPM_LEFTALIGN | w32.TPM_TOPALIGN | w32.TPM_RETURNCMD,
-        pt.x,
-        pt.y,
-        hwnd,
-        null,
-    );
-
-    // The menu ran a modal message loop; the window may have started
-    // closing (or the surface shutting down) while it was up.
-    if (self.parent_window.closing or !self.core_surface_ready) return;
-
-    // "Split ... With..." opens the backend picker as a follow-up
-    // menu at the same cursor position, targeting a split. The picker
-    // takes window client coordinates.
-    const cmd_id: usize = @intCast(cmd);
-    if (cmd_id == CTX_SPLIT_RIGHT_WITH or cmd_id == CTX_SPLIT_DOWN_WITH) {
-        const win = self.parent_window;
-        var client_pt = pt;
-        if (win.hwnd) |wh| _ = w32.ScreenToClient(wh, &client_pt);
-        win.showBackendMenu(client_pt.x, client_pt.y, .{
-            .split = if (cmd_id == CTX_SPLIT_RIGHT_WITH) .right else .down,
-        });
-        return;
+    fn action(self: MenuBinding) input.Binding.Action {
+        return switch (self) {
+            .copy => .{ .copy_to_clipboard = .mixed },
+            .paste => .paste_from_clipboard,
+            .select_all => .select_all,
+            .split_right => .{ .new_split = .right },
+            .split_down => .{ .new_split = .down },
+            .new_tab => .new_tab,
+            // Routed through the binding action (not closeSplitSurface
+            // directly): close_surface posts WM_CLOSE, deferring the
+            // actual teardown out of the menu's modal loop so the surface
+            // is never destroyed while still on the stack here.
+            .close_pane => .close_surface,
+        };
     }
+};
 
-    const ba: input.Binding.Action = switch (cmd_id) {
-        CTX_COPY => .{ .copy_to_clipboard = .mixed },
-        CTX_PASTE => .paste_from_clipboard,
-        CTX_SELECT_ALL => .select_all,
-        CTX_SPLIT_RIGHT => .{ .new_split = .right },
-        CTX_SPLIT_DOWN => .{ .new_split = .down },
-        CTX_NEW_TAB => .new_tab,
-        // Routed through the binding action (not closeSplitSurface
-        // directly): close_surface posts WM_CLOSE, deferring the actual
-        // teardown out of this menu's modal loop so we never destroy
-        // `self` while still on the stack here.
-        CTX_CLOSE_PANE => .close_surface,
-        else => return,
-    };
-    _ = self.core_surface.performBindingAction(ba) catch |err| {
+fn menuHasSelection(ctx: *const menus.Context) bool {
+    const self = ctx.surface orelse return false;
+    return self.core_surface.hasSelection();
+}
+
+fn menuNotQuickTerminal(ctx: *const menus.Context) bool {
+    return !ctx.window.is_quick_terminal;
+}
+
+fn menuClosePaneLabel(ctx: *const menus.Context, buf: []u8) []const u8 {
+    const self = ctx.surface orelse return "Close Pane";
+    return closePaneLabel(self.app.config.keybind.set.getTrigger(.close_surface), buf);
+}
+
+fn menuBinding(ctx: *menus.Context, arg: usize) void {
+    const self = ctx.surface orelse return;
+    const binding: MenuBinding = @enumFromInt(arg);
+    _ = self.core_surface.performBindingAction(binding.action()) catch |err| {
         log.err("context menu action error: {}", .{err});
     };
+}
+
+/// "Split ... With..." opens the backend picker as a follow-up menu at
+/// the same point, targeting a split (arg 0 = right, 1 = down).
+fn menuSplitWith(ctx: *menus.Context, arg: usize) void {
+    menus.showBackendMenu(ctx.window, ctx.client_x, ctx.client_y, .{
+        .split = if (arg == 0) .right else .down,
+    });
+}
+
+/// Show the terminal context menu at the screen cursor.
+fn showContextMenu(self: *Surface) void {
+    if (self.parent_window.closing) return;
+    var pt: w32.POINT = undefined;
+    if (w32.GetCursorPos_(&pt) == 0) return;
+    menus.showTerminalMenu(self, pt);
 }
 
 /// Handle WM_MOUSEMOVE.

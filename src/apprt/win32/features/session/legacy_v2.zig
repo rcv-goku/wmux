@@ -1,6 +1,6 @@
 //! Persisted session layout for the Win32 runtime (tmux-resurrect style).
 //!
-//! Saves the entire workspace/PaneContainer/tab layout with working
+//! Saves the entire workspace/Pane/tab layout with working
 //! directories to `%LOCALAPPDATA%\ghostty\session-state.json` so it can
 //! be restored on restart.
 //!
@@ -20,15 +20,16 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const App = @import("App.zig");
-const Pane = @import("Pane.zig");
-const PaneContainer = @import("PaneContainer.zig");
-const Surface = @import("Surface.zig");
-const Window = @import("Window.zig");
-const SplitTree = @import("../../datastruct/split_tree.zig").SplitTree;
-const app_paths = @import("app/paths.zig");
-const RuntimeEnv = @import("app/runtime_env.zig").RuntimeEnv;
-const w32 = @import("platform/win32.zig");
+const App = @import("../../App.zig");
+const Pane = @import("../../model/Pane.zig");
+const Window = @import("../../ui/Window.zig");
+const ops_pane = @import("../../model/ops/pane.zig");
+const ops_surface = @import("../../model/ops/surface.zig");
+const ops_window = @import("../../model/ops/window.zig");
+const SplitTree = @import("../../../../datastruct/split_tree.zig").SplitTree;
+const app_paths = @import("../../app/paths.zig");
+const RuntimeEnv = @import("../../app/runtime_env.zig").RuntimeEnv;
+const w32 = @import("../../platform/win32.zig");
 
 const log = std.log.scoped(.win32);
 
@@ -50,7 +51,7 @@ pub const TabData = struct {
     cwd: ?[]const u8 = null,
 };
 
-/// A serializable PaneContainer snapshot.
+/// A serializable Pane snapshot.
 pub const PaneContainerData = struct {
     tabs: []TabData = &.{},
     active_tab: usize = 0,
@@ -89,22 +90,25 @@ pub const SessionData = struct {
 
 // ── Save ────────────────────────────────────────────────────────────
 
-/// Build a PaneContainerData from a live PaneContainer.
-fn containerDataFrom(a: Allocator, container: *PaneContainer) !PaneContainerData {
-    const tab_count = container.tab_count;
-    const tabs = try a.alloc(TabData, tab_count);
+/// A title or name as it is written to the session file: null when empty
+/// or not valid UTF-8 (a rename holding an unpaired surrogate), as when
+/// the former UTF-16 slots failed to transcode.
+fn sessionText(text: ?[]const u8) ?[]const u8 {
+    const t = text orelse return null;
+    if (t.len == 0 or !std.unicode.utf8ValidateSlice(t)) return null;
+    return t;
+}
 
-    for (0..tab_count) |ti| {
+/// Build a PaneContainerData from a live Pane.
+fn containerDataFrom(a: Allocator, container: *const Pane) !PaneContainerData {
+    const tabs = try a.alloc(TabData, container.tabCount());
+
+    for (container.tabs.items, 0..) |tab, ti| {
         var td: TabData = .{};
 
-        const title_len = container.tab_title_lens[ti];
-        if (title_len > 0) {
-            const utf16 = container.tab_titles[ti][0..title_len];
-            td.title = std.unicode.utf16LeToUtf8Alloc(a, utf16) catch null;
-        }
+        td.title = sessionText(tab.title.text());
 
-        const pane = container.tabs[ti];
-        switch (pane.content) {
+        switch (tab.content) {
             .terminal => |surface| {
                 td.kind = .terminal;
                 if (surface.core_surface_ready) {
@@ -114,6 +118,7 @@ fn containerDataFrom(a: Allocator, container: *PaneContainer) !PaneContainerData
             .browser => {
                 td.kind = .browser;
             },
+            .placeholder => {},
         }
 
         tabs[ti] = td;
@@ -121,15 +126,15 @@ fn containerDataFrom(a: Allocator, container: *PaneContainer) !PaneContainerData
 
     return .{
         .tabs = tabs,
-        .active_tab = container.active_tab,
+        .active_tab = container.selected,
     };
 }
 
 /// Recursively serialize a SplitTree node into a SplitNodeData.
 fn serializeNode(
     a: Allocator,
-    tree: SplitTree(PaneContainer),
-    handle: SplitTree(PaneContainer).Node.Handle,
+    tree: SplitTree(Pane),
+    handle: SplitTree(Pane).Node.Handle,
 ) !SplitNodeData {
     switch (tree.nodes[handle.idx()]) {
         .leaf => |container| {
@@ -160,8 +165,8 @@ fn serializeNode(
 /// Find the index of the focused container within the tree's leaf
 /// iteration order, for serializing `active_container`.
 fn focusedContainerIndex(ws: *const Window.Workspace) usize {
-    const focused = ws.focused_container orelse return 0;
-    var it = ws.split_tree.iterator();
+    const focused = ws.focused_pane orelse return 0;
+    var it = ws.tree.iterator();
     var idx: usize = 0;
     while (it.next()) |entry| {
         if (entry.view.eql(focused)) return idx;
@@ -176,24 +181,19 @@ pub fn save(alloc: Allocator, window: *Window) !void {
     defer arena.deinit();
     const a = arena.allocator();
 
-    const ws_count = window.workspace_count;
-    const ws_data = try a.alloc(WorkspaceData, ws_count);
+    const ws_data = try a.alloc(WorkspaceData, window.workspaces.items.len);
 
-    for (0..ws_count) |wi| {
-        const ws = &window.workspaces[wi];
+    for (window.workspaces.items, 0..) |ws, wi| {
         var wsd: WorkspaceData = .{
             .active_container = focusedContainerIndex(ws),
         };
 
-        if (ws.name_len > 0) {
-            const utf16 = ws.name[0..ws.name_len];
-            wsd.name = std.unicode.utf16LeToUtf8Alloc(a, utf16) catch null;
-        }
+        wsd.name = sessionText(ws.name());
 
-        wsd.working_dir = ws.working_dir;
+        wsd.working_dir = ws.cwd;
 
-        if (!ws.split_tree.isEmpty()) {
-            wsd.split_tree = try serializeNode(a, ws.split_tree, .root);
+        if (!ws.tree.isEmpty()) {
+            wsd.split_tree = try serializeNode(a, ws.tree, .root);
         }
 
         ws_data[wi] = wsd;
@@ -201,7 +201,7 @@ pub fn save(alloc: Allocator, window: *Window) !void {
 
     const session: SessionData = .{
         .workspaces = ws_data,
-        .active_workspace = window.active_workspace,
+        .active_workspace = window.activeIndex(),
     };
 
     var aw: std.Io.Writer.Allocating = .init(a);
@@ -223,8 +223,8 @@ pub fn save(alloc: Allocator, window: *Window) !void {
 /// Restore a session from disk into the app. Creates workspaces and tabs
 /// to match the saved layout.
 ///
-/// Supports both v2 (split_tree of PaneContainers) and v1 (flat tabs[])
-/// formats — v1 files are migrated to one PaneContainer per workspace.
+/// Supports both v2 (split_tree of Panes) and v1 (flat tabs[])
+/// formats — v1 files are migrated to one Pane per workspace.
 pub fn restore(alloc: Allocator, app: *App) !void {
     var arena = std.heap.ArenaAllocator.init(alloc);
     defer arena.deinit();
@@ -260,20 +260,17 @@ pub fn restore(alloc: Allocator, app: *App) !void {
             else => continue,
         };
 
-        if (ws_idx > 0) {
-            if (window.workspace_count >= window.workspaces.len) break;
-            window.workspaces[window.workspace_count] = .{};
-            window.workspace_count += 1;
-        }
-
-        const target_ws_idx: usize = if (ws_idx == 0) 0 else window.workspace_count - 1;
+        const target_ws_idx: usize = if (ws_idx == 0)
+            0
+        else
+            ops_window.appendWorkspace(window) orelse break;
 
         if (jsonString(ws_obj.get("name"))) |name| {
             window.setWorkspaceName(target_ws_idx, name);
         }
 
         if (jsonString(ws_obj.get("working_dir"))) |wd| {
-            window.workspaces[target_ws_idx].setWorkingDir(alloc, wd) catch {};
+            window.workspaces.items[target_ws_idx].setCwd(alloc, wd) catch {};
         }
 
         if (version >= 2) {
@@ -283,7 +280,7 @@ pub fn restore(alloc: Allocator, app: *App) !void {
         }
     }
 
-    if (active_ws < window.workspace_count) {
+    if (active_ws < window.workspaces.items.len) {
         window.selectWorkspace(active_ws);
     }
 
@@ -291,7 +288,7 @@ pub fn restore(alloc: Allocator, app: *App) !void {
 }
 
 /// Restore a v2 workspace: parse the split_tree and recursively rebuild
-/// the PaneContainer hierarchy with tabs. Builds the SplitTree bottom-up
+/// the Pane hierarchy with tabs. Builds the SplitTree bottom-up
 /// to faithfully reconstruct the exact tree topology that was saved.
 fn restoreV2Workspace(
     alloc: Allocator,
@@ -305,32 +302,32 @@ fn restoreV2Workspace(
         else => return,
     };
 
-    const ws = &window.workspaces[ws_idx];
-    const is_bg = ws_idx != window.active_workspace;
+    const ws = window.workspaces.items[ws_idx];
+    const is_bg = ws_idx != window.activeIndex();
 
     // Recursively build the SplitTree from the serialized JSON.
     const tree = buildSplitTree(alloc, window, ws, is_bg, tree_obj) orelse return;
 
-    // Replace any existing tree on the workspace.
-    if (!ws.split_tree.isEmpty()) {
-        ws.split_tree.deinit();
-    }
-    ws.split_tree = tree;
+    // Replace any existing tree on the workspace. Drop the focused pane
+    // first: it belongs to the old tree, which installTree frees (and
+    // focus messages sent while it is torn down must not reach it).
+    ws.focused_pane = null;
+    ops_pane.installTree(ws, tree);
 
     // Set the focused container.
     const active_container = jsonUsize(ws_obj.get("active_container")) orelse 0;
-    if (ws.containerAtIndex(active_container)) |container| {
-        ws.focused_container = container;
+    if (ws.paneAt(active_container)) |container| {
+        ws.focused_pane = container;
     } else {
-        var it = ws.split_tree.iterator();
+        var it = ws.tree.iterator();
         if (it.next()) |entry| {
-            ws.focused_container = entry.view;
+            ws.focused_pane = entry.view;
         }
     }
 }
 
 /// Recursively build a SplitTree from a JSON node. For leaf nodes,
-/// creates a PaneContainer with tabs and returns a single-leaf tree.
+/// creates a Pane with tabs and returns a single-leaf tree.
 /// For split nodes, recursively builds left and right subtrees and
 /// combines them via SplitTree.split to preserve the exact topology.
 fn buildSplitTree(
@@ -339,7 +336,7 @@ fn buildSplitTree(
     ws: *Window.Workspace,
     is_bg: bool,
     node_obj: std.json.ObjectMap,
-) ?SplitTree(PaneContainer) {
+) ?SplitTree(Pane) {
     const node_type = jsonString(node_obj.get("node_type")) orelse return null;
 
     if (std.mem.eql(u8, node_type, "leaf")) {
@@ -357,7 +354,7 @@ fn buildLeafTree(
     ws: *Window.Workspace,
     is_bg: bool,
     node_obj: std.json.ObjectMap,
-) ?SplitTree(PaneContainer) {
+) ?SplitTree(Pane) {
     const container_val = node_obj.get("container") orelse return null;
     const container_obj = switch (container_val) {
         .object => |o| o,
@@ -371,11 +368,11 @@ fn buildLeafTree(
     };
     if (tabs_arr.items.len == 0) return null;
 
-    // Create a PaneContainer and populate its tabs.
-    const container = PaneContainer.create(alloc) catch return null;
+    // Create a Pane and populate its tabs (no tab cap since W0-A2).
+    const container = Pane.create(alloc) catch return null;
+    container.workspace = ws;
 
-    for (tabs_arr.items, 0..) |tab_val, ti| {
-        if (ti >= 64) break; // MAX_TABS
+    for (tabs_arr.items) |tab_val| {
         const tab_obj = switch (tab_val) {
             .object => |o| o,
             else => continue,
@@ -383,59 +380,41 @@ fn buildLeafTree(
 
         const title = jsonString(tab_obj.get("title"));
 
-        const surface = alloc.create(Surface) catch continue;
-        surface.init(window.app, window, .tab, null, ws.working_dir) catch {
-            surface.deinit();
-            alloc.destroy(surface);
-            continue;
-        };
-
-        const pane = Pane.create(alloc, surface) catch {
-            surface.deinit();
-            alloc.destroy(surface);
-            continue;
-        };
-        _ = pane.ref(alloc) catch {
-            alloc.destroy(pane);
-            surface.deinit();
-            alloc.destroy(surface);
+        const tab = ops_surface.createTerminalTab(window, .tab, null, ws.cwd) catch continue;
+        ops_surface.initTitle(alloc, tab, title, ops_surface.terminal_default_title) catch {
+            tab.unref(alloc);
             continue;
         };
 
         if (is_bg) {
-            if (surface.hwnd) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
+            if (tab.hwnd()) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
         }
 
-        const pos = container.tab_count;
-        container.tabs[pos] = pane;
-        container.tab_status[pos] = .normal;
-        container.tab_status_text_len[pos] = 0;
-        container.tab_progress[pos] = null;
-        container.tab_log[pos].clear();
-        container.tab_count += 1;
-
-        const default_title = std.unicode.utf8ToUtf16LeStringLiteral("Ghostty");
-        @memcpy(container.tab_titles[pos][0..default_title.len], default_title);
-        container.tab_title_lens[pos] = @intCast(default_title.len);
-        if (title) |t| {
-            const wlen = std.unicode.utf8ToUtf16Le(
-                &container.tab_titles[pos],
-                t[0..@min(t.len, 255)],
-            ) catch 0;
-            if (wlen > 0) container.tab_title_lens[pos] = @intCast(@min(wlen, 255));
-        }
+        ops_surface.insert(alloc, container, tab, container.tabCount()) catch {
+            tab.unref(alloc);
+            continue;
+        };
     }
 
-    if (container.tab_count == 0) {
+    if (container.tabCount() == 0) {
+        container.tabs.deinit(alloc);
         alloc.destroy(container);
         return null;
     }
 
     // Restore the active tab within this container.
     const active_tab = jsonUsize(container_obj.get("active_tab")) orelse 0;
-    container.active_tab = @min(active_tab, container.tab_count - 1);
+    container.selected = @min(active_tab, container.tabCount() - 1);
 
-    return SplitTree(PaneContainer).init(alloc, container) catch null;
+    return SplitTree(Pane).init(alloc, container) catch {
+        // init failed before taking its reference: release the tabs.
+        while (container.tabCount() > 0) {
+            ops_surface.remove(container, container.tabCount() - 1).unref(alloc);
+        }
+        container.tabs.deinit(alloc);
+        alloc.destroy(container);
+        return null;
+    };
 }
 
 /// Build a SplitTree from a split JSON node by recursively building
@@ -446,7 +425,7 @@ fn buildSplitNode(
     ws: *Window.Workspace,
     is_bg: bool,
     node_obj: std.json.ObjectMap,
-) ?SplitTree(PaneContainer) {
+) ?SplitTree(Pane) {
     const left_val = node_obj.get("left") orelse return null;
     const left_obj = switch (left_val) {
         .object => |o| o,
@@ -466,7 +445,7 @@ fn buildSplitNode(
     defer right_tree.deinit();
 
     const dir_str = jsonString(node_obj.get("direction")) orelse "horizontal";
-    const direction: SplitTree(PaneContainer).Split.Direction = if (std.mem.eql(u8, dir_str, "vertical"))
+    const direction: SplitTree(Pane).Split.Direction = if (std.mem.eql(u8, dir_str, "vertical"))
         .down
     else
         .right;
@@ -483,7 +462,7 @@ fn buildSplitNode(
     return combined;
 }
 
-/// Restore a v1 workspace: flat tabs array, one PaneContainer for all.
+/// Restore a v1 workspace: flat tabs array, one Pane for all.
 fn restoreV1Workspace(
     alloc: Allocator,
     window: *Window,
@@ -508,7 +487,7 @@ fn restoreV1Workspace(
 
         const title = jsonString(tab_obj.get("title"));
 
-        if (ws_idx == window.active_workspace) {
+        if (ws_idx == window.activeIndex()) {
             _ = window.addTabWithCommand(null, title) catch |err| {
                 log.warn("session restore: failed to create tab: {}", .{err});
                 continue;
@@ -619,35 +598,34 @@ test "SessionState: SessionData defaults to version 2" {
 }
 
 test "SessionState: focusedContainerIndex returns 0 for empty workspace" {
-    const ws: Window.Workspace = .{};
+    const ws: Window.Workspace = .{ .window = undefined };
     try testing.expectEqual(@as(usize, 0), focusedContainerIndex(&ws));
 }
 
 test "SessionState: focusedContainerIndex returns 0 when focused is null" {
-    var ws: Window.Workspace = .{};
-    ws.focused_container = null;
+    var ws: Window.Workspace = .{ .window = undefined };
+    ws.focused_pane = null;
     try testing.expectEqual(@as(usize, 0), focusedContainerIndex(&ws));
 }
 
 test "SessionState: focusedContainerIndex finds correct leaf in single-node tree" {
     const alloc = testing.allocator;
-    var pc: PaneContainer = .{};
-    const tree = try SplitTree(PaneContainer).init(alloc, &pc);
+    const pc = try Pane.create(alloc);
+    const tree = try SplitTree(Pane).init(alloc, pc);
     defer {
         var t = tree;
         t.deinit();
     }
-    var ws: Window.Workspace = .{};
-    ws.split_tree = tree;
-    ws.focused_container = &pc;
+    var ws: Window.Workspace = .{ .window = undefined };
+    ws.tree = tree;
+    ws.focused_pane = pc;
     try testing.expectEqual(@as(usize, 0), focusedContainerIndex(&ws));
 }
 
 test "SessionState: containerDataFrom produces correct tab count and active index" {
     const alloc = testing.allocator;
-    var pc: PaneContainer = .{};
-    pc.tab_count = 0;
-    pc.active_tab = 0;
+    var pc: Pane = .{};
+    pc.selected = 0;
 
     const data = try containerDataFrom(alloc, &pc);
     defer alloc.free(data.tabs);
@@ -657,9 +635,8 @@ test "SessionState: containerDataFrom produces correct tab count and active inde
 
 test "SessionState: serializeNode round-trips a single-leaf tree" {
     const alloc = testing.allocator;
-    var pc: PaneContainer = .{};
-    pc.tab_count = 0;
-    const tree = try SplitTree(PaneContainer).init(alloc, &pc);
+    const pc = try Pane.create(alloc);
+    const tree = try SplitTree(Pane).init(alloc, pc);
     defer {
         var t = tree;
         t.deinit();

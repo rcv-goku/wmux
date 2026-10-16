@@ -7,11 +7,16 @@
 //!
 //! Enabled via the `window-show-right-sidebar` config option. The right
 //! sidebar coexists with the left sidebar and tab bar.
+//!
+//! The legacy status strip (moved from RightSidebar.zig in W0-A2); W1-8
+//! turns it into the `wmux.status` mode of the right-sidebar host
+//! (ARCHITECTURE.md ADR-11.6).
 
 const std = @import("std");
-const w32 = @import("platform/win32.zig");
-const Window = @import("Window.zig");
-const log_ring = @import("features/status/log_ring.zig");
+const w32 = @import("../../platform/win32.zig");
+const Window = @import("../Window.zig");
+const log_ring = @import("../../features/status/log_ring.zig");
+const titles = @import("../../model/logic/titles.zig");
 
 /// Unscaled layout constants.
 const HEADER_H_BASE: i32 = 32;
@@ -123,9 +128,10 @@ pub fn paint(win: *Window, hdc_screen: w32.HDC) void {
     var y: i32 = 0;
 
     // Get the active workspace and focused container's tab data.
-    const wsp = &win.workspaces[win.active_workspace];
-    const container = wsp.focusedContainerOrFirst() orelse return;
-    const active_tab = container.active_tab;
+    const wsp = win.activeWorkspace();
+    const container = wsp.focusedPaneOrFirst() orelse return;
+    const active_tab = container.selected;
+    const sel_tab = container.selectedTab();
 
     // --- Header: tab title ---
     {
@@ -144,8 +150,9 @@ pub fn paint(win: *Window, hdc_screen: w32.HDC) void {
         }
 
         // Tab title text.
-        if (container.tab_count > 0 and active_tab < container.tab_count) {
-            const title_len: usize = container.tab_title_lens[active_tab];
+        if (sel_tab) |tab| {
+            var title_buf: [256]u16 = undefined;
+            const title_len = titles.toUtf16(&title_buf, tab.titleText());
             if (title_len > 0) {
                 _ = w32.SetTextColor(mem_dc, title_text_color);
                 var text_rect = w32.RECT{
@@ -156,7 +163,7 @@ pub fn paint(win: *Window, hdc_screen: w32.HDC) void {
                 };
                 _ = w32.DrawTextW(
                     mem_dc,
-                    @ptrCast(&container.tab_titles[active_tab]),
+                    @ptrCast(&title_buf),
                     @intCast(title_len),
                     &text_rect,
                     w32.DT_LEFT | w32.DT_VCENTER | w32.DT_SINGLELINE | w32.DT_END_ELLIPSIS | w32.DT_NOPREFIX,
@@ -167,7 +174,7 @@ pub fn paint(win: *Window, hdc_screen: w32.HDC) void {
     }
 
     // --- Status text ---
-    if (container.tab_count > 0 and active_tab < container.tab_count) {
+    if (sel_tab != null) {
         const status = wsp.tabStatusText(active_tab);
         if (status.len > 0) {
             y += section_gap;
@@ -214,8 +221,8 @@ pub fn paint(win: *Window, hdc_screen: w32.HDC) void {
     }
 
     // --- Progress bar ---
-    if (container.tab_count > 0 and active_tab < container.tab_count) {
-        if (container.tab_progress[active_tab]) |progress| {
+    if (sel_tab) |tab| {
+        if (tab.legacy.progress) |progress| {
             y += section_gap;
 
             // Label.
@@ -290,8 +297,8 @@ pub fn paint(win: *Window, hdc_screen: w32.HDC) void {
     }
 
     // --- Log entries ---
-    if (container.tab_count > 0 and active_tab < container.tab_count) {
-        const ring = &container.tab_log[active_tab];
+    if (sel_tab) |tab| {
+        const ring = &tab.legacy.log;
         if (ring.len > 0) {
             y += section_gap;
 

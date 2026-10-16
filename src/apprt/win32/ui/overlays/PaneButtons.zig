@@ -26,8 +26,8 @@
 //! independent of GDI.
 
 const std = @import("std");
-const w32 = @import("platform/win32.zig");
-const Pane = @import("Pane.zig");
+const w32 = @import("../../platform/win32.zig");
+const Tab = @import("../../model/Tab.zig");
 const testing = std.testing;
 
 const log = std.log.scoped(.win32_pane_buttons);
@@ -122,9 +122,9 @@ pub const PaneButtons = struct {
     scale: f32 = 1.0,
     /// Whether the popup is currently shown.
     visible: bool = false,
-    /// The pane this cluster acts on. Validated by address (Window.findLoc)
+    /// The tab this cluster acts on. Validated by address (Window.findLoc)
     /// before any action runs, so a stale pointer is a safe no-op.
-    pane: ?*Pane = null,
+    tab: ?*Tab = null,
     /// Back-pointer to the owning Window, set by Window so the WndProc can
     /// route clicks. Opaque to avoid an import cycle (Window imports us).
     window: ?*anyopaque = null,
@@ -193,13 +193,13 @@ pub const PaneButtons = struct {
     }
 
     /// Position the cluster at the top-right of the pane whose client rect
-    /// is `pane_screen` (already in screen coordinates), bind it to `pane`
+    /// is `pane_screen` (already in screen coordinates), bind it to `tab`
     /// + `window`, then paint and show it. The cluster is inset from the
     /// pane's top/right edges by a DPI-scaled pad.
     pub fn positionAt(
         self: *PaneButtons,
         pane_screen: w32.RECT,
-        pane: *Pane,
+        tab: *Tab,
         window: *anyopaque,
     ) void {
         const w = clusterWidth(self.scale);
@@ -214,7 +214,7 @@ pub const PaneButtons = struct {
             return;
         }
 
-        self.pane = pane;
+        self.tab = tab;
         self.window = window;
 
         const left = pane_screen.right - pad - w;
@@ -534,7 +534,7 @@ fn registerClassOnce(hinstance: w32.HINSTANCE) !void {
 /// Window.onPaneButtonClick has this signature; declared here as a fn
 /// pointer type so the WndProc can call back into Window without an
 /// import cycle. Window casts its *anyopaque self back to *Window.
-pub const ClickFn = *const fn (window: *anyopaque, pane: *Pane, action: Action) void;
+pub const ClickFn = *const fn (window: *anyopaque, tab: *Tab, action: Action) void;
 
 /// Set by Window at startup so the overlay WndProc can route clicks.
 pub var on_click: ?ClickFn = null;
@@ -570,9 +570,9 @@ fn paneButtonsWndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) ca
             const x = loword(lparam);
             const y = hiword(lparam);
             if (hitTest(x, y, self.scale)) |idx| {
-                if (self.pane) |pane| {
+                if (self.tab) |tab| {
                     if (self.window) |window| {
-                        if (on_click) |cb| cb(window, pane, @enumFromInt(idx));
+                        if (on_click) |cb| cb(window, tab, @enumFromInt(idx));
                     }
                 }
             }

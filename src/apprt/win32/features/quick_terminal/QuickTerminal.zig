@@ -7,7 +7,7 @@ const Allocator = std.mem.Allocator;
 const configpkg = @import("../../../../config.zig");
 
 const App = @import("../../App.zig");
-const Window = @import("../../Window.zig");
+const Window = @import("../../ui/Window.zig");
 const Surface = @import("../../Surface.zig");
 const foreground = @import("../../app/foreground.zig");
 const timers = @import("../../app/timers.zig");

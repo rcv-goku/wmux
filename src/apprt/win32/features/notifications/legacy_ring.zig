@@ -14,11 +14,13 @@ const std = @import("std");
 const apprt = @import("../../../../apprt.zig");
 const App = @import("../../App.zig");
 const Surface = @import("../../Surface.zig");
-const Window = @import("../../Window.zig");
+const Window = @import("../../ui/Window.zig");
 const foreground_mod = @import("../../app/foreground.zig");
 const hooks = @import("../../app/hooks.zig");
 const modal = @import("../../app/modal.zig");
 const taskbar = @import("../../platform/taskbar.zig");
+const ops_surface = @import("../../model/ops/surface.zig");
+const titles = @import("../../model/logic/titles.zig");
 const w32 = @import("../../platform/win32.zig");
 
 const log = std.log.scoped(.win32);
@@ -300,7 +302,7 @@ pub fn showDesktopNotification(
         const ctx: ToastContext = .{
             .window_foreground = if (s.window.hwnd) |wh| w32.GetForegroundWindow() == wh else false,
             .workspace_active = if (s.window.findLocOfSurface(s.surface)) |loc|
-                s.window.workspaceIndex(loc.ws) == s.window.active_workspace
+                loc.ws == s.window.activeWorkspace()
             else
                 false,
             .panel_open = s.window.notif_panel_open,
@@ -519,8 +521,8 @@ pub fn jumpToSurface(self: *App, window: *Window, surface: *Surface) bool {
     // Select the workspace containing the surface first (re-lays out for
     // its tab count), then the container and tab within it.
     win.selectWorkspace(win.workspaceIndex(loc.ws));
-    loc.ws.focused_container = loc.container;
-    if (loc.tab != loc.container.active_tab) win.selectTabIndex(loc.tab);
+    loc.ws.focused_pane = loc.pane;
+    if (loc.index != loc.pane.selected) ops_surface.selectInPane(win, loc.ws, loc.pane, loc.index);
     if (surface.hwnd) |sh| _ = w32.SetFocus(sh);
     return true;
 }
@@ -786,13 +788,14 @@ pub fn onBell(self: *App, target: apprt.Target) void {
             // the user already sees it.
             const loc = parent_window.findLocOfSurface(rt_surface);
             const active = if (loc) |l|
-                l.ws == parent_window.activeWorkspace() and l.container == l.ws.focused_container and l.tab == l.container.active_tab
+                l.ws == parent_window.activeWorkspace() and l.pane == l.ws.focused_pane and l.index == l.pane.selected
             else
                 false;
             if (!active or !foreground) {
                 parent_window.setTabStatusForSurface(rt_surface, .bell);
+                var title_w_buf: [256]u16 = undefined;
                 const title: []const u16 = if (loc) |l|
-                    l.container.tab_titles[l.tab][0..l.container.tab_title_lens[l.tab]]
+                    title_w_buf[0..titles.toUtf16(&title_w_buf, l.pane.tabs.items[l.index].titleText())]
                 else
                     std.unicode.utf8ToUtf16LeStringLiteral("Ghostty");
                 pushNotif(
@@ -820,8 +823,9 @@ pub fn onChildExited(self: *App, target: apprt.Target, value: apprt.Action.Value
             // active tab; the user may be looking elsewhere
             // when the shell exits.
             parent_window.setTabStatusForSurface(rt_surface, .exited);
+            var title_w_buf: [256]u16 = undefined;
             const title: []const u16 = if (parent_window.findLocOfSurface(rt_surface)) |l|
-                l.container.tab_titles[l.tab][0..l.container.tab_title_lens[l.tab]]
+                title_w_buf[0..titles.toUtf16(&title_w_buf, l.pane.tabs.items[l.index].titleText())]
             else
                 std.unicode.utf8ToUtf16LeStringLiteral("Ghostty");
             pushNotif(

@@ -7,9 +7,9 @@
 
 const std = @import("std");
 
-const agent_session = @import("../../agent_session.zig");
+const agent_session = @import("../agents/legacy_store.zig");
 const App = @import("../../App.zig");
-const SessionState = @import("../../SessionState.zig");
+const SessionState = @import("legacy_v2.zig");
 const Surface = @import("../../Surface.zig");
 const ipc = @import("../../rpc/compat/legacy_json.zig");
 const LegacyCommand = @import("../../rpc/compat/legacy_table.zig").LegacyCommand;
@@ -44,7 +44,7 @@ fn ipcResolveSessionTarget(self: *App, req: *ipc.Request) IpcError!SessionTarget
         return .{ .id = sid, .surface = loc.surface };
     }
     const target = try targets.ipcResolveTab(self, req);
-    const pane = target.container.activePane() orelse return IpcError.UnknownPane;
+    const pane = target.container.selectedTab() orelse return IpcError.UnknownPane;
     const surface = pane.surface() orelse return IpcError.NotATerminal;
     if (!surface.core_surface_initialized) return IpcError.CoreNotReady;
     return .{ .id = surface.core_surface.id, .surface = surface };

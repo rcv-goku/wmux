@@ -26,15 +26,12 @@ pub fn saveAllScrollback(self: *App) void {
 
     for (self.windows.items) |w| {
         if (w.closing) continue;
-        for (w.workspaces[0..w.workspace_count]) |*ws| {
-            var tree_it = ws.split_tree.iterator();
+        for (w.workspaces.items) |ws| {
+            var tree_it = ws.tree.iterator();
             while (tree_it.next()) |tree_entry| {
                 const ctr = tree_entry.view;
-                for (ctr.tabs[0..ctr.tab_count]) |tab_pane| {
-                    const surface = switch (tab_pane.content) {
-                        .terminal => |s| s,
-                        .browser => continue,
-                    };
+                for (ctr.tabs.items) |tab| {
+                    const surface = tab.surface() orelse continue;
                     if (!surface.core_surface_ready) continue;
                     saveOnePaneScrollback(self, alloc, scrollback_dir, surface) catch continue;
                 }

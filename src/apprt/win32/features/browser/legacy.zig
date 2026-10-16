@@ -9,7 +9,7 @@
 const std = @import("std");
 
 const App = @import("../../App.zig");
-const BrowserPane = @import("../../BrowserPane.zig");
+const BrowserPane = @import("../../web/BrowserPane.zig");
 const ipc = @import("../../rpc/compat/legacy_json.zig");
 const LegacyCommand = @import("../../rpc/compat/legacy_table.zig").LegacyCommand;
 const targets = @import("../../rpc/compat/legacy_targets.zig");
@@ -31,14 +31,14 @@ fn ipcFindBrowser(self: *App, id: ?u32) ?*BrowserPane {
     var best: ?*BrowserPane = null;
     for (self.windows.items) |w| {
         if (w.closing) continue;
-        for (w.workspaces[0..w.workspace_count]) |*ws| {
-            var tree_it = ws.split_tree.iterator();
+        for (w.workspaces.items) |ws| {
+            var tree_it = ws.tree.iterator();
             while (tree_it.next()) |tree_entry| {
                 const container = tree_entry.view;
-                for (container.tabs[0..container.tab_count]) |tab_pane| {
-                    const browser = switch (tab_pane.content) {
+                for (container.tabs.items) |tab| {
+                    const browser = switch (tab.content) {
                         .browser => |b| b,
-                        .terminal => continue,
+                        else => continue,
                     };
                     if (id) |want| {
                         if (browser.ipc_id == want) return browser;
@@ -81,10 +81,10 @@ fn ipcOpen(self: *App, req: *ipc.Request) anyerror!void {
     }
 
     // The just-created pane is the window's active pane.
-    const pane = window.getActivePane() orelse return IpcError.NoWindow;
+    const pane = window.getActiveTab() orelse return IpcError.NoWindow;
     const browser = switch (pane.content) {
         .browser => |b| b,
-        .terminal => return IpcError.NoWindow,
+        else => return IpcError.NoWindow,
     };
 
     var url_w: [2049]u16 = undefined;

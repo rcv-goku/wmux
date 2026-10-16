@@ -10,7 +10,7 @@
 //! rides the owner's z-order.
 
 const std = @import("std");
-const w32 = @import("platform/win32.zig");
+const w32 = @import("../../platform/win32.zig");
 const testing = std.testing;
 
 /// Flash border thickness in unscaled pixels (DPI-scaled at use time).

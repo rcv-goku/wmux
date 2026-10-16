@@ -14,7 +14,7 @@
 const std = @import("std");
 
 const App = @import("../App.zig");
-const Window = @import("../Window.zig");
+const Window = @import("../ui/Window.zig");
 const notifications = @import("../features/notifications/api.zig");
 const updater = @import("../features/updater/legacy_check.zig");
 const w32 = @import("../platform/win32.zig");

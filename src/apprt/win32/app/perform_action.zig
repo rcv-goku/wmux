@@ -13,15 +13,16 @@ const std = @import("std");
 
 const apprt = @import("../../../apprt.zig");
 const App = @import("../App.zig");
-const PaneContainer = @import("../PaneContainer.zig");
+const Pane = @import("../model/Pane.zig");
 const QuickTerminal = @import("../features/quick_terminal/QuickTerminal.zig");
-const SessionState = @import("../SessionState.zig");
+const SessionState = @import("../features/session/legacy_v2.zig");
 const SplitTree = @import("../../../datastruct/split_tree.zig").SplitTree;
 const Surface = @import("../Surface.zig");
-const Window = @import("../Window.zig");
+const Window = @import("../ui/Window.zig");
 const config_files = @import("../settings/legacy_config_files.zig");
 const foreground = @import("foreground.zig");
 const notifications = @import("../features/notifications/api.zig");
+const ops_surface = @import("../model/ops/surface.zig");
 const updater = @import("../features/updater/legacy_check.zig");
 const w32 = @import("../platform/win32.zig");
 
@@ -72,7 +73,7 @@ pub fn perform(
         .toggle_tab_overview => {},
         .toggle_sidebar => if (parentWindow(target)) |w| w.toggleSidebar(),
         .save_session => saveSession(app),
-        .edit_workspace_description => if (parentWindow(target)) |w| w.editWorkspaceDescription(w.active_workspace),
+        .edit_workspace_description => if (parentWindow(target)) |w| w.editWorkspaceDescription(w.activeIndex()),
         .toggle_right_sidebar => if (parentWindow(target)) |w| w.toggleRightSidebar(),
         .restore_session => restoreSession(app),
         .focus_right_sidebar => if (parentWindow(target)) |w| w.focusRightSidebar(),
@@ -125,8 +126,8 @@ pub fn perform(
         .select_layout => if (parentWindow(target)) |w| w.selectLayout(value),
         .toggle_split_zoom => if (parentWindow(target)) |w| w.toggleSplitZoom(),
         .toggle_synchronized_input => if (parentWindow(target)) |w| w.toggleSynchronizedInput(),
-        .break_pane => if (rtSurface(target)) |s| if (s.pane) |pane| s.parent_window.breakPane(pane),
-        .move_pane => if (rtSurface(target)) |s| if (s.pane) |pane| s.parent_window.movePaneToTab(pane, value),
+        .break_pane => if (rtSurface(target)) |s| if (s.tab) |tab| s.parent_window.breakPane(tab),
+        .move_pane => if (rtSurface(target)) |s| if (s.tab) |tab| s.parent_window.movePaneToTab(tab, value),
         .prompt_title => promptTitle(target),
         .check_for_updates => updater.startUpdateCheck(app),
         .toggle_command_palette => if (rtSurface(target)) |s| s.setCommandPaletteActive(!s.palette_active),
@@ -551,8 +552,8 @@ fn presentTerminal(self: *App, target: apprt.Target) void {
                 // tab within it. Order matters.
                 if (win.findLocOfSurface(core_surface.rt_surface)) |loc| {
                     win.selectWorkspace(win.workspaceIndex(loc.ws));
-                    loc.ws.focused_container = loc.container;
-                    if (loc.tab != loc.container.active_tab) win.selectTabIndex(loc.tab);
+                    loc.ws.focused_pane = loc.pane;
+                    if (loc.index != loc.pane.selected) ops_surface.selectInPane(win, loc.ws, loc.pane, loc.index);
                 }
                 // Focus the surface's child HWND.
                 if (core_surface.rt_surface.hwnd) |sh| {
@@ -567,7 +568,7 @@ fn newSplit(target: apprt.Target, value: apprt.Action.Value(.new_split)) void {
     switch (target) {
         .app => {},
         .surface => |core_surface| {
-            const dir: SplitTree(PaneContainer).Split.Direction = switch (value) {
+            const dir: SplitTree(Pane).Split.Direction = switch (value) {
                 .left => .left,
                 .right => .right,
                 .up => .up,
@@ -588,8 +589,8 @@ fn promptTitle(target: apprt.Target) void {
             // current tab. On Win32 there's no separate surface title
             // UI — the tab title IS the surface identity.
             const pw = core_surface.rt_surface.parent_window;
-            const rename_container = pw.activeWorkspace().focusedContainerOrFirst() orelse return;
-            pw.startTabRename(rename_container.active_tab);
+            const rename_container = pw.activeWorkspace().focusedPaneOrFirst() orelse return;
+            pw.startTabRename(rename_container.selected);
         },
     }
 }

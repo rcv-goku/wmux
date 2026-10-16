@@ -10,10 +10,10 @@ const Config = configpkg.Config;
 const CoreApp = @import("../../App.zig");
 const input = @import("../../input.zig");
 
-const agent_session = @import("agent_session.zig");
-const BrowserPane = @import("BrowserPane.zig");
+const agent_session = @import("features/agents/legacy_store.zig");
+const BrowserPane = @import("web/BrowserPane.zig");
 const Surface = @import("Surface.zig");
-const Window = @import("Window.zig");
+const Window = @import("ui/Window.zig");
 
 // app/ plumbing (ARCHITECTURE.md ADR-1.6).
 const app_clipboard = @import("app/clipboard.zig");
@@ -1024,9 +1024,9 @@ fn surfaceWndProc(
             // a pane in a tab slot that doesn't own it.
             const win = surface.parent_window;
             if (!win.closing) {
-                if (surface.pane) |pane| {
-                    if (win.findLoc(pane)) |loc| {
-                        loc.ws.focused_container = loc.container;
+                if (surface.tab) |tab| {
+                    if (win.findLoc(tab)) |loc| {
+                        loc.ws.focused_pane = loc.pane;
                     }
                 }
                 win.repaintDividers();

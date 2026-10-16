@@ -16,7 +16,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const App = @import("../../App.zig");
-const Window = @import("../../Window.zig");
+const Window = @import("../../ui/Window.zig");
 const tasks = @import("../../app/tasks.zig");
 const ws_meta = @import("probes.zig");
 
@@ -81,9 +81,9 @@ pub fn refreshWorkspaceMetadata(self: *App) void {
 
     for (self.windows.items) |w| {
         if (w.closing or w.is_quick_terminal) continue;
-        if (w.workspace_count == 0) continue;
-        const ws_idx = w.active_workspace;
-        if (ws_idx >= w.workspace_count) continue;
+        if (w.workspaces.items.len == 0) continue;
+        const ws_idx = w.activeIndex();
+        if (ws_idx >= w.workspaces.items.len) continue;
         if (buildMetaJob(self, w, ws_idx, want_pr)) |job| {
             jobs.append(self.core_app.alloc, job) catch |err| {
                 log.warn("ws-meta: failed to queue job: {}", .{err});
@@ -102,7 +102,7 @@ pub fn refreshWorkspaceMetadata(self: *App) void {
 pub fn refreshWorkspaceMetadataNow(self: *App, w: *Window, ws_idx: usize) void {
     if (!self.config.@"sidebar-metadata") return;
     if (w.closing or w.is_quick_terminal) return;
-    if (ws_idx >= w.workspace_count) return;
+    if (ws_idx >= w.workspaces.items.len) return;
     const job = buildMetaJob(self, w, ws_idx, false) orelse return;
     const jobs = self.core_app.alloc.alloc(ws_meta.Job, 1) catch {
         var j = job;
@@ -114,37 +114,34 @@ pub fn refreshWorkspaceMetadataNow(self: *App, w: *Window, ws_idx: usize) void {
 }
 
 /// Build a self-contained refresh job for workspace `ws_idx` of `w`, or
-/// null when there is nothing to scan (no working_dir AND no child PIDs).
+/// null when there is nothing to scan (no cwd AND no child PIDs).
 /// Stamps the workspace with a fresh token. Runs on the UI thread; all
-/// reads (working_dir, child PIDs) are lock-free/stable.
+/// reads (cwd, child PIDs) are lock-free/stable.
 fn buildMetaJob(self: *App, w: *Window, ws_idx: usize, want_pr: bool) ?ws_meta.Job {
     const alloc = self.core_app.alloc;
-    const ws = &w.workspaces[ws_idx];
+    const ws = w.workspaces.items[ws_idx];
 
-    // Collect ConPTY child PIDs from all PaneContainers (terminals only).
+    // Collect ConPTY child PIDs from all Panes (terminals only).
     var pids: std.ArrayList(u32) = .empty;
     errdefer pids.deinit(alloc);
     {
-        var tree_it = ws.split_tree.iterator();
+        var tree_it = ws.tree.iterator();
         while (tree_it.next()) |tree_entry| {
             const container = tree_entry.view;
-            for (container.tabs[0..container.tab_count]) |tab_pane| {
-                const surface = switch (tab_pane.content) {
-                    .terminal => |s| s,
-                    .browser => continue,
-                };
+            for (container.tabs.items) |tab| {
+                const surface = tab.surface() orelse continue;
                 if (surface.childPid()) |pid| pids.append(alloc, pid) catch {};
             }
         }
     }
 
-    const has_dir = ws.working_dir != null;
+    const has_dir = ws.cwd != null;
     if (!has_dir and pids.items.len == 0) {
         pids.deinit(alloc);
         return null;
     }
 
-    const dir_copy: ?[]u8 = if (ws.working_dir) |d| (alloc.dupe(u8, d) catch null) else null;
+    const dir_copy: ?[]u8 = if (ws.cwd) |d| (alloc.dupe(u8, d) catch null) else null;
     const pid_slice = pids.toOwnedSlice(alloc) catch {
         pids.deinit(alloc);
         if (dir_copy) |d| alloc.free(d);
@@ -231,11 +228,11 @@ pub fn applyWorkspaceMetadata(self: *App, result: *ws_meta.Result) void {
         }
     }
     if (!alive or target.closing) return;
-    if (result.ws_idx >= target.workspace_count) return;
+    if (result.ws_idx >= target.workspaces.items.len) return;
 
-    const ws = &target.workspaces[result.ws_idx];
-    // Token mismatch ⇒ the slot was recycled (closeWorkspace shift) since
-    // dispatch; drop rather than mis-apply.
+    const ws = target.workspaces.items[result.ws_idx];
+    // Token mismatch: a different workspace sits at the index now (a close
+    // or a reorder since dispatch); drop rather than mis-apply.
     if (ws.meta_token != result.token) return;
 
     ws.setGitBranch(result.branch[0..result.branch_len]);
