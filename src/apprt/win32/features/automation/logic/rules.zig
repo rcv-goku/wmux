@@ -44,7 +44,9 @@ pub const max_run_timeout_ms: u64 = 300_000;
 /// CLI strings (cli-automation-cli).
 pub const msg = struct {
     pub const usage_first_line = "Usage: cmux automation <list|show|test|enable|disable|logs|reload> [args]";
-    /// cmux names `~/.cmuxterm/automations.json`; wmux keeps the file under STATE.
+    /// cmux names `~/.cmuxterm/automations.json`; wmux keeps the file under STATE
+    /// (Appendix G.1). This is the default location; when `WMUX_STATE_DIR` is
+    /// set the CLI should print the resolved `STATE\automations.json` instead.
     pub const usage_rules_note = "Rules live in %LOCALAPPDATA%\\wmux\\<channel>\\automations.json.";
     pub const test_requires_event = "automation test requires --event <json>";
     pub const test_event_not_object = "automation test event must be a JSON object";
@@ -953,7 +955,8 @@ pub fn setEnabled(gpa: Allocator, src: []const u8, id: []const u8, enabled: bool
         .array => |a| a,
         else => return error.NotARulesFile,
     };
-    // The last rule with this id, matching the duplicate rule (which loads the first).
+    // The first rule with this id: `parse` keeps the first occurrence of an id
+    // and rejects later ones as duplicates, so this is the rule that loads.
     const target: *const Node = for (items) |*rn| {
         const s = (rn.get("id") orelse continue).asString() orelse continue;
         if (std.mem.eql(u8, s, id)) break rn;

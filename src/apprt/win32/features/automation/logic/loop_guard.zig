@@ -195,6 +195,11 @@ pub const EnvVar = struct { name: []const u8, value: []const u8 };
 /// order. `event_json` is the serialized event (exported twice, as cmux
 /// does); `origin` is the action's origin from `extend`. Values are
 /// allocated in `arena`.
+///
+/// The caller must bound `event_json`: Windows limits one environment
+/// variable to 32,767 UTF-16 code units, and the event appears twice. Pass a
+/// size-capped encoding (for example the 16 KiB event-stream frame with
+/// `payload_truncated`), not the raw payload.
 pub fn runEnv(arena: Allocator, origin: *const AutomationOrigin, event_json: []const u8) Allocator.Error![4]EnvVar {
     return .{
         .{ .name = env_event, .value = event_json },
