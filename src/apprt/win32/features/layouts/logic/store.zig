@@ -71,6 +71,13 @@ pub fn normalizeName(name: []const u8) error{BlankName}![]const u8 {
     return proto.utf8.truncateUtf8(t, max_name_bytes);
 }
 
+/// True when `src` holds only whitespace after an optional UTF-8 byte order
+/// mark (Windows PowerShell 5.1 writes a BOM even for an empty file).
+fn isBlankDocument(src: []const u8) bool {
+    const body = if (std.mem.startsWith(u8, src, jsonc.utf8_bom)) src[jsonc.utf8_bom.len..] else src;
+    return std.mem.trim(u8, body, " \t\r\n").len == 0;
+}
+
 pub const Store = struct {
     arena: std.heap.ArenaAllocator,
     layouts: std.ArrayList(SavedLayout) = .empty,
@@ -84,14 +91,14 @@ pub const Store = struct {
         self.* = undefined;
     }
 
-    /// Loads layouts.json text. Empty or whitespace-only text is an empty
-    /// store. A syntax or schema error gives error.CorruptFile; `problems`
-    /// explains why.
+    /// Loads layouts.json text. Empty or whitespace-only text (a lone byte
+    /// order mark included) is an empty store. A syntax or schema error
+    /// gives error.CorruptFile; `problems` explains why.
     pub fn parse(gpa: Allocator, src: []const u8, problems: ?*Problems) Error!Store {
         var store: Store = .init(gpa);
         errdefer store.deinit();
         const a = store.arena.allocator();
-        if (std.mem.trim(u8, src, " \t\r\n").len == 0) return store;
+        if (isBlankDocument(src)) return store;
         var jd: jsonc.Diagnostic = .{};
         const root = jsonc.parseInto(a, src, .{}, &jd) catch |e| switch (e) {
             error.OutOfMemory => return error.OutOfMemory,
@@ -395,6 +402,17 @@ test "unit: layouts: empty file is an empty store and garbage is corruptFile" {
         try testing.expectError(error.CorruptFile, Store.parse(testing.allocator, src, &problems));
         try testing.expect(problems.items.items.len >= 1);
     }
+}
+
+test "unit: layouts: a byte order mark alone or before the document is accepted" {
+    for ([_][]const u8{ "\xEF\xBB\xBF", "\xEF\xBB\xBF\r\n", "\xEF\xBB\xBF{\"layouts\":[]}\r\n" }) |src| {
+        var st = try Store.parse(testing.allocator, src, null);
+        defer st.deinit();
+        try testing.expectEqual(@as(usize, 0), st.layouts.items.len);
+    }
+    var st = try Store.parse(testing.allocator, "\xEF\xBB\xBF{\"layouts\":[{\"name\":\"a\",\"workspace\":{}}]}\r\n", null);
+    defer st.deinit();
+    try testing.expectEqualStrings("a", st.get("A").?.name);
 }
 
 test "unit: layouts: corrupt-file diagnostics explain the problem" {
