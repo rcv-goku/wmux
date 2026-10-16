@@ -485,6 +485,21 @@ describe("unit: feed app", () => {
     assert.equal(again.selectionStart, 4);
   });
 
+  test("unit: feed: an option keeps focus in its own question when labels repeat", async () => {
+    const yesNo = (q) => ({ question: q, header: "", multi_select: false, options: [{ label: "Yes", description: "" }, { label: "No", description: "" }] });
+    await startApp({ items: [question(1, [yesNo("Tests?"), yesNo("Docs?")])] });
+    const second = btn(cards()[0], "option", '[data-q="1"][data-label="Yes"]');
+    second.focus();
+    click(window, second);
+    const card = cardById(uuid(1));
+    const focused = doc.activeElement;
+    assert.notEqual(focused, second, "the card was rebuilt");
+    assert.equal(focused, btn(card, "option", '[data-q="1"][data-label="Yes"]'), "focus stays in the second question");
+    assert.equal(focused.getAttribute("aria-pressed"), "true");
+    assert.equal(btn(card, "option", '[data-q="0"][data-label="Yes"]').getAttribute("aria-pressed"), "false");
+    assert.equal(host.calls("feed.question.reply").length, 0, "several questions wait for Submit All Answers");
+  });
+
   test("unit: feed: stop card sends the reply to the agent", async () => {
     await startApp({ items: [item(1, "stop", { hook_event_name: "Stop" })] });
     click(window, $("feed-tab-activity"));

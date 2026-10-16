@@ -240,6 +240,8 @@ export function createApp(options) {
       snap.action = active.dataset.action;
       snap.mode = active.dataset.mode;
       snap.label = active.dataset.label;
+      // Option buttons repeat labels across questions ("Yes"/"No" in each).
+      snap.q = active.dataset.q;
     }
     return snap;
   }
@@ -254,7 +256,12 @@ export function createApp(options) {
     } else if (snap.action) {
       target =
         Array.from(card.querySelectorAll("[data-action]")).find(
-          (n) => n.dataset.action === snap.action && n.dataset.mode === snap.mode && n.dataset.label === snap.label && !n.disabled,
+          (n) =>
+            n.dataset.action === snap.action &&
+            n.dataset.mode === snap.mode &&
+            n.dataset.label === snap.label &&
+            n.dataset.q === snap.q &&
+            !n.disabled,
         ) || card;
     }
     target.focus({ preventScroll: true });
