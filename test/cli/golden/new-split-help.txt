@@ -1,8 +1,8 @@
 Usage: cmux new-split <left|right|up|down> [--surface <id|ref|index>] [--command <text>]
 
-Split from a surface in a direction and print the new surface, pane and
-workspace (`OK surface:<n> pane:<n> workspace:<n>`). The new terminal does not
-take keyboard focus unless --focus true is given.
+Divide the pane of a surface toward the given side, start a terminal in the
+new half and print its handles (`OK surface:<n> pane:<n> workspace:<n>`).
+Keyboard focus stays where it was unless --focus true is given.
 
 Options:
   <left|right|up|down>          Direction of the new split (required)

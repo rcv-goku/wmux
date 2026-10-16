@@ -1,7 +1,7 @@
 Usage: cmux split-off --surface <id|ref|index> <left|right|up|down>
 
-Move an existing surface into a new split next to its pane. Focus does not
-change unless --focus true is given.
+Give an existing surface its own new pane beside the one it is in. Focus
+stays where it is unless --focus true is given.
 
 Options:
   --surface <id|ref|index>      Surface to split off (required; alias --panel)

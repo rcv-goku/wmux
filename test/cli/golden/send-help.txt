@@ -1,8 +1,9 @@
 Usage: cmux send [--surface <id|ref|index>] [--paste] [--force] [--] <text>
 
-Type text into a terminal surface as keystrokes. Escapes are interpreted:
-\n and \r press Enter, \t presses Tab, \\ is a backslash. Options must come
-before the text; everything from the first word on is the text.
+Type text into a terminal surface, one keystroke at a time. Backslash
+escapes are expanded first: \n and \r become Enter, \t becomes Tab and \\ a
+single backslash. Options go before the text: the first word that is not an
+option starts the text, and every word after it belongs to the text.
 
 Options:
   --surface <id|ref|index>      Target surface (default: $CMUX_SURFACE_ID, else
@@ -15,10 +16,13 @@ Options:
   --force                       Skip the draft guard
   --json                        Print the full response
 
-Large or multi-line text sent without --paste prints a hint on stderr.
-The command refuses to type over an agent's unsent prompt draft or into an
-open agent dialog unless --force comes before the text; text that only
-presses Enter is refused only for a dialog.
+Text over about 4 KB, or text with several line breaks, is still typed
+without --paste; stderr then suggests --paste for the next time.
+
+Draft guard: when the agent in the target surface holds a half-typed prompt,
+or is asking a question or for a permission, nothing is typed and the
+command fails. --force before the text skips the check. Text made only of
+Enter presses is held back only by such a question or permission prompt.
 
 Examples:
   cmux send 'echo hi\n'

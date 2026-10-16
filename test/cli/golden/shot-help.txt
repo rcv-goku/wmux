@@ -1,10 +1,10 @@
 Usage: cmux shot [flags]
 
-Screenshot a wmux window, or a region of one, to a png or jpeg file
-(alias: screenshot). Only wmux's own windows are captured. Prints
-"<width>x<height> <bytes> <path>". The image is written beside the output
-path and moved into place, so an existing file is replaced only by a
-complete image.
+Capture one of the app's windows, or a rectangle inside it, as a PNG or
+JPEG image (alias: screenshot). Other applications are never captured.
+Output: "<width>x<height> <bytes> <path>". The file only appears once it is
+complete: the image is first written to a temporary file in the same folder,
+which then takes the target's place.
 
 Flags:
   --format <png|jpg>            Image format (default: png)

@@ -1,6 +1,6 @@
 Usage: cmux break-pane [--workspace <id|ref|index>] [--pane <id|ref|index>] [--surface <id|ref|index>] [--window <id|ref|index>] [--focus <true|false>] [--no-focus]
 
-Move the selected pane or surface into its own workspace.
+Take the chosen pane or surface out into a workspace of its own.
 
 Options:
   --pane <id|ref|index>         Pane to move

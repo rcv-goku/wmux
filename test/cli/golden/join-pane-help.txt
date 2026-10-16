@@ -1,6 +1,6 @@
 Usage: cmux join-pane --target-pane <id|ref|index> [--workspace <id|ref|index>] [--pane <id|ref|index>] [--surface <id|ref|index>] [--window <id|ref|index>] [--focus <true|false>] [--no-focus]
 
-Move the selected pane or surface into another pane.
+Put the chosen pane or surface into the pane named by --target-pane.
 
 Options:
   --target-pane <id|ref|index>  Destination pane (required)

@@ -1,6 +1,6 @@
 Usage: cmux rename-tab [--surface <id|ref|index>] <title>
 
-Rename a tab (compatibility wrapper for `tab-action rename`).
+Set a tab's title; shorthand for `tab-action rename`.
 
 Options:
   <title>                       New title (or --title <text>)

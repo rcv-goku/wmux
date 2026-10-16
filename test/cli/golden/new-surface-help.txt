@@ -1,6 +1,6 @@
 Usage: cmux new-surface [--pane <id|ref|index>] [--type <terminal|browser>] [--command <text>]
 
-Create a surface (tab) inside a pane.
+Open a new surface (tab) in a pane.
 
 Options:
   --pane <id|ref|index>         Pane for the new surface (default: the

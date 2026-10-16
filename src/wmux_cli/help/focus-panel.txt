@@ -1,7 +1,7 @@
 Usage: cmux focus-panel --panel <id|ref|index>
 
-Focus a panel (compatibility alias over surface focus; the handle may also be
-given positionally).
+Select and focus a surface by its panel handle (the older spelling of
+surface focus; the handle may also be given positionally).
 
 Options:
   --panel <id|ref|index>        Surface to focus (required; aliases --surface,

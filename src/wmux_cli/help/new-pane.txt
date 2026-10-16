@@ -1,6 +1,6 @@
 Usage: cmux new-pane [--type <terminal|browser>] [--command <text>]
 
-Create a pane with terminal or browser content next to the focused pane.
+Add a pane holding a terminal or a browser beside the focused pane.
 
 Options:
   --type <terminal|browser>     Content of the new pane (default: terminal)

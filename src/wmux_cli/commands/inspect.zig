@@ -452,8 +452,9 @@ fn memLine(w: *Writer, label: []const u8, bytes: ?f64, procs: ?f64) !void {
     try w.writeByte('\n');
 }
 
-/// The app's own footprint and its WebView2 processes, apart from the
-/// recursive RSS of terminal child processes, then the heaviest groups
+/// One line for the app's footprint, one for its WebView2 processes and one
+/// for everything the terminals spawned (summed over each process tree),
+/// then the heaviest groups
 /// (assumed `system.memory` shape: `app {footprint_bytes, webview_bytes,
 /// webview_process_count}`, `children {rss_bytes, process_count}`,
 /// `groups [{kind, id, ref, title, rss_bytes, process_count}]`).

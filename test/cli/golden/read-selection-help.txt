@@ -1,9 +1,9 @@
 Usage: cmux read-selection [--surface <id|ref|index>] [--json]
 
-Print the active selection of a terminal, file preview, Markdown or browser
-surface: the available context lines (Kind:, File:, Lines:, URL:) and then
-the selected text. With no selection it prints "Has selection: false" and
-exits 0.
+Show what is selected in a surface (terminal, file preview, Markdown view or
+browser): first whichever context lines apply (Kind:, File:, Lines:, URL:),
+then the text itself. When nothing is selected the output is
+"Has selection: false" and the exit code is still 0.
 
 Options:
   --surface <id|ref|index>      Surface to read (default: $CMUX_SURFACE_ID)

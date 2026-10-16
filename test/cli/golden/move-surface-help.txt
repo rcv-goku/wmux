@@ -1,6 +1,7 @@
 Usage: cmux move-surface --surface <id|ref|index> [--pane|--workspace|--window <id|ref|index>] [--index <n>]
 
-Move a surface to another pane, workspace or window, or to an index.
+Take a surface out of its pane and place it in another pane, workspace or
+window, or at another position.
 
 Options:
   --surface <id|ref|index>      Surface to move (required; alias --panel)

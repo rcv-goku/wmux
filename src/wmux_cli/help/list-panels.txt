@@ -1,7 +1,7 @@
 Usage: cmux list-panels [--workspace <id|ref|index>]
 
-List every surface of a workspace (compatibility alias over pane and surface
-data), one per line:
+List all surfaces of a workspace across its panes (the older, flat listing),
+one per line:
   * surface:4  pane:2  terminal  <title>  [focused]
 
 Options:

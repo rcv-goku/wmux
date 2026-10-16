@@ -1,7 +1,7 @@
 Usage: cmux drag-surface-to-split --surface <id|ref|index> <left|right|up|down>
 
-Move a surface into a split direction, with the same result as dragging its
-tab to a pane edge.
+Give a surface a split of its own on one side, exactly as dropping its tab
+on that edge of a pane does.
 
 Options:
   --surface <id|ref|index>      Surface to move (required; alias --panel)

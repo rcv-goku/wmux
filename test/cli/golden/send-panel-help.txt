@@ -1,7 +1,7 @@
 Usage: cmux send-panel [--panel <id|ref|index>] [--force] <text>
 
-Type text into a terminal panel (legacy form of send with a required
---panel). Same escapes, draft guard and --force as send.
+The older, panel-addressed form of send: --panel is required, and escapes,
+the draft guard and --force work as they do for send.
 
 Options:
   --panel <id|ref|index>        Target surface (required)

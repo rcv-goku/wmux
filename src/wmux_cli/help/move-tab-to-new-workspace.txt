@@ -1,6 +1,6 @@
 Usage: cmux move-tab-to-new-workspace [--surface <id|ref|index>]
 
-Move a tab into a newly created workspace (alias: detach-tab). The new
+Detach a tab into a workspace of its own (alias: detach-tab). The new
 workspace is not selected unless --focus true is given.
 
 Options:
