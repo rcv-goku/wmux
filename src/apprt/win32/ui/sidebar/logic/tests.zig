@@ -598,6 +598,50 @@ test "unit: sidebar: unicode titles measure by code point" {
     try testing.expect(!titleOf(lay.rows[1]).truncated);
 }
 
+test "unit: sidebar: one-line texts stay one line when they contain line breaks" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var b = model.RowBuilder.init(a);
+    b.beginSlot(.agent_status);
+    try b.pills(&.{.{ .text = "two\nlines" }});
+    b.beginSlot(.log);
+    try b.text(null, "Compilation failed\nsee build.log", .{ .tone = .@"error" });
+    const nodes = [_]model.Node{.{ .workspace = .{ .id = testId(1), .custom_title = "first\nsecond", .details = b.finish() } }};
+    var fake: text_style.FakeMeasurer = .{};
+    const params: layout.Params = .{ .width = 240 };
+    const res = params.metrics.resolve();
+    const rows = try model.build(a, .{ .nodes = &nodes });
+    const lay = try layout.layoutRows(a, null, rows, fake.measurer(), params);
+    const g = lay.rows[0];
+
+    // The latest log entry is a single trimmed line; the tooltip has it all.
+    const text = findKind(g, .text).?;
+    try testing.expect(text.truncated);
+    try testing.expectApproxEqAbs(@as(f32, 12.5 * 0.88 * 1.25), text.rect.height(), 1.0);
+    try testing.expectEqualStrings("Compilation failed\nsee build.log", (try layout.elementTooltip(a, &rows[0], text)).?);
+    // Titles are one line unless sidebar.wrapWorkspaceTitles is on.
+    const title = titleOf(g);
+    try testing.expect(title.truncated);
+    try testing.expectApproxEqAbs(@as(f32, 12.5 * 1.25), title.rect.height(), 1.0);
+    // Pills stay one line tall.
+    try testing.expect(findKind(g, .pill).?.rect.height() < 2 * 12.5 * 0.82 * 1.25);
+    try testing.expect(findKind(g, .pill_text).?.truncated);
+    // Paint draws with exactly the styles layout measured.
+    try testing.expectEqual(@as(u16, 1), layout.elementStyle(&rows[0], text, res).max_lines);
+    try testing.expectEqual(@as(u16, 1), layout.elementStyle(&rows[0], title, res).max_lines);
+    try testing.expectEqual(@as(u16, 1), layout.elementStyle(&rows[0], findKind(g, .pill_text).?, res).max_lines);
+
+    const wrapped = try model.build(a, .{ .nodes = &nodes, .settings = .{ .wrap_workspace_titles = true } });
+    const wl = try layout.layoutRows(a, null, wrapped, fake.measurer(), params);
+    const wt = titleOf(wl.rows[0]);
+    try testing.expect(!wt.truncated);
+    try testing.expectApproxEqAbs(@as(f32, 2 * 12.5 * 1.25), wt.rect.height(), 1.0);
+    const ws = layout.elementStyle(&wrapped[0], wt, res);
+    try testing.expectEqual(text_style.Wrap.word, ws.wrap);
+    try testing.expectEqual(@as(u16, 0), ws.max_lines);
+}
+
 test "unit: sidebar: layout cache reuses rows and survives eviction and clear" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();

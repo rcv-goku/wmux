@@ -117,19 +117,69 @@ pub const Resolved = struct {
 pub const TextRole = enum(u8) { none, title, detail, header, badge, hint, pill, chip, toggle, progress_label };
 
 /// The one place text styles are defined: layout measures with exactly
-/// what paint draws.
+/// what paint draws. Single-line roles cap at one line, so an explicit
+/// line break (DirectWrite breaks lines there even without wrapping) is
+/// trimmed instead of growing the element. Paint uses `elementStyle`,
+/// which also applies the title's wrap mode and a detail line's overflow.
 pub fn textStyle(role: TextRole, r: Resolved) TextStyle {
     const f = r.font;
     return switch (role) {
-        .none, .detail, .progress_label => .{ .size = f * 0.88 },
-        .title => .{ .size = f, .weight = .medium },
-        .header => .{ .size = f * 0.85, .weight = .semi_bold },
-        .badge => .{ .size = f * 0.78, .weight = .semi_bold, .h_align = .center },
-        .hint => .{ .size = f * 0.78, .weight = .medium, .h_align = .center },
-        .pill => .{ .size = f * 0.82 },
-        .chip => .{ .size = f * 0.82, .family = text_style.mono_family },
-        .toggle => .{ .size = f * 0.82, .weight = .medium },
+        .none, .detail => .{ .size = f * 0.88 },
+        .progress_label => .{ .size = f * 0.88, .max_lines = 1 },
+        .title => .{ .size = f, .weight = .medium, .max_lines = 1 },
+        .header => .{ .size = f * 0.85, .weight = .semi_bold, .max_lines = 1 },
+        .badge => .{ .size = f * 0.78, .weight = .semi_bold, .h_align = .center, .max_lines = 1 },
+        .hint => .{ .size = f * 0.78, .weight = .medium, .h_align = .center, .max_lines = 1 },
+        .pill => .{ .size = f * 0.82, .max_lines = 1 },
+        .chip => .{ .size = f * 0.82, .family = text_style.mono_family, .max_lines = 1 },
+        .toggle => .{ .size = f * 0.82, .weight = .medium, .max_lines = 1 },
     };
+}
+
+/// Style of a workspace title: one line unless `sidebar.wrapWorkspaceTitles`
+/// is on (then word wrap without a line limit).
+pub fn titleStyle(t: *const model.TitleLine, r: Resolved) TextStyle {
+    var st = textStyle(.title, r);
+    if (t.wrap) {
+        st.wrap = .word;
+        st.max_lines = 0;
+    }
+    return st;
+}
+
+/// Style of a detail line's text: exactly one line for the truncating
+/// overflow modes (line breaks included), else word wrap up to
+/// `Line.max_lines` (0 = unlimited).
+pub fn lineStyle(l: *const model.Line, r: Resolved) TextStyle {
+    var st = textStyle(.detail, r);
+    switch (l.overflow) {
+        .truncate_end, .truncate_start => {
+            st.wrap = .none;
+            st.max_lines = 1;
+        },
+        .wrap => {
+            st.wrap = .word;
+            st.max_lines = l.max_lines;
+        },
+    }
+    return st;
+}
+
+/// The style element `e` of `row` was measured with: paint draws its text
+/// (or `text_override`) with it.
+pub fn elementStyle(row: *const model.Row, e: Element, r: Resolved) TextStyle {
+    switch (row.body) {
+        .workspace => |*w| switch (e.kind) {
+            .title => return titleStyle(&w.title, r),
+            .text, .link => if (e.item < w.items.len) switch (w.items[e.item].body) {
+                .line => |*l| return lineStyle(l, r),
+                else => {},
+            },
+            else => {},
+        },
+        .group_header => {},
+    }
+    return textStyle(e.role, r);
 }
 
 pub const ElementKind = enum(u8) {
@@ -480,8 +530,7 @@ fn layoutWorkspace(cx: *Ctx, w: *const model.WorkspaceRow) Allocator.Error!f32 {
     }
 
     // Title.
-    var st = textStyle(.title, r);
-    if (t.wrap) st.wrap = .word;
+    const st = titleStyle(t, r);
     const title_right = if (reserve > 0) right - reserve - r.gap else right;
     const avail = @max(title_right - x, 0);
     const ext = cx.measure(t.title, &st, avail);
@@ -520,14 +569,7 @@ fn layoutLine(cx: *Ctx, l: *const model.Line, item: u16, left: f32, right: f32, 
         try cx.add(.{ .kind = .icon, .rect = Rect.xywh(x, y + (lh - r.detail_icon) / 2, r.detail_icon, r.detail_icon), .item = item });
         x += r.detail_icon + r.gap;
     }
-    var st = textStyle(.detail, r);
-    switch (l.overflow) {
-        .truncate_end, .truncate_start => st.wrap = .none,
-        .wrap => {
-            st.wrap = .word;
-            st.max_lines = l.max_lines;
-        },
-    }
+    const st = lineStyle(l, r);
     const avail = @max(right - x, 0);
     const text = try model.joinRuns(cx.arena, l.runs);
     const ext = cx.measure(text, &st, avail);
@@ -576,9 +618,12 @@ fn layoutPills(cx: *Ctx, ps: []const model.Pill, item: u16, left: f32, right: f3
     const st = textStyle(.pill, r);
     const labels = try cx.arena.alloc(Size, ps.len);
     const metrics = try cx.arena.alloc(geometry.PillMetrics, ps.len);
-    for (ps, labels, metrics) |p, *lb, *pm| {
+    // Labels cut to one line (a line break) are truncated too.
+    const cut = try cx.arena.alloc(bool, ps.len);
+    for (ps, labels, metrics, cut) |p, *lb, *pm, *c| {
         const e = cx.measure(p.text, &st, std.math.inf(f32));
         lb.* = .{ .w = e.width, .h = e.height };
+        c.* = e.truncated;
         pm.* = r.pill;
         if (p.icon != null) pm.icon = r.detail_icon;
     }
@@ -592,7 +637,7 @@ fn layoutPills(cx: *Ctx, ps: []const model.Pill, item: u16, left: f32, right: f3
         const sub: u16 = @intCast(@min(i, no_item - 1));
         try cx.add(.{ .kind = .pill, .rect = pl.bounds, .action = if (ps[i].link != null) .open_link else .none, .item = item, .sub = sub });
         if (pl.icon) |ir| try cx.add(.{ .kind = .pill_icon, .rect = ir, .item = item, .sub = sub });
-        try cx.add(.{ .kind = .pill_text, .rect = pl.text, .role = .pill, .item = item, .sub = sub, .truncated = pl.truncated });
+        try cx.add(.{ .kind = .pill_text, .rect = pl.text, .role = .pill, .item = item, .sub = sub, .truncated = pl.truncated or cut[i] });
     }
     return res.size.h;
 }
@@ -601,9 +646,11 @@ fn layoutChips(cx: *Ctx, cs: []const model.Chip, item: u16, left: f32, right: f3
     const r = cx.r;
     const st = textStyle(.chip, r);
     const labels = try cx.arena.alloc(Size, cs.len);
-    for (cs, labels) |c, *lb| {
+    const cut = try cx.arena.alloc(bool, cs.len);
+    for (cs, labels, cut) |c, *lb, *k| {
         const e = cx.measure(c.text, &st, std.math.inf(f32));
         lb.* = .{ .w = e.width, .h = e.height };
+        k.* = e.truncated;
     }
     const fl = try flowBoxes(cx, labels, r.chip, left, right, y);
     for (fl.rects, 0..) |cr, i| {
@@ -615,7 +662,7 @@ fn layoutChips(cx: *Ctx, cs: []const model.Chip, item: u16, left: f32, right: f3
             .role = .chip,
             .item = item,
             .sub = @intCast(@min(i, no_item - 1)),
-            .truncated = pl.truncated,
+            .truncated = pl.truncated or cut[i],
         });
     }
     return fl.height;
