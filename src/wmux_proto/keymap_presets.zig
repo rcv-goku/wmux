@@ -124,15 +124,18 @@ pub const BuildError = when.ParseError || strokes.ParseError || error{UnknownAct
 fn appendKey(gpa: std.mem.Allocator, out: *std.ArrayList(Binding), e: *const catalog.Entry, key: []const u8, clause: ?[]const u8) BuildError!void {
     const t = try strokes.Trigger.parse(key, .windows);
     const mask = try clauseMask(gpa, clause);
-    const fam = e.numbered and t.second == null and t.first.key.kind() == .digit;
-    if (!fam) {
+    // A numbered key stands for its whole 1–9 family; the digit is the last
+    // stroke ("ctrl+shift+1", or "ctrl+b 1" after a chord prefix).
+    const last = t.second orelse t.first;
+    if (!e.numbered or last.key.kind() != .digit) {
         try out.append(gpa, .{ .id = e.id, .trigger = t, .when = clause, .mask = mask, .performable = e.performable });
         return;
     }
-    // A numbered default stands for its whole 1–9 family.
     for (1..10) |dg| {
-        const s = t.first.withKey(strokes.Key.fromDigit(@intCast(dg)));
-        try out.append(gpa, .{ .id = e.id, .trigger = .{ .first = s }, .when = clause, .mask = mask, .performable = e.performable });
+        const k = strokes.Key.fromDigit(@intCast(dg));
+        var ft = t;
+        if (t.second) |s| ft.second = s.withKey(k) else ft.first = t.first.withKey(k);
+        try out.append(gpa, .{ .id = e.id, .trigger = ft, .when = clause, .mask = mask, .performable = e.performable });
     }
 }
 
@@ -143,7 +146,8 @@ fn appendEntryKeys(gpa: std.mem.Allocator, out: *std.ArrayList(Binding), e: *con
 
 /// Effective bindings of the built-in defaults, or of the defaults with a
 /// preset's overrides applied (an override replaces every default key of
-/// its action, scoped ones included). Caller frees with `gpa.free`.
+/// its action, scoped ones included). Numbered keys are expanded to the nine
+/// strokes or chords the router matches. Caller frees with `gpa.free`.
 pub fn effectiveBindings(gpa: std.mem.Allocator, preset: ?*const Preset) BuildError![]Binding {
     var out: std.ArrayList(Binding) = .empty;
     errdefer out.deinit(gpa);
@@ -451,7 +455,11 @@ test "unit: keys: presets are well-formed" {
             const e = catalog.find(o.id) orelse return error.TestUnexpectedResult;
             try testing.expectEqualStrings(e.id, o.id); // canonical id, not an alias
             try testing.expect(e.availability == .supported);
-            for (o.keys) |k| _ = try strokes.Trigger.parse(k, .windows);
+            for (o.keys) |k| {
+                const t = try strokes.Trigger.parse(k, .windows);
+                // Numbered families are written with their first member.
+                if (e.numbered) try testing.expectEqual(strokes.Key.@"1", (t.second orelse t.first).key);
+            }
             // Sorted, one entry per id; and every override changes a default.
             if (j > 0) try testing.expect(std.mem.lessThan(u8, p.overrides[j - 1].id, o.id));
             try testing.expect(differsFromDefault(o));
@@ -478,6 +486,40 @@ test "unit: keys: every preset keymap is conflict-free under router precedence" 
     }
 }
 
+test "unit: keys: conflicts with a numbered chord family are found" {
+    const gpa = testing.allocator;
+    // "ctrl+b 2" is a member of selectWorkspaceByNumber's ctrl+b 1…9 family.
+    const clash: Preset = .{ .name = "t", .title = "t", .description = "t", .overrides = &.{
+        .{ .id = "newTab", .keys = &.{"ctrl+b 2"} },
+        .{ .id = "selectWorkspaceByNumber", .keys = &.{"ctrl+b 1"} },
+    } };
+    const b = try effectiveBindings(gpa, &clash);
+    defer gpa.free(b);
+    const conflicts = try findConflicts(gpa, b, .{ .specific_beats_global = true });
+    defer gpa.free(conflicts);
+    try testing.expectEqual(@as(usize, 1), conflicts.len);
+    try testing.expect(conflicts[0].a.trigger.eql(try strokes.Trigger.parse("ctrl+b 2", .windows)));
+    // A plain "ctrl+b" binding is a prefix of every member.
+    const prefix: Preset = .{ .name = "t", .title = "t", .description = "t", .overrides = &.{
+        .{ .id = "selectWorkspaceByNumber", .keys = &.{"ctrl+b 1"} },
+        .{ .id = "toggleSidebar", .keys = &.{"ctrl+b"} },
+    } };
+    const b2 = try effectiveBindings(gpa, &prefix);
+    defer gpa.free(b2);
+    const c2 = try findConflicts(gpa, b2, .{ .specific_beats_global = true });
+    defer gpa.free(c2);
+    try testing.expectEqual(@as(usize, 9), c2.len);
+    // An unknown override id is an error, and nothing leaks.
+    const unknown: Preset = .{ .name = "t", .title = "t", .description = "t", .overrides = &.{
+        .{ .id = "noSuchAction", .keys = &.{"ctrl+shift+f12"} },
+    } };
+    try testing.expectError(error.UnknownAction, effectiveBindings(gpa, &unknown));
+    const bad_key: Preset = .{ .name = "t", .title = "t", .description = "t", .overrides = &.{
+        .{ .id = "splitRight", .keys = &.{"ctrl+shift+nokey"} },
+    } };
+    try testing.expectError(error.UnknownKey, effectiveBindings(gpa, &bad_key));
+}
+
 fn bindingFor(bindings: []const Binding, id: []const u8) ?Binding {
     for (bindings) |b| if (std.mem.eql(u8, b.id, id)) return b;
     return null;
@@ -493,8 +535,14 @@ test "unit: keys: preset contents" {
     // Overridden actions lose their defaults; others keep them.
     for (b) |x| if (std.mem.eql(u8, x.id, "newTab")) try testing.expect(x.trigger.isChord());
     try testing.expect(bindingFor(b, "newSurface").?.trigger.eql(try strokes.Trigger.parse("ctrl+shift+t", .windows)));
-    // Numbered chord second strokes stay literal ("ctrl+b 1" selects workspace 1 family via the router).
-    try testing.expect(bindingFor(b, "selectWorkspaceByNumber").?.trigger.isChord());
+    // A numbered chord ("ctrl+b 1") stands for ctrl+b 1 … ctrl+b 9.
+    var fam: usize = 0;
+    for (b) |x| if (std.mem.eql(u8, x.id, "selectWorkspaceByNumber")) {
+        fam += 1;
+        try testing.expect(x.trigger.first.eql(try strokes.Stroke.parse("ctrl+b", .windows)));
+        try testing.expectEqual(@as(?u8, @as(u8, @intCast(fam))), x.trigger.second.?.key.digit());
+    };
+    try testing.expectEqual(@as(usize, 9), fam);
 
     const wt = try effectiveBindings(gpa, find("windows-terminal").?);
     defer gpa.free(wt);
