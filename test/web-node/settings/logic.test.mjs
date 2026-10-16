@@ -489,6 +489,43 @@ describe("unit: core-shortcuts-settings-ui: validation", () => {
     assert.deepEqual(sc.validateBinding(actions, get("newSurface"), []).errors, ["Not a valid shortcut."]);
   });
 
+  test("unit: core-shortcuts-settings-ui: a numbered key stands for its whole 1-9 family", () => {
+    assert.deepEqual(sc.expandNumbered("ctrl+shift+1", true), [1, 2, 3, 4, 5, 6, 7, 8, 9].map((d) => `ctrl+shift+${d}`));
+    assert.deepEqual(sc.expandNumbered("ctrl+b 1", true).slice(-2), ["ctrl+b 8", "ctrl+b 9"]);
+    assert.deepEqual(sc.expandNumbered("1", true).length, 9);
+    assert.deepEqual(sc.expandNumbered("ctrl+shift+1", false), ["ctrl+shift+1"]);
+    assert.deepEqual(sc.expandNumbered("ctrl+shift+x", true), ["ctrl+shift+x"]);
+    assert.deepEqual(sc.expandNumbered("ctrl+shift+=", true), ["ctrl+shift+="]);
+    // Select Workspace 1…9 holds ctrl+alt+1…9: Ctrl+Alt+5 elsewhere conflicts with it, Ctrl+Alt+0 does not.
+    assert.deepEqual(sc.findConflicts(actions, "newSurface", "ctrl+alt+5"), [
+      { id: "selectWorkspaceByNumber", title: "Select Workspace 1…9", keys: "ctrl+alt+5" },
+    ]);
+    assert.deepEqual(sc.validateBinding(actions, get("newSurface"), ["ctrl+alt+5"]).errors, [
+      "This shortcut conflicts with Select Workspace 1…9 (Ctrl+Alt+5)",
+    ]);
+    assert.deepEqual(sc.findConflicts(actions, "newSurface", "ctrl+alt+0"), []);
+    // A numbered recording claims the family too; chord families expand on their last stroke.
+    const list = sc.normalizeShortcutList({
+      actions: [
+        { id: "a", title: "A", category: "app", keys: ["ctrl+shift+4"] },
+        { id: "n", title: "N 1…9", category: "workspace", keys: [], numbered: true },
+        { id: "t", title: "T 1…9", category: "workspace", keys: ["ctrl+b 1"], numbered: true },
+      ],
+    }).actions;
+    const n = list.find((x) => x.id === "n");
+    const v = sc.validateBinding(list, n, ["ctrl+shift+9"]);
+    assert.equal(v.binding, "ctrl+shift+1");
+    assert.deepEqual(v.errors, ["This shortcut conflicts with A (Ctrl+Shift+4)"]);
+    assert.deepEqual(
+      sc.findConflicts(list, "a", "ctrl+b 5").map((c) => [c.id, c.keys]),
+      [["t", "ctrl+b 5"]],
+    );
+    assert.deepEqual(
+      sc.actionsUsingStroke(actions, "ctrl+alt+7").map((x) => x.id),
+      ["selectWorkspaceByNumber"],
+    );
+  });
+
   test("unit: core-shortcuts-settings-ui: search and detect by keys", () => {
     assert.deepEqual(
       sc.filterActions(actions, "split").map((a) => a.id),

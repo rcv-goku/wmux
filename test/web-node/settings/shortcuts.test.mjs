@@ -232,6 +232,23 @@ describe("unit: core-shortcuts-settings-ui: recorder", () => {
     assert.deepEqual(sc.wmux.diffViewerScrollDown, ["n"]);
   });
 
+  test("unit: core-shortcuts-settings-ui: a key in a numbered family is a conflict and is not saved", async () => {
+    const { sc } = await open();
+    // Select Workspace 1…9 is ctrl+alt+1, so it owns Ctrl+Alt+1 through Ctrl+Alt+9.
+    await recordFor("newSurface", { key: "5", code: "Digit5", keyCode: 53, ctrlKey: true, altKey: true });
+    assert.deepEqual(errorsOf("newSurface"), ["This shortcut conflicts with Select Workspace 1…9 (Ctrl+Alt+5)"]);
+    assert.equal(host.calls("wmux.shortcuts.validate").length, 0, "blocked before the native check");
+    assert.equal(sc.wmux.newSurface, undefined);
+    // Find by keys lists the family's owner too.
+    $("#set-sc-detect").click();
+    keydown({ key: "8", code: "Digit8", keyCode: 56, ctrlKey: true, altKey: true }, doc.body);
+    await flush();
+    assert.deepEqual(
+      $$(".set-sc-row").map((r) => r.dataset.action),
+      ["selectWorkspaceByNumber"],
+    );
+  });
+
   test("unit: core-shortcuts-settings-ui: Escape cancels; modifier-only presses are ignored", async () => {
     await open();
     row("newSurface").querySelector(".set-sc-keys").click();

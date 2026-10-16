@@ -146,7 +146,9 @@ panel-only.
   Win and Alt+Tab / Ctrl+Esc / Ctrl+Shift+Esc / Ctrl+Alt+Delete / Alt+Esc are
   "reserved by Windows"; Alt+Space, Alt+F4, Ctrl+Alt+Tab and F1 warn;
   numbered actions need 1-9 and store digit 1; conflicts with an action in an
-  overlapping context (or a chord prefix) block saving. Chords are edited in
+  overlapping context (or a chord prefix) block saving, where a numbered
+  action's key counts for its whole 1-9 family (`ctrl+shift+1` also holds
+  Ctrl+Shift+5; find by keys lists it too). Chords are edited in
   wmux.json ("Shortcut Chords" help). Unbind (X) turns into Restore. The
   Pane Resize Step row (`app.paneResizeStepPixels`) heads the page whatever
   section its spec names, and is not repeated among the section's rows.
