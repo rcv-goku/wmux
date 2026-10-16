@@ -132,7 +132,8 @@ fn runList(ctx: *Ctx, args: []const []const u8, v: *const Verb, _: []const u8) !
     }
     for (items) |g| {
         const handle = (try common.handleText(ctx, g, "group")) orelse "?";
-        const count = common.int(g, "workspace_count") orelse if (common.list(g, "workspace_ids")) |l| @as(i64, @intCast(l.len)) else 0;
+        const members = common.list(g, "workspace_ids") orelse common.list(g, "child_workspace_ids");
+        const count = common.int(g, "workspace_count") orelse if (members) |l| @as(i64, @intCast(l.len)) else 0;
         try ctx.out.print("{s}  {s}  workspaces={d}", .{ handle, common.str(g, "name") orelse "", count });
         if (common.boolean(g, "collapsed")) try ctx.out.writeAll("  [collapsed]");
         if (common.boolean(g, "pinned")) try ctx.out.writeAll("  [pinned]");
@@ -164,7 +165,8 @@ fn runCreate(ctx: *Ctx, args: []const []const u8, v: *const Verb, _: []const u8)
             const hv = (try common.handleValue(ctx.arena, .workspace, item, &msg)) orelse return common.usage(ctx, u, "{s}", .{msg});
             try ids.append(hv);
         }
-        try p.value("workspace_ids", .{ .array = ids });
+        // cmux's member key on workspace.group.create.
+        try p.value("child_workspace_ids", .{ .array = ids });
     }
     for ([_][2][]const u8{ .{ "--idempotency-key", "idempotency_key" }, .{ "--external-id", "external_id" } }) |f| {
         if (o.get(f[0])) |k| {
@@ -350,12 +352,12 @@ test "unit: cli-workspace-group: create params and validation" {
     h.ok("workspace.group.create", "{\"group_id\":\"0A000000-0000-4000-8000-000000000003\",\"group_ref\":\"workspace_group:3\"}");
     const out = try testkit.expectOk(&h, &.{ "workspace-group", "create", "--name", "m", "--from", "workspace:1,workspace:2", "--idempotency-key", "k" });
     try testkit.expectGolden(h.alloc(), "workspace-group-create.txt", out);
-    try h.expectLast("workspace.group.create", "{\"name\":\"m\",\"workspace_ids\":[\"workspace:1\",\"workspace:2\"],\"idempotency_key\":\"k\"}");
+    try h.expectLast("workspace.group.create", "{\"name\":\"m\",\"child_workspace_ids\":[\"workspace:1\",\"workspace:2\"],\"idempotency_key\":\"k\"}");
     // Anchor-only: no --from means no members are inferred.
     _ = try testkit.expectOk(&h, &.{ "workspace", "group", "create", "--cwd", "/srv", "--external-id", "jira-7" });
     try h.expectLast("workspace.group.create", "{\"cwd\":\"/srv\",\"external_id\":\"jira-7\"}");
     _ = try testkit.expectOk(&h, &.{ "workspace-group", "create", "--from", "3", "--window", "window:1" });
-    try h.expectLast("workspace.group.create", "{\"workspace_ids\":[3],\"window_id\":\"window:1\"}");
+    try h.expectLast("workspace.group.create", "{\"child_workspace_ids\":[3],\"window_id\":\"window:1\"}");
     try testkit.expectUsage(&h, &.{ "workspace-group", "create", "--idempotency-key", "k", "--external-id", "e" }, "--idempotency-key and --external-id cannot be combined");
     try testkit.expectUsage(&h, &.{ "workspace-group", "create", "--from", "workspace:1," }, "--from has an empty entry");
     try testkit.expectUsage(&h, &.{ "workspace-group", "create", "--from", "pane:1" }, "Invalid workspace handle: pane:1 (expected UUID, ref like workspace:1, or index)");
@@ -446,6 +448,17 @@ test "unit: cli-workspace-group: membership verbs default to the caller's worksp
     try testkit.expectUsage(&h, &.{ "--window", "window:1", "workspace", "group", "remove" }, "workspace group remove requires --workspace <id|ref|index>");
     h.unsetEnv("CMUX_WORKSPACE_ID");
     try testkit.expectUsage(&h, &.{ "workspace-group", "add", "--group", "workspace_group:1", "--workspace=" }, msg);
+}
+
+test "unit: cli-workspace-group: group handles in the kind spelling print too" {
+    var h: testkit.Harness = undefined;
+    try h.init();
+    defer h.deinit();
+    h.ok("workspace.group.create", "{\"workspace_group_id\":\"0A000000-0000-4000-8000-000000000004\",\"workspace_group_ref\":\"workspace_group:4\"}");
+    try testing.expectEqualStrings("OK workspace_group:4\n", try testkit.expectOk(&h, &.{ "workspace-group", "create", "--name", "x" }));
+    try testing.expectEqualStrings("OK 0A000000-0000-4000-8000-000000000004\n", try testkit.expectOk(&h, &.{ "workspace-group", "create", "--id-format", "uuids" }));
+    h.ok("workspace.group.list", "{\"groups\":[{\"workspace_group_ref\":\"workspace_group:4\",\"name\":\"N\",\"child_workspace_ids\":[\"A\",\"B\",\"C\"]},{\"ref\":\"workspace_group:5\",\"name\":\"M\"}]}");
+    try testing.expectEqualStrings("workspace_group:4  N  workspaces=3\nworkspace_group:5  M  workspaces=0\n", try testkit.expectOk(&h, &.{ "workspace-group", "list" }));
 }
 
 test "unit: cli-workspace-group: usage errors" {

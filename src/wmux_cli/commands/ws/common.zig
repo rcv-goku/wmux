@@ -247,11 +247,16 @@ pub fn list(v: std.json.Value, key: []const u8) ?[]const std.json.Value {
 }
 
 /// The handle of `v` in text form for `--id-format`: `<p>_ref`/`<p>_id`,
-/// then `ref`/`id`; null when `v` carries neither.
+/// then `ref`/`id`; null when `v` carries neither. Groups (`group`) also
+/// accept the kind spelling `workspace_group_ref`/`workspace_group_id`
+/// (ADR-2.5) after the selector spelling.
 pub fn handleText(ctx: *Ctx, v: std.json.Value, prefix: []const u8) !?[]const u8 {
     const a = ctx.arena;
-    const ref = str(v, try std.fmt.allocPrint(a, "{s}_ref", .{prefix})) orelse str(v, "ref");
-    const id = str(v, try std.fmt.allocPrint(a, "{s}_id", .{prefix})) orelse str(v, "id");
+    const group = std.mem.eql(u8, prefix, "group");
+    const alt_ref = if (group) str(v, "workspace_group_ref") else null;
+    const alt_id = if (group) str(v, "workspace_group_id") else null;
+    const ref = str(v, try std.fmt.allocPrint(a, "{s}_ref", .{prefix})) orelse alt_ref orelse str(v, "ref");
+    const id = str(v, try std.fmt.allocPrint(a, "{s}_id", .{prefix})) orelse alt_id orelse str(v, "id");
     if (ref == null and id == null) return null;
     return try idformat.handleTextAlloc(a, ctx.parsed.globals.id_format, ref, id, .{});
 }
