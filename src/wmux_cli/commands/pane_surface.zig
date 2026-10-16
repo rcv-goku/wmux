@@ -592,6 +592,12 @@ test "unit: cli-ps: new-split sends direction, caller targets, initial input and
     try pt.expectGolden(h.alloc(), "new-split.txt", r.out);
     const both = h.run(&.{ "cmux", "new-split", "right", "--id-format", "both" });
     try testing.expectEqualStrings("OK surface:3 (S3) pane:2 (P2) workspace:1 (W1)\n", both.out);
+    // Results also carry the window (ADR-2.5); the OK line keeps cmux's
+    // documented `OK surface:<n> pane:<n> workspace:<n>` shape and --json
+    // still shows everything.
+    h.ok("surface.split", "{\"window_id\":\"WIN1\",\"window_ref\":\"window:1\",\"surface_id\":\"S3\",\"surface_ref\":\"surface:3\",\"pane_id\":\"P2\",\"pane_ref\":\"pane:2\",\"workspace_id\":\"W1\",\"workspace_ref\":\"workspace:1\"}");
+    try testing.expectEqualStrings("OK surface:3 pane:2 workspace:1\n", h.run(&.{ "cmux", "new-split", "right" }).out);
+    try pt.expectContains(h.run(&.{ "cmux", "new-split", "right", "--json" }).out, "\"window_ref\": \"window:1\"");
     // Explicit handles beat the caller; --window drops the caller defaults.
     _ = h.run(&.{ "cmux", "--window", "window:2", "new-split", "left", "--panel", "3", "--focus", "--command", "  " });
     try h.expectLast("surface.split", "{\"direction\":\"left\",\"window_id\":\"window:2\",\"surface_id\":3,\"focus\":true}");

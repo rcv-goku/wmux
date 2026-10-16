@@ -412,15 +412,18 @@ pub fn writeHandle(ctx: *Ctx, w: *Writer, v: std.json.Value, prefix: ?[]const u8
     return true;
 }
 
-/// `OK` followed by the surface, pane, workspace and window handles the
-/// result carries (`OK surface:3 pane:2 workspace:1`). A remote tmux mirror
-/// that only accepted the request prints cmux's asynchronous note.
+/// `OK` followed by the surface, pane and workspace handles the result
+/// carries, in cmux's documented order (`OK surface:3 pane:2 workspace:1`).
+/// Window handles are left to `--json`: the line keeps cmux's exact shape
+/// even though results carry `window_id`/`window_ref` (ADR-2.5). A remote
+/// tmux mirror that only accepted the request prints cmux's asynchronous
+/// note.
 pub fn writeOk(ctx: *Ctx, result: std.json.Value) !void {
     const w = ctx.out;
     try w.writeAll("OK");
     const accepted = getBool(result, "accepted");
     if (accepted) try w.writeAll(" accepted");
-    for ([_][]const u8{ "surface", "pane", "workspace", "window" }) |k| {
+    for ([_][]const u8{ "surface", "pane", "workspace" }) |k| {
         var aw: std.Io.Writer.Allocating = .init(ctx.arena);
         if (try writeHandle(ctx, &aw.writer, result, k, false)) {
             try w.writeByte(' ');
