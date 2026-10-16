@@ -116,10 +116,7 @@ pub fn runServer(gpa: Allocator, home: []const u8, name: []const u8, opts: Serve
 
     const lock = try std.fs.cwd().createFile(slot.lock, .{ .truncate = false, .mode = 0o600 });
     defer lock.close();
-    posix.flock(lock.handle, posix.LOCK.EX | posix.LOCK.NB) catch |err| switch (err) {
-        error.WouldBlock => return error.AlreadyRunning,
-        else => return err,
-    };
+    try lockSlot(lock);
     {
         var buf: [32]u8 = undefined;
         const pid_text = try std.fmt.bufPrint(&buf, "{d}\n", .{std.c.getpid()});
@@ -143,6 +140,21 @@ pub fn runServer(gpa: Allocator, home: []const u8, name: []const u8, opts: Serve
     defer srv.deinit();
     log.info("slot {s} serving on {s}", .{ name, slot.sock });
     try srv.run();
+}
+
+/// Takes the slot lock for the server's lifetime. `lockHeld` (status,
+/// --persistent-stop) takes the lock for an instant to probe it, so a
+/// starting server retries for a moment before it concludes that another
+/// server owns the slot.
+fn lockSlot(lock: std.fs.File) !void {
+    var tries: usize = 0;
+    while (true) : (tries += 1) {
+        if (posix.flock(lock.handle, posix.LOCK.EX | posix.LOCK.NB)) |_| return else |err| switch (err) {
+            error.WouldBlock => if (tries >= 25) return error.AlreadyRunning,
+            else => return err,
+        }
+        std.Thread.sleep(10 * std.time.ns_per_ms);
+    }
 }
 
 /// Starts the slot server detached from the caller (double fork, new
@@ -176,14 +188,22 @@ pub fn spawnServer(gpa: Allocator, exe: []const u8, slot: *const Slot, session_t
     _ = std.c.waitpid(pid, null, 0);
 }
 
-/// Connects to the slot server, starting it if needed (bounded wait).
+/// Connects to the slot server, starting it if needed (bounded wait). The
+/// start is repeated every second while waiting: a server that was still
+/// shutting down when we spawned holds the lock, and the one we spawned
+/// then exits as AlreadyRunning, leaving nobody to listen.
 pub fn connectOrSpawn(gpa: Allocator, exe: []const u8, slot: *const Slot, session_ttl_s: u64, wait_ms: i64) !posix.fd_t {
     if (connect(slot.sock)) |fd| return fd else |_| {}
-    try spawnServer(gpa, exe, slot, session_ttl_s);
-    const deadline = std.time.milliTimestamp() + wait_ms;
+    const start = std.time.milliTimestamp();
+    var next_spawn = start;
     while (true) {
+        const now = std.time.milliTimestamp();
+        if (now >= next_spawn) {
+            try spawnServer(gpa, exe, slot, session_ttl_s);
+            next_spawn = now + 1000;
+        }
         if (connect(slot.sock)) |fd| return fd else |err| {
-            if (std.time.milliTimestamp() >= deadline) return err;
+            if (now - start >= wait_ms) return err;
         }
         std.Thread.sleep(20 * std.time.ns_per_ms);
     }

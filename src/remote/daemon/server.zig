@@ -113,6 +113,11 @@ pub const Server = struct {
 
     /// Kills remaining sessions (with the grace period), closes everything.
     pub fn deinit(self: *Server) void {
+        // Stop accepting first: during the reap below, a connecting bridge
+        // is refused (and starts the next server) instead of being queued
+        // in a backlog that the close would reset.
+        if (self.listener) |l| posix.close(l);
+        self.listener = null;
         self.shutdownSessions();
         for (self.conns.items) |c| self.destroyConn(c);
         self.conns.deinit(self.gpa);
@@ -120,7 +125,6 @@ pub const Server = struct {
         self.graveyard.deinit(self.gpa);
         self.sessions.deinit(self.gpa);
         self.reaping.deinit(self.gpa);
-        if (self.listener) |l| posix.close(l);
         self.* = undefined;
     }
 

@@ -574,6 +574,47 @@ test "unit: remote-daemon: a second server for the same slot is refused" {
     try testing.expect(persistent.readPid(h.slot.pid) != null);
 }
 
+test "unit: remote-daemon: a brief probe of the slot lock does not stop a server from starting" {
+    const gpa = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const home = try tmp.dir.realpathAlloc(gpa, ".");
+    defer gpa.free(home);
+    var slot = try persistent.Slot.init(gpa, home, "probe");
+    defer slot.deinit(gpa);
+    try persistent.ensurePrivateDir(slot.dir);
+    // Hold the lock the way `status` and `--persistent-stop` probe it (only
+    // for longer) while the server starts.
+    const probe = try std.fs.cwd().createFile(slot.lock, .{ .truncate = false, .mode = 0o600 });
+    try posix.flock(probe.handle, posix.LOCK.EX | posix.LOCK.NB);
+    const Run = struct {
+        stop: std.atomic.Value(bool) = .init(false),
+        err: ?anyerror = null,
+        fn run(r: *@This(), g: std.mem.Allocator, h: []const u8) void {
+            persistent.runServer(g, h, "probe", .{ .stop_flag = &r.stop, .kill_grace_ms = 100 }) catch |e| {
+                r.err = e;
+            };
+        }
+    };
+    var r: Run = .{};
+    const t = try std.Thread.spawn(.{}, Run.run, .{ &r, gpa, home });
+    std.Thread.sleep(30 * std.time.ns_per_ms);
+    probe.close();
+    var fd: ?posix.fd_t = null;
+    var tries: usize = 0;
+    while (fd == null and tries < 300) : (tries += 1) {
+        fd = persistent.connect(slot.sock) catch blk: {
+            std.Thread.sleep(10 * std.time.ns_per_ms);
+            break :blk null;
+        };
+    }
+    r.stop.store(true, .release);
+    t.join();
+    if (fd) |f| posix.close(f);
+    try testing.expect(r.err == null);
+    try testing.expect(fd != null);
+}
+
 test "unit: remote-daemon: idle ttl reaps detached sessions" {
     const gpa = testing.allocator;
     const h = try SlotHarness.start(gpa, .{ .session_ttl_ms = 300 });
