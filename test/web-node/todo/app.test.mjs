@@ -311,6 +311,34 @@ describe("unit: todo pane interaction", () => {
     assert.equal(doc.activeElement, doc.querySelector(".todo-editor"));
   });
 
+  test("unit: todo: a re-render that reports the editor's removal as focusout keeps the draft", async () => {
+    await startApp({ items: [item("a"), item("b")] });
+    const focusout = () => new window.FocusEvent("focusout", { bubbles: true, relatedTarget: null });
+    const list = $("todo-list");
+    // Chromium (WebView2) fires focusout, relatedTarget null, when
+    // replaceChildren() removes the focused editor; jsdom does not.
+    list.replaceChildren = function (...nodes) {
+      const active = doc.activeElement;
+      if (active && active !== this && this.contains(active)) active.dispatchEvent(focusout());
+      return window.Element.prototype.replaceChildren.apply(this, nodes);
+    };
+    app.startEdit(store.items[0].id);
+    doc.querySelector(".todo-editor").value = "draft";
+    store.items.push(item("c"));
+    host.emit("panel.todo.changed", { workspace_id: WS, ...listReply() });
+    await settle();
+    assert.equal(host.calls("workspace.todo.edit").length, 0, "a live update never commits the draft");
+    assert.equal(app.editingId, store.items[0].id);
+    assert.equal(doc.querySelector(".todo-editor").value, "draft");
+    assert.equal(doc.activeElement, doc.querySelector(".todo-editor"));
+    // Really leaving the editor still commits it.
+    doc.querySelector(".todo-editor").dispatchEvent(focusout());
+    await settle();
+    assert.deepEqual(host.calls("workspace.todo.edit").map((c) => c.params.text), ["draft"]);
+    assert.equal(app.editingId, null);
+    assert.equal(store.items[0].text, "draft");
+  });
+
   test("unit: todo: context menu offers Edit, Mark In Progress and Remove", async () => {
     await startApp({ items: [item("a"), item("b")] });
     mouse(window, rowOf("b"), "contextmenu", { clientX: 10, clientY: 10 });

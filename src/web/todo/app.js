@@ -106,6 +106,7 @@ export function createApp(options) {
     menuFor: null,
     confirmResolve: null,
     loadSeq: 0,
+    rendering: false,
   };
   const cleanups = [];
   const timers = new Set();
@@ -248,9 +249,17 @@ export function createApp(options) {
     const hadFocus = editor && doc.activeElement === editor;
     if (state.editingId && !itemById(state.editingId)) state.editingId = null;
 
-    ui.list.replaceChildren();
-    const order = displayOrder(state.items);
-    order.forEach((index, pos) => ui.list.append(renderItem(state.items[index], pos)));
+    // Chromium (WebView2) fires focusout, relatedTarget null, while
+    // replaceChildren() removes the focused editor; onEditorBlur must not take
+    // that for the user leaving the editor.
+    state.rendering = true;
+    try {
+      ui.list.replaceChildren();
+      const order = displayOrder(state.items);
+      order.forEach((index, pos) => ui.list.append(renderItem(state.items[index], pos)));
+    } finally {
+      state.rendering = false;
+    }
     const active = ui.list.querySelector(".todo-item.is-highlighted");
     if (active) ui.list.setAttribute("aria-activedescendant", active.id);
     else ui.list.removeAttribute("aria-activedescendant");
@@ -707,6 +716,8 @@ export function createApp(options) {
   }
 
   function onEditorBlur(e) {
+    // A re-render replacing the editor is not the user leaving it (render() keeps the draft).
+    if (state.rendering) return;
     if (e.target.classList && e.target.classList.contains("todo-editor") && state.editingId) {
       // Clicking a menu or the list keeps the edit open; leaving the pane commits it.
       const next = e.relatedTarget;
