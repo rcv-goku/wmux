@@ -887,3 +887,67 @@ test "unit: remote-daemon: huge output is streamed in full but replay is bounded
     const st = try c.request(.session_status, msgs.SessionIdParams{ .session_id = sid }, timeout);
     try testing.expectEqual(@as(i64, 4096), int(st.result, "scrollback_bytes"));
 }
+
+test "unit: remote-daemon: pty.write refuses oversized data and a full input queue" {
+    const gpa = testing.allocator;
+    const h = try StdioHarness.start(gpa, homeCfg("/tmp"));
+    defer h.stop();
+    const c = &h.client;
+    _ = try c.hello(true, timeout);
+    // A raw-mode terminal whose program never reads: input backs up.
+    const cmd: []const []const u8 = &.{ "/bin/sh", "-c", "stty raw -echo; echo ready-$((1+1)); exec sleep 30" };
+    const r = try c.request(.session_open, msgs.SessionOpenParams{ .command = cmd }, timeout);
+    try testing.expect(r.ok);
+    const sid = str(r.result, "session_id");
+    const a = try ptyAttach(c, sid, 80, 24);
+    try c.waitData(a.channel, "ready-2", timeout);
+    const Enc = std.base64.standard.Encoder;
+    const raw = try gpa.alloc(u8, msgs.max_pty_write + 1);
+    defer gpa.free(raw);
+    @memset(raw, 'k');
+    const b64 = try gpa.alloc(u8, Enc.calcSize(raw.len));
+    defer gpa.free(b64);
+    // One byte over the per-write cap.
+    const over = try c.request(.pty_write, msgs.PtyWriteParams{ .session_id = sid, .data = Enc.encode(b64, raw) }, timeout);
+    try testing.expectEqualStrings("too_large", over.code.?);
+    // Exactly the cap is queued (the terminal takes only some KiB of it),
+    // so a second write finds the input queue full.
+    const max = Enc.encode(b64, raw[0..msgs.max_pty_write]);
+    const first = try c.request(.pty_write, msgs.PtyWriteParams{ .session_id = sid, .data = max }, timeout);
+    try testing.expect(first.ok);
+    try testing.expectEqual(@as(i64, msgs.max_pty_write), int(first.result, "bytes"));
+    const second = try c.request(.pty_write, msgs.PtyWriteParams{ .session_id = sid, .data = max }, timeout);
+    try testing.expectEqualStrings("busy", second.code.?);
+    try testing.expect((try c.request(.ping, .{}, timeout)).ok);
+}
+
+test "unit: remote-daemon: cwd, a zero-byte scrollback and an exit by signal" {
+    const gpa = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = try tmp.dir.realpathAlloc(gpa, ".");
+    defer gpa.free(dir);
+    const h = try StdioHarness.start(gpa, homeCfg("/tmp"));
+    defer h.stop();
+    const c = &h.client;
+    _ = try c.hello(true, timeout);
+    // Waits for a line before each step, so no output precedes the attach.
+    const cmd: []const []const u8 = &.{ "/bin/sh", "-c", "read x; pwd; read y; kill -TERM $$" };
+    const r = try c.request(.session_open, msgs.SessionOpenParams{ .command = cmd, .cwd = dir, .scrollback_bytes = 0 }, timeout);
+    try testing.expect(r.ok);
+    const sid = str(r.result, "session_id");
+    const a = try ptyAttach(c, sid, 80, 24);
+    try testing.expectEqual(@as(i64, 0), a.replay);
+    try typeLine(c, sid, "\n");
+    try c.waitData(a.channel, dir, timeout);
+    // The ring keeps nothing, so a new attachment replays nothing.
+    const b = try ptyAttach(c, sid, 80, 24);
+    try testing.expectEqual(@as(i64, 0), b.replay);
+    const st = try c.request(.session_status, msgs.SessionIdParams{ .session_id = sid }, timeout);
+    try testing.expectEqual(@as(i64, 0), int(st.result, "scrollback_bytes"));
+    try typeLine(c, sid, "\n");
+    const ev = try c.waitEvent(msgs.event_pty_exit, timeout);
+    try testing.expectEqualStrings(sid, str(ev.params, "session_id"));
+    try testing.expectEqual(@as(i64, 15), int(ev.params, "signal"));
+    try testing.expect(ev.params.object.get("exit_code") == null);
+}
