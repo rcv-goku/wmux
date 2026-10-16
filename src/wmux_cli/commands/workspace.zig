@@ -50,7 +50,10 @@ pub const commands = [_]CommandSpec{
     .{ .name = "current-workspace", .group = .start, .usage = u_current, .help = @embedFile("../help/current-workspace.txt"), .run = runCurrent },
     .{ .name = "new-workspace", .group = .start, .usage = u_new, .help = @embedFile("../help/new-workspace.txt"), .legacy_notice = true, .legacy_alias_of = "workspace create", .run = runNewLegacy },
     .{ .name = "select-workspace", .group = .start, .usage = u_select, .help = @embedFile("../help/select-workspace.txt"), .legacy_notice = true, .legacy_alias_of = "workspace select", .run = runSelectLegacy },
-    .{ .name = "rename-workspace", .aliases = &.{"rename-window"}, .group = .start, .usage = u_rename, .help = @embedFile("../help/rename-workspace.txt"), .legacy_notice = true, .legacy_alias_of = "workspace rename", .run = runRenameLegacy },
+    .{ .name = "rename-workspace", .group = .start, .usage = u_rename, .help = @embedFile("../help/rename-workspace.txt"), .legacy_notice = true, .legacy_alias_of = "workspace rename", .run = runRenameLegacy },
+    // The tmux-compatible spelling of rename-workspace: same command and
+    // help, but no legacy notice (cmux prints none for it).
+    .{ .name = "rename-window", .group = .start, .usage = u_rename, .help = @embedFile("../help/rename-workspace.txt"), .run = runRenameLegacy },
     .{ .name = "close-workspace", .group = .start, .usage = u_close, .help = @embedFile("../help/close-workspace.txt"), .legacy_notice = true, .legacy_alias_of = "workspace close", .run = runCloseLegacy },
     .{ .name = "workspace", .group = .start, .usage = u_ns, .help = @embedFile("../help/workspace.txt"), .run = runNamespace },
     .{ .name = "workspace-action", .group = .start, .usage = reorder.u_action, .help = @embedFile("../help/workspace-action.txt"), .run = reorder.runAction },
@@ -76,9 +79,9 @@ fn runNamespace(ctx: *Ctx) !u8 {
     if (eql(u8, sub, "list")) return runList(ctx, rest, u_ns_list);
     if (eql(u8, sub, "create")) return create.run(ctx, rest, u_ns_create);
     if (eql(u8, sub, "env")) return create.runEnv(ctx, rest, u_ns_env);
-    if (eql(u8, sub, "close")) return runClose(ctx, rest, u_ns_close, "workspace close");
+    if (eql(u8, sub, "close")) return runClose(ctx, rest, u_ns_close, "workspace close", .namespace);
     if (eql(u8, sub, "rename")) return runRenameNs(ctx, rest);
-    if (eql(u8, sub, "select")) return runSelect(ctx, rest, u_ns_select, "workspace select");
+    if (eql(u8, sub, "select")) return runSelect(ctx, rest, u_ns_select, "workspace select", .namespace);
     if (eql(u8, sub, "status")) return status.runStatus(ctx, rest, u_ns_status);
     if (eql(u8, sub, "reconnect")) return status.runRemote(ctx, rest, u_ns_reconnect, "workspace.remote.reconnect");
     if (eql(u8, sub, "disconnect")) return status.runRemote(ctx, rest, u_ns_disconnect, "workspace.remote.disconnect");
@@ -95,12 +98,19 @@ fn runNewLegacy(ctx: *Ctx) !u8 {
 }
 
 fn runSelectLegacy(ctx: *Ctx) !u8 {
-    return runSelect(ctx, ctx.args(), u_select, "select-workspace");
+    return runSelect(ctx, ctx.args(), u_select, "select-workspace", .legacy);
 }
 
 fn runCloseLegacy(ctx: *Ctx) !u8 {
-    return runClose(ctx, ctx.args(), u_close, "close-workspace");
+    return runClose(ctx, ctx.args(), u_close, "close-workspace", .legacy);
 }
+
+/// The cmux legacy verbs (`select-workspace`, `close-workspace`) act only
+/// on a workspace they are given (positional, kept for `+workspace close
+/// <index>`, or `--workspace`; a blank one is the caller's, ADR-4.6) and
+/// say "<verb> requires --workspace" otherwise, as cmux does. The
+/// namespace verbs fall back to the caller's workspace.
+const Form = enum { legacy, namespace };
 
 // ----- list and current -----
 
@@ -183,12 +193,19 @@ fn explicitWorkspace(ctx: *Ctx, u: []const u8, o: common.opts.Opts, code: *u8) ?
     return if (o.positionals.len == 1) o.positionals[0] else o.get("--workspace");
 }
 
-fn runSelect(ctx: *Ctx, args: []const []const u8, u: []const u8, name: []const u8) !u8 {
+fn missingWorkspace(ctx: *Ctx, u: []const u8, name: []const u8, form: Form) u8 {
+    return switch (form) {
+        .legacy => common.usage(ctx, u, "{s} requires --workspace", .{name}),
+        .namespace => common.usage(ctx, u, "{s} requires a workspace (<id|ref|index> or --workspace)", .{name}),
+    };
+}
+
+fn runSelect(ctx: *Ctx, args: []const []const u8, u: []const u8, name: []const u8, form: Form) !u8 {
     var code: u8 = 0;
     const o = (try common.parseOpts(ctx, u, args, &target_defs, &code)) orelse return code;
     const ws = explicitWorkspace(ctx, u, o, &code) orelse {
         if (code != 0) return code;
-        return common.usage(ctx, u, "{s} requires a workspace (<id|ref|index> or --workspace)", .{name});
+        return missingWorkspace(ctx, u, name, form);
     };
     var p = Params.init(ctx.arena);
     if (try common.putExplicitWorkspace(ctx, &p, u, "workspace_id", ws, common.windowText(ctx, o) != null)) |c| return c;
@@ -196,27 +213,30 @@ fn runSelect(ctx: *Ctx, args: []const []const u8, u: []const u8, name: []const u
     return common.simple(ctx, "workspace.select", &p, &.{"workspace"});
 }
 
-fn runClose(ctx: *Ctx, args: []const []const u8, u: []const u8, name: []const u8) !u8 {
+fn runClose(ctx: *Ctx, args: []const []const u8, u: []const u8, name: []const u8, form: Form) !u8 {
     var code: u8 = 0;
     const o = (try common.parseOpts(ctx, u, args, &close_defs, &code)) orelse return code;
     const explicit = explicitWorkspace(ctx, u, o, &code);
     if (code != 0) return code;
+    // Closing is destructive: the legacy verb never picks a workspace by
+    // itself (cmux: "close-workspace requires --workspace").
+    if (form == .legacy and explicit == null) return missingWorkspace(ctx, u, name, form);
     var p = Params.init(ctx.arena);
     if (try common.putWorkspaceTarget(ctx, &p, u, explicit, common.windowText(ctx, o) != null)) |c| return c;
-    if (p.map.get("workspace_id") == null) return common.usage(ctx, u, "{s} requires a workspace (<id|ref|index> or --workspace)", .{name});
+    if (p.map.get("workspace_id") == null) return missingWorkspace(ctx, u, name, form);
     if (try common.putWindow(ctx, &p, u, o)) |c| return c;
     if (o.has("--force")) try p.boolean("force", true);
     return common.simple(ctx, "workspace.close", &p, &.{"workspace"});
 }
 
 /// `rename-workspace [--workspace <h>] [--] <title>` (tmux-style
-/// `rename-window`): the remaining words are the title.
+/// `rename-window`): the remaining words, trimmed, are the title.
 fn runRenameLegacy(ctx: *Ctx) !u8 {
     const u = u_rename;
     var code: u8 = 0;
     const o = (try common.parseOpts(ctx, u, ctx.args(), &target_defs, &code)) orelse return code;
-    const title = try std.mem.join(ctx.arena, " ", o.positionals);
-    if (std.mem.trim(u8, title, " \t\r\n").len == 0) return common.usage(ctx, u, "rename-workspace requires a title", .{});
+    const title = std.mem.trim(u8, try std.mem.join(ctx.arena, " ", o.positionals), " \t\r\n");
+    if (title.len == 0) return common.usage(ctx, u, "{s} requires a title", .{ctx.command});
     var p = Params.init(ctx.arena);
     if (try common.putWorkspaceTarget(ctx, &p, u, o.get("--workspace"), common.windowText(ctx, o) != null)) |c| return c;
     if (try common.putWindow(ctx, &p, u, o)) |c| return c;
@@ -358,6 +378,15 @@ test "unit: cli-workspace: legacy verbs print the alias notice unless quiet" {
     try testing.expectEqualStrings("OK workspace:3\n", n.out);
     const ns = h.run(&.{ "workspace", "list" });
     try testing.expectEqualStrings("", ns.err);
+    // rename-window is the tmux-compatible spelling: cmux prints no notice
+    // for it, only for rename-workspace.
+    h.ok("workspace.rename", "{\"workspace_ref\":\"workspace:1\"}");
+    const rw = h.run(&.{ "rename-window", "--workspace", "workspace:1", "x" });
+    try testing.expectEqual(@as(u8, 0), rw.code);
+    try testing.expectEqualStrings("", rw.err);
+    try testing.expectEqualStrings("OK workspace:1\n", rw.out);
+    const rn = h.run(&.{ "rename-workspace", "--workspace", "workspace:1", "x" });
+    try testing.expectEqualStrings("cmux: 'rename-workspace' is now an alias for 'workspace rename'. The legacy form keeps working indefinitely; set CMUX_QUIET=1 to silence this notice.\n", rn.err);
     h.setEnv("CMUX_QUIET", "1");
     try testing.expectEqualStrings("", h.run(&.{"list-workspaces"}).err);
 }
@@ -553,7 +582,7 @@ test "unit: cli-workspace: select, close and rename in legacy and namespace form
     try testing.expectEqualStrings("OK workspace:3 (9B690000-0000-4000-8000-000000000003)\n", try testkit.expectOk(&h, &.{ "workspace", "rename", "workspace:3", "--title", "t", "--id-format", "both" }));
     _ = try testkit.expectOk(&h, &.{ "workspace", "select", "2", "--window", "window:1" });
     try h.expectLast("workspace.select", "{\"workspace_id\":2,\"window_id\":\"window:1\"}");
-    try testkit.expectUsage(&h, &.{"select-workspace"}, "select-workspace requires a workspace (<id|ref|index> or --workspace)");
+    try testkit.expectUsage(&h, &.{"select-workspace"}, "select-workspace requires --workspace");
     try testkit.expectUsage(&h, &.{ "workspace", "select" }, "workspace select requires a workspace (<id|ref|index> or --workspace)");
     try testkit.expectUsage(&h, &.{ "workspace", "select", "workspace:0" }, "Invalid workspace handle: workspace:0 (expected UUID, ref like workspace:1, or index)");
 
@@ -561,20 +590,33 @@ test "unit: cli-workspace: select, close and rename in legacy and namespace form
     try h.expectLast("workspace.close", "{\"workspace_id\":\"workspace:3\",\"force\":true}");
     _ = try testkit.expectOk(&h, &.{ "workspace", "close", "9b690000-0000-4000-8000-000000000003" });
     try h.expectLast("workspace.close", "{\"workspace_id\":\"9b690000-0000-4000-8000-000000000003\"}");
-    try testkit.expectUsage(&h, &.{"close-workspace"}, "close-workspace requires a workspace (<id|ref|index> or --workspace)");
+    try testkit.expectUsage(&h, &.{"close-workspace"}, "close-workspace requires --workspace");
+    try testkit.expectUsage(&h, &.{ "workspace", "close" }, "workspace close requires a workspace (<id|ref|index> or --workspace)");
     try testkit.expectUsage(&h, &.{ "workspace", "close", "a", "b" }, "unexpected argument 'b'");
+    // The legacy +workspace close <index> keeps its positional index.
+    _ = try testkit.expectOk(&h, &.{ "+workspace", "close", "2" });
+    try h.expectLast("workspace.close", "{\"workspace_id\":2}");
 
     try testkit.expectUsage(&h, &.{"rename-workspace"}, "rename-workspace requires a title");
     try testkit.expectUsage(&h, &.{ "workspace", "rename", "workspace:1" }, "workspace rename requires --title <title>");
     _ = try testkit.expectOk(&h, &.{ "workspace", "rename", "workspace:1", "--title", "API \u{1F680}" });
     try h.expectLast("workspace.rename", "{\"workspace_id\":\"workspace:1\",\"title\":\"API \u{1F680}\"}");
 
-    // Inside a terminal the caller's workspace is the default target.
+    // Inside a terminal the caller's workspace is the default target...
     h.setEnv("CMUX_WORKSPACE_ID", "CALLER-UUID");
-    _ = try testkit.expectOk(&h, &.{"close-workspace"});
+    _ = try testkit.expectOk(&h, &.{ "workspace", "close" });
+    try h.expectLast("workspace.close", "{\"workspace_id\":\"CALLER-UUID\"}");
+    // ...except for close-workspace, which only closes what it is given
+    // (a blank --workspace "" is the caller's workspace).
+    try testkit.expectUsage(&h, &.{"close-workspace"}, "close-workspace requires --workspace");
+    try testkit.expectUsage(&h, &.{ "close-workspace", "--force" }, "close-workspace requires --workspace");
+    _ = try testkit.expectOk(&h, &.{ "close-workspace", "--workspace", "" });
     try h.expectLast("workspace.close", "{\"workspace_id\":\"CALLER-UUID\"}");
     _ = try testkit.expectOk(&h, &.{ "rename-window", "agent", "run" });
     try h.expectLast("workspace.rename", "{\"workspace_id\":\"CALLER-UUID\",\"title\":\"agent run\"}");
+    _ = try testkit.expectOk(&h, &.{ "rename-window", "  padded  " });
+    try h.expectLast("workspace.rename", "{\"workspace_id\":\"CALLER-UUID\",\"title\":\"padded\"}");
+    try testkit.expectUsage(&h, &.{ "rename-window", " " }, "rename-window requires a title");
     _ = try testkit.expectOk(&h, &.{ "rename-workspace", "--workspace", "workspace:2", "--", "--odd title" });
     try h.expectLast("workspace.rename", "{\"workspace_id\":\"workspace:2\",\"title\":\"--odd title\"}");
     _ = try testkit.expectOk(&h, &.{ "workspace", "rename", "--title", "x" });
@@ -583,7 +625,8 @@ test "unit: cli-workspace: select, close and rename in legacy and namespace form
     // window's selected workspace.
     _ = try testkit.expectOk(&h, &.{ "rename-workspace", "--window", "window:2", "new" });
     try h.expectLast("workspace.rename", "{\"window_id\":\"window:2\",\"title\":\"new\"}");
-    try testkit.expectUsage(&h, &.{ "close-workspace", "--window", "window:2" }, "close-workspace requires a workspace (<id|ref|index> or --workspace)");
+    try testkit.expectUsage(&h, &.{ "close-workspace", "--window", "window:2" }, "close-workspace requires --workspace");
+    try testkit.expectUsage(&h, &.{ "workspace", "close", "--window", "window:2" }, "workspace close requires a workspace (<id|ref|index> or --workspace)");
 }
 
 test "unit: cli-workspace: a blank workspace handle means the caller's workspace or fails closed" {
