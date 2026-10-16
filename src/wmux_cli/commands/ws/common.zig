@@ -282,6 +282,20 @@ pub fn kindHandle(ctx: *Ctx, v: std.json.Value, kind: []const u8) !?[]const u8 {
     return try idformat.handleTextAlloc(a, ctx.parsed.globals.id_format, ref, id, .{});
 }
 
+/// A list row's handle as cmux prints list lines: `ref` (else
+/// `<prefix>_ref`) and `id` (else `<prefix>_id`); `both` joins the two
+/// with a space, and a row with neither prints `?`.
+pub fn rowHandle(ctx: *Ctx, v: std.json.Value, prefix: []const u8) ![]const u8 {
+    const a = ctx.arena;
+    const ref = str(v, "ref") orelse str(v, try std.fmt.allocPrint(a, "{s}_ref", .{prefix}));
+    const id = str(v, "id") orelse str(v, try std.fmt.allocPrint(a, "{s}_id", .{prefix}));
+    return switch (ctx.parsed.globals.id_format) {
+        .refs => ref orelse id orelse "?",
+        .uuids => id orelse ref orelse "?",
+        .both => if (ref) |r| (if (id) |i| try std.fmt.allocPrint(a, "{s} {s}", .{ r, i }) else r) else id orelse "?",
+    };
+}
+
 /// Writes a number as an integer when whole, else with up to two decimals.
 pub fn writeNumber(w: *Writer, v: std.json.Value) !void {
     switch (v) {

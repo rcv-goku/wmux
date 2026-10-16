@@ -6,8 +6,11 @@
 //! `group_id` (UUID, `workspace_group:N` or index), workspaces in
 //! `workspace_id`, and flags as snake_case params (`--idempotency-key` →
 //! `idempotency_key`, `--close-workspaces` → `close_workspaces`, …).
-//! Mutations print `OK` (creations `OK <handle>`); `--json` prints the
-//! result.
+//! Text follows cmux's result shapes: list rows (`ref`/`id`, `name`,
+//! `member_count`, `is_pinned`, `is_collapsed`), the created group under
+//! `group`, and removals that report `operation` with
+//! `kept_workspace_count` or `closed_workspace_count`; other mutations
+//! print `OK`. `--json` prints the result.
 
 const std = @import("std");
 const command = @import("../command.zig");
@@ -104,11 +107,43 @@ fn groupParams(ctx: *Ctx, args: []const []const u8, v: *const Verb, prefix: []co
     return o;
 }
 
+fn plural(n: i64) []const u8 {
+    return if (n == 1) "" else "s";
+}
+
+/// Sends a group mutation and prints cmux's text for it: a removal reports
+/// what happened (`OK group dissolved (kept N workspaces)`, `OK group
+/// deleted (closed N workspaces)`); anything else prints `OK`.
+fn groupResponse(ctx: *Ctx, method: []const u8, p: *const Params) !u8 {
+    const r = switch (try common.request(ctx, method, p)) {
+        .code => |c| return c,
+        .ok => |r| r,
+    };
+    if (ctx.json()) {
+        try common.writeJsonResult(ctx, r);
+        return output.exit.ok;
+    }
+    const op = common.str(r, "operation") orelse "";
+    if (std.mem.eql(u8, op, "dissolved")) {
+        if (common.int(r, "kept_workspace_count")) |n| {
+            try ctx.out.print("OK group dissolved (kept {d} workspace{s})\n", .{ n, plural(n) });
+            return output.exit.ok;
+        }
+    } else if (std.mem.eql(u8, op, "closed_workspaces")) {
+        if (common.int(r, "closed_workspace_count")) |n| {
+            try ctx.out.print("OK group deleted (closed {d} workspace{s})\n", .{ n, plural(n) });
+            return output.exit.ok;
+        }
+    }
+    try ctx.out.writeAll("OK\n");
+    return output.exit.ok;
+}
+
 fn runGroupOnly(ctx: *Ctx, args: []const []const u8, v: *const Verb, prefix: []const u8) !u8 {
     var code: u8 = 0;
     var p = Params.init(ctx.arena);
     _ = (try groupParams(ctx, args, v, prefix, &.{}, &p, &code)) orelse return code;
-    return common.simple(ctx, v.method, &p, &.{});
+    return groupResponse(ctx, v.method, &p);
 }
 
 fn runList(ctx: *Ctx, args: []const []const u8, v: *const Verb, _: []const u8) !u8 {
@@ -127,16 +162,17 @@ fn runList(ctx: *Ctx, args: []const []const u8, v: *const Verb, _: []const u8) !
     }
     const items = common.list(r, "groups") orelse &.{};
     if (items.len == 0) {
-        try ctx.out.writeAll("No workspace groups\n");
+        try ctx.out.writeAll("No groups\n");
         return output.exit.ok;
     }
+    // cmux's row: `<group>  <name>  (<n> members)[ [pinned]][ [collapsed]]`.
     for (items) |g| {
-        const handle = (try common.handleText(ctx, g, "group")) orelse "?";
-        const members = common.list(g, "workspace_ids") orelse common.list(g, "child_workspace_ids");
-        const count = common.int(g, "workspace_count") orelse if (members) |l| @as(i64, @intCast(l.len)) else 0;
-        try ctx.out.print("{s}  {s}  workspaces={d}", .{ handle, common.str(g, "name") orelse "", count });
-        if (common.boolean(g, "collapsed")) try ctx.out.writeAll("  [collapsed]");
-        if (common.boolean(g, "pinned")) try ctx.out.writeAll("  [pinned]");
+        const handle = try common.rowHandle(ctx, g, "group");
+        const members = common.list(g, "member_workspace_ids");
+        const count = common.int(g, "member_count") orelse if (members) |l| @as(i64, @intCast(l.len)) else 0;
+        try ctx.out.print("{s}  {s}  ({d} members)", .{ handle, common.str(g, "name") orelse "", count });
+        if (common.boolean(g, "is_pinned")) try ctx.out.writeAll(" [pinned]");
+        if (common.boolean(g, "is_collapsed")) try ctx.out.writeAll(" [collapsed]");
         try ctx.out.writeByte('\n');
     }
     return output.exit.ok;
@@ -175,7 +211,25 @@ fn runCreate(ctx: *Ctx, args: []const []const u8, v: *const Verb, _: []const u8)
         }
     }
     if (try common.putWindow(ctx, &p, u, o)) |c| return c;
-    return common.created(ctx, v.method, &p, "group");
+    const r = switch (try common.request(ctx, v.method, &p)) {
+        .code => |c| return c,
+        .ok => |r| r,
+    };
+    if (ctx.json()) {
+        try common.writeJsonResult(ctx, r);
+        return output.exit.ok;
+    }
+    // cmux returns `{group: {id, ref, ...}, created}`; a handle at the top
+    // level is accepted too.
+    const group = common.field(r, "group");
+    if (group != null and group.? == .object) {
+        try ctx.out.print("OK {s}\n", .{try common.rowHandle(ctx, group.?, "group")});
+        return output.exit.ok;
+    }
+    try ctx.out.writeAll("OK");
+    if (try common.handleText(ctx, r, "group")) |t| try ctx.out.print(" {s}", .{t});
+    try ctx.out.writeByte('\n');
+    return output.exit.ok;
 }
 
 fn runRename(ctx: *Ctx, args: []const []const u8, v: *const Verb, prefix: []const u8) !u8 {
@@ -185,7 +239,7 @@ fn runRename(ctx: *Ctx, args: []const []const u8, v: *const Verb, prefix: []cons
     const name = o.get("--name") orelse "";
     if (std.mem.trim(u8, name, " \t\r\n").len == 0) return common.usage(ctx, v.usage, "{s} rename requires --name <new>", .{prefix});
     try p.str("name", name);
-    return common.simple(ctx, v.method, &p, &.{});
+    return groupResponse(ctx, v.method, &p);
 }
 
 fn runUngroup(ctx: *Ctx, args: []const []const u8, v: *const Verb, prefix: []const u8) !u8 {
@@ -193,7 +247,7 @@ fn runUngroup(ctx: *Ctx, args: []const []const u8, v: *const Verb, prefix: []con
     var p = Params.init(ctx.arena);
     const o = (try groupParams(ctx, args, v, prefix, &.{.{ .name = "--remove-generated-anchor", .takes_value = false }}, &p, &code)) orelse return code;
     if (o.has("--remove-generated-anchor")) try p.boolean("remove_generated_anchor", true);
-    return common.simple(ctx, v.method, &p, &.{});
+    return groupResponse(ctx, v.method, &p);
 }
 
 fn runDelete(ctx: *Ctx, args: []const []const u8, v: *const Verb, prefix: []const u8) !u8 {
@@ -203,19 +257,7 @@ fn runDelete(ctx: *Ctx, args: []const []const u8, v: *const Verb, prefix: []cons
     const o = (try groupParams(ctx, args, v, prefix, &extra, &p, &code)) orelse return code;
     if (o.has("--close-workspaces")) try p.boolean("close_workspaces", true);
     if (o.has("--remove-generated-anchor")) try p.boolean("remove_generated_anchor", true);
-    const r = switch (try common.request(ctx, v.method, &p)) {
-        .code => |c| return c,
-        .ok => |r| r,
-    };
-    if (ctx.json()) {
-        try common.writeJsonResult(ctx, r);
-        return output.exit.ok;
-    }
-    try ctx.out.writeAll("OK");
-    if (common.str(r, "operation")) |op| try ctx.out.print(" operation={s}", .{op});
-    if (common.int(r, "affected")) |n| try ctx.out.print(" affected={d}", .{n});
-    try ctx.out.writeByte('\n');
-    return output.exit.ok;
+    return groupResponse(ctx, v.method, &p);
 }
 
 /// `--workspace`, else the caller's workspace; usage error when neither.
@@ -233,7 +275,7 @@ fn runGroupWorkspace(ctx: *Ctx, args: []const []const u8, v: *const Verb, prefix
     var p = Params.init(ctx.arena);
     const o = (try groupParams(ctx, args, v, prefix, &.{.{ .name = "--workspace" }}, &p, &code)) orelse return code;
     if (try putMember(ctx, o, v, prefix, &p)) |c| return c;
-    return common.simple(ctx, v.method, &p, &.{});
+    return groupResponse(ctx, v.method, &p);
 }
 
 fn runRemove(ctx: *Ctx, args: []const []const u8, v: *const Verb, prefix: []const u8) !u8 {
@@ -242,7 +284,7 @@ fn runRemove(ctx: *Ctx, args: []const []const u8, v: *const Verb, prefix: []cons
     if (o.positionals.len > 0) return common.usage(ctx, v.usage, "unexpected argument '{s}'", .{o.positionals[0]});
     var p = Params.init(ctx.arena);
     if (try putMember(ctx, o, v, prefix, &p)) |c| return c;
-    return common.simple(ctx, v.method, &p, &.{});
+    return groupResponse(ctx, v.method, &p);
 }
 
 /// `#RRGGBB`.
@@ -255,7 +297,8 @@ pub fn validHex(s: []const u8) bool {
 fn runSetColor(ctx: *Ctx, args: []const []const u8, v: *const Verb, prefix: []const u8) !u8 {
     var code: u8 = 0;
     var p = Params.init(ctx.arena);
-    const o = (try groupParams(ctx, args, v, prefix, &.{.{ .name = "--hex" }}, &p, &code)) orelse return code;
+    // `--color` is cmux's alias of `--hex`.
+    const o = (try groupParams(ctx, args, v, prefix, &.{.{ .name = "--hex", .aliases = &.{"--color"} }}, &p, &code)) orelse return code;
     const hex = std.mem.trim(u8, o.get("--hex") orelse "", " \t");
     if (hex.len == 0) {
         // Empty or missing clears the color.
@@ -264,16 +307,17 @@ fn runSetColor(ctx: *Ctx, args: []const []const u8, v: *const Verb, prefix: []co
         if (!validHex(hex)) return common.usage(ctx, v.usage, "--hex must be #RRGGBB (got '{s}')", .{hex});
         try p.str("hex", hex);
     }
-    return common.simple(ctx, v.method, &p, &.{});
+    return groupResponse(ctx, v.method, &p);
 }
 
 fn runSetIcon(ctx: *Ctx, args: []const []const u8, v: *const Verb, prefix: []const u8) !u8 {
     var code: u8 = 0;
     var p = Params.init(ctx.arena);
-    const o = (try groupParams(ctx, args, v, prefix, &.{.{ .name = "--symbol" }}, &p, &code)) orelse return code;
+    // `--icon` is cmux's alias of `--symbol`.
+    const o = (try groupParams(ctx, args, v, prefix, &.{.{ .name = "--symbol", .aliases = &.{"--icon"} }}, &p, &code)) orelse return code;
     const sym = std.mem.trim(u8, o.get("--symbol") orelse "", " \t");
     if (sym.len == 0) try p.value("symbol", .null) else try p.str("symbol", sym);
-    return common.simple(ctx, v.method, &p, &.{});
+    return groupResponse(ctx, v.method, &p);
 }
 
 fn runMove(ctx: *Ctx, args: []const []const u8, v: *const Verb, prefix: []const u8) !u8 {
@@ -292,7 +336,7 @@ fn runMove(ctx: *Ctx, args: []const []const u8, v: *const Verb, prefix: []const 
     }
     if (o.get("--before")) |g| if (try common.putHandle(ctx, &p, v.usage, "before_group_id", .workspace_group, g)) |c| return c;
     if (o.get("--after")) |g| if (try common.putHandle(ctx, &p, v.usage, "after_group_id", .workspace_group, g)) |c| return c;
-    return common.simple(ctx, v.method, &p, &.{});
+    return groupResponse(ctx, v.method, &p);
 }
 
 fn runNewWorkspace(ctx: *Ctx, args: []const []const u8, v: *const Verb, prefix: []const u8) !u8 {
@@ -322,10 +366,12 @@ test "unit: cli-workspace-group: offline help in both spellings" {
     try testing.expectEqual(@as(usize, 0), h.fp.connects);
 }
 
+// cmux's workspace.group.list rows.
 const groups_json =
-    \\{"window_ref":"window:1","groups":[
-    \\{"group_id":"0A000000-0000-4000-8000-000000000001","group_ref":"workspace_group:1","name":"Backend","workspace_count":3,"collapsed":true,"pinned":false},
-    \\{"group_id":"0A000000-0000-4000-8000-000000000002","group_ref":"workspace_group:2","name":"Fronts été","workspace_ids":["A","B"],"collapsed":false,"pinned":true}]}
+    \\{"window_id":"6F1D2C3B-0000-4000-8000-000000000001","window_ref":"window:1","groups":[
+    \\{"id":"0A000000-0000-4000-8000-000000000001","ref":"workspace_group:1","name":"Backend","is_collapsed":true,"is_pinned":false,"member_count":3},
+    \\{"id":"0A000000-0000-4000-8000-000000000002","ref":"workspace_group:2","name":"Fronts été","is_collapsed":true,"is_pinned":true,
+    \\"member_workspace_ids":["9B690000-0000-4000-8000-000000000001"],"member_workspace_refs":["workspace:1"],"member_count":1}]}
 ;
 
 test "unit: cli-workspace-group: list text, json, empty and both spellings" {
@@ -337,21 +383,34 @@ test "unit: cli-workspace-group: list text, json, empty and both spellings" {
     try testkit.expectGolden(h.alloc(), "workspace-group-list.txt", out);
     try h.expectLast("workspace.group.list", "{}");
     try testing.expectEqualStrings(out, try testkit.expectOk(&h, &.{ "workspace", "group", "list" }));
+    // cmux joins both handles of a row with a space.
+    const both = try testkit.expectOk(&h, &.{ "workspace-group", "list", "--id-format", "both" });
+    try testing.expect(std.mem.startsWith(u8, both, "workspace_group:1 0A000000-0000-4000-8000-000000000001  Backend  (3 members) [collapsed]\n"));
     _ = try testkit.expectOk(&h, &.{ "workspace-group", "list", "--window", "window:2" });
     try h.expectLast("workspace.group.list", "{\"window_id\":\"window:2\"}");
     const js = try testkit.expectOk(&h, &.{ "workspace-group", "list", "--json" });
     try testkit.expectGolden(h.alloc(), "workspace-group-list-json.txt", js);
+    // Without member_count the member list gives the count.
+    h.ok("workspace.group.list", "{\"groups\":[{\"ref\":\"workspace_group:5\",\"name\":\"M\",\"member_workspace_ids\":[\"A\",\"B\"]},{\"id\":\"0A000000-0000-4000-8000-000000000006\",\"name\":\"\"}]}");
+    try testing.expectEqualStrings("workspace_group:5  M  (2 members)\n0A000000-0000-4000-8000-000000000006    (0 members)\n", try testkit.expectOk(&h, &.{ "workspace-group", "list" }));
     h.ok("workspace.group.list", "{\"groups\":[]}");
-    try testing.expectEqualStrings("No workspace groups\n", try testkit.expectOk(&h, &.{ "workspace-group", "list" }));
+    try testing.expectEqualStrings("No groups\n", try testkit.expectOk(&h, &.{ "workspace-group", "list" }));
 }
 
 test "unit: cli-workspace-group: create params and validation" {
     var h: testkit.Harness = undefined;
     try h.init();
     defer h.deinit();
-    h.ok("workspace.group.create", "{\"group_id\":\"0A000000-0000-4000-8000-000000000003\",\"group_ref\":\"workspace_group:3\"}");
+    // cmux returns the group under `group`, with `created`.
+    h.ok("workspace.group.create", "{\"group\":{\"id\":\"0A000000-0000-4000-8000-000000000003\",\"ref\":\"workspace_group:3\",\"name\":\"m\",\"member_count\":2},\"created\":true}");
     const out = try testkit.expectOk(&h, &.{ "workspace-group", "create", "--name", "m", "--from", "workspace:1,workspace:2", "--idempotency-key", "k" });
     try testkit.expectGolden(h.alloc(), "workspace-group-create.txt", out);
+    try testing.expectEqualStrings("OK 0A000000-0000-4000-8000-000000000003\n", try testkit.expectOk(&h, &.{ "workspace-group", "create", "--id-format", "uuids" }));
+    try testing.expectEqualStrings("OK workspace_group:3 0A000000-0000-4000-8000-000000000003\n", try testkit.expectOk(&h, &.{ "workspace-group", "create", "--id-format", "both" }));
+    const cj = try testkit.expectOk(&h, &.{ "workspace-group", "create", "--json" });
+    try testing.expect(std.mem.indexOf(u8, cj, "\"created\": true") != null);
+    h.ok("workspace.group.create", "{\"group\":{\"id\":\"0A000000-0000-4000-8000-000000000003\",\"ref\":\"workspace_group:3\",\"name\":\"m\",\"member_count\":2},\"created\":true}");
+    _ = try testkit.expectOk(&h, &.{ "workspace-group", "create", "--name", "m", "--from", "workspace:1,workspace:2", "--idempotency-key", "k" });
     try h.expectLast("workspace.group.create", "{\"name\":\"m\",\"child_workspace_ids\":[\"workspace:1\",\"workspace:2\"],\"idempotency_key\":\"k\"}");
     // Anchor-only: no --from means no members are inferred.
     _ = try testkit.expectOk(&h, &.{ "workspace", "group", "create", "--cwd", "/srv", "--external-id", "jira-7" });
@@ -385,8 +444,10 @@ test "unit: cli-workspace-group: group verbs map onto workspace.group methods" {
         .{ .argv = &.{ "set-color", "workspace_group:2", "--hex", "#FF8800" }, .method = "workspace.group.set_color", .params = "{\"group_id\":\"workspace_group:2\",\"hex\":\"#FF8800\"}" },
         .{ .argv = &.{ "set-color", "workspace_group:2", "--hex", "" }, .method = "workspace.group.set_color", .params = "{\"group_id\":\"workspace_group:2\",\"hex\":null}" },
         .{ .argv = &.{ "set-color", "workspace_group:2" }, .method = "workspace.group.set_color", .params = "{\"group_id\":\"workspace_group:2\",\"hex\":null}" },
+        .{ .argv = &.{ "set-color", "workspace_group:2", "--color", "#00aa11" }, .method = "workspace.group.set_color", .params = "{\"group_id\":\"workspace_group:2\",\"hex\":\"#00aa11\"}" },
         .{ .argv = &.{ "set-icon", "workspace_group:2", "--symbol", "hammer" }, .method = "workspace.group.set_icon", .params = "{\"group_id\":\"workspace_group:2\",\"symbol\":\"hammer\"}" },
         .{ .argv = &.{ "set-icon", "workspace_group:2", "--symbol=" }, .method = "workspace.group.set_icon", .params = "{\"group_id\":\"workspace_group:2\",\"symbol\":null}" },
+        .{ .argv = &.{ "set-icon", "workspace_group:2", "--icon", "star" }, .method = "workspace.group.set_icon", .params = "{\"group_id\":\"workspace_group:2\",\"symbol\":\"star\"}" },
         .{ .argv = &.{ "move", "workspace_group:2", "--to-index", "0" }, .method = "workspace.group.move", .params = "{\"group_id\":\"workspace_group:2\",\"to_index\":0}" },
         .{ .argv = &.{ "move", "workspace_group:2", "--before", "workspace_group:1" }, .method = "workspace.group.move", .params = "{\"group_id\":\"workspace_group:2\",\"before_group_id\":\"workspace_group:1\"}" },
         .{ .argv = &.{ "move", "workspace_group:2", "--after", "workspace_group:1" }, .method = "workspace.group.move", .params = "{\"group_id\":\"workspace_group:2\",\"after_group_id\":\"workspace_group:1\"}" },
@@ -408,13 +469,26 @@ test "unit: cli-workspace-group: delete reports the operation; new-workspace pri
     var h: testkit.Harness = undefined;
     try h.init();
     defer h.deinit();
-    h.ok("workspace.group.delete", "{\"operation\":\"close_workspaces\",\"affected\":3}");
+    // cmux's removal replies: operation plus the affected count.
+    h.ok("workspace.group.delete", "{\"group_id\":\"0A000000-0000-4000-8000-000000000001\",\"operation\":\"closed_workspaces\",\"closed_workspace_count\":3}");
     const out = try testkit.expectOk(&h, &.{ "workspace-group", "delete", "workspace_group:1", "--close-workspaces", "--remove-generated-anchor" });
     try testkit.expectGolden(h.alloc(), "workspace-group-delete.txt", out);
     try h.expectLast("workspace.group.delete", "{\"group_id\":\"workspace_group:1\",\"close_workspaces\":true,\"remove_generated_anchor\":true}");
-    h.ok("workspace.group.delete", "{}");
-    try testing.expectEqualStrings("OK\n", try testkit.expectOk(&h, &.{ "workspace-group", "delete", "workspace_group:1" }));
+    h.ok("workspace.group.delete", "{\"operation\":\"closed_workspaces\",\"closed_workspace_count\":1}");
+    try testing.expectEqualStrings("OK group deleted (closed 1 workspace)\n", try testkit.expectOk(&h, &.{ "workspace-group", "delete", "workspace_group:1", "--close-workspaces" }));
+    // Without --close-workspaces the group is dissolved.
+    h.ok("workspace.group.delete", "{\"operation\":\"dissolved\",\"kept_workspace_count\":2}");
+    try testing.expectEqualStrings("OK group dissolved (kept 2 workspaces)\n", try testkit.expectOk(&h, &.{ "workspace-group", "delete", "workspace_group:1" }));
     try h.expectLast("workspace.group.delete", "{\"group_id\":\"workspace_group:1\"}");
+    h.ok("workspace.group.ungroup", "{\"operation\":\"dissolved\",\"kept_workspace_count\":1,\"removed_anchor_workspace_id\":\"A\"}");
+    try testing.expectEqualStrings("OK group dissolved (kept 1 workspace)\n", try testkit.expectOk(&h, &.{ "workspace", "group", "ungroup", "workspace_group:1", "--remove-generated-anchor" }));
+    // An operation without its count, or an unknown one, prints OK.
+    h.ok("workspace.group.ungroup", "{\"operation\":\"dissolved\"}");
+    try testing.expectEqualStrings("OK\n", try testkit.expectOk(&h, &.{ "workspace-group", "ungroup", "workspace_group:1" }));
+    h.ok("workspace.group.delete", "{\"operation\":\"archived\",\"closed_workspace_count\":4}");
+    try testing.expectEqualStrings("OK\n", try testkit.expectOk(&h, &.{ "workspace-group", "delete", "workspace_group:1" }));
+    const dj = try testkit.expectOk(&h, &.{ "workspace-group", "delete", "workspace_group:1", "--json" });
+    try testing.expect(std.mem.indexOf(u8, dj, "\"operation\": \"archived\"") != null);
 
     h.ok("workspace.group.new_workspace", "{\"workspace_id\":\"W\",\"workspace_ref\":\"workspace:9\",\"group_ref\":\"workspace_group:1\"}");
     const nw = try testkit.expectOk(&h, &.{ "workspace-group", "new-workspace", "workspace_group:1", "--placement", "afterCurrent" });
@@ -450,15 +524,20 @@ test "unit: cli-workspace-group: membership verbs default to the caller's worksp
     try testkit.expectUsage(&h, &.{ "workspace-group", "add", "--group", "workspace_group:1", "--workspace=" }, msg);
 }
 
-test "unit: cli-workspace-group: group handles in the kind spelling print too" {
+test "unit: cli-workspace-group: a created group's handle at the top level prints too" {
     var h: testkit.Harness = undefined;
     try h.init();
     defer h.deinit();
     h.ok("workspace.group.create", "{\"workspace_group_id\":\"0A000000-0000-4000-8000-000000000004\",\"workspace_group_ref\":\"workspace_group:4\"}");
     try testing.expectEqualStrings("OK workspace_group:4\n", try testkit.expectOk(&h, &.{ "workspace-group", "create", "--name", "x" }));
     try testing.expectEqualStrings("OK 0A000000-0000-4000-8000-000000000004\n", try testkit.expectOk(&h, &.{ "workspace-group", "create", "--id-format", "uuids" }));
-    h.ok("workspace.group.list", "{\"groups\":[{\"workspace_group_ref\":\"workspace_group:4\",\"name\":\"N\",\"child_workspace_ids\":[\"A\",\"B\",\"C\"]},{\"ref\":\"workspace_group:5\",\"name\":\"M\"}]}");
-    try testing.expectEqualStrings("workspace_group:4  N  workspaces=3\nworkspace_group:5  M  workspaces=0\n", try testkit.expectOk(&h, &.{ "workspace-group", "list" }));
+    h.ok("workspace.group.create", "{\"group_ref\":\"workspace_group:5\"}");
+    try testing.expectEqualStrings("OK workspace_group:5\n", try testkit.expectOk(&h, &.{ "workspace-group", "create" }));
+    // A `group` that is not an object, or no handle at all, prints OK.
+    h.ok("workspace.group.create", "{\"group\":\"workspace_group:6\",\"created\":false}");
+    try testing.expectEqualStrings("OK\n", try testkit.expectOk(&h, &.{ "workspace-group", "create" }));
+    h.ok("workspace.group.create", "{\"group\":{\"name\":\"anon\"}}");
+    try testing.expectEqualStrings("OK ?\n", try testkit.expectOk(&h, &.{ "workspace-group", "create" }));
 }
 
 test "unit: cli-workspace-group: usage errors" {

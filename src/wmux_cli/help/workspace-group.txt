@@ -5,21 +5,24 @@ Sidebar workspace groups (also "cmux workspace group <subcommand>"). A
 
 Subcommands:
   list [--window <id|ref|index>]
+      One line per group: "<group>  <name>  (<n> members)", then [pinned]
+      and [collapsed] when they apply; "No groups" when there are none
   create [--name <name>] [--cwd <path>] [--from <id>,<id>...]
          [--idempotency-key <key> | --external-id <id>]
       Prints "OK <group>". Without --from the group holds only its anchor.
       Repeating a key in the same window returns the same group.
   rename <group> --name <new>
   ungroup <group> [--remove-generated-anchor]
+      Prints "OK group dissolved (kept <n> workspaces)"
   delete <group> [--close-workspaces] [--remove-generated-anchor]
       Without --close-workspaces this ungroups like "ungroup"; with it every
-      member workspace is closed
+      member workspace is closed: "OK group deleted (closed <n> workspaces)"
   collapse <group> | expand <group> | pin <group> | unpin <group>
   add --group <group> --workspace <id|ref|index>
   remove --workspace <id|ref|index>
   set-anchor --group <group> --workspace <id|ref|index>
-  set-color <group> [--hex #RRGGBB]      (empty clears)
-  set-icon <group> [--symbol <name>]     (empty clears)
+  set-color <group> [--hex #RRGGBB]   (empty clears; --color is an alias)
+  set-icon <group> [--symbol <name>]  (empty clears; --icon is an alias)
   move <group> (--to-index <n> | --before <group> | --after <group>)
   focus <group>
   new-workspace <group> [--placement afterCurrent|top|end]
