@@ -572,6 +572,34 @@ describe("unit: persistence-settings-reset-all: Reset All", () => {
     assert.equal(app.state.effective.get("sidebar.showPorts").source, "cmux.json");
   });
 
+  test("unit: persistence-settings-reset-all: the confirmation is modal", async () => {
+    const { app } = await startSettings();
+    app.navigate("reset");
+    const opener = $("#set-reset-all");
+    opener.focus();
+    opener.click();
+    assert.equal($(".set-layout").hasAttribute("inert"), true, "the page behind the dialog is inert");
+    assert.equal(doc.activeElement, $("#set-confirm-cancel"));
+    // Page shortcuts are off while it is open: Ctrl+F does not reach the search behind it.
+    const ctrlF = keydown({ key: "f", ctrlKey: true });
+    assert.equal(doc.activeElement, $("#set-confirm-cancel"));
+    assert.equal(ctrlF.defaultPrevented, false);
+    // Focus on <body> (a click on the backdrop): Tab goes back in, Escape closes.
+    doc.activeElement.blur();
+    assert.equal(doc.activeElement, doc.body);
+    keydown({ key: "Tab" }, doc.body);
+    assert.equal(doc.activeElement, $("#set-confirm-cancel"));
+    doc.activeElement.blur();
+    keydown({ key: "Escape" }, doc.body);
+    await flush();
+    assert.equal($("#set-confirm").hidden, true);
+    assert.equal($(".set-layout").hasAttribute("inert"), false);
+    assert.equal(doc.activeElement, opener, "focus returns to the button that opened it");
+    assert.equal(host.calls("wmux.settings.reset_all").length, 0);
+    keydown({ key: "f", ctrlKey: true });
+    assert.equal(doc.activeElement, $("#set-search"), "Ctrl+F works again once it is closed");
+  });
+
   test("unit: persistence-settings-reset-all: falls back to per-key unset when reset_all is missing", async () => {
     const store = createStore({
       wmux: { "terminal.scrollSpeed": 2, "sidebar.showPorts": false },

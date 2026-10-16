@@ -71,6 +71,7 @@ export function createApp(options) {
   const keys = opts.keys || installKeys();
   const $ = (id) => doc.getElementById(id);
   const els = {
+    layout: doc.querySelector(".set-layout"),
     navList: $("set-nav-list"),
     search: $("set-search"),
     main: $("set-main"),
@@ -118,13 +119,18 @@ export function createApp(options) {
       : null;
   }
 
-  /** In-page confirmation dialog; resolves true for OK. */
+  /**
+   * In-page confirmation dialog; resolves true for OK. It is modal: the page
+   * behind it is inert (no focus, clicks or screen-reader browsing) until it
+   * closes.
+   */
   function confirm(body, okLabel) {
     if (confirmResolve) confirmResolve(false);
-    confirmOpener = doc.activeElement;
+    else confirmOpener = doc.activeElement;
     els.confirmBody.textContent = body;
     els.confirmOk.textContent = okLabel || "OK";
     els.confirm.hidden = false;
+    if (els.layout) els.layout.setAttribute("inert", "");
     els.confirmCancel.focus();
     return new Promise((resolve) => {
       confirmResolve = resolve;
@@ -136,6 +142,7 @@ export function createApp(options) {
     const resolve = confirmResolve;
     confirmResolve = null;
     els.confirm.hidden = true;
+    if (els.layout) els.layout.removeAttribute("inert");
     if (confirmOpener && typeof confirmOpener.focus === "function" && confirmOpener.isConnected) confirmOpener.focus();
     confirmOpener = null;
     resolve(result);
@@ -698,6 +705,21 @@ export function createApp(options) {
       items[next].focus();
     });
     const onKey = (e) => {
+      if (!els.confirm.hidden) {
+        // Modal: no page shortcuts (Ctrl+F would move focus behind the
+        // dialog). Keys from outside it (focus fell to <body> after a click
+        // on the backdrop) still close it or move focus back into it.
+        if (!els.confirm.contains(e.target)) {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            closeConfirm(false);
+          } else if (e.key === "Tab") {
+            e.preventDefault();
+            els.confirmCancel.focus();
+          }
+        }
+        return;
+      }
       if (e.defaultPrevented || shortcuts.isRecording()) return;
       if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === "f" || e.key === "F")) {
         e.preventDefault();
