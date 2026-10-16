@@ -25,6 +25,9 @@ pub const Content = union(enum) {
     browser: *BrowserPane,
 };
 
+/// Per-tab status indicator shown in the session sidebar.
+pub const TabStatus = enum { normal, bell, exited };
+
 /// Allocate a tab wrapping a terminal surface and set the surface's
 /// back-pointer. The caller owns the allocation until a SplitTree
 /// ref()s the tab.

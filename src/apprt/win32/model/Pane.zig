@@ -10,13 +10,19 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const Tab = @import("Tab.zig");
-const Window = @import("../ui/Window.zig");
+const arith = @import("logic/arith.zig");
 const log_ring = @import("../features/status/log_ring.zig");
 const w32 = @import("../platform/win32.zig");
 
-const MAX_TABS = Window.MAX_TABS;
-const MAX_STATUS_BYTES = Window.MAX_STATUS_BYTES;
-const TabStatus = Window.TabStatus;
+const TabStatus = Tab.TabStatus;
+
+/// Maximum bytes of a per-tab status string (set-status). Inline, like
+/// tab titles, so set-status never allocates; over-long text is byte
+/// truncated by the setter.
+pub const MAX_STATUS_BYTES: usize = 96;
+
+/// Maximum number of tabs per workspace.
+pub const MAX_TABS: usize = 64;
 
 /// Reference count for SplitTree ownership. Starts at 0 because
 /// SplitTree.init() calls ref() to take initial ownership.
@@ -152,7 +158,7 @@ pub fn activeTab(self: *Pane) ?*Tab {
 
 /// The parallel per-tab arrays as a tuple of array pointers, compatible
 /// with the tabArraysInsertGap/tabArraysRemove/tabArraysSwap helpers
-/// in Window.zig.
+/// in model/logic/arith.zig.
 pub fn tabArrays(self: *Pane) struct {
     *[MAX_TABS]*Tab,
     *[MAX_TABS][256]u16,
@@ -203,344 +209,6 @@ pub fn hasAttention(self: *const Pane) bool {
 /// Give keyboard focus to the active tab's content.
 pub fn focus(self: *const Pane) void {
     if (self.tab_count > 0) self.tabs[self.active_tab].focus();
-}
-
-// -------------------------------------------------------------------------
-// Per-pane tab bar rendering
-// -------------------------------------------------------------------------
-
-/// The unscaled tab bar height in pixels (matches Window.tabBarHeight logic).
-pub fn tabBarHeight(scale: f32) i32 {
-    return @intFromFloat(@round(32.0 * scale));
-}
-
-/// Paint a per-pane tab bar within the top portion of `rect`. Returns the
-/// height consumed (0 when no bar is drawn, e.g. <=1 tab). Stores hit-test
-/// rects on self in window client coords for later click/hover routing.
-///
-/// `is_focused` controls visual treatment: focused gets brighter text and
-/// an accent underline on the active tab; unfocused is dimmed.
-pub fn paintTabBar(
-    self: *Pane,
-    hdc: w32.HDC,
-    rect: w32.RECT,
-    scale: f32,
-    config: anytype,
-    is_focused: bool,
-    tab_font: ?*anyopaque,
-    hovered_tab: ?usize,
-    hovered_close: ?usize,
-    force_visible: bool,
-    hovered_new_tab: bool,
-    hovered_dropdown: bool,
-) i32 {
-    if (!force_visible and self.tab_count <= 1) {
-        self.tab_rect_count = 0;
-        return 0;
-    }
-
-    const bar_h = tabBarHeight(scale);
-    if (bar_h <= 0) return 0;
-
-    const bar_w = rect.right - rect.left;
-    if (bar_w <= 0) return 0;
-
-    // Double-buffer: create offscreen DC and bitmap.
-    const mem_dc = w32.CreateCompatibleDC(hdc) orelse return 0;
-    defer _ = w32.DeleteDC(mem_dc);
-
-    const mem_bmp = w32.CreateCompatibleBitmap(hdc, bar_w, bar_h) orelse return 0;
-    const old_bmp = w32.SelectObject(mem_dc, mem_bmp);
-    defer {
-        _ = w32.SelectObject(mem_dc, old_bmp);
-        _ = w32.DeleteObject(mem_bmp);
-    }
-
-    // --- Colors ---
-    const bg = config.background;
-    const bar_r: u8 = @min(@as(u16, bg.r) + 20, 255);
-    const bar_g: u8 = @min(@as(u16, bg.g) + 20, 255);
-    const bar_b: u8 = @min(@as(u16, bg.b) + 20, 255);
-
-    // Unfocused bar is dimmer (only +10 from terminal bg instead of +20).
-    const uf_r: u8 = @min(@as(u16, bg.r) + 10, 255);
-    const uf_g: u8 = @min(@as(u16, bg.g) + 10, 255);
-    const uf_b: u8 = @min(@as(u16, bg.b) + 10, 255);
-
-    const bar_color = if (is_focused) w32.RGB(bar_r, bar_g, bar_b) else w32.RGB(uf_r, uf_g, uf_b);
-
-    const hover_r: u8 = @min(@as(u16, bar_r) + 15, 255);
-    const hover_g: u8 = @min(@as(u16, bar_g) + 15, 255);
-    const hover_b: u8 = @min(@as(u16, bar_b) + 15, 255);
-    const hover_color = w32.RGB(hover_r, hover_g, hover_b);
-
-    const active_bg_color = w32.RGB(bg.r, bg.g, bg.b);
-    const accent_color = w32.RGB(0x3D, 0x8E, 0xF8);
-
-    const active_text_color = if (is_focused) w32.RGB(230, 230, 230) else w32.RGB(150, 150, 150);
-    const inactive_text_color = w32.RGB(150, 150, 150);
-
-    const close_normal_color = w32.RGB(150, 150, 150);
-    const close_hover_color = w32.RGB(232, 65, 65);
-
-    // --- Fill bar background ---
-    var bar_rect = w32.RECT{ .left = 0, .top = 0, .right = bar_w, .bottom = bar_h };
-    if (w32.CreateSolidBrush(bar_color)) |bar_brush| {
-        _ = w32.FillRect(mem_dc, &bar_rect, bar_brush);
-        _ = w32.DeleteObject(@ptrCast(bar_brush));
-    }
-
-    // --- Select font and set text mode ---
-    var old_font: ?*anyopaque = null;
-    if (tab_font) |font| {
-        old_font = w32.SelectObject(mem_dc, font);
-    }
-    defer {
-        if (old_font) |f| _ = w32.SelectObject(mem_dc, f);
-    }
-    _ = w32.SetBkMode(mem_dc, w32.TRANSPARENT);
-
-    // --- Calculate tab geometry ---
-    const new_tab_btn_w: i32 = @intFromFloat(@round(36.0 * scale));
-    const dropdown_btn_w: i32 = @intFromFloat(@round(20.0 * scale));
-    const close_btn_w: i32 = @intFromFloat(@round(20.0 * scale));
-    const text_pad: i32 = @intFromFloat(@round(10.0 * scale));
-    const accent_h: i32 = @intFromFloat(@round(2.0 * scale));
-
-    const tab_count_i32: i32 = @intCast(self.tab_count);
-    const available_w = bar_w - new_tab_btn_w - dropdown_btn_w;
-
-    const min_tab_w: i32 = @intFromFloat(@round(60.0 * scale));
-    const max_tab_w: i32 = @intFromFloat(@round(200.0 * scale));
-
-    var tab_w: i32 = if (tab_count_i32 > 0)
-        @divTrunc(available_w, tab_count_i32)
-    else
-        0;
-    tab_w = @max(tab_w, min_tab_w);
-    tab_w = @min(tab_w, max_tab_w);
-
-    // --- Draw each tab ---
-    var x: i32 = 0;
-    for (0..self.tab_count) |i| {
-        const is_active = (i == self.active_tab);
-        const is_hovered = if (hovered_tab) |ht| (ht == i) else false;
-
-        const this_tab_w: i32 = if (i == self.tab_count - 1 and tab_count_i32 > 0)
-            @max(available_w - x, min_tab_w)
-        else
-            tab_w;
-
-        // Store hit-test rect in window client coords.
-        self.tab_rects[i] = w32.RECT{
-            .left = rect.left + x,
-            .top = rect.top,
-            .right = rect.left + x + this_tab_w,
-            .bottom = rect.top + bar_h,
-        };
-
-        // Store close button hit-test rect.
-        const close_left = x + this_tab_w - close_btn_w - @divTrunc(text_pad, 2);
-        self.close_btn_rects[i] = w32.RECT{
-            .left = rect.left + close_left,
-            .top = rect.top,
-            .right = rect.left + close_left + close_btn_w + @divTrunc(text_pad, 2),
-            .bottom = rect.top + bar_h,
-        };
-
-        // Draw tab background.
-        if (is_active) {
-            var tab_rect = w32.RECT{ .left = x, .top = 0, .right = x + this_tab_w, .bottom = bar_h };
-            if (w32.CreateSolidBrush(active_bg_color)) |brush| {
-                _ = w32.FillRect(mem_dc, &tab_rect, brush);
-                _ = w32.DeleteObject(@ptrCast(brush));
-            }
-
-            // Accent line at bottom — only when focused.
-            if (is_focused) {
-                var accent_rect = w32.RECT{
-                    .left = x,
-                    .top = bar_h - accent_h,
-                    .right = x + this_tab_w,
-                    .bottom = bar_h,
-                };
-                if (w32.CreateSolidBrush(accent_color)) |brush| {
-                    _ = w32.FillRect(mem_dc, &accent_rect, brush);
-                    _ = w32.DeleteObject(@ptrCast(brush));
-                }
-            }
-        } else if (is_hovered) {
-            var hover_rect = w32.RECT{ .left = x, .top = 0, .right = x + this_tab_w, .bottom = bar_h };
-            if (w32.CreateSolidBrush(hover_color)) |brush| {
-                _ = w32.FillRect(mem_dc, &hover_rect, brush);
-                _ = w32.DeleteObject(@ptrCast(brush));
-            }
-        }
-
-        // Attention dot.
-        const attn_dot_w: i32 = if (self.tab_attention[i]) @intFromFloat(@round(12.0 * scale)) else 0;
-        if (attn_dot_w > 0) {
-            _ = w32.SetTextColor(mem_dc, accent_color);
-            const dot_char = std.unicode.utf8ToUtf16LeStringLiteral("\u{25CF}");
-            var dot_rect = w32.RECT{
-                .left = x + text_pad,
-                .top = 0,
-                .right = x + text_pad + attn_dot_w,
-                .bottom = bar_h,
-            };
-            _ = w32.DrawTextW(
-                mem_dc,
-                dot_char,
-                1,
-                &dot_rect,
-                w32.DT_LEFT | w32.DT_VCENTER | w32.DT_SINGLELINE | w32.DT_NOPREFIX,
-            );
-        }
-
-        // Sync indicator.
-        const sync_indicator_w: i32 = if (self.tab_synchronized[i]) @intFromFloat(@round(14.0 * scale)) else 0;
-        if (sync_indicator_w > 0) {
-            _ = w32.SetTextColor(mem_dc, w32.RGB(0xE8, 0x9C, 0x20));
-            const sync_char = std.unicode.utf8ToUtf16LeStringLiteral("\u{21C4}");
-            var sync_rect = w32.RECT{
-                .left = x + text_pad + attn_dot_w,
-                .top = 0,
-                .right = x + text_pad + attn_dot_w + sync_indicator_w,
-                .bottom = bar_h,
-            };
-            _ = w32.DrawTextW(
-                mem_dc,
-                sync_char,
-                1,
-                &sync_rect,
-                w32.DT_LEFT | w32.DT_VCENTER | w32.DT_SINGLELINE | w32.DT_NOPREFIX,
-            );
-        }
-
-        // Draw tab title text.
-        const title_len = self.tab_title_lens[i];
-        if (title_len > 0) {
-            _ = w32.SetTextColor(mem_dc, if (is_active) active_text_color else inactive_text_color);
-            var text_rect = w32.RECT{
-                .left = x + text_pad + attn_dot_w + sync_indicator_w,
-                .top = 0,
-                .right = x + this_tab_w - close_btn_w - text_pad,
-                .bottom = bar_h,
-            };
-            _ = w32.DrawTextW(
-                mem_dc,
-                @ptrCast(&self.tab_titles[i]),
-                @intCast(title_len),
-                &text_rect,
-                w32.DT_LEFT | w32.DT_VCENTER | w32.DT_SINGLELINE | w32.DT_END_ELLIPSIS | w32.DT_NOPREFIX,
-            );
-        }
-
-        // Draw close button (×) — visible on active or hovered tabs.
-        if (is_active or is_hovered) {
-            const is_close_hovered = if (hovered_close) |hc| (hc == i) else false;
-            const close_text_color = if (is_close_hovered)
-                close_hover_color
-            else
-                close_normal_color;
-
-            _ = w32.SetTextColor(mem_dc, close_text_color);
-            const x_char = std.unicode.utf8ToUtf16LeStringLiteral("\u{00D7}");
-            const close_y_center = @divTrunc(bar_h, 2);
-            var close_rect = w32.RECT{
-                .left = close_left,
-                .top = close_y_center - @divTrunc(close_btn_w, 2),
-                .right = close_left + close_btn_w,
-                .bottom = close_y_center + @divTrunc(close_btn_w, 2),
-            };
-            _ = w32.DrawTextW(
-                mem_dc,
-                x_char,
-                1,
-                &close_rect,
-                w32.DT_CENTER | w32.DT_VCENTER | w32.DT_SINGLELINE | w32.DT_NOPREFIX,
-            );
-        }
-
-        x += this_tab_w;
-    }
-
-    // --- Draw new-tab (+) button ---
-    {
-        const btn_left = x;
-        const btn_right = x + new_tab_btn_w;
-        self.new_tab_btn_rect = w32.RECT{
-            .left = rect.left + btn_left,
-            .top = rect.top,
-            .right = rect.left + btn_right,
-            .bottom = rect.top + bar_h,
-        };
-
-        if (hovered_new_tab) {
-            var btn_rect = w32.RECT{ .left = btn_left, .top = 0, .right = btn_right, .bottom = bar_h };
-            if (w32.CreateSolidBrush(hover_color)) |brush| {
-                _ = w32.FillRect(mem_dc, &btn_rect, brush);
-                _ = w32.DeleteObject(@ptrCast(brush));
-            }
-        }
-
-        _ = w32.SetTextColor(mem_dc, inactive_text_color);
-        const plus_char = std.unicode.utf8ToUtf16LeStringLiteral("+");
-        var plus_rect = w32.RECT{
-            .left = btn_left,
-            .top = 0,
-            .right = btn_right,
-            .bottom = bar_h,
-        };
-        _ = w32.DrawTextW(
-            mem_dc,
-            plus_char,
-            1,
-            &plus_rect,
-            w32.DT_CENTER | w32.DT_VCENTER | w32.DT_SINGLELINE | w32.DT_NOPREFIX,
-        );
-    }
-
-    // --- Draw backend picker (▾) segment beside the new-tab button ---
-    {
-        const dd_left = self.new_tab_btn_rect.right - rect.left;
-        self.new_tab_dropdown_rect = w32.RECT{
-            .left = rect.left + dd_left,
-            .top = rect.top,
-            .right = rect.left + dd_left + dropdown_btn_w,
-            .bottom = rect.top + bar_h,
-        };
-
-        var dd_rect_local = w32.RECT{
-            .left = dd_left,
-            .top = 0,
-            .right = dd_left + dropdown_btn_w,
-            .bottom = bar_h,
-        };
-
-        if (hovered_dropdown) {
-            if (w32.CreateSolidBrush(hover_color)) |brush| {
-                _ = w32.FillRect(mem_dc, &dd_rect_local, brush);
-                _ = w32.DeleteObject(@ptrCast(brush));
-            }
-        }
-
-        _ = w32.SetTextColor(mem_dc, if (hovered_dropdown) active_text_color else inactive_text_color);
-        const chevron_char = std.unicode.utf8ToUtf16LeStringLiteral("\u{25BE}");
-        _ = w32.DrawTextW(
-            mem_dc,
-            chevron_char,
-            1,
-            &dd_rect_local,
-            w32.DT_CENTER | w32.DT_VCENTER | w32.DT_SINGLELINE | w32.DT_NOPREFIX,
-        );
-    }
-
-    // --- BitBlt to screen at the container's position ---
-    _ = w32.BitBlt(hdc, rect.left, rect.top, bar_w, bar_h, mem_dc, 0, 0, w32.SRCCOPY);
-
-    self.tab_rect_count = self.tab_count;
-    return bar_h;
 }
 
 // -------------------------------------------------------------------------
@@ -628,46 +296,6 @@ test "unit: Pane focus is noop when empty" {
     pc.focus();
 }
 
-// Dummy HDC for tests that hit early returns before any GDI operations.
-const test_hdc: w32.HDC = @ptrFromInt(1);
-const test_config = .{ .background = .{ .r = @as(u8, 30), .g = @as(u8, 30), .b = @as(u8, 30) } };
-
-test "unit: tabBarHeight returns scaled height" {
-    try testing.expectEqual(@as(i32, 32), Pane.tabBarHeight(1.0));
-    try testing.expectEqual(@as(i32, 64), Pane.tabBarHeight(2.0));
-    try testing.expectEqual(@as(i32, 48), Pane.tabBarHeight(1.5));
-    try testing.expectEqual(@as(i32, 0), Pane.tabBarHeight(0.0));
-}
-
-test "unit: paintTabBar returns 0 for single tab not force visible" {
-    var pc: Pane = .{};
-    pc.tab_count = 1;
-    const h = pc.paintTabBar(test_hdc, .{ .left = 0, .top = 0, .right = 800, .bottom = 600 }, 1.0, test_config, true, null, null, null, false, false, false);
-    try testing.expectEqual(@as(i32, 0), h);
-    try testing.expectEqual(@as(usize, 0), pc.tab_rect_count);
-}
-
-test "unit: paintTabBar returns 0 for empty container" {
-    var pc: Pane = .{};
-    const h = pc.paintTabBar(test_hdc, .{ .left = 0, .top = 0, .right = 800, .bottom = 600 }, 1.0, test_config, true, null, null, null, false, false, false);
-    try testing.expectEqual(@as(i32, 0), h);
-    try testing.expectEqual(@as(usize, 0), pc.tab_rect_count);
-}
-
-test "unit: paintTabBar returns 0 for zero scale" {
-    var pc: Pane = .{};
-    pc.tab_count = 3;
-    const h = pc.paintTabBar(test_hdc, .{ .left = 0, .top = 0, .right = 800, .bottom = 600 }, 0.0, test_config, true, null, null, null, false, false, false);
-    try testing.expectEqual(@as(i32, 0), h);
-}
-
-test "unit: paintTabBar returns 0 for zero-width rect" {
-    var pc: Pane = .{};
-    pc.tab_count = 3;
-    const h = pc.paintTabBar(test_hdc, .{ .left = 100, .top = 0, .right = 100, .bottom = 600 }, 1.0, test_config, true, null, null, null, false, false, false);
-    try testing.expectEqual(@as(i32, 0), h);
-}
-
 test "unit: Pane default hover state is cleared" {
     const pc: Pane = .{};
     try testing.expectEqual(@as(?usize, null), pc.hovered_tab_idx);
@@ -746,4 +374,150 @@ test "unit: Pane tab bar visibility rule" {
 
     pc.tab_count = 5;
     try testing.expect(pc.tab_count > 1);
+}
+
+test "unit: Pane aggregate status of an empty container is normal" {
+    var pc: Pane = .{};
+    try testing.expectEqual(TabStatus.normal, pc.aggregateStatus());
+    // Status slots past tab_count are ignored even when dirty.
+    pc.tab_status[0] = .exited;
+    try testing.expectEqual(TabStatus.normal, pc.aggregateStatus());
+}
+
+test "unit: Pane aggregate status all-normal stays normal" {
+    var pc: Pane = .{};
+    pc.tab_count = 3;
+    try testing.expectEqual(TabStatus.normal, pc.aggregateStatus());
+}
+
+test "unit: Pane aggregate status exited beats bell" {
+    var pc: Pane = .{};
+    pc.tab_count = 4;
+    pc.tab_status[1] = .bell;
+    try testing.expectEqual(TabStatus.bell, pc.aggregateStatus());
+    pc.tab_status[3] = .exited;
+    try testing.expectEqual(TabStatus.exited, pc.aggregateStatus());
+    pc.tab_status[3] = .normal;
+    pc.tab_status[0] = .exited;
+    try testing.expectEqual(TabStatus.exited, pc.aggregateStatus());
+    pc.tab_status[0] = .normal;
+    pc.tab_count = 1;
+    try testing.expectEqual(TabStatus.normal, pc.aggregateStatus());
+}
+
+test "unit: Pane hasAttention ignores slots past tab_count" {
+    var pc: Pane = .{};
+    pc.tab_attention[0] = true;
+    try testing.expect(!pc.hasAttention());
+    pc.tab_count = 1;
+    try testing.expect(pc.hasAttention());
+    pc.tab_attention[0] = false;
+    pc.tab_count = 2;
+    pc.tab_attention[5] = true;
+    try testing.expect(!pc.hasAttention());
+    pc.tab_attention[1] = true;
+    try testing.expect(pc.hasAttention());
+}
+
+test "unit: Pane attention is orthogonal to bell/exited status" {
+    var pc: Pane = .{};
+    pc.tab_count = 3;
+    pc.tab_status[0] = .exited;
+    pc.tab_attention[2] = true;
+    try testing.expectEqual(TabStatus.exited, pc.aggregateStatus());
+    try testing.expect(pc.hasAttention());
+    pc.tab_attention[2] = false;
+    try testing.expectEqual(TabStatus.exited, pc.aggregateStatus());
+    try testing.expect(!pc.hasAttention());
+}
+
+test "unit: Pane progress and log store and clear per tab" {
+    var pc: Pane = .{};
+    pc.tab_count = 2;
+
+    try testing.expectEqual(@as(?u8, null), pc.tab_progress[0]);
+    try testing.expect(pc.tab_log[0].latest() == null);
+
+    pc.tab_progress[1] = 42;
+    try testing.expectEqual(@as(?u8, 42), pc.tab_progress[1]);
+    pc.tab_progress[1] = 100;
+    try testing.expectEqual(@as(?u8, 100), pc.tab_progress[1]);
+    pc.tab_progress[1] = null;
+    try testing.expectEqual(@as(?u8, null), pc.tab_progress[1]);
+
+    pc.tab_log[0].push("line one");
+    pc.tab_log[0].push("line two");
+    try testing.expectEqualStrings("line two", pc.tab_log[0].latest().?);
+    try testing.expectEqualStrings("line one", pc.tab_log[0].at(1).?);
+    try testing.expect(pc.tab_log[1].latest() == null);
+}
+
+test "unit: tab arrays stress at workspace capacity" {
+    // Parallel arrays at the real MAX_TABS size: entry i of every array
+    // must keep describing the same logical tab through edge-position
+    // removes, a front re-insert, full-span moves, and an end swap.
+    var ids: [MAX_TABS]u16 = undefined;
+    var tags: [MAX_TABS]u32 = undefined;
+    const arrays = .{ &ids, &tags };
+    for (0..MAX_TABS) |i| {
+        ids[i] = @intCast(i);
+        tags[i] = @as(u32, @intCast(i)) + 1000;
+    }
+    var count: usize = MAX_TABS;
+
+    // Remove the first tab: everything shifts down one.
+    arith.tabArraysRemove(arrays, count, 0);
+    count -= 1; // 63 live: 1..63
+    try testing.expectEqual(@as(u16, 1), ids[0]);
+    try testing.expectEqual(@as(u16, 63), ids[count - 1]);
+
+    // Remove the last tab (idx == count - 1): pure count decrement.
+    arith.tabArraysRemove(arrays, count, count - 1);
+    count -= 1; // 62 live: 1..62
+    try testing.expectEqual(@as(u16, 62), ids[count - 1]);
+
+    // Re-insert at the front (gap at 0).
+    arith.tabArraysInsertGap(arrays, count, 0);
+    ids[0] = 0;
+    tags[0] = 1000;
+    count += 1; // 63 live: 0..62
+
+    // Front-to-back then back-to-front across the whole span: a full
+    // round trip must be the identity permutation.
+    arith.tabArraysMove(arrays, 0, count - 1);
+    arith.tabArraysMove(arrays, count - 1, 0);
+    for (0..count) |i| {
+        try testing.expectEqual(@as(u16, @intCast(i)), ids[i]);
+    }
+
+    // Swap the two ends, then verify every parallel slot still
+    // describes the same logical tab.
+    arith.tabArraysSwap(arrays, 0, count - 1);
+    try testing.expectEqual(@as(u16, 62), ids[0]);
+    try testing.expectEqual(@as(u16, 0), ids[count - 1]);
+    for (ids[0..count], tags[0..count]) |id, tag| {
+        try testing.expectEqual(@as(u32, id) + 1000, tag);
+    }
+}
+
+test "unit: Pane aggregate status slot visibility at the count boundaries" {
+    var pc: Pane = .{};
+
+    for (&pc.tab_status) |*s| s.* = .exited;
+    pc.tab_count = 0;
+    try testing.expectEqual(TabStatus.normal, pc.aggregateStatus());
+
+    for (&pc.tab_status) |*s| s.* = .normal;
+    pc.tab_status[MAX_TABS - 1] = .exited;
+    pc.tab_count = MAX_TABS;
+    try testing.expectEqual(TabStatus.exited, pc.aggregateStatus());
+
+    pc.tab_count = MAX_TABS - 1;
+    try testing.expectEqual(TabStatus.normal, pc.aggregateStatus());
+
+    pc.tab_status[MAX_TABS - 1] = .bell;
+    pc.tab_count = MAX_TABS;
+    try testing.expectEqual(TabStatus.bell, pc.aggregateStatus());
+    pc.tab_count = 0;
+    try testing.expectEqual(TabStatus.normal, pc.aggregateStatus());
 }
