@@ -1,0 +1,21 @@
+Usage: cmux right-sidebar <command> [flags]
+
+Control the right sidebar of a window: visibility, mode, focus and state.
+
+Commands:
+  toggle | show | hide          Change visibility (prints nothing on success)
+  focus                         Focus the current right-sidebar mode
+  set <mode>                    Show the sidebar in <mode> and focus it
+  files | find | vault | sessions | feed | dock
+                                Short for 'set <mode>'
+  mode                          Print {"visible": ..., "mode": ...} as JSON
+
+Flags:
+  --window <id|ref|index>       Target a window
+  --workspace <id|ref|index>    Target the window containing a workspace
+  --no-focus                    With set: switch mode without moving focus
+  --json                        Print the reply of a mutation
+
+Without --window or --workspace the caller's workspace (CMUX_WORKSPACE_ID)
+selects the window. The cmux Cloud modes (cloud, devices) are not available
+on Windows.
