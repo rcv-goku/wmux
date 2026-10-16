@@ -1,0 +1,6 @@
+# Vendored libraries are byte-exact upstream files that each directory's
+# SHA256SUMS verifies (README.md). Never convert their line endings: with
+# core.autocrlf=true (the Git for Windows default) every LF would be checked
+# out as CRLF and every checksum would fail. Files directly in this directory
+# (README.md) keep the repository rules.
+*/** -text
