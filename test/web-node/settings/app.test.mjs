@@ -270,6 +270,35 @@ describe("unit: persistence-settings-window: sources and locks", () => {
   });
 });
 
+describe("unit: persistence-settings-window: reloads while editing", () => {
+  test("unit: persistence-settings-window: a reload never overwrites the field being typed in", async () => {
+    const { app } = await startSettings();
+    app.navigate("automation");
+    const binary = control("automation.claudeBinaryPath");
+    binary.focus();
+    binary.value = "C:\\Tools\\cla"; // typing, not committed yet
+    host.emit("wmux.settings.changed", {
+      values: { "automation.socketControlMode": { value: "allowAll", source: "wmux.json" } },
+    });
+    assert.equal(binary.value, "C:\\Tools\\cla");
+    assert.equal(control("automation.socketControlMode").selectedOptions[0].textContent, "allowAll");
+    host.emit("wmux.settings.changed", {}); // full refetch with the same stored value
+    await flush();
+    assert.equal(binary.value, "C:\\Tools\\cla");
+    // A new value for the edited key itself still shows.
+    host.emit("wmux.settings.changed", {
+      values: { "automation.claudeBinaryPath": { value: "D:\\claude.exe", source: "wmux.json" } },
+    });
+    assert.equal(binary.value, "D:\\claude.exe");
+    // A local validation error keeps the text being typed, so it can be fixed.
+    const slug = control("automation.autoNamingAgent");
+    slug.focus();
+    edit(slug, "Bad Slug");
+    assert.match(errorText("automation.autoNamingAgent"), /expected format/);
+    assert.equal(slug.value, "Bad Slug");
+  });
+});
+
 describe("unit: persistence-settings-window: typed controls", () => {
   test("unit: persistence-settings-window: number ranges validate before saving; native errors show", async () => {
     const { app } = await startSettings();
@@ -391,9 +420,12 @@ describe("unit: persistence-settings-window: typed controls", () => {
     dup.value = "a";
     dup.dispatchEvent(new window.Event("change", { bubbles: true }));
     assert.equal(errorText("notifications.hooks"), "Duplicate key “a”.");
-    row().querySelector(".set-kv-row .set-icon").click();
+    assert.equal(inputs()[4].value, "a", "the rejected edit stays on screen to be fixed");
+    assert.deepEqual(store.wmux["notifications.hooks"], { a: "1", b: true, "ü-ключ": "plain text" });
+    row().querySelector(".set-kv-row .set-icon").click(); // remove the first "a": no longer a duplicate
     await flush();
-    assert.deepEqual(Object.keys(store.wmux["notifications.hooks"]), ["b", "ü-ключ"]);
+    assert.deepEqual(store.wmux["notifications.hooks"], { b: true, a: "plain text" });
+    assert.equal(errorText("notifications.hooks"), "");
   });
 
   test("unit: persistence-settings-window: key-value saves keep the inputs, focus and a new empty row", async () => {

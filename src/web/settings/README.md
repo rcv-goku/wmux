@@ -110,7 +110,10 @@ panel-only.
   (`true`, `12` and `null` cells are JSON, other text is a string), else a
   JSON editor; `strokes` -> text plus a one-stroke recorder; anything else ->
   JSON editor. Values are validated before `wmux.settings.set`; native
-  validates again. Object settings merge key by key across layers
+  validates again. A reload never overwrites the control being edited
+  unless that key's value changed. Input that fails the page's checks stays
+  on screen next to its message. A value native rejects is replaced by the
+  stored one. Object settings merge key by key across layers
   (`resolve.zig`), so an object row shows the merged value and saving writes
   all of it to `wmux.json`. A key that comes from a lower layer cannot be
   removed from this row. `shortcuts.bindings` is never a generic row; the

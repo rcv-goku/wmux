@@ -224,10 +224,24 @@ export function createApp(options) {
     return row;
   }
 
-  /** Refresh a row from the effective state; `keepValue` leaves the control's text alone. */
-  function updateRow(row, keepValue) {
+  /** True when keyboard focus is inside the row's control (the user may be typing there). */
+  function editing(row) {
+    const a = doc.activeElement;
+    return Boolean(a && a !== doc.body && row.control.element.contains(a));
+  }
+
+  /**
+   * Refresh a row from the effective state. `how`: "keep" leaves the control's
+   * text alone (saving), "force" shows the stored value again (a failed save).
+   * Otherwise a reload does not overwrite the control being edited unless that
+   * key's value really changed.
+   */
+  function updateRow(row, how) {
     const s = stateOf(row.field);
-    if (!keepValue) row.control.setValue(s.value);
+    if (how !== "keep" && (how === "force" || !editing(row) || !deepEqual(row.shown, s.value))) {
+      row.control.setValue(s.value);
+      row.shown = s.value;
+    }
     row.control.setDisabled(s.readOnly);
     row.element.classList.toggle("set-row-readonly", s.readOnly);
     row.element.dataset.source = s.source;
@@ -304,7 +318,7 @@ export function createApp(options) {
     row.busy = true;
     // Keep the user's edit on screen while saving: showing the old value
     // would flicker and rebuild key-value rows under the caret.
-    updateRow(row, true);
+    updateRow(row, "keep");
     try {
       const result = await call("wmux.settings.set", { path: field.path, value });
       row.busy = false;
@@ -317,7 +331,7 @@ export function createApp(options) {
       row.busy = false;
       row.error = errorMessage(err);
       updatePath(field.path);
-      updateRow(row);
+      updateRow(row, "force"); // the rejected edit is not stored: show what is
     }
   }
 
