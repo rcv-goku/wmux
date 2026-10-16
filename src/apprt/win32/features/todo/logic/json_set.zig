@@ -393,6 +393,33 @@ test "unit: todo: set truncates long unicode text and ignores unknown keys" {
     try testing.expectEqualStrings("\u{e9}t\u{e9}", c.items.items[0].text);
 }
 
+test "unit: todo: set leaves the list untouched when an allocation fails" {
+    try testing.checkAllAllocationFailures(testing.allocator, replaceUnderAllocationFailure, .{});
+}
+
+fn replaceUnderAllocationFailure(gpa: Allocator) !void {
+    var c: Checklist = .{};
+    defer c.deinit(gpa);
+    _ = try c.add(gpa, "keep", .{ .id = testId(1), .origin = .agent });
+    _ = try c.add(gpa, "drop", .{ .id = testId(2) });
+    var buf: [192]u8 = undefined;
+    const id1 = testId(1).toText();
+    const json = try std.fmt.bufPrint(&buf,
+        \\{{"items":[{{"id":"{s}","text":" kept ","state":"completed"}},{{"text":"new"}}]}}
+    , .{&id1});
+    replace(gpa, &c, json, null) catch |err| {
+        try testing.expectEqual(@as(usize, 2), c.len());
+        try testing.expectEqualStrings("keep", c.items.items[0].text);
+        try testing.expectEqualStrings("drop", c.items.items[1].text);
+        return err;
+    };
+    try testing.expectEqual(@as(usize, 2), c.len());
+    try testing.expect(c.items.items[0].id.eql(testId(1)));
+    try testing.expectEqualStrings("kept", c.items.items[0].text);
+    try testing.expectEqual(checklist.Origin.agent, c.items.items[0].origin);
+    try testing.expectEqualStrings("new", c.items.items[1].text);
+}
+
 test "unit: todo: set error messages name the element" {
     var buf: [256]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);

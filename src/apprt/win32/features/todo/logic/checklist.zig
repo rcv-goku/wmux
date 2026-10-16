@@ -465,6 +465,22 @@ test "unit: todo: text is trimmed, capped at 500 code points, empty rejected" {
     try testing.expectEqualStrings("🚀 デプロイ", f);
 }
 
+test "unit: todo: text rejects surrogates and overlong forms, keeps inner bytes" {
+    const gpa = testing.allocator;
+    // Windows argv with a lone UTF-16 surrogate arrives as WTF-8.
+    try testing.expectError(error.InvalidUtf8, normalizeText(gpa, "a\xED\xA0\x80b"));
+    try testing.expectError(error.InvalidUtf8, normalizeText(gpa, "\xC0\xAF"));
+    try testing.expectError(error.InvalidUtf8, normalizeText(gpa, "ok\xE2\x82"));
+    // Only the ends are trimmed; inner whitespace, tabs and NUL stay.
+    const a = try normalizeText(gpa, "\u{2028} a\t\x00 b \u{85}");
+    defer gpa.free(a);
+    try testing.expectEqualStrings("a\t\x00 b", a);
+    // Zero-width space is not whitespace (Swift does not trim it either).
+    const z = try normalizeText(gpa, "\u{200B}");
+    defer gpa.free(z);
+    try testing.expectEqualStrings("\u{200B}", z);
+}
+
 test "unit: todo: add assigns ids, defaults, and fails on the 51st item" {
     const gpa = testing.allocator;
     var c: Checklist = .{};
@@ -567,6 +583,13 @@ test "unit: todo: resolve accepts 1-based index or uuid and rejects the rest" {
     try testing.expectEqual(@as(usize, 1), try c.resolve("02"));
     const missing = testId(9).toText();
     try testing.expectError(error.InvalidTarget, c.resolve(&missing));
+    // Braced UUIDs resolve; half-braced and signed or non-ASCII digits do not.
+    var braced_buf: [Uuid.text_len + 2]u8 = undefined;
+    const braced = try std.fmt.bufPrint(&braced_buf, "{{{s}}}", .{&id_text});
+    try testing.expectEqual(@as(usize, 1), try c.resolve(braced));
+    for ([_][]const u8{ braced[0 .. braced.len - 1], "+1", "\u{FF11}", "1\x00" }) |bad| {
+        try testing.expectError(error.InvalidTarget, c.resolve(bad));
+    }
 
     var aw: std.Io.Writer.Allocating = .init(gpa);
     defer aw.deinit();
@@ -653,6 +676,49 @@ test "unit: todo: move reorders and clamps within the completion group" {
     defer one.deinit(gpa);
     _ = try one.add(gpa, "solo", .{});
     try testing.expectEqual(@as(usize, 0), one.move(0, 5));
+}
+
+test "unit: todo: move in interleaved storage keeps the other group's order" {
+    const gpa = testing.allocator;
+    var c: Checklist = .{};
+    defer c.deinit(gpa);
+    // storage: X(c) a(p) Y(c) b(p); pending spans 1..3, completed 0..2.
+    _ = try c.add(gpa, "X", .{ .state = .completed });
+    _ = try c.add(gpa, "a", .{});
+    _ = try c.add(gpa, "Y", .{ .state = .completed });
+    _ = try c.add(gpa, "b", .{ .state = .in_progress });
+    // b to the top stops at the first pending slot; X and Y keep their order.
+    try testing.expectEqual(@as(usize, 1), c.move(3, 0));
+    try expectOrder(&c, "XbaY");
+    // X to the end: the completed group now spans 0..3.
+    try testing.expectEqual(@as(usize, 3), c.move(0, 3));
+    try expectOrder(&c, "baYX");
+    // a cannot pass the completed run that now follows the pending one.
+    try testing.expectEqual(@as(usize, 1), c.move(1, 3));
+    try expectOrder(&c, "baYX");
+    // Display order is unchecked first, each group in storage order.
+    const order = try c.displayOrder(gpa);
+    defer gpa.free(order);
+    try testing.expectEqualSlices(usize, &.{ 0, 1, 2, 3 }, order);
+}
+
+test "unit: todo: add, edit and display order clean up when an allocation fails" {
+    try testing.checkAllAllocationFailures(testing.allocator, mutateUnderAllocationFailure, .{});
+}
+
+fn mutateUnderAllocationFailure(gpa: Allocator) !void {
+    var c: Checklist = .{};
+    defer c.deinit(gpa);
+    _ = try c.add(gpa, "first", .{ .id = testId(1) });
+    _ = try c.add(gpa, "second", .{ .state = .completed });
+    c.edit(gpa, 0, " renamed ") catch |err| {
+        try testing.expectEqualStrings("first", c.items.items[0].text);
+        return err;
+    };
+    try testing.expectEqualStrings("renamed", c.items.items[0].text);
+    const order = try c.displayOrder(gpa);
+    defer gpa.free(order);
+    try testing.expectEqualSlices(usize, &.{ 0, 1 }, order);
 }
 
 fn expectOrder(c: *const Checklist, expected: []const u8) !void {
