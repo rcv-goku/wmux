@@ -596,6 +596,39 @@ describe("unit: notifications app", () => {
     }
   });
 
+  test("unit: notifications: renders wait while a pointer is pressed, so the pressed row keeps its click", async () => {
+    const press = (type, target) => target.dispatchEvent(new window.MouseEvent(type, { bubbles: true, cancelable: true, button: 0 }));
+    const update = async (h, n) => {
+      h.setRecords([rec(n, { title: `Fresh ${n}` }), ...h.records]);
+      host.emit("cmux.event", { name: "notification.created" });
+      await sleep(60);
+      await settle();
+    };
+    const h = await startApp({ params: { group_by: "none" } });
+    const row = rowById(uuid(2));
+    press("pointerdown", row);
+    await update(h, 0.5);
+    assert.equal(app.state.records.length, 4, "the data is current");
+    assert.equal(rows().length, 3, "the rows are not rebuilt while the button is held");
+    assert.equal(row.isConnected, true, "the pressed row stays in the document");
+    press("pointerup", row);
+    click(window, row.querySelector(".ntf-row-primary"));
+    await settle();
+    assert.deepEqual(host.calls("notification.open").map((m) => m.params), [{ id: uuid(2) }], "the click opens the pressed row");
+    assert.equal(rows().length, 4, "the held-back render ran after the release");
+
+    rows()[0].dispatchEvent(new window.MouseEvent("pointerdown", { bubbles: true, button: 2 }));
+    assert.equal(app.state.pressed, false, "a secondary button does not hold renders back");
+
+    press("pointerdown", rows()[0]);
+    await update(h, 0.2);
+    assert.equal(rows().length, 4);
+    window.dispatchEvent(new window.Event("blur"));
+    await settle();
+    assert.equal(rows().length, 5, "losing focus releases the press");
+    assert.equal(app.state.pressed, false);
+  });
+
   test("unit: notifications: snapshot events replace the list without a round trip", async () => {
     await startApp();
     host.emit("panel.notifications.snapshot", { notifications: [rec(5, { workspace: WS2 })], workspaces: WORKSPACES.workspaces });

@@ -115,6 +115,9 @@ dropped (it predates the action), and the list reloads after the action.
 - **Rows.** Click opens. The hover-only X dismisses. Right click (or
   Shift+F10 / the Menu key) opens Open / Copy / Mark as Read|Mark as Unread /
   Dismiss; the menu is keyboard navigable (arrows, Home/End, Enter, Escape).
+  Every render rebuilds the rows, so while a primary pointer button is held,
+  renders wait for its release (at most 2 s): a live update must not replace
+  the row under a click, which the browser would then drop.
 - **Keyboard.** The list is a listbox with a roving tab stop. ArrowUp/Down or
   `k`/`j`, Home/End, PgUp/PgDn move; Enter opens; Space toggles read; Delete
   or Backspace dismisses; Ctrl+C copies. When the page gets focus (pane shown
