@@ -835,6 +835,40 @@ test "unit: sidebar: thousands of rows lay out and virtualize" {
     try testing.expectEqual(s.maxOffset(), s.offset);
 }
 
+test "unit: sidebar: long lists keep row tops on the device pixel grid" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // Mixed heights that are not whole DIPs at 125%/150%/175%.
+    var b = model.RowBuilder.init(a);
+    b.beginSlot(.log);
+    try b.text(null, "built", null);
+    const with_log = b.finish();
+    const n = 3000;
+    const nodes = try a.alloc(model.Node, n);
+    for (nodes, 0..) |*node, i| {
+        var id: Uuid = .nil;
+        std.mem.writeInt(u32, id.b[12..16], @intCast(i), .big);
+        node.* = .{ .workspace = .{ .id = id, .custom_title = "ws", .details = if (i % 3 == 0) with_log else .{} } };
+    }
+    const rows = try model.build(a, .{ .nodes = nodes });
+    var fake: text_style.FakeMeasurer = .{};
+    for ([_]f32{ 1.25, 1.5, 1.75 }) |s| {
+        var cache = layout.Cache.init(testing.allocator, 16);
+        defer cache.deinit();
+        const lay = try layout.layoutRows(a, &cache, rows, fake.measurer(), .{ .width = 240, .dpi = Dpi.fromScale(s) });
+        for (lay.rows, 0..) |g, i| {
+            // f32 resolves ~0.01 px at these magnitudes; summing f32 heights
+            // drifted a full half pixel by row ~1000.
+            const px = g.top * s;
+            try testing.expect(@abs(px - @round(px)) < 0.05);
+            // Contiguous: hit testing never finds a gap between rows.
+            if (i + 1 < lay.rows.len) try testing.expectEqual(g.bottom(), lay.rows[i + 1].top);
+        }
+        try testing.expectEqual(lay.rows[n - 1].bottom(), lay.content_height);
+    }
+}
+
 test "unit: sidebar: debug snapshot is valid JSON with rows and geometry" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();

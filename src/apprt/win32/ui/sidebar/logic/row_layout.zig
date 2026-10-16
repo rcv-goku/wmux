@@ -806,6 +806,12 @@ fn copyElements(a: Allocator, src: []const Element) Allocator.Error![]Element {
 /// unchanged rows.
 pub fn layoutRows(arena: Allocator, cache: ?*Cache, rows: []const model.Row, m: TextMeasurer, params: Params) Allocator.Error!Layout {
     const geoms = try arena.alloc(RowGeom, rows.len);
+    // Tops derive from an exact device-pixel count: summing f32 heights
+    // drifts off the grid in long lists (half a pixel by row ~1000 at
+    // 125%). Each stored height is the step to the next top, so `bottom()`
+    // is exactly the next row's `top` and rows stay contiguous.
+    const scale: f64 = @as(f64, @floatFromInt(params.dpi.value)) / 96.0;
+    var px: f64 = 0;
     var top: f32 = 0;
     for (rows, geoms) |*row, *g| {
         var height: f32 = undefined;
@@ -827,8 +833,10 @@ pub fn layoutRows(arena: Allocator, cache: ?*Cache, rows: []const model.Row, m: 
             height = res.height;
             elements = res.elements;
         }
-        g.* = .{ .top = top, .height = height, .kind = row.kind(), .elements = elements };
-        top += height;
+        px += @round(@as(f64, height) * scale);
+        const next: f32 = @floatCast(px / scale);
+        g.* = .{ .top = top, .height = next - top, .kind = row.kind(), .elements = elements };
+        top = g.bottom();
     }
     return .{ .rows = geoms, .content_height = top, .width = sanitizeWidth(params.width), .dpi = params.dpi };
 }
