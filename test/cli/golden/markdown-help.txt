@@ -1,0 +1,14 @@
+Usage: cmux markdown open <path>
+       cmux markdown open <path> [--workspace <id|ref|index>] [--surface <id|ref|index>] [--window <id|ref|index>] [--direction left|right|up|down] [--focus <true|false>] [--font-size <points>]
+       cmux markdown <path>
+
+Open a markdown file in a formatted viewer panel with live file watching.
+
+The viewer opens in a new split beside the source surface (default: the
+focused surface of the workspace), to the right unless --direction says
+otherwise, and does not take focus unless --focus true. --font-size takes
+8 to 96 points. The path may start with ~ and is relative to the current
+directory. The workspace defaults to CMUX_WORKSPACE_ID unless --window is
+given.
+
+Prints 'OK surface=<ref> pane=<ref> path=<abs>'; --json prints the reply.

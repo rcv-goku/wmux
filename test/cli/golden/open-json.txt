@@ -1,0 +1,20 @@
+{
+  "opened": [
+    {
+      "kind": "file",
+      "payload": {
+        "surface_ref": "surface:7",
+        "pane_ref": "pane:3"
+      },
+      "path": "/t/work/a.md"
+    },
+    {
+      "kind": "url",
+      "payload": {
+        "surface_ref": "surface:8",
+        "pane_ref": "pane:5"
+      },
+      "url": "https://x.example"
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+Usage: cmux diff [<patch>|-] [--source <source>] [--repo <path>] [--base <ref>] [--staged|--unstaged] [--json]
+       cmux diff [<patch-file>|-|<github PR URL>] [--source <unstaged|staged|branch|last-turn>]
+                 [--unstaged] [--staged] [--branch] [--last-turn]
+                 [--workspace <id|ref|index>] [--surface <id|ref|index>] [--window <id|ref|index>]
+                 [--session|--agent-session <id>] [--cwd|--repo|--path <path>]
+                 [--base|--branch-base <ref>] [--focus <true|false>] [--no-focus]
+                 [--title <text>] [--layout split|unified] [--font-size <points>] [--json]
+
+Open a diff in a viewer panel: a patch file, '-' or piped stdin, a GitHub pull
+request URL, or a git source. A patch and a git source cannot be combined, and
+only one source may be named. --repo, --base and --session imply a git source
+(--base: branch, --session: last-turn, otherwise unstaged).
+
+The panel opens in the background unless --focus true, beside the caller's
+surface (CMUX_SURFACE_ID / CMUX_WORKSPACE_ID). --layout picks split or unified
+(default: the last layout used in a viewer, then diffViewer.defaultLayout);
+--font-size takes points in (0, 96] (default 10). For piped patches the
+repository is guessed from the current directory so comments persist.
+
+Prints 'OK surface=<ref> pane=<ref>'; --json prints the reply (path, url,
+title and source).
