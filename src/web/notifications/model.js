@@ -241,9 +241,16 @@ export function isRecordEvent(name) {
   return typeof name === "string" && (name.startsWith("notification.") || name === "wmux.notification.unread_count.changed" || name === "wmux.attention.changed");
 }
 
+/**
+ * Workspace events that change titles or order. Frequent ones that do not
+ * (`workspace.selected`, `workspace.prompt.submitted` on every agent prompt,
+ * `workspace.action`) would only cost a `workspace.list` and a re-render.
+ */
+const WORKSPACE_TITLE_EVENTS = new Set(["workspace.created", "workspace.closed", "workspace.moved", "workspace.renamed", "workspace.reordered"]);
+
 /** Event names that change workspace titles or order. */
 export function isWorkspaceEvent(name) {
-  return typeof name === "string" && name.startsWith("workspace.");
+  return WORKSPACE_TITLE_EVENTS.has(name);
 }
 
 /** Event name of a `cmux.event` frame (`name`, or `event` when it is a string). */

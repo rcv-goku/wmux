@@ -204,6 +204,10 @@ describe("unit: notifications model", () => {
     assert.ok(model.isRecordEvent("wmux.notification.unread_count.changed"));
     assert.ok(!model.isRecordEvent("workspace.renamed"));
     assert.ok(model.isWorkspaceEvent("workspace.renamed"));
+    assert.ok(model.isWorkspaceEvent("workspace.reordered"));
+    assert.ok(!model.isWorkspaceEvent("workspace.selected"));
+    assert.ok(!model.isWorkspaceEvent("workspace.prompt.submitted"));
+    assert.ok(!model.isWorkspaceEvent(undefined));
     assert.equal(model.frameName({ type: "event", name: "notification.read" }), "notification.read");
     assert.equal(model.frameName({ event: "notification.read" }), "notification.read");
     assert.equal(model.frameName(null), "");
@@ -454,10 +458,48 @@ describe("unit: notifications app", () => {
     await settle();
     assert.ok(texts(doc, ".ntf-group-name").includes("api-renamed"));
 
+    const titleCalls = host.calls("workspace.list").length;
+    host.emit("cmux.event", { type: "event", name: "workspace.selected" });
+    host.emit("cmux.event", { type: "event", name: "workspace.prompt.submitted" });
+    await sleep(60);
+    assert.equal(host.calls("workspace.list").length, titleCalls, "selection and prompts do not reload titles");
+
     const before = host.calls("notification.list").length;
     host.emit("cmux.event", { type: "event", name: "surface.focused" });
     await sleep(60);
     assert.equal(host.calls("notification.list").length, before, "unrelated events are ignored");
+  });
+
+  test("unit: notifications: re-renders keep the scroll position, moving the focus scrolls", async () => {
+    // jsdom has no scrollIntoView: record the calls on a stub (rows are
+    // HTMLElements, so this shadows any Element.prototype version).
+    const proto = window.HTMLElement.prototype;
+    const had = Object.prototype.hasOwnProperty.call(proto, "scrollIntoView");
+    const original = proto.scrollIntoView;
+    const scrolled = [];
+    proto.scrollIntoView = function scrollIntoView() {
+      scrolled.push(this.dataset ? this.dataset.id : null);
+    };
+    try {
+      const h = await startApp({ params: { group_by: "none" } });
+      scrolled.length = 0;
+      app.focusList();
+      assert.deepEqual(scrolled, [uuid(1)], "focusing the list brings the focused row into view");
+      scrolled.length = 0;
+      h.setRecords([...h.records, rec(9, { title: "Older" })]);
+      host.emit("cmux.event", { type: "event", name: "notification.created" });
+      await sleep(60);
+      await settle();
+      assert.equal(rows().length, 4);
+      app.render();
+      assert.deepEqual(scrolled, [], "live updates and re-renders do not scroll");
+      assert.equal(doc.activeElement, rowById(uuid(1)), "focus stays on the focused row");
+      key(window, doc.activeElement, { key: "ArrowDown" });
+      assert.deepEqual(scrolled, [uuid(2)], "keyboard navigation still scrolls");
+    } finally {
+      if (had) proto.scrollIntoView = original;
+      else delete proto.scrollIntoView;
+    }
   });
 
   test("unit: notifications: snapshot events replace the list without a round trip", async () => {

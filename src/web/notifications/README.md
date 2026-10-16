@@ -55,7 +55,7 @@ applied in place. The page sets the title with `panel.set_title
 | Method | Params -> result | When |
 |---|---|---|
 | `notification.list` | `{}` -> `{notifications: [record], marker_count?}` | start and after every relevant event (debounced 40 ms; only the newest reply applies). A bare array is accepted too |
-| `workspace.list` | `{}` -> `{workspaces: [{id, title}]}` | live workspace titles; reloaded on `workspace.*` events |
+| `workspace.list` | `{}` -> `{workspaces: [{id, title}]}` | live workspace titles; reloaded on the workspace events that change titles or order |
 | `notification.open` | `{notification_id}` | row click, Enter, menu Open. In the popover the page then calls `panel.notifications.close_popover` |
 | `notification.mark_read` | `{notification_id}` | menu Mark as Read, Space on an unread row |
 | `panel.notifications.mark_unread` | `{notification_id}` -> `{}` | menu Mark as Unread, Space on a read row. Native: `Store.markUnread(id)` (record-level, not the workspace `toggleUnread`) |
@@ -83,7 +83,7 @@ not complete the action: <message>" and reloads the list.
 
 | Event | Payload | Effect |
 |---|---|---|
-| `cmux.event` | events frame `{name, ...}` | `notification.*`, `wmux.notification.unread_count.changed`, `wmux.attention.changed` reload the list; `workspace.*` reloads the titles. Payloads are redacted on the stream, so the page never reads record text from frames |
+| `cmux.event` | events frame `{name, ...}` | `notification.*`, `wmux.notification.unread_count.changed`, `wmux.attention.changed` reload the list; `workspace.created`, `.renamed`, `.reordered`, `.moved` and `.closed` reload the titles (`workspace.selected` and `workspace.prompt.submitted` are ignored). Payloads are redacted on the stream, so the page never reads record text from frames. Re-renders keep the scroll position; only moving the focus scrolls a row into view |
 | `panel.notifications.snapshot` | `notification.list` result, optionally with `workspaces` | replaces the list without a round trip |
 | `panel.notifications.command` | `{action}` | `jumpToUnread`, `clearAllNotifications`, `focus` (focus the list), `refresh` |
 | `panel.init`, `theme`, `keymap`, `panel.key_sequence` | shared | handled here and by `_shared/` |

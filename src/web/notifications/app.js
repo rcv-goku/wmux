@@ -253,7 +253,9 @@ export function createApp(options) {
     els.list.replaceChildren(...nodes);
     if (state.focusedId && !find(state.focusedId)) state.focusedId = null;
     if (!state.focusedId && state.records.length > 0) state.focusedId = orderedIds()[0];
-    applyFocus(restoreFocus);
+    // Re-renders (live updates, the minute tick) put focus back without
+    // scrolling: a list the user scrolled away from the focused row stays put.
+    applyFocus(restoreFocus, false);
   }
 
   /** Record ids in visual order (groups reorder the flat list). */
@@ -261,8 +263,11 @@ export function createApp(options) {
     return Array.from(els.list.querySelectorAll(".ntf-row"), (row) => row.dataset.id);
   }
 
-  /** Roving tabindex: the focused row is the list's tab stop. */
-  function applyFocus(moveDomFocus) {
+  /**
+   * Roving tabindex: the focused row is the list's tab stop. `scroll` brings
+   * the row into view (navigation); re-renders pass false.
+   */
+  function applyFocus(moveDomFocus, scroll = true) {
     let target = null;
     for (const row of els.list.querySelectorAll(".ntf-row")) {
       const on = row.dataset.id === state.focusedId;
@@ -272,7 +277,7 @@ export function createApp(options) {
     }
     if (moveDomFocus && target) {
       target.focus({ preventScroll: true });
-      if (typeof target.scrollIntoView === "function") target.scrollIntoView({ block: "nearest" });
+      if (scroll && typeof target.scrollIntoView === "function") target.scrollIntoView({ block: "nearest" });
     }
   }
 
