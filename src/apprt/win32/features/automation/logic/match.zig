@@ -612,6 +612,17 @@ test "unit: automation: match where operators" {
     try testing.expectEqual(Outcome.where_mismatch, try f.outcome("nested", "{\"name\":\"x\",\"workspace_id\":\"ff\",\"payload\":{\"result\":{\"status\":\"ok\"}}}"));
 }
 
+test "unit: automation: match uses the last of repeated where keys" {
+    var f = try Fixture.init(
+        \\{"version":1,"rules":[{"id":"r","when":{"event":"*"},"then":[],
+        \\ "where":{"title":"a","title":{"prefix":"x","prefix":"b"}}}]}
+    );
+    defer f.deinit();
+    try testing.expectEqual(Outcome.matched, try f.outcome("r", "{\"name\":\"x\",\"payload\":{\"title\":\"Bee\"}}"));
+    try testing.expectEqual(Outcome.where_mismatch, try f.outcome("r", "{\"name\":\"x\",\"payload\":{\"title\":\"a\"}}"));
+    try testing.expectEqual(Outcome.where_mismatch, try f.outcome("r", "{\"name\":\"x\",\"payload\":{\"title\":\"xb\"}}"));
+}
+
 test "unit: automation: match engine context overrides payload aliases" {
     var f = try Fixture.init(
         \\{"version":1,"rules":[{"id":"r","when":{"event":"*"},"then":[],

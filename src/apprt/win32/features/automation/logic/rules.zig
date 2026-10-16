@@ -535,9 +535,14 @@ const Parser = struct {
             try self.err(path, node.start, "predicate nested too deeply", .{});
             return null;
         }
+        // A repeated operator keeps its last value, as keys do everywhere else.
+        const shadowed = try self.arena.alloc(bool, members.len);
+        @memset(shadowed, false);
+        try self.checkDuplicates(members, path, shadowed);
         var ops: std.ArrayList(Op) = .empty;
         var ok = true;
-        for (members) |*m| {
+        for (members, shadowed) |*m, skip| {
+            if (skip) continue;
             const p = try self.sub(path, m.key);
             const v = &m.value;
             if (std.mem.eql(u8, m.key, "equals")) {
@@ -594,9 +599,16 @@ const Parser = struct {
                 return null;
             },
         };
+        // A repeated key keeps its last value, as everywhere else in the file
+        // (and as a JSON object decoder would), instead of adding a second
+        // predicate that must also hold.
+        const shadowed = try self.arena.alloc(bool, members.len);
+        @memset(shadowed, false);
+        try self.checkDuplicates(members, path, shadowed);
         var preds: std.ArrayList(Predicate) = .empty;
         var ok = true;
-        for (members) |*m| {
+        for (members, shadowed) |*m, skip| {
+            if (skip) continue;
             const p = try self.sub(path, m.key);
             if (std.mem.trim(u8, m.key, " \t").len == 0) {
                 try self.err(p, m.key_start, "empty where key", .{});
@@ -748,13 +760,20 @@ const Parser = struct {
             var headers: std.ArrayList(webhook.Header) = .empty;
             if (node.get("headers")) |hn| switch (hn.data) {
                 .null => {},
-                .object => |hm| for (hm) |*h| {
-                    const hp = try self.sub(try self.sub(path, "headers"), h.key);
-                    const value = (try self.expectString(&h.value, hp)) orelse {
-                        ok = false;
-                        continue;
-                    };
-                    try headers.append(self.arena, .{ .name = h.key, .value = value });
+                .object => |hm| {
+                    // A repeated header key keeps its last value (sent once).
+                    const shadowed = try self.arena.alloc(bool, hm.len);
+                    @memset(shadowed, false);
+                    try self.checkDuplicates(hm, try self.sub(path, "headers"), shadowed);
+                    for (hm, shadowed) |*h, skip| {
+                        if (skip) continue;
+                        const hp = try self.sub(try self.sub(path, "headers"), h.key);
+                        const value = (try self.expectString(&h.value, hp)) orelse {
+                            ok = false;
+                            continue;
+                        };
+                        try headers.append(self.arena, .{ .name = h.key, .value = value });
+                    }
                 },
                 else => {
                     try self.err(try self.sub(path, "headers"), hn.start, "headers must be an object of strings, found {s}", .{hn.kindName()});
@@ -1327,6 +1346,41 @@ test "unit: automation: rules parse where predicates" {
     try expectIssue(&cfg, .err, "$.rules[5].where.k.in[0]", "in needs");
     try expectIssue(&cfg, .err, "$.rules[6].where.", "empty where key");
     try expectIssue(&cfg, .warning, "$.rules[7].where.k.in", "never matches");
+}
+
+test "unit: automation: rules keep the last of repeated where keys and operators" {
+    var cfg = try parse(testing.allocator,
+        \\{"version":1,"rules":[
+        \\ {"id":"r","when":{"event":"*"},"then":[],
+        \\  "where":{"title":"a","agent":"claude","title":{"prefix":"x","prefix":"b"}}},
+        \\ {"id":"s","when":{"event":"*"},"then":[],"where":{"k":{"bogus":1},"k":"ok"}}
+        \\]}
+    );
+    defer cfg.deinit();
+    const r = cfg.find("r").?;
+    try testing.expectEqual(@as(usize, 2), r.where.len);
+    try testing.expectEqualStrings("agent", r.where[0].key);
+    try testing.expectEqualStrings("title", r.where[1].key);
+    try testing.expectEqual(@as(usize, 1), r.where[1].cond.ops.len);
+    try testing.expectEqualStrings("b", r.where[1].cond.ops[0].prefix);
+    try expectIssue(&cfg, .warning, "$.rules[0].where.title", "duplicate key");
+    try expectIssue(&cfg, .warning, "$.rules[0].where.title.prefix", "duplicate key");
+    // An overridden value is ignored, errors and all.
+    const s = cfg.find("s").?;
+    try testing.expectEqual(@as(usize, 1), s.where.len);
+    try testing.expectEqualStrings("ok", s.where[0].cond.ops[0].equals.string);
+    try testing.expectEqual(@as(usize, 0), cfg.errorCount());
+
+    // Webhook headers too: one header, the last value.
+    var hc = try parse(testing.allocator,
+        \\{"version":1,"rules":[{"id":"w","when":{"event":"*"},
+        \\ "then":[{"action":"webhook","url":"https://h.example/","headers":{"X-Tag":7,"X-Tag":"b"}}]}]}
+    );
+    defer hc.deinit();
+    const wh = hc.find("w").?.then[0].webhook;
+    try testing.expectEqual(@as(usize, 1), wh.headers.len);
+    try testing.expectEqualStrings("b", wh.headers[0].value);
+    try expectIssue(&hc, .warning, "$.rules[0].then[0].headers.X-Tag", "duplicate key");
 }
 
 test "unit: automation: rules validate actions" {
