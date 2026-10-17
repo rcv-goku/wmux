@@ -12,7 +12,10 @@
 //! - Admission (admission.zig, cmux numbers): 64 live, 64 pending for at
 //!   most 15 s, 16 pre-authorization readers; overflow is accepted,
 //!   answered `overloaded {retryable, retry_after_ms, reason}` and closed.
-//! - Each connection thread (Connection.zig) frames lines (1 MiB cap),
+//!   Pending connections are promoted in arrival order (`waitPending`) and
+//!   a client that leaves while pending is noticed within 250 ms.
+//! - Each connection thread (Connection.zig) frames lines (`max_line_bytes`;
+//!   the control pipe uses the 16 MiB authorized cap of ADR-3.2),
 //!   hands each line to `Handler.dispatch` and writes the reply before it
 //!   handles the next line, so replies are in request order.
 //! - Replies come back through `complete(token, line)` from any thread.
@@ -25,9 +28,12 @@
 //! - `stop` rejects new clients, answers in-flight requests
 //!   (`overloaded server_stopping` if queued, `cancelled` if running),
 //!   cancels all I/O and joins every thread. `deinit` then frees.
+//! - `pushLine` writes from other threads (event streams) to a live
+//!   connection, pinned for the write.
 //!
-//! Wiring for W1-1a: rpc/server/mod.zig starts one PipeServer on the
-//! control pipe with a Handler whose dispatch runs the registry dispatcher.
+//! Wiring (W1-1a): rpc/server/mod.zig starts one PipeServer on the control
+//! pipe (rpc/dispatch.zig), one on the legacy `wmux-ipc-<pid>` pipe
+//! (legacy_pipe.zig) and the launch pipe (launch_pipe.zig).
 
 const PipeServer = @This();
 
@@ -67,6 +73,9 @@ pub const Config = struct {
     write_timeout_ms: u32 = 10_000,
     /// Pipe in/out buffer size and read chunk size.
     buffer_size: u32 = 64 * 1024,
+    /// Lines the transport writes itself (oversized, overloaded) use the
+    /// legacy wmux JSON shape: the `wmux-ipc-<pid>` pipe (W1-1a).
+    legacy_replies: bool = false,
 };
 
 /// The dispatcher interface. Callbacks run on connection threads.
@@ -135,6 +144,14 @@ conns: std.ArrayList(*Connection) = .empty,
 /// Connections whose thread returned (join, then destroy).
 finished: std.ArrayList(*Connection) = .empty,
 
+/// Pending connections in arrival order (guarded by `gate.mutex`): a freed
+/// live slot goes to the head, and a new arrival never overtakes them
+/// (FIFO admission, W1-1a).
+waiters: std.ArrayList(*Connection) = .empty,
+/// The spare could not be created (all instances busy): logged once until
+/// a spare is created again.
+spare_warned: bool = false,
+
 /// Creates the first instance (so clients can connect as soon as this
 /// returns) and starts the accept thread.
 pub fn start(gpa: Allocator, config: Config, handler: Handler) StartError!*PipeServer {
@@ -194,6 +211,10 @@ pub fn stop(self: *PipeServer) void {
     self.stopped = true;
     self.stopping.store(true, .release);
     self.gate.stop();
+    // Pending connections also wait on stop_event; wake them anyway.
+    self.gate.mutex.lock();
+    for (self.waiters.items) |w| _ = w32.SetEvent(w.wait_event);
+    self.gate.mutex.unlock();
     _ = w32.SetEvent(self.stop_event);
     if (self.accept_thread) |t| t.join();
     self.accept_thread = null;
@@ -217,6 +238,7 @@ pub fn deinit(self: *PipeServer) void {
     const gpa = self.gpa;
     self.conns.deinit(gpa);
     self.finished.deinit(gpa);
+    self.waiters.deinit(gpa);
     self.slots.deinit(gpa);
     windows.CloseHandle(self.stop_event);
     windows.CloseHandle(self.reap_event);
@@ -264,9 +286,13 @@ fn createInstance(self: *PipeServer, first: bool) StartError!w32.HANDLE {
     if (h == windows.INVALID_HANDLE_VALUE) {
         const err = windows.GetLastError();
         if (first and (err == .ACCESS_DENIED or err == .PIPE_BUSY)) return error.PipeNameInUse;
-        log.warn("CreateNamedPipeW failed: {d}", .{@intFromEnum(err)});
+        // All instances busy is expected under load (the accept loop retries
+        // every 250 ms): warn once per busy period, not per retry.
+        if (err != .PIPE_BUSY or !self.spare_warned) log.warn("CreateNamedPipeW failed: {d}", .{@intFromEnum(err)});
+        if (err == .PIPE_BUSY) self.spare_warned = true;
         return error.CreatePipeFailed;
     }
+    self.spare_warned = false;
     return h;
 }
 
@@ -382,7 +408,7 @@ fn waitReapOrStop(self: *PipeServer, ms: u32) bool {
 /// Classifies a connected instance and hands it to a connection thread,
 /// or answers `overloaded` inline and closes it.
 fn admit(self: *PipeServer, pipe: w32.HANDLE) void {
-    const verdict = self.gate.accept();
+    const verdict = self.acceptFifo();
     const must_wait = switch (verdict) {
         .admit => false,
         .wait => true,
@@ -419,7 +445,7 @@ fn undoAccept(self: *PipeServer, was_pending: bool) void {
         _ = self.gate.state.abandonPending();
         self.gate.mutex.unlock();
     } else {
-        self.gate.release();
+        self.releaseLive();
     }
 }
 
@@ -449,6 +475,141 @@ fn reapFinished(self: *PipeServer) void {
         if (conn.thread) |t| t.join();
         conn.destroy();
     }
+}
+
+// ---------------------------------------------------------------------------
+// FIFO admission (W1-1a): the gate's counters, with pending connections
+// promoted strictly in arrival order. The counters stay in `gate.state`
+// (so `counts()` and the pre-authorization slots keep working); the order
+// lives in `waiters`, both guarded by `gate.mutex`.
+// ---------------------------------------------------------------------------
+
+/// Classifies a newly accepted connection: a live slot only when nobody is
+/// pending (a new arrival never overtakes a waiter), else a pending place,
+/// else `pool_saturated`.
+fn acceptFifo(self: *PipeServer) admission.Verdict {
+    self.gate.mutex.lock();
+    defer self.gate.mutex.unlock();
+    const st = &self.gate.state;
+    if (st.stopping) {
+        st.reject_reason = .server_stopping;
+        return .{ .reject = .server_stopping };
+    }
+    if (st.live < st.limits.max_live and st.pending == 0) {
+        st.live += 1;
+        return .admit;
+    }
+    if (st.pending < st.limits.max_pending) {
+        st.pending += 1;
+        return .wait;
+    }
+    st.reject_reason = .pool_saturated;
+    return .{ .reject = .pool_saturated };
+}
+
+/// Hands freed live slots to the oldest waiters. Caller holds gate.mutex.
+fn grantWaitersLocked(self: *PipeServer) void {
+    const st = &self.gate.state;
+    while (self.waiters.items.len > 0 and !st.stopping and st.live < st.limits.max_live) {
+        const w = self.waiters.orderedRemove(0);
+        st.pending -= 1;
+        st.live += 1;
+        w.wait_granted = true;
+        _ = w32.SetEvent(w.wait_event);
+    }
+}
+
+fn removeWaiterLocked(self: *PipeServer, conn: *Connection) bool {
+    for (self.waiters.items, 0..) |w, i| if (w == conn) {
+        _ = self.waiters.orderedRemove(i);
+        return true;
+    };
+    return false;
+}
+
+pub const PendingResult = union(enum) {
+    admitted,
+    rejected: admission.Reason,
+    /// The client left while waiting (nothing to answer).
+    gone,
+};
+
+/// How often a pending connection checks that its client is still there.
+const pending_poll_ms: u32 = 250;
+
+/// After `acceptFifo` returned `.wait` (connection thread): joins the FIFO
+/// and blocks until a live slot is handed over, the pending wait cap
+/// passes (`pending_expired`), the server stops (`server_stopping`) or the
+/// client disconnects (`gone`, noticed within `pending_poll_ms`).
+pub fn waitPending(self: *PipeServer, conn: *Connection) PendingResult {
+    self.gate.mutex.lock();
+    conn.wait_granted = false;
+    self.waiters.append(self.gpa, conn) catch {
+        _ = self.gate.state.abandonPending();
+        self.gate.mutex.unlock();
+        return .{ .rejected = .accept_buffer_full };
+    };
+    self.grantWaitersLocked();
+    self.gate.mutex.unlock();
+
+    const budget_ms: u64 = self.config.limits.pending_wait_ms;
+    var timer = std.time.Timer.start() catch null;
+    while (true) {
+        self.gate.mutex.lock();
+        if (conn.wait_granted) {
+            self.gate.mutex.unlock();
+            return .admitted;
+        }
+        const spent_ms: u64 = if (timer) |*t| t.read() / std.time.ns_per_ms else budget_ms;
+        const outcome: ?PendingResult = if (self.gate.state.stopping)
+            .{ .rejected = .server_stopping }
+        else if (spent_ms >= budget_ms)
+            .{ .rejected = .pending_expired }
+        else if (!conn.clientConnected())
+            .gone
+        else
+            null;
+        if (outcome) |o| {
+            if (self.removeWaiterLocked(conn)) _ = self.gate.state.abandonPending();
+            self.gate.mutex.unlock();
+            return o;
+        }
+        self.gate.mutex.unlock();
+        const wait_ms: u32 = @intCast(@min(budget_ms - spent_ms, pending_poll_ms));
+        const handles = [_]w32.HANDLE{ conn.wait_event, self.stop_event };
+        _ = w32.WaitForMultipleObjects(handles.len, &handles, windows.FALSE, wait_ms);
+    }
+}
+
+/// A live connection closed: its slot goes to the oldest waiter.
+pub fn releaseLive(self: *PipeServer) void {
+    self.gate.mutex.lock();
+    defer self.gate.mutex.unlock();
+    std.debug.assert(self.gate.state.live > 0);
+    self.gate.state.live -|= 1;
+    self.grantWaitersLocked();
+}
+
+// ---------------------------------------------------------------------------
+// Pushes from other threads (event streams, W2-4)
+// ---------------------------------------------------------------------------
+
+/// Writes `line` (plus LF) to the live connection (conn_id, generation)
+/// from any thread, e.g. an event stream. False when that connection is
+/// gone (its slot was released or reused), closing, or the write failed.
+/// The connection is pinned for the write, so it cannot be destroyed
+/// meanwhile; writes are serialized with its replies by `write_mutex`.
+pub fn pushLine(self: *PipeServer, conn_id: u64, generation: u64, line: []const u8) bool {
+    self.mutex.lock();
+    const entry = self.slots.entryFor(conn_id, generation) orelse {
+        self.mutex.unlock();
+        return false;
+    };
+    const conn = entry.value;
+    _ = conn.refs.fetchAdd(1, .acq_rel);
+    self.mutex.unlock();
+    defer _ = conn.refs.fetchSub(1, .acq_rel);
+    return conn.writeLine(line);
 }
 
 // ---------------------------------------------------------------------------

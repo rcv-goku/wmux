@@ -5,7 +5,9 @@
 
 test {
     _ = @import("admission.zig");
+    _ = @import("deadline.zig");
     _ = @import("framer.zig");
     _ = @import("ratelimit.zig");
     _ = @import("request_state.zig");
+    _ = @import("router_rules.zig");
 }

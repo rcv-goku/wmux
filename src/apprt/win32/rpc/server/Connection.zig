@@ -9,8 +9,17 @@
 //! read stays pending while it waits, so a vanished client is noticed: its
 //! reply is discarded and the slot freed). Replies are therefore in request
 //! order by construction.
-//! Only this thread writes replies; `writeLine` serializes other writers
-//! (event streams) through `write_mutex`.
+//! Only this thread writes replies; other writers (event streams) go
+//! through `PipeServer.pushLine`, which pins the connection and writes
+//! under `write_mutex` (closing takes the same mutex, so a push never
+//! writes to a closed or reused handle).
+//!
+//! W1-1a: a connection accepted while the pool is full waits in the
+//! server's FIFO (`PipeServer.waitPending`), noticing a client that leaves
+//! meanwhile; the pipe is closed before the live slot is released, so the
+//! instance count never exceeds its limit; transport-owned lines of legacy
+//! requests (`Request.legacy_id`, `Config.legacy_replies`) use the legacy
+//! wmux JSON shape.
 
 const Connection = @This();
 
@@ -75,6 +84,8 @@ pub const w32 = struct {
     pub extern "advapi32" fn ConvertSidToStringSidW(Sid: *anyopaque, StringSid: *?windows.LPWSTR) callconv(.winapi) BOOL;
     pub extern "advapi32" fn ConvertStringSecurityDescriptorToSecurityDescriptorW(StringSecurityDescriptor: windows.LPCWSTR, StringSDRevision: DWORD, SecurityDescriptor: *?*anyopaque, SecurityDescriptorSize: ?*windows.ULONG) callconv(.winapi) BOOL;
     pub extern "advapi32" fn EqualSid(pSid1: *anyopaque, pSid2: *anyopaque) callconv(.winapi) BOOL;
+    pub extern "kernel32" fn PeekNamedPipe(hNamedPipe: HANDLE, lpBuffer: ?*anyopaque, nBufferSize: DWORD, lpBytesRead: ?*DWORD, lpTotalBytesAvail: ?*DWORD, lpBytesLeftThisMessage: ?*DWORD) callconv(.winapi) BOOL;
+    pub extern "kernel32" fn ProcessIdToSessionId(dwProcessId: DWORD, pSessionId: *DWORD) callconv(.winapi) BOOL;
 
     /// A manual-reset (or auto-reset) unnamed event, non-inheritable.
     pub fn event(manual: bool) error{CreateEventFailed}!HANDLE {
@@ -167,7 +178,19 @@ pub const Request = struct {
     /// Named in the timeout reply (`main_actor` for the UI lane).
     stage: []const u8 = request_state.stage_main_actor,
     lifecycle: request_state.Lifecycle = .{},
+    /// Set by `dispatch` for a legacy wmux JSON request: the client's id.
+    /// Timeout and shutdown replies the transport writes for it then use
+    /// the legacy shape `{"id":N,"ok":false,"error":"..."}`.
+    legacy_id: ?u64 = null,
 };
+
+/// One legacy wmux JSON failure line (no terminator).
+pub fn legacyLineAlloc(gpa: Allocator, id: u64, msg: []const u8) Allocator.Error![]u8 {
+    return std.fmt.allocPrint(gpa, "{{\"id\":{d},\"ok\":false,\"error\":{f}}}", .{ id, std.json.fmt(msg, .{}) });
+}
+
+/// The legacy pipe's reply to a line over the cap (the pre-W1-1a text).
+pub const legacy_too_long_message = "request exceeds maximum length";
 
 /// What `Handler.on_connect` decides for a new connection.
 pub const ConnectAction = enum {
@@ -213,10 +236,20 @@ write_mutex: std.Thread.Mutex = .{},
 thread: ?std.Thread = null,
 /// Free for the dispatcher (auth state, stream subscriber, ...).
 user_data: ?*anyopaque = null,
+/// Other threads currently writing through `PipeServer.pushLine`;
+/// `destroy` waits until it drops to zero.
+refs: std.atomic.Value(u32) = .init(0),
+/// Auto-reset; signaled when a pending connection is granted a live slot
+/// or the server stops (see `PipeServer.waitPending`).
+wait_event: w32.HANDLE,
 
 // Guarded by server.mutex:
 current: ?*Request = null,
 reply: ?[]u8 = null,
+
+// Guarded by server.gate.mutex:
+/// A live slot was handed to this pending connection.
+wait_granted: bool = false,
 
 pub fn create(server: *PipeServer, pipe: w32.HANDLE, must_wait: bool) !*Connection {
     const gpa = server.gpa;
@@ -229,6 +262,8 @@ pub fn create(server: *PipeServer, pipe: w32.HANDLE, must_wait: bool) !*Connecti
     const write_event = try w32.event(true);
     errdefer windows.CloseHandle(write_event);
     const reply_event = try w32.event(false);
+    errdefer windows.CloseHandle(reply_event);
+    const wait_event = try w32.event(false);
     self.* = .{
         .server = server,
         .gpa = gpa,
@@ -236,6 +271,7 @@ pub fn create(server: *PipeServer, pipe: w32.HANDLE, must_wait: bool) !*Connecti
         .read_event = read_event,
         .write_event = write_event,
         .reply_event = reply_event,
+        .wait_event = wait_event,
         .read_buf = read_buf,
         .framer = .init(server.config.max_line_bytes),
         .must_wait = must_wait,
@@ -246,18 +282,25 @@ pub fn create(server: *PipeServer, pipe: w32.HANDLE, must_wait: bool) !*Connecti
 }
 
 /// Frees everything; the thread must have been joined. Cancels a pending
-/// read before the buffer goes away.
+/// read before the buffer goes away and waits for in-flight pushers.
 pub fn destroy(self: *Connection) void {
     self.closePipe();
+    // Slot already released: no new pusher can pin us; let the ones that
+    // did finish (their write fails fast on the closed handle).
+    while (self.refs.load(.acquire) != 0) std.Thread.sleep(std.time.ns_per_ms);
     if (self.reply) |r| self.gpa.free(r);
     self.framer.deinit(self.gpa);
     windows.CloseHandle(self.read_event);
     windows.CloseHandle(self.write_event);
     windows.CloseHandle(self.reply_event);
+    windows.CloseHandle(self.wait_event);
     self.gpa.free(self.read_buf);
     self.gpa.destroy(self);
 }
 
+/// Cancels the lookahead read (connection thread only) and closes the
+/// handle under `write_mutex`, so a concurrent push never writes to a
+/// closed or reused handle. Idempotent.
 fn closePipe(self: *Connection) void {
     if (self.read_pending) {
         var n: w32.DWORD = 0;
@@ -265,10 +308,20 @@ fn closePipe(self: *Connection) void {
         _ = w32.GetOverlappedResult(self.pipe, &self.read_ov, &n, windows.TRUE);
         self.read_pending = false;
     }
+    self.write_mutex.lock();
+    defer self.write_mutex.unlock();
     if (self.pipe != windows.INVALID_HANDLE_VALUE) {
         windows.CloseHandle(self.pipe);
         self.pipe = windows.INVALID_HANDLE_VALUE;
     }
+}
+
+/// Whether the client end is still connected (a pending connection checks
+/// this while it waits for a slot).
+pub fn clientConnected(self: *Connection) bool {
+    if (self.pipe == windows.INVALID_HANDLE_VALUE) return false;
+    var avail: w32.DWORD = 0;
+    return w32.PeekNamedPipe(self.pipe, null, 0, null, &avail, null) != 0;
 }
 
 /// The client's process id (0 if unknown).
@@ -293,7 +346,8 @@ pub fn takePollingToken(self: *Connection) ?u32 {
     return self.limiter.take();
 }
 
-/// Writes `line` plus LF. Any thread, while the connection is alive.
+/// Writes `line` plus LF under `write_mutex`. The connection thread, or a
+/// thread that pinned the connection (`PipeServer.pushLine`).
 pub fn writeLine(self: *Connection, line: []const u8) bool {
     return self.writeLineOpts(line, self.server.stop_event, self.server.config.write_timeout_ms);
 }
@@ -324,11 +378,16 @@ pub fn run(self: *Connection) void {
     defer self.server.connectionFinished(self);
     defer self.closePipe();
     const server = self.server;
-    if (self.must_wait) switch (server.gate.waitForSlot()) {
+    if (self.must_wait) switch (server.waitPending(self)) {
         .admitted => {},
         .rejected => |reason| return self.rejectOverloaded(reason),
+        .gone => return,
     };
-    defer server.gate.release();
+    // Deferred in this order so the pipe is closed before the live slot is
+    // released: otherwise the next admitted client can need one instance
+    // more than the limit (CreateNamedPipeW then fails with PIPE_BUSY).
+    defer server.releaseLive();
+    defer self.closePipe();
     if (!server.claimSlot(self)) return self.rejectOverloaded(.pool_saturated);
     defer server.releaseSlot(self);
 
@@ -354,9 +413,22 @@ pub fn run(self: *Connection) void {
 }
 
 fn rejectOverloaded(self: *Connection, reason: admission.Reason) void {
-    const line = admission.overloadedLineAlloc(self.gpa, .null, reason) catch return;
+    const line = if (self.server.config.legacy_replies)
+        legacyLineAlloc(self.gpa, 0, legacyOverloadedMessage(reason)) catch return
+    else
+        admission.overloadedLineAlloc(self.gpa, .null, reason) catch return;
     defer self.gpa.free(line);
     self.writeFinal(line);
+}
+
+fn legacyOverloadedMessage(reason: admission.Reason) []const u8 {
+    return switch (reason) {
+        .pool_saturated => "server overloaded: pool_saturated",
+        .pending_expired => "server overloaded: pending_expired",
+        .preauthorization_saturated => "server overloaded: preauthorization_saturated",
+        .accept_buffer_full => "server overloaded: accept_buffer_full",
+        .server_stopping => "server overloaded: server_stopping",
+    };
 }
 
 /// Leaves pre-authorization once the dispatcher called `authorize`.
@@ -379,7 +451,10 @@ fn serve(self: *Connection) void {
         while (self.framer.next()) |ev| {
             switch (ev) {
                 .oversized => {
-                    const line = request_state.oversizedLineAlloc(self.gpa, self.framer.max_line) catch return;
+                    const line = (if (config.legacy_replies)
+                        legacyLineAlloc(self.gpa, 0, legacy_too_long_message)
+                    else
+                        request_state.oversizedLineAlloc(self.gpa, self.framer.max_line)) catch return;
                     defer self.gpa.free(line);
                     if (!self.writeLine(line)) return;
                 },
@@ -492,7 +567,7 @@ fn awaitReply(self: *Connection, req: *Request, id: std.json.Value) Outcome {
             },
             w32.WAIT_TIMEOUT => {
                 const expiry = req.lifecycle.expire();
-                const line = (request_state.expiryLineAlloc(self.gpa, id, expiry, req.stage, req.deadline_ms) catch return .gone) orelse continue;
+                const line = (expiryLine(self.gpa, req, id, expiry) catch return .gone) orelse continue;
                 defer self.gpa.free(line);
                 return if (self.writeLine(line)) .timed_out else .gone;
             },
@@ -520,9 +595,10 @@ fn clientLeft(self: *Connection, req: *Request) bool {
 /// Shutdown with a request in flight: queued → `overloaded
 /// server_stopping` (it never ran), running/deferred → `cancelled`.
 fn stopRequest(self: *Connection, req: *Request, id: std.json.Value) Outcome {
+    const legacy = req.legacy_id;
     const line = switch (req.lifecycle.expire()) {
-        .not_started => admission.overloadedLineAlloc(self.gpa, id, .server_stopping),
-        .abandoned => request_state.cancelledLineAlloc(self.gpa, id),
+        .not_started => if (legacy) |lid| legacyLineAlloc(self.gpa, lid, "server stopping") else admission.overloadedLineAlloc(self.gpa, id, .server_stopping),
+        .abandoned => if (legacy) |lid| legacyLineAlloc(self.gpa, lid, "cancelled: server stopping") else request_state.cancelledLineAlloc(self.gpa, id),
         // Completed while we were stopping: deliver the real reply.
         .none => {
             if (self.server.takeReplyOnly(self)) |r| {
@@ -535,4 +611,19 @@ fn stopRequest(self: *Connection, req: *Request, id: std.json.Value) Outcome {
     defer self.gpa.free(line);
     self.writeFinal(line);
     return .stopped;
+}
+
+/// The timeout reply for an expired request: the v2 `timeout {stage,
+/// deadline_ms, retryable}` line, or for a legacy request the legacy
+/// shape; null when the request already completed.
+fn expiryLine(gpa: Allocator, req: *const Request, id: std.json.Value, expiry: request_state.Expiry) Allocator.Error!?[]u8 {
+    const lid = req.legacy_id orelse return request_state.expiryLineAlloc(gpa, id, expiry, req.stage, req.deadline_ms);
+    const retryable = switch (expiry) {
+        .none => return null,
+        .not_started => true,
+        .abandoned => false,
+    };
+    const msg = try std.fmt.allocPrint(gpa, "timeout: no reply within {d} ms (stage {s}, retryable {})", .{ req.deadline_ms, req.stage, retryable });
+    defer gpa.free(msg);
+    return try legacyLineAlloc(gpa, lid, msg);
 }
