@@ -1,12 +1,23 @@
-//! Persisted session layout for the Win32 runtime (tmux-resurrect style).
+//! The legacy (v2) session file for the Win32 runtime: the read-only v2
+//! reader plus the explicit legacy `session-save` writer.
 //!
-//! Saves the entire workspace/Pane/tab layout with working
-//! directories to `%LOCALAPPDATA%\ghostty\session-state.json` so it can
-//! be restored on restart.
+//! Session v3 (W1-7a, ARCHITECTURE.md ADR-9) owns persistence now:
+//! automatic saves (autosave, full saves, WM_CLOSE) write
+//! `STATE\session\session.json` and never this file. What stays here:
+//!
+//! - `save`: the explicit legacy `session-save` command (and the
+//!   `save_session` keybind action) still write
+//!   `%LOCALAPPDATA%\ghostty\session-state.json` (or
+//!   `<WMUX_STATE_DIR>\session-state.json`) in the v2 shape, in test mode
+//!   too (owner decision 2026-10-17 b), until W1-7b flips the command to
+//!   `wmux.session.save`;
+//! - `restore`: the explicit legacy `session-restore` reads that file
+//!   through logic/migrate_v2.zig (the same v2/v1 reader the launch
+//!   migration uses) and applies it with the v3 restorer into window 0,
+//!   so every workspace keeps its splits and none is lost (the W0-ST
+//!   multi-workspace bug).
 //!
 //! ## Data model (v2)
-//!
-//! The JSON hierarchy mirrors the runtime model:
 //!
 //!   SessionData
 //!     └─ WorkspaceData[]
@@ -14,8 +25,6 @@
 //!          └─ split_tree: SplitNodeData (recursive)
 //!               ├─ leaf → PaneContainerData { tabs[], active_tab }
 //!               └─ split → { direction, ratio, left, right }
-//!
-//! v1 files (tabs[] with split trees) are detected and migrated on load.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -23,16 +32,11 @@ const Allocator = std.mem.Allocator;
 const App = @import("../../App.zig");
 const Pane = @import("../../model/Pane.zig");
 const Window = @import("../../ui/Window.zig");
-const ops_pane = @import("../../model/ops/pane.zig");
-const ops_surface = @import("../../model/ops/surface.zig");
-const ops_window = @import("../../model/ops/window.zig");
-const model_registry = @import("../../model/registry.zig");
 const SplitTree = @import("../../../../datastruct/split_tree.zig").SplitTree;
 const app_paths = @import("../../app/paths.zig");
 const RuntimeEnv = @import("../../app/runtime_env.zig").RuntimeEnv;
-const w32 = @import("../../platform/win32.zig");
 
-const log = std.log.scoped(.win32);
+const log = std.log.scoped(.session);
 
 /// Build the absolute path to the session-state file:
 /// %LOCALAPPDATA%\ghostty\session-state.json, or
@@ -222,321 +226,23 @@ pub fn save(alloc: Allocator, window: *Window) !void {
 
 // ── Restore ─────────────────────────────────────────────────────────
 
-/// Restore a session from disk into the app. Creates workspaces and tabs
-/// to match the saved layout.
-///
-/// Supports both v2 (split_tree of Panes) and v1 (flat tabs[])
-/// formats — v1 files are migrated to one Pane per workspace.
+/// The explicit legacy `session-restore`: read the v2 (or v1) file and
+/// restore it into window 0 with the v3 restorer (replacing window 0's
+/// workspaces; terminals spawn in their saved directories). A missing or
+/// unreadable file is not an error (the legacy reply stays `ok`).
 pub fn restore(alloc: Allocator, app: *App) !void {
     var arena = std.heap.ArenaAllocator.init(alloc);
     defer arena.deinit();
     const a = arena.allocator();
 
     const path = sessionStatePath(a, &app.runtime_env) catch return;
-    const file = std.fs.cwd().openFile(path, .{}) catch return;
-    defer file.close();
-
-    const max_size = 4 * 1024 * 1024;
-    const contents = file.readToEndAlloc(a, max_size) catch return;
-
-    const parsed = std.json.parseFromSlice(std.json.Value, a, contents, .{}) catch return;
-    const root_obj = switch (parsed.value) {
-        .object => |o| o,
-        else => return,
+    const contents = std.fs.cwd().readFileAlloc(a, path, 4 * 1024 * 1024) catch return;
+    const session = @import("migrate.zig").readLegacy(a, contents) catch |err| {
+        log.warn("legacy session-restore: unreadable session file err={}", .{err});
+        return;
     };
-
-    const workspaces_val = root_obj.get("workspaces") orelse return;
-    const workspaces_arr = switch (workspaces_val) {
-        .array => |arr| arr,
-        else => return,
-    };
-    const active_ws: usize = jsonUsize(root_obj.get("active_workspace")) orelse 0;
-    const version: usize = jsonUsize(root_obj.get("version")) orelse 1;
-
     if (app.windows.items.len == 0) return;
-    const window = app.windows.items[0];
-
-    for (workspaces_arr.items, 0..) |ws_val, ws_idx| {
-        const ws_obj = switch (ws_val) {
-            .object => |o| o,
-            else => continue,
-        };
-
-        const target_ws_idx: usize = if (ws_idx == 0)
-            0
-        else
-            ops_window.appendWorkspace(window) orelse break;
-
-        if (jsonString(ws_obj.get("name"))) |name| {
-            window.setWorkspaceName(target_ws_idx, name);
-        }
-
-        if (jsonString(ws_obj.get("working_dir"))) |wd| {
-            window.workspaces.items[target_ws_idx].setCwd(alloc, wd) catch {};
-        }
-
-        if (version >= 2) {
-            restoreV2Workspace(alloc, window, target_ws_idx, ws_obj);
-        } else {
-            restoreV1Workspace(alloc, window, target_ws_idx, ws_obj);
-        }
-    }
-
-    if (active_ws < window.workspaces.items.len) {
-        window.selectWorkspace(active_ws);
-    }
-
-    window.invalidateSidebar();
-}
-
-/// Restore a v2 workspace: parse the split_tree and recursively rebuild
-/// the Pane hierarchy with tabs. Builds the SplitTree bottom-up
-/// to faithfully reconstruct the exact tree topology that was saved.
-fn restoreV2Workspace(
-    alloc: Allocator,
-    window: *Window,
-    ws_idx: usize,
-    ws_obj: std.json.ObjectMap,
-) void {
-    const tree_val = ws_obj.get("split_tree") orelse return;
-    const tree_obj = switch (tree_val) {
-        .object => |o| o,
-        else => return,
-    };
-
-    const ws = window.workspaces.items[ws_idx];
-    const is_bg = ws_idx != window.activeIndex();
-
-    // Recursively build the SplitTree from the serialized JSON.
-    const tree = buildSplitTree(alloc, window, ws, is_bg, tree_obj) orelse return;
-
-    // Replace any existing tree on the workspace. Drop the focused pane
-    // first: it belongs to the old tree, which installTree frees (and
-    // focus messages sent while it is torn down must not reach it).
-    ws.focused_pane = null;
-    ops_pane.installRestoredTree(window, ws, tree);
-
-    // Set the focused container.
-    const active_container = jsonUsize(ws_obj.get("active_container")) orelse 0;
-    if (ws.paneAt(active_container)) |container| {
-        ws.focused_pane = container;
-    } else {
-        var it = ws.tree.iterator();
-        if (it.next()) |entry| {
-            ws.focused_pane = entry.view;
-        }
-    }
-}
-
-/// Recursively build a SplitTree from a JSON node. For leaf nodes,
-/// creates a Pane with tabs and returns a single-leaf tree.
-/// For split nodes, recursively builds left and right subtrees and
-/// combines them via SplitTree.split to preserve the exact topology.
-fn buildSplitTree(
-    alloc: Allocator,
-    window: *Window,
-    ws: *Window.Workspace,
-    is_bg: bool,
-    node_obj: std.json.ObjectMap,
-) ?SplitTree(Pane) {
-    const node_type = jsonString(node_obj.get("node_type")) orelse return null;
-
-    if (std.mem.eql(u8, node_type, "leaf")) {
-        return buildLeafTree(alloc, window, ws, is_bg, node_obj);
-    } else if (std.mem.eql(u8, node_type, "split")) {
-        return buildSplitNode(alloc, window, ws, is_bg, node_obj);
-    }
-    return null;
-}
-
-/// Build a single-leaf SplitTree from a leaf JSON node.
-fn buildLeafTree(
-    alloc: Allocator,
-    window: *Window,
-    ws: *Window.Workspace,
-    is_bg: bool,
-    node_obj: std.json.ObjectMap,
-) ?SplitTree(Pane) {
-    const container_val = node_obj.get("container") orelse return null;
-    const container_obj = switch (container_val) {
-        .object => |o| o,
-        else => return null,
-    };
-
-    const tabs_val = container_obj.get("tabs") orelse return null;
-    const tabs_arr = switch (tabs_val) {
-        .array => |arr| arr,
-        else => return null,
-    };
-    if (tabs_arr.items.len == 0) return null;
-
-    // Create a Pane and populate its tabs (no tab cap since W0-A2).
-    const container = Pane.create(alloc) catch return null;
-    model_registry.register(&window.app.handles, alloc, container) catch {
-        alloc.destroy(container);
-        return null;
-    };
-    container.workspace = ws;
-
-    for (tabs_arr.items) |tab_val| {
-        const tab_obj = switch (tab_val) {
-            .object => |o| o,
-            else => continue,
-        };
-
-        const title = jsonString(tab_obj.get("title"));
-
-        const tab = ops_surface.createTerminalTab(window, ws, container.handle.uuid, .tab, null, ws.cwd) catch continue;
-        ops_surface.initTitle(alloc, tab, title, ops_surface.terminal_default_title) catch {
-            tab.unref(alloc);
-            continue;
-        };
-
-        if (is_bg) {
-            if (tab.hwnd()) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
-        }
-
-        ops_surface.insert(alloc, container, tab, container.tabCount()) catch {
-            tab.unref(alloc);
-            continue;
-        };
-    }
-
-    if (container.tabCount() == 0) {
-        model_registry.unregister(container);
-        container.tabs.deinit(alloc);
-        alloc.destroy(container);
-        return null;
-    }
-
-    // Restore the active tab within this container.
-    const active_tab = jsonUsize(container_obj.get("active_tab")) orelse 0;
-    container.selected = @min(active_tab, container.tabCount() - 1);
-
-    return SplitTree(Pane).init(alloc, container) catch {
-        // init failed before taking its reference: release the tabs.
-        while (container.tabCount() > 0) {
-            ops_surface.remove(container, container.tabCount() - 1).unref(alloc);
-        }
-        model_registry.unregister(container);
-        container.tabs.deinit(alloc);
-        alloc.destroy(container);
-        return null;
-    };
-}
-
-/// Build a SplitTree from a split JSON node by recursively building
-/// left and right subtrees and combining them.
-fn buildSplitNode(
-    alloc: Allocator,
-    window: *Window,
-    ws: *Window.Workspace,
-    is_bg: bool,
-    node_obj: std.json.ObjectMap,
-) ?SplitTree(Pane) {
-    const left_val = node_obj.get("left") orelse return null;
-    const left_obj = switch (left_val) {
-        .object => |o| o,
-        else => return null,
-    };
-    const right_val = node_obj.get("right") orelse return null;
-    const right_obj = switch (right_val) {
-        .object => |o| o,
-        else => return null,
-    };
-
-    var left_tree = buildSplitTree(alloc, window, ws, is_bg, left_obj) orelse return null;
-    var right_tree = buildSplitTree(alloc, window, ws, is_bg, right_obj) orelse {
-        left_tree.deinit();
-        return null;
-    };
-    defer right_tree.deinit();
-
-    const dir_str = jsonString(node_obj.get("direction")) orelse "horizontal";
-    const direction: SplitTree(Pane).Split.Direction = if (std.mem.eql(u8, dir_str, "vertical"))
-        .down
-    else
-        .right;
-
-    const ratio_val = jsonFloat(node_obj.get("ratio")) orelse 0.5;
-    const ratio: f16 = @floatCast(ratio_val);
-
-    const combined = left_tree.split(alloc, .root, direction, ratio, &right_tree) catch {
-        left_tree.deinit();
-        return null;
-    };
-
-    left_tree.deinit();
-    return combined;
-}
-
-/// Restore a v1 workspace: flat tabs array, one Pane for all.
-fn restoreV1Workspace(
-    alloc: Allocator,
-    window: *Window,
-    ws_idx: usize,
-    ws_obj: std.json.ObjectMap,
-) void {
-    _ = alloc;
-    const tabs_arr = switch (ws_obj.get("tabs") orelse return) {
-        .array => |arr| arr,
-        else => return,
-    };
-
-    if (tabs_arr.items.len == 0) return;
-
-    log.warn("session restore: migrating v1 session format to v2", .{});
-
-    for (tabs_arr.items) |tab_val| {
-        const tab_obj = switch (tab_val) {
-            .object => |o| o,
-            else => continue,
-        };
-
-        const title = jsonString(tab_obj.get("title"));
-
-        if (ws_idx == window.activeIndex()) {
-            _ = window.addTabWithCommand(null, title) catch |err| {
-                log.warn("session restore: failed to create tab: {}", .{err});
-                continue;
-            };
-        } else {
-            _ = window.addTabBackground(ws_idx, null, title) catch |err| {
-                log.warn("session restore: failed to create bg tab: {}", .{err});
-                continue;
-            };
-        }
-    }
-}
-
-// ── JSON helpers ────────────────────────────────────────────────────
-
-/// Extract a string from a `std.json.Value`, returning null for non-string values.
-fn jsonString(v: ?std.json.Value) ?[]const u8 {
-    const val = v orelse return null;
-    return switch (val) {
-        .string => |s| s,
-        else => null,
-    };
-}
-
-/// Extract a usize from a `std.json.Value` (integer only).
-fn jsonUsize(v: ?std.json.Value) ?usize {
-    const val = v orelse return null;
-    return switch (val) {
-        .integer => |i| if (i >= 0) @intCast(i) else null,
-        else => null,
-    };
-}
-
-/// Extract an f64 from a `std.json.Value` (float or integer).
-fn jsonFloat(v: ?std.json.Value) ?f64 {
-    const val = v orelse return null;
-    return switch (val) {
-        .float => |f| f,
-        .integer => |i| @floatFromInt(i),
-        else => null,
-    };
+    try @import("restore.zig").apply(app, &session, .{ .stagger = false, .placement = false, .all_windows = false });
 }
 
 // ── Tests ──────────────────────────────────────────────────────────
@@ -561,29 +267,6 @@ fn freeTestLeafTree(alloc: Allocator, tree: SplitTree(Pane), pane: *Pane) void {
     t.arena.deinit();
     alloc.destroy(pane);
 }
-
-test "SessionState: jsonString extracts strings and rejects non-strings" {
-    try testing.expectEqualStrings("hello", jsonString(.{ .string = "hello" }).?);
-    try testing.expect(jsonString(.{ .integer = 42 }) == null);
-    try testing.expect(jsonString(.null) == null);
-    try testing.expect(jsonString(null) == null);
-}
-
-test "SessionState: jsonUsize extracts non-negative integers" {
-    try testing.expectEqual(@as(usize, 5), jsonUsize(.{ .integer = 5 }).?);
-    try testing.expectEqual(@as(usize, 0), jsonUsize(.{ .integer = 0 }).?);
-    try testing.expect(jsonUsize(.{ .integer = -1 }) == null);
-    try testing.expect(jsonUsize(.{ .string = "5" }) == null);
-    try testing.expect(jsonUsize(null) == null);
-}
-
-test "SessionState: jsonFloat extracts floats and integer-as-float" {
-    try testing.expectApproxEqAbs(@as(f64, 0.75), jsonFloat(.{ .float = 0.75 }).?, 0.001);
-    try testing.expectApproxEqAbs(@as(f64, 3.0), jsonFloat(.{ .integer = 3 }).?, 0.001);
-    try testing.expect(jsonFloat(.{ .string = "0.5" }) == null);
-    try testing.expect(jsonFloat(null) == null);
-}
-
 test "SessionState: PaneContainerData defaults" {
     const d: PaneContainerData = .{};
     try testing.expectEqual(@as(usize, 0), d.tabs.len);

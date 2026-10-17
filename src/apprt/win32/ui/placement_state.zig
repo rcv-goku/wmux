@@ -212,6 +212,59 @@ pub fn clampToVirtualScreen(saved: Rect, screen: Rect) Rect {
     return .{ .x = nx, .y = ny, .width = w, .height = h };
 }
 
+/// Fit a saved window rect (screen coordinates) into the work area of the
+/// monitor it is restored on (session v3, ADR-9.4): the whole rect ends up
+/// inside `work` (shrunk to it when larger), and a rect that misses the
+/// monitor entirely is centered on it. Same rules as clampToVirtualScreen,
+/// against one monitor's work area instead of the virtual screen, so a
+/// window is never restored under the taskbar or across a monitor gap.
+pub fn clampToWorkArea(saved: Rect, work: Rect) Rect {
+    if (work.width <= 0 or work.height <= 0) return saved;
+    return clampToVirtualScreen(saved, work);
+}
+
+/// `GetWindowPlacement`'s rcNormalPosition is in workspace coordinates
+/// (screen coordinates minus the primary monitor's work-area origin) for a
+/// top-level window without WS_EX_TOOLWINDOW. Treating them as screen
+/// coordinates drifted the window by the taskbar size on every restore;
+/// these convert both ways given the primary work-area origin.
+pub fn workspaceToScreen(r: Rect, primary_work_x: i32, primary_work_y: i32) Rect {
+    return .{ .x = r.x + primary_work_x, .y = r.y + primary_work_y, .width = r.width, .height = r.height };
+}
+
+pub fn screenToWorkspace(r: Rect, primary_work_x: i32, primary_work_y: i32) Rect {
+    return .{ .x = r.x - primary_work_x, .y = r.y - primary_work_y, .width = r.width, .height = r.height };
+}
+
+test "unit: session: placement fits the restored window into the monitor work area" {
+    // A 1920x1040 work area above a 40 px taskbar.
+    const work: Rect = .{ .x = 0, .y = 0, .width = 1920, .height = 1040 };
+    // Hanging under the taskbar: pulled up so the whole window is inside.
+    const low = clampToWorkArea(.{ .x = 100, .y = 900, .width = 800, .height = 600 }, work);
+    try std.testing.expectEqual(Rect{ .x = 100, .y = 440, .width = 800, .height = 600 }, low);
+    // Larger than the work area: shrunk to it.
+    const big = clampToWorkArea(.{ .x = -10, .y = -10, .width = 4000, .height = 3000 }, work);
+    try std.testing.expectEqual(Rect{ .x = 0, .y = 0, .width = 1920, .height = 1040 }, big);
+    // Saved on a monitor that is gone (fully outside): centered.
+    const gone = clampToWorkArea(.{ .x = 5000, .y = 0, .width = 800, .height = 600 }, work);
+    try std.testing.expectEqual(Rect{ .x = 560, .y = 220, .width = 800, .height = 600 }, gone);
+    // A second monitor left of the primary one (negative origin).
+    const left: Rect = .{ .x = -1280, .y = 0, .width = 1280, .height = 984 };
+    const on_left = clampToWorkArea(.{ .x = -1300, .y = 10, .width = 600, .height = 400 }, left);
+    try std.testing.expectEqual(Rect{ .x = -1280, .y = 10, .width = 600, .height = 400 }, on_left);
+    // An unknown (empty) work area leaves the rect alone.
+    const keep = clampToWorkArea(.{ .x = 1, .y = 2, .width = 300, .height = 200 }, .{ .x = 0, .y = 0, .width = 0, .height = 0 });
+    try std.testing.expectEqual(Rect{ .x = 1, .y = 2, .width = 300, .height = 200 }, keep);
+}
+
+test "unit: session: placement converts workspace and screen coordinates" {
+    // Taskbar docked left, 60 px: the primary work area starts at x = 60.
+    const ws: Rect = .{ .x = 10, .y = 20, .width = 800, .height = 600 };
+    const screen = workspaceToScreen(ws, 60, 0);
+    try std.testing.expectEqual(@as(i32, 70), screen.x);
+    try std.testing.expectEqual(ws, screenToWorkspace(screen, 60, 0));
+}
+
 test "winsize: serialize/parse round-trip" {
     const testing = std.testing;
     const in = State{ .width = 1024, .height = 768, .x = 100, .y = 80, .maximized = false };

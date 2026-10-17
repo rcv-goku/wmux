@@ -39,6 +39,49 @@
         ]
       },
       "default": []
+    },
+    "wmux": {
+      "type": "object",
+      "properties": {
+        "session": {
+          "type": "object",
+          "properties": {
+            "autosave": {
+              "title": "Save the session automatically",
+              "description": "Save the session layout every 8 seconds when it changed, and fully on quit, on closing the last window and on logoff or shutdown. Off: the session file is not updated (the last saved session is still restored).",
+              "type": "boolean",
+              "default": true,
+              "x-cmux-scopes": [
+                "global"
+              ],
+              "x-wmux-section": "app",
+              "x-wmux-keywords": [
+                "session",
+                "autosave",
+                "save"
+              ],
+              "x-wmux-apply": "restart"
+            },
+            "restoreOnLaunch": {
+              "title": "Restore the previous session on launch",
+              "description": "Reopen the windows, workspaces, splits and tabs of the last session when wmux starts (the terminals start again in their working directories). WMUX_DISABLE_SESSION_RESTORE or CMUX_DISABLE_SESSION_RESTORE, or launching wmux with a path, URL or command, skips the restore once.",
+              "type": "boolean",
+              "default": true,
+              "x-cmux-scopes": [
+                "global"
+              ],
+              "x-wmux-section": "app",
+              "x-wmux-keywords": [
+                "session",
+                "restore",
+                "startup",
+                "relaunch"
+              ],
+              "x-wmux-apply": "restart"
+            }
+          }
+        }
+      }
     }
   }
 }
