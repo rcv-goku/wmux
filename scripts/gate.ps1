@@ -464,8 +464,13 @@ function Get-BatchRefs {
         if ($BatchRef.Count) { $refs.Add($BatchRef[$i]); continue }
         $id = $wps[$i]
         $names = @(Split-WmuxLines (Invoke-WmuxGit -RepoRoot $repo -Arguments @('for-each-ref', '--format=%(refname:short)', "refs/heads/wp/$id", "refs/heads/wp/$id-*")).Output)
-        # wp/W1-1a-* also matches wp/W1-1a-t-*: keep branches whose id part is exactly $id.
-        $names = @($names | Where-Object { $_ -eq "wp/$id" -or ($_.StartsWith("wp/$id-") -and -not ($wps | Where-Object { $_ -ne $id -and $_.StartsWith("$id-") -and $names -contains $_ })) })
+        # wp/W1-1a-* also matches wp/W1-1a-t-*: drop branches of a longer known WP id.
+        $longer = @(Get-ChildItem -LiteralPath (Join-Path $repo 'docs/arch/wp') -Filter '*.md' -File -ErrorAction SilentlyContinue |
+                ForEach-Object BaseName | Where-Object { $_.StartsWith("$id-") })
+        $names = @($names | Where-Object {
+                $n = $_
+                -not @($longer | Where-Object { $n -eq "wp/$_" -or $n.StartsWith("wp/$_-") }).Count
+            })
         if ($names.Count -ne 1) { throw "cannot pick the branch of ${id}: $(if ($names.Count) { $names -join ', ' } else { 'no wp/' + $id + '[-*] branch' }); pass -BatchRef." }
         $refs.Add($names[0])
     }
