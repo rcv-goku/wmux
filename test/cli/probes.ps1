@@ -39,6 +39,10 @@
 .PARAMETER Json
     Optional path of a JSON report (one record per probe run).
 
+.PARAMETER Parallel
+    Probes running at the same time (default: processor count, at most 8). Results are reported
+    in table order either way.
+
 .EXAMPLE
     pwsh test/cli/probes.ps1
     pwsh test/cli/probes.ps1 -Exe zig-out\release\bin\cli\cmux.exe -Name wmux
@@ -48,7 +52,8 @@ param(
     [string]$Exe,
     [ValidateSet('cmux', 'wmux', 'both')][string]$Name = 'both',
     [ValidateRange(1, 600)][int]$TimeoutSec = 20,
-    [string]$Json
+    [string]$Json,
+    [ValidateRange(0, 64)][int]$Parallel = 0
 )
 
 Set-StrictMode -Version 3.0
@@ -354,7 +359,7 @@ function Get-ProbeEnvironment {
     return $map
 }
 
-function Invoke-Probe {
+function Start-Probe {
     param([string[]]$Arguments, [System.Collections.IDictionary]$Environment)
     $psi = [System.Diagnostics.ProcessStartInfo]::new($Exe)
     foreach ($a in $Arguments) { $psi.ArgumentList.Add($a) }
@@ -370,11 +375,20 @@ function Invoke-Probe {
     $psi.Environment.Clear()
     foreach ($k in $Environment.Keys) { $psi.Environment[$k] = $Environment[$k] }
     $proc = [System.Diagnostics.Process]::Start($psi)
+    $outTask = $proc.StandardOutput.ReadToEndAsync()
+    $errTask = $proc.StandardError.ReadToEndAsync()
+    $proc.StandardInput.Close()
+    return [pscustomobject]@{ Process = $proc; Out = $outTask; Err = $errTask; Started = [DateTime]::UtcNow }
+}
+
+function Complete-Probe {
+    param($Running)
+    $proc = $Running.Process
+    $outTask = $Running.Out
+    $errTask = $Running.Err
     try {
-        $outTask = $proc.StandardOutput.ReadToEndAsync()
-        $errTask = $proc.StandardError.ReadToEndAsync()
-        $proc.StandardInput.Close()
-        if (-not $proc.WaitForExit($TimeoutSec * 1000)) {
+        $leftMs = [Math]::Max(0, [int]($TimeoutSec * 1000 - ([DateTime]::UtcNow - $Running.Started).TotalMilliseconds))
+        if (-not $proc.WaitForExit($leftMs)) {
             try { $proc.Kill($true) } catch { }
             return [pscustomobject]@{ ExitCode = -1; Stdout = ''; Stderr = "timed out after ${TimeoutSec}s" }
         }
@@ -422,27 +436,40 @@ $probes = @(
 $brands = if ($Name -eq 'both') { @('cmux', 'wmux') } else { @($Name) }
 $records = [System.Collections.Generic.List[object]]::new()
 $failed = 0
+if ($Parallel -le 0) { $Parallel = [Math]::Min(8, [Environment]::ProcessorCount) }
+$jobs = [System.Collections.Generic.List[object]]::new()
 foreach ($brand in $brands) {
     $envMap = Get-ProbeEnvironment -Brand $brand
-    foreach ($p in $probes) {
-        $r = Invoke-Probe -Arguments $p.Args -Environment $envMap
-        $why = Test-Probe -Probe $p -Brand $brand -Result $r
-        $records.Add([ordered]@{
-                brand  = $brand
-                args   = $p.Args
-                exit   = $r.ExitCode
-                expect = $p.Exit
-                mode   = $p.Mode
-                text   = $p.Text
-                ok     = ($null -eq $why)
-                reason = $why
-            })
-        if ($null -ne $why) {
-            $failed++
-            Write-Host ("FAIL {0} {1}: {2}" -f $brand, ($p.Args -join ' '), $why)
-            $tail = (($r.Stdout + $r.Stderr) -split "`r?`n" | Select-Object -First 4) -join ' / '
-            Write-Host "     output: $tail"
-        }
+    foreach ($p in $probes) { $jobs.Add([pscustomobject]@{ Brand = $brand; Probe = $p; Env = $envMap }) }
+}
+# Sliding window: keep $Parallel probes running, complete them in table order.
+$running = [System.Collections.Generic.Queue[object]]::new()
+$next = 0
+for ($done = 0; $done -lt $jobs.Count; $done++) {
+    while ($next -lt $jobs.Count -and $running.Count -lt $Parallel) {
+        $j = $jobs[$next++]
+        $running.Enqueue([pscustomobject]@{ Job = $j; Run = (Start-Probe -Arguments $j.Probe.Args -Environment $j.Env) })
+    }
+    $item = $running.Dequeue()
+    $brand = $item.Job.Brand
+    $p = $item.Job.Probe
+    $r = Complete-Probe $item.Run
+    $why = Test-Probe -Probe $p -Brand $brand -Result $r
+    $records.Add([ordered]@{
+            brand  = $brand
+            args   = $p.Args
+            exit   = $r.ExitCode
+            expect = $p.Exit
+            mode   = $p.Mode
+            text   = $p.Text
+            ok     = ($null -eq $why)
+            reason = $why
+        })
+    if ($null -ne $why) {
+        $failed++
+        Write-Host ("FAIL {0} {1}: {2}" -f $brand, ($p.Args -join ' '), $why)
+        $tail = (($r.Stdout + $r.Stderr) -split "`r?`n" | Select-Object -First 4) -join ' / '
+        Write-Host "     output: $tail"
     }
 }
 if ($Json) {
