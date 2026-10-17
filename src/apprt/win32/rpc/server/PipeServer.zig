@@ -85,6 +85,13 @@ pub const Handler = struct {
 
 pub const Completion = enum { delivered, dropped };
 
+/// Initial stack of the accept and connection threads. On Windows,
+/// std.Thread hands `stack_size` to CreateThread as the size to *commit*
+/// up front, so the 16 MiB default would commit 16 MiB per connection
+/// (about 2 GiB at 64 live + 64 pending). The stack still grows on demand
+/// up to the executable's reserve (16 MiB for Zig-built exes).
+pub const thread_stack_size: usize = 256 * 1024;
+
 pub const StartError = error{
     /// FIRST_PIPE_INSTANCE failed: another server (maybe not ours) owns the name.
     PipeNameInUse,
@@ -172,7 +179,7 @@ pub fn start(gpa: Allocator, config: Config, handler: Handler) StartError!*PipeS
 
     self.spare = try self.createInstance(config.first_instance);
     errdefer windows.CloseHandle(self.spare);
-    self.accept_thread = std.Thread.spawn(.{}, acceptLoop, .{self}) catch return error.ThreadSpawnFailed;
+    self.accept_thread = std.Thread.spawn(.{ .stack_size = thread_stack_size }, acceptLoop, .{self}) catch return error.ThreadSpawnFailed;
     return self;
 }
 
@@ -377,7 +384,7 @@ fn admit(self: *PipeServer, pipe: w32.HANDLE) void {
         return self.rejectInline(pipe, .accept_buffer_full);
     };
     // Spawn under the mutex so `conn.thread` is set before anyone joins.
-    conn.thread = std.Thread.spawn(.{}, Connection.run, .{conn}) catch null;
+    conn.thread = std.Thread.spawn(.{ .stack_size = thread_stack_size }, Connection.run, .{conn}) catch null;
     if (conn.thread == null) {
         _ = self.conns.pop();
         self.mutex.unlock();
