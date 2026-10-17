@@ -5,17 +5,19 @@
 //! Window.zig. Until then the sidebar is the legacy GDI strip painted by
 //! the window itself (legacy_gdi.zig, input in legacy_input.zig), which
 //! needs no per-window setup.
+//!
+//! Since the W1 kickoff interface commit (W1-IF) both calls delegate to
+//! api.zig, the sidebar's public API, so W1-8b/W1-8c edit only api.zig.
 
 const Window = @import("../Window.zig");
+pub const api = @import("api.zig");
 
-/// Set up the sidebar of `window` (its HWND exists). No-op for the
-/// legacy strip. Called for quick terminals too, which show no sidebar.
+/// Set up the sidebar of `window` (its HWND exists). See `api.attach`.
 pub fn attach(window: *Window) void {
-    _ = window;
+    api.attach(window);
 }
 
-/// Tear down what `attach` set up: the window is about to be freed, and
-/// its HWND (with any child windows) may already be destroyed.
+/// Tear down what `attach` set up. See `api.detach`.
 pub fn detach(window: *Window) void {
-    _ = window;
+    api.detach(window);
 }

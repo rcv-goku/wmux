@@ -115,3 +115,23 @@ fn flushWebView2Pending(self: *App) void {
     defer pending.deinit(alloc);
     for (pending.items) |browser| browser.onEnvironment(self.webview2_env);
 }
+
+/// Wait (bounded by `timeout_ms`, pumping nothing) until the WebView2
+/// browser process of the environment has exited, so the user-data folder
+/// under STATE is released (spike S2, AF-5; ICoreWebView2Environment5
+/// `BrowserProcessExited`). Returns true when no browser process is left,
+/// false on timeout. Called by `wmux.debug.app.quit` (W1-1a,
+/// features/debug/hooks_core.zig) after the windows closed.
+///
+/// Stub written by the W1 kickoff interface commit (W1-IF) so W1-1a can
+/// call it a sub-wave before W1-6c implements it: returns true at once
+/// (nothing is awaited yet, as before).
+pub fn waitForBrowserExit(self: *App, timeout_ms: u32) bool {
+    _ = self;
+    _ = timeout_ms;
+    return true;
+}
+
+test {
+    _ = &waitForBrowserExit;
+}

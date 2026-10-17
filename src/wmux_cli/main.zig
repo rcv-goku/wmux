@@ -395,6 +395,7 @@ test {
     _ = welcome;
     _ = legacy_plus;
     _ = @import("tests.zig");
+    _ = @import("logic/tests.zig");
     _ = @import("hooks/tests.zig");
     _ = @import("wmux_proto");
     _ = @import("tmux/tests.zig");

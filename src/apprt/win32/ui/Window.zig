@@ -24,7 +24,7 @@ const Sidebar = @import("sidebar/legacy_gdi.zig");
 const right_sidebar = @import("right_sidebar/mod.zig");
 const sidebar = @import("sidebar/mod.zig");
 const Surface = @import("../Surface.zig");
-const SessionState = @import("../features/session/legacy_v2.zig");
+const session_api = @import("../features/session/api.zig");
 const WindowState = @import("placement_state.zig");
 const SplitTree = @import("../../../datastruct/split_tree.zig").SplitTree;
 const app_foreground = @import("../app/foreground.zig");
@@ -939,12 +939,10 @@ pub fn windowWndProc(
             // unrecoverable.
             window.savePlacement();
             // Persist the session layout (workspaces/tabs/cwds) alongside
-            // the window geometry so it can be restored on next launch.
-            // A test instance leaves no session state behind unless
-            // WMUX_TEST_SESSION_RESTORE asks for it (ADR-12.3).
-            if (window.app.runtime_env.sessionSaveOnCloseAllowed()) {
-                SessionState.save(window.app.core_app.alloc, window) catch {};
-            }
+            // the window geometry so it can be restored on next launch
+            // (the session feature decides; a test instance saves nothing
+            // unless WMUX_TEST_SESSION_RESTORE asks for it, ADR-12.3).
+            session_api.onWindowClose(window);
             window.close();
             return 0;
         },

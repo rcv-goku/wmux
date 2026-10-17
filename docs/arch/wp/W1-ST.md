@@ -47,6 +47,14 @@ deviations: []               # Appendix E rows requested
 - `pwsh scripts/gate.ps1 -Wp W1-ST` green (legacy-compat suite green, zero focus violations); docs
   fragment `docs/wmux/features/<module>/W1-ST.md` and `changes/W1-ST.md` written.
 
+## Kickoff interface (W1-IF)
+Facades, stubs and sub-files the W1 kickoff interface commit created for this WP (AF-1); the owner fills the body, callers rely on the signature.
+- The kickoff stubs must all be filled by M1: `input/router.zig`, `ui/notice.zig`, `settings/api.zig`
+  `get`, the `env_identity` job queries, `rpc/server/mod.zig` `controlPipeName`, `web/env.zig`
+  `waitForBrowserExit`, `ui/sidebar` and `ui/right_sidebar` `api.zig`, `chrome` `dpi_hooks.zig` and
+  `rpc.zig`, `ui/tabbar/hints.zig`; `ui/strings.zig` stays a no-op until W7-1 and the empty
+  `commands/wmux/*.zig` sub-files wait for their W2/W3/W7 owners (`action.zig` has none yet).
+
 ## Carried follow-ups
 Source: `research/parity/FOLLOWUPS.md` (sections of 2026-10-16 and 2026-10-17) and the known issues of `docs/arch/release-notes/wave-0.md`; read the full entries there before implementing.
 - `test/known-failures.txt`: the 9 DiskCache entries did not fail in the W0-ST unfiltered run
