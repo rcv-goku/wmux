@@ -8,8 +8,9 @@ wmux ships two programs:
 | `cli\cmux.exe`, `cli\wmux.exe`, `cli\wmux.com` | console | the command-line client (byte copies; the name picks the branding) |
 | `cli\posix\cmux`, `cli\posix\wmux` | sh | launchers for Git Bash, MSYS2 and WSL that run `..\cmux.exe` |
 
-Inside wmux terminals `cli\` is on PATH. Elsewhere, call the files by path (the installer never
-edits PATH).
+The installer never edits PATH: call the files by path, or add `cli\` to PATH yourself. (wmux
+terminals will put `cli\` on PATH once the terminal environment work of ARCHITECTURE ADR-3.9
+lands.)
 
 ## Which binary runs what
 
@@ -80,7 +81,9 @@ The Ghostty actions keep their own help (`wmux +ssh --help`, `wmux +list-themes 
 
 ## Other quirks kept from the old CLI
 
-- `--version` anywhere in a legacy `+verb` call prints the version (Ghostty's rule), and a
-  second `+action` in the same call is an error; tokens starting with `+` are otherwise ignored.
+- While a legacy pipe exists, `--version` anywhere in a legacy `+verb` call prints the version
+  (Ghostty's rule), and a second `+action` in the same call is Ghostty's multiple-actions error;
+  tokens starting with `+` are otherwise ignored. Without a legacy pipe the cmux command's rules
+  apply instead (`wmux +send --version` sends the text `--version`).
 - The old verbs read flags anywhere on the line, so text that starts with `--` cannot be sent
   with `+send`; use `wmux send -- --text` instead.

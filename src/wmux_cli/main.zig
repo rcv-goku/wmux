@@ -172,7 +172,7 @@ fn runInner(rt: Runtime, argv: []const []const u8) !u8 {
             };
             switch (relay.runLegacy(io, rt.platform, rest)) {
                 .done => |code| return code,
-                .relay_gui => return relayToGui(rt, b, rest),
+                .version => return relayToGui(rt, b, &.{"--version"}),
                 .fallback => {},
             }
         }

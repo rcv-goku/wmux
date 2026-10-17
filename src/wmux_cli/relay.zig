@@ -21,7 +21,7 @@
 //! exactly as the old wmux.exe did (pinned by the plus-verbs goldens),
 //! whether or not an instance runs; Ghostty-native `+actions` (`+ssh`,
 //! `+list-themes`, ...) keep their in-process help. The cmux help of the new
-//! commands is `cmux <command> --help`.
+//! commands is `wmux <command> --help`.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -81,8 +81,15 @@ pub const Detected = union(enum) {
     action: []const u8,
 };
 
-/// Mirrors `detectIter` over `args` (argv without argv[0]).
+/// Mirrors `detectIter` over `args` (argv without argv[0]) with the legacy
+/// verbs counted as actions, as the old wmux.exe detected them.
 pub fn detectAction(args: []const []const u8) Detected {
+    return detect(args, true);
+}
+
+/// `detectIter` as Ghostty runs it since W1-2b (`legacy` false: a legacy
+/// verb is an unknown action) or as it ran before (`legacy` true).
+fn detect(args: []const []const u8, legacy: bool) Detected {
     var pending: ?[]const u8 = null;
     var fallback = false;
     for (args) |a| {
@@ -94,7 +101,7 @@ pub fn detectAction(args: []const []const u8) Detected {
         if (a.len == 0 or a[0] != '+') continue;
         if (pending != null) return .multiple;
         const name = a[1..];
-        if (!isGhosttyAction(name) and !isLegacyVerb(name)) return .invalid;
+        if (!isGhosttyAction(name) and !(legacy and isLegacyVerb(name))) return .invalid;
         pending = name;
     }
     if (pending) |p| return .{ .action = p };
@@ -139,7 +146,11 @@ pub fn routeGui(args: []const []const u8) GuiRoute {
     if (args.len > 0 and (isCliWord(args[0]) or isGlobalCliOption(args[0]))) return .relay;
     return switch (detectAction(args)) {
         .none => .app,
-        .help, .version, .multiple, .invalid => .in_process,
+        .help, .invalid => .in_process,
+        // `--version` or a second `+action` after a legacy verb: Ghostty's
+        // detection now stops at the legacy verb (an unknown action), so the
+        // CLI reproduces the old outcome (`runLegacy`).
+        .version, .multiple => if (detect(args, false) == .invalid) .relay else .in_process,
         .action => |name| if (isLegacyVerb(name)) .relay else .in_process,
     };
 }
@@ -936,9 +947,11 @@ fn parseBrowser(arena: Allocator, it: *Args) Allocator.Error!Parsed {
 pub const Outcome = union(enum) {
     /// Served; the exit code.
     done: u8,
-    /// Ghostty's own detection decides (another `+action` or `--version`
-    /// in the argv): run `..\wmux.exe` with the original arguments.
-    relay_gui,
+    /// `--version` in the argv (Ghostty's rule: it wins over the action):
+    /// run `..\wmux.exe --version`. Relaying the original argv would not
+    /// do: wmux.exe no longer knows the legacy verb and would print its
+    /// unknown-action error instead.
+    version,
     /// No legacy pipe exists: use the cmux mapping (ADR-4.11).
     fallback,
 };
@@ -1110,9 +1123,21 @@ fn runLegacyInner(io: LegacyIo, platform: anytype, rest: []const []const u8) !Ou
         else => false,
     };
     if ((overridden or !offline) and !try hasLegacyPipe(io, platform)) return .fallback;
-    if (overridden) return .relay_gui;
+    if (overridden) switch (detectAction(rest)) {
+        .multiple => {
+            // The old wmux.exe's error for `+verb ... +other`.
+            try io.err.writeAll(multiple_actions_message);
+            return .{ .done = 1 };
+        },
+        else => return .version,
+    };
     return .{ .done = try execute(io, platform, parsed) };
 }
+
+/// Ghostty's MultipleActions message (src/main_ghostty.zig).
+const multiple_actions_message =
+    "Error: multiple CLI actions specified. You must specify only one\n" ++
+    "action starting with the `+` character.\n";
 
 // ===========================================================================
 // Tests
@@ -1134,8 +1159,16 @@ test "unit: cli-relay: wmux.exe routes argv per ADR-4.10" {
         .{ .argv = &.{"--version"}, .want = .in_process },
         .{ .argv = &.{"--help"}, .want = .in_process },
         .{ .argv = &.{"+frobnicate"}, .want = .in_process },
-        .{ .argv = &.{ "+workspace", "+tab" }, .want = .in_process },
-        .{ .argv = &.{ "+workspace", "list", "--version" }, .want = .in_process },
+        .{ .argv = &.{ "+workspace", "+tab" }, .want = .relay },
+        // After a legacy verb Ghostty would stop at an unknown action: the
+        // CLI reproduces the old `--version`/multiple-actions outcome.
+        .{ .argv = &.{ "+workspace", "list", "--version" }, .want = .relay },
+        .{ .argv = &.{ "+send", "+list-fonts" }, .want = .relay },
+        .{ .argv = &.{ "+workspace", "+frob" }, .want = .relay },
+        .{ .argv = &.{ "--version", "+workspace", "list" }, .want = .in_process },
+        .{ .argv = &.{ "+list-fonts", "+send" }, .want = .in_process },
+        .{ .argv = &.{ "+frob", "+send" }, .want = .in_process },
+        .{ .argv = &.{ "+list-fonts", "--version" }, .want = .in_process },
         .{ .argv = &.{ "+workspace", "list" }, .want = .relay },
         .{ .argv = &.{ "+send", "hi", "--enter" }, .want = .relay },
         .{ .argv = &.{ "+workspace", "--help" }, .want = .relay },
@@ -1399,8 +1432,18 @@ test "unit: cli-relay: help, usage, browser list and the fallback" {
     try testing.expectEqualStrings("multiple Ghostty instances found; set GHOSTTY_PID to choose one\n", r.err);
 
     // Another +action or --version anywhere: Ghostty's detection decides.
-    try testing.expect(runFake(a, &f, "1", &.{ "+send", "hi", "--version" }).outcome == .relay_gui);
-    try testing.expect(runFake(a, &f, "1", &.{ "+send", "+list-fonts" }).outcome == .relay_gui);
+    try testing.expect(runFake(a, &f, "1", &.{ "+send", "hi", "--version" }).outcome == .version);
+    try testing.expect(runFake(a, &f, "1", &.{ "+workspace", "--version", "list" }).outcome == .version);
+    r = runFake(a, &f, "1", &.{ "+send", "+list-fonts" });
+    try testing.expectEqual(@as(u8, 1), r.outcome.done);
+    try testing.expectEqualStrings("Error: multiple CLI actions specified. You must specify only one\naction starting with the `+` character.\n", r.err);
+    // A second action before `--version` is still the multiple-actions error.
+    r = runFake(a, &f, "1", &.{ "+send", "+frob", "--version" });
+    try testing.expectEqual(@as(u8, 1), r.outcome.done);
+    try testing.expectEqual(@as(usize, 0), f.connects);
+    // Without a legacy pipe the cmux mapping decides (`--version` is text).
+    f.pipes = &.{};
+    try testing.expect(runFake(a, &f, null, &.{ "+send", "hi", "--version" }).outcome == .fallback);
     // `+`-prefixed tokens were dropped by Ghostty's ArgsIterator.
     try expectParsed("send", &.{"hi"}, req("{\"id\":1,\"cmd\":\"send\",\"args\":{\"text\":\"hi\"}}"));
 }

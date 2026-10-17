@@ -26,6 +26,9 @@
            - "cli\cmux.exe +version" relays to ..\wmux.exe: same stdout and exit code as
              wmux.exe +version; a failing action (+validate-config on a missing file)
              returns wmux.exe's exit code through the relay
+           - with a legacy pipe selected (GHOSTTY_PID), "+workspace list --version" prints the
+             wmux.exe --version text and "+send +list-fonts" Ghostty's multiple-actions error,
+             through wmux.exe and cli\cmux.exe
 
     Exit code 0 when every check passed (SKIP lines allowed), 1 otherwise.
 
@@ -94,7 +97,7 @@ function New-SmokeEnvironment {
     return $map
 }
 
-function Invoke-Smoke([string]$Exe, [string[]]$Argv, [int]$TimeoutSec = 60) {
+function Invoke-Smoke([string]$Exe, [string[]]$Argv, [int]$TimeoutSec = 60, [hashtable]$ExtraEnv = @{}) {
     $psi = [System.Diagnostics.ProcessStartInfo]::new($Exe)
     foreach ($a in $Argv) { $psi.ArgumentList.Add($a) }
     $psi.UseShellExecute = $false
@@ -108,6 +111,7 @@ function Invoke-Smoke([string]$Exe, [string[]]$Argv, [int]$TimeoutSec = 60) {
     $envMap = New-SmokeEnvironment
     $psi.Environment.Clear()
     foreach ($k in $envMap.Keys) { $psi.Environment[$k] = $envMap[$k] }
+    foreach ($k in $ExtraEnv.Keys) { $psi.Environment[$k] = $ExtraEnv[$k] }
     $p = [System.Diagnostics.Process]::Start($psi)
     try {
         $out = $p.StandardOutput.ReadToEndAsync()
@@ -238,6 +242,21 @@ try {
         $r2 = Invoke-Smoke $cli @('+validate-config', "--config-file=$missing")
         if ($d2.ExitCode -eq 0) { return "+validate-config on a missing file exited 0: $(Format-Run $d2)" }
         if ($r2.ExitCode -ne $d2.ExitCode) { return "failing action: relayed exit $($r2.ExitCode), direct $($d2.ExitCode)" }
+    }
+    Test-Check 'legacy "+verb ... --version" and "+verb +action" keep the old outcome' {
+        # A GHOSTTY_PID that names no instance selects the legacy client (no I/O happens).
+        $legacyEnv = @{ GHOSTTY_PID = '4294967295' }
+        $want = Invoke-Smoke $gui @('--version')
+        foreach ($exe in $gui, $cli) {
+            $r = Invoke-Smoke $exe @('+workspace', 'list', '--version') -ExtraEnv $legacyEnv
+            if ($r.ExitCode -ne 0 -or $r.Stdout -cne $want.Stdout) {
+                return "$([IO.Path]::GetFileName($exe)) +workspace list --version: $(Format-Run $r); want $(Format-Run $want)"
+            }
+            $m = Invoke-Smoke $exe @('+send', '+list-fonts') -ExtraEnv $legacyEnv
+            if ($m.ExitCode -ne 1 -or $m.Stdout -or $m.Stderr -notmatch '^Error: multiple CLI actions specified') {
+                return "$([IO.Path]::GetFileName($exe)) +send +list-fonts: $(Format-Run $m)"
+            }
+        }
     }
 
     if ($installed) {
