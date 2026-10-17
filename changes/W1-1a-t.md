@@ -1,0 +1,1 @@
+- Internal: new v2 RPC named-pipe transport (thread-per-connection PipeServer with cmux admission limits, polling rate limit, 1 MiB line framing, per-request deadlines, generation-checked deferred replies, clean shutdown) and the single-instance launch pipe, ready for the W1-1a dispatcher.
