@@ -88,3 +88,57 @@ test "unit: model: group create, rename and destroy retire the handle" {
     group.destroy(gpa);
     try testing.expectEqual(@as(?*Group, null), reg.get(Group, .workspace_group, uuid));
 }
+
+test "unit: model: display order lists pinned workspaces first, then groups flattened in display order" {
+    // ADR-2.4 over a fake model graph (model/logic/fake.zig): the index
+    // semantics W1-1a resolves workspace indexes with (AF-22).
+    const fake = @import("logic/fake.zig");
+    const display_order = @import("logic/display_order.zig");
+    const gpa = testing.allocator;
+
+    var graph = fake.Graph.init(gpa);
+    defer graph.deinit();
+    var ws: [6]*Workspace = undefined;
+    for (&ws) |*w| w.* = try graph.addWorkspace(&.{1});
+
+    const backend = try Group.create(gpa, undefined, "backend");
+    defer backend.destroy(gpa);
+    const ops = try Group.create(gpa, undefined, "ops");
+    defer ops.destroy(gpa);
+    const empty = try Group.create(gpa, undefined, "empty");
+    defer empty.destroy(gpa);
+    const groups = [_]*Group{ backend, ops, empty };
+
+    // 0: ungrouped; 1, 4: backend (anchored at 4, member 4 pinned);
+    // 2: pinned; 3: ops (a pinned group); 5: ungrouped.
+    ws[1].group = backend;
+    ws[4].group = backend;
+    ws[4].pinned = true;
+    backend.anchor = ws[4];
+    ws[2].pinned = true;
+    ws[3].group = ops;
+    ops.pinned = true;
+
+    const order = try display_order.fromModel(gpa, graph.workspaces.items, @as([]const *Group, &groups));
+    defer gpa.free(order);
+    // Pinned run: 2, then the ops group (3). Unpinned run: 0, the backend
+    // group at its anchor (pinned member 4 first, then 1), then 5. The
+    // empty group shows nothing.
+    try testing.expectEqualSlices(usize, &.{ 2, 3, 0, 4, 1, 5 }, order);
+    try testing.expectEqual(@as(?usize, 3), display_order.displayIndexOf(order, 4));
+
+    // Collapsing only hides rows: the indexes stay.
+    backend.collapsed = true;
+    const collapsed = try display_order.fromModel(gpa, graph.workspaces.items, @as([]const *Group, &groups));
+    defer gpa.free(collapsed);
+    try testing.expectEqualSlices(usize, order, collapsed);
+
+    // Ungrouped and unpinned again: the plain workspace order.
+    for (ws) |w| {
+        w.group = null;
+        w.pinned = false;
+    }
+    const plain = try display_order.fromModel(gpa, graph.workspaces.items, @as([]const *Group, &groups));
+    defer gpa.free(plain);
+    try testing.expectEqualSlices(usize, &.{ 0, 1, 2, 3, 4, 5 }, plain);
+}
