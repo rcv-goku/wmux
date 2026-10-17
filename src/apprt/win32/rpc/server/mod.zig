@@ -8,12 +8,14 @@
 //!    `\\.\pipe\wmux-<channel>-<sidhash8>-s<session>` and `-launch`;
 //! 2. single instance (app/single_instance.zig): claims the launch pipe, or
 //!    hands the launch to the running instance and exits;
-//! 3. starts the v2 control pipe (rpc/dispatch.zig; 64 live + 64 pending
-//!    connections, 16 MiB lines, the worker pool and the UI lane). When the
-//!    name is taken (FILE_FLAG_FIRST_PIPE_INSTANCE fails: a squatter, or an
+//! 3. sets `app.ipc_server` (the legacy reply hub) and starts the v2
+//!    control pipe (rpc/dispatch.zig; 64 live + 64 pending connections,
+//!    16 MiB lines, the worker pool and the UI lane). When the name is
+//!    taken (FILE_FLAG_FIRST_PIPE_INSTANCE fails: a squatter, or an
 //!    instance we could not hand off to) it serves `<name>-alt-<8hex>`;
 //! 4. starts the legacy `\\.\pipe\wmux-ipc-<pid>` pipe (legacy JSON only,
-//!    one release) and sets `app.ipc_server` (the legacy reply hub);
+//!    one release), after the control pipe so a client that finds it also
+//!    finds the control pipe;
 //! 5. writes `STATE\run\instance.json` (server/marker.zig).
 //!
 //! `socket-control = off` (the Ghostty key until W1-1b's access modes)
@@ -202,7 +204,8 @@ fn startPlane(app: *App) !void {
     // Handlers reply through app.ipc_server: set before any pipe serves.
     app.ipc_server = &p.hub;
 
-    // 3. The v2 control pipe.
+    // 3. The v2 control pipe, first: a client that finds the legacy pipe
+    // also finds the control pipe (the e2e harness prefers v2 that way).
     p.control = startControl(p) catch |err| blk: {
         log.warn("control pipe {s} not started: {}", .{ p.control_name, err });
         break :blk null;

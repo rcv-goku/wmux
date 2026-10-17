@@ -29,6 +29,7 @@ const App = @import("../../App.zig");
 const Pane = @import("../../model/Pane.zig");
 const Tab = @import("../../model/Tab.zig");
 const Window = @import("../../ui/Window.zig");
+const Surface = @import("../../Surface.zig");
 const Workspace = @import("../../model/Workspace.zig");
 const dialogs = @import("../../app/dialogs.zig");
 const env_identity = @import("../env_identity/api.zig");
@@ -324,7 +325,12 @@ pub fn layout(ctx: *Ctx) Error!void {
 // type, key
 // ---------------------------------------------------------------------------
 
-const Target = struct { hwnd: w32.HWND, kind: []const u8 };
+const Target = struct {
+    hwnd: w32.HWND,
+    kind: []const u8,
+    /// The terminal behind `hwnd`, if it is one.
+    surface: ?*Surface = null,
+};
 
 /// Where typed input goes: the selected surface when a selector is given,
 /// else the open rename edit of the active window, else its selected
@@ -337,15 +343,25 @@ fn inputTarget(ctx: *Ctx) Error!Target {
     }
     const tab = try ctx.resolveTab(sel);
     const hwnd = tab.hwnd() orelse return ctx.fail(.surface_unavailable, "Surface has no window yet", null);
-    return .{ .hwnd = hwnd, .kind = tab.content.kindName() };
+    return .{ .hwnd = hwnd, .kind = tab.content.kindName(), .surface = tab.surface() };
 }
 
-/// `{text}` → one WM_CHAR per UTF-16 unit to the input target.
+/// `{text}` → each UTF-16 unit as character input to the input target: a
+/// terminal takes it on its IME/character path (the Win32 input mode
+/// sequence when ConPTY enabled it, else the text key event); any other
+/// control gets WM_CHAR.
 pub fn typeText(ctx: *Ctx) Error!void {
     const text = (try ctx.param([]const u8, "text")) orelse return ctx.fail(.invalid_params, "Missing text", .{ .param = "text" });
     const target = try inputTarget(ctx);
     const units = std.unicode.utf8ToUtf16LeAlloc(ctx.arena, text) catch return ctx.fail(.invalid_params, "Invalid text: not UTF-8", .{ .param = "text" });
-    for (units) |u| _ = w32.SendMessageW(target.hwnd, w32.WM_CHAR, u, 1);
+    if (target.surface) |surface| {
+        if (!surface.core_surface_ready) return ctx.fail(.surface_unavailable, "Terminal is not ready", null);
+        for (units) |u| {
+            if (surface.isWin32InputMode()) surface.sendWin32CharEvent(u) else surface.handleCharEvent(u);
+        }
+    } else {
+        for (units) |u| _ = w32.SendMessageW(target.hwnd, w32.WM_CHAR, u, 1);
+    }
     ctx.ok(.{ .sent = units.len, .target = target.kind });
 }
 
@@ -421,17 +437,41 @@ pub fn parseChord(text: []const u8) ?Chord {
     return null;
 }
 
-/// `{key: "ctrl+shift+t"}` → WM_KEYDOWN (+ WM_CHAR) + WM_KEYUP to the input
-/// target, with the modifiers set in this (UI) thread's keyboard state for
-/// the duration (GetKeyState sees them; other processes never do).
+/// Restores the UI thread's keyboard state after posted key messages ran.
+const RestoreKeyboard = struct {
+    task: tasks.Task = .{ .run = run, .destroy = destroy },
+    gpa: Allocator,
+    saved: [256]u8,
+
+    fn run(app: *App, task: *tasks.Task) void {
+        _ = app;
+        const self: *RestoreKeyboard = @fieldParentPtr("task", task);
+        _ = SetKeyboardState(&self.saved);
+    }
+
+    fn destroy(task: *tasks.Task) void {
+        const self: *RestoreKeyboard = @fieldParentPtr("task", task);
+        self.gpa.destroy(self);
+    }
+};
+
+/// `{key: "ctrl+shift+t"}` → WM_KEYDOWN + WM_KEYUP posted to the input
+/// target, so they take the real input path (the message loop's
+/// pre-translation, e.g. Enter/Escape of the rename edit; TranslateMessage
+/// where the app translates). The modifiers are set in this (UI) thread's
+/// keyboard state until the posted keys ran (GetKeyState sees them; other
+/// processes never do). Replies once the keys are queued.
 pub fn key(ctx: *Ctx) Error!void {
     const text = (try ctx.param([]const u8, "key")) orelse return ctx.fail(.invalid_params, "Missing key", .{ .param = "key" });
     const chord = parseChord(text) orelse return ctx.fail(.invalid_params, "Invalid key", .{ .param = "key" });
     const target = try inputTarget(ctx);
+    const gpa = ctx.app.core_app.alloc;
 
     var saved: [256]u8 = undefined;
-    const have_state = w32.GetKeyboardState(&saved) != 0;
-    if (have_state) {
+    const modifiers = chord.ctrl or chord.shift or chord.alt;
+    if (modifiers and w32.GetKeyboardState(&saved) != 0) {
+        const restore = gpa.create(RestoreKeyboard) catch return oom(ctx);
+        restore.* = .{ .gpa = gpa, .saved = saved };
         var state = saved;
         const down: u8 = 0x80;
         if (chord.ctrl) {
@@ -447,20 +487,22 @@ pub fn key(ctx: *Ctx) Error!void {
             state[0xA4] = down; // VK_LMENU
         }
         _ = SetKeyboardState(&state);
-    }
-    defer if (have_state) {
-        _ = SetKeyboardState(&saved);
-    };
+        postKeys(target.hwnd, chord);
+        // Posted after the keys (this handler runs inside a task drain, so
+        // the task's wakeup message is queued behind them).
+        ctx.app.tasks.post(&restore.task);
+    } else postKeys(target.hwnd, chord);
+    ctx.ok(.{ .key = text, .target = target.kind });
+}
 
+fn postKeys(hwnd: w32.HWND, chord: Chord) void {
     const scan: isize = @intCast(MapVirtualKeyW(chord.vk, 0) & 0xFF);
     var lparam: isize = 1 | (scan << 16);
     if (chord.extended) lparam |= 1 << 24;
     const down_msg: u32 = if (chord.alt) 0x0104 else w32.WM_KEYDOWN; // WM_SYSKEYDOWN
     const up_msg: u32 = if (chord.alt) 0x0105 else w32.WM_KEYUP; // WM_SYSKEYUP
-    _ = w32.SendMessageW(target.hwnd, down_msg, chord.vk, lparam);
-    if (chord.char) |ch| _ = w32.SendMessageW(target.hwnd, w32.WM_CHAR, ch, lparam);
-    _ = w32.SendMessageW(target.hwnd, up_msg, chord.vk, lparam | (1 << 30) | (1 << 31));
-    ctx.ok(.{ .key = text, .target = target.kind });
+    _ = w32.PostMessageW(hwnd, down_msg, chord.vk, lparam);
+    _ = w32.PostMessageW(hwnd, up_msg, chord.vk, lparam | (1 << 30) | (1 << 31));
 }
 
 // ---------------------------------------------------------------------------
@@ -497,6 +539,36 @@ fn menuContext(ctx: *Ctx, site: menus.MenuSite) Error!menus.Context {
     return c;
 }
 
+const TargetJson = struct {
+    window_id: Uuid,
+    window_ref: Ref,
+    workspace_id: ?Uuid = null,
+    workspace_ref: ?Ref = null,
+    pane_id: ?Uuid = null,
+    pane_ref: ?Ref = null,
+    surface_id: ?Uuid = null,
+    surface_ref: ?Ref = null,
+};
+
+/// The objects a menu context names (resolved from the selectors).
+fn targetOf(c: *const menus.Context) TargetJson {
+    var t: TargetJson = .{ .window_id = c.window.handle.uuid, .window_ref = c.window.handle.refOf(.window) };
+    if (c.workspace) |ws| {
+        t.workspace_id = ws.handle.uuid;
+        t.workspace_ref = ws.handle.refOf(.workspace);
+    }
+    if (c.pane) |p| {
+        t.pane_id = p.handle.uuid;
+        t.pane_ref = p.handle.refOf(.pane);
+    }
+    const tab: ?*Tab = if (c.surface) |s| s.tab else c.tab;
+    if (tab) |tb| {
+        t.surface_id = tb.handle.uuid;
+        t.surface_ref = tb.handle.refOf(.surface);
+    }
+    return t;
+}
+
 const ItemJson = struct {
     index: usize,
     title: []const u8,
@@ -507,7 +579,7 @@ const ItemJson = struct {
     separator_before: bool,
 };
 
-/// `{site, <selectors>}` → `{site, items:[{index, title, accelerator,
+/// `{site, <selectors>}` → `{site, target, items:[{index, title, accelerator,
 /// group, enabled, checked, separator_before}]}` in display order, built by
 /// the same MenuBuilder as the popup.
 pub fn menuList(ctx: *Ctx) Error!void {
@@ -528,7 +600,7 @@ pub fn menuList(ctx: *Ctx) Error!void {
             .separator_before = b.separatorBefore(i),
         };
     }
-    ctx.ok(.{ .site = @tagName(site), .items = items });
+    ctx.ok(.{ .site = @tagName(site), .target = targetOf(&mctx), .items = items });
 }
 
 /// `{site, title | index, <selectors>}` → runs that row as if it had been
