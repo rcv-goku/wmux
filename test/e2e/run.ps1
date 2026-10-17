@@ -123,6 +123,9 @@ $jobs = foreach ($f in (Get-ChildItem -LiteralPath $SuitesRoot -Recurse -File -F
         Base        = $base
         Slug        = Get-FileSlug $relNoExt
         TestCount   = @(Select-String -LiteralPath $f.FullName -Pattern '^\s*Test-Case\b').Count
+        # "# budget-sec: <n>" in the header raises the file's time budget (files whose Test-Cases
+        # are generated in loops or that run nested runs).
+        BudgetSec   = $(($m = Select-String -LiteralPath $f.FullName -Pattern '^#\s*budget-sec:\s*(\d+)\s*$' | Select-Object -First 1); if ($m) { [int]$m.Matches[0].Groups[1].Value } else { 0 })
         Quarantined = ($area -eq '_quarantine')
     }
 }
@@ -196,6 +199,51 @@ if ($Exe) {
 }
 
 # ---------------------------------------------------------------------------
+# Stale instance roots (spike S2): a root whose owning harness process is gone (killed run,
+# crashed test, a WebView2 lock that outlived the background deleter) is deleted. Roots of
+# live runs, including other worktrees' concurrent runs, are never touched; roots without an
+# owner.json (older harness) only after 24 h.
+# ---------------------------------------------------------------------------
+
+function Invoke-StaleRootSweep {
+    $base = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } elseif ($env:TEMP) { $env:TEMP } else { [IO.Path]::GetTempPath() }
+    $dir = Join-Path ([IO.Path]::GetFullPath($base)) 'wmux-e2e'
+    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { return }
+    $swept = 0
+    $kept = 0
+    foreach ($root in @(Get-ChildItem -LiteralPath $dir -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^[0-9a-f]{8}$' })) {
+        $stale = $false
+        $ownerFile = Join-Path $root.FullName 'owner.json'
+        if (Test-Path -LiteralPath $ownerFile -PathType Leaf) {
+            try {
+                $owner = Get-Content -LiteralPath $ownerFile -Raw | ConvertFrom-Json
+                $alive = $false
+                $p = Get-Process -Id ([int]$owner.harness_pid) -ErrorAction SilentlyContinue
+                if ($p) {
+                    # ConvertFrom-Json may already have turned the ISO-8601 text into a DateTime.
+                    $h = $owner.harness_started
+                    $started = if ($h -is [DateTime]) { $h.ToUniversalTime() } else { [DateTime]::Parse([string]$h, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime() }
+                    try { $alive = [Math]::Abs(($p.StartTime.ToUniversalTime() - $started).TotalSeconds) -lt 2 } catch { $alive = $true }
+                }
+                $stale = -not $alive
+            } catch {
+                $stale = ($root.LastWriteTimeUtc -lt [DateTime]::UtcNow.AddHours(-24))
+            }
+        } else {
+            $stale = ($root.LastWriteTimeUtc -lt [DateTime]::UtcNow.AddHours(-24))
+        }
+        if (-not $stale) { $kept++; continue }
+        try {
+            Remove-Item -LiteralPath $root.FullName -Recurse -Force -ErrorAction Stop
+            $swept++
+        } catch { }
+    }
+    if ($swept -gt 0) { Write-Host "run.ps1: swept $swept stale instance root(s) under $dir ($kept live kept)" -ForegroundColor DarkGray }
+}
+
+Invoke-StaleRootSweep
+
+# ---------------------------------------------------------------------------
 # Run (one pwsh per file, retry once)
 # ---------------------------------------------------------------------------
 
@@ -240,7 +288,7 @@ function Invoke-Attempt {
     if ($Cfg.Exe) { $psi.Environment['WMUX_E2E_EXE'] = $Cfg.Exe }
 
     $grace = [Math]::Min(60, [Math]::Max(5, [int]($Cfg.TestTimeoutSec / 2)))
-    $budgetSec = $Cfg.TestTimeoutSec * [Math]::Max(1, $Job.TestCount) + $grace
+    $budgetSec = [Math]::Max($Cfg.TestTimeoutSec * [Math]::Max(1, $Job.TestCount) + $grace, $Job.BudgetSec)
     $clock = [Diagnostics.Stopwatch]::StartNew()
     $proc = [System.Diagnostics.Process]::Start($psi)
     try { $proc.StandardInput.Close() } catch { }
