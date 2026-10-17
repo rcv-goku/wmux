@@ -234,11 +234,9 @@ pub fn layoutSplits(self: *Window) void {
         while (it.next()) |entry| {
             entry.view.layout_rect = rect;
             if (entry.handle == zoomed_handle) {
-                if (entry.view.selectedHwnd()) |h| {
-                    const w = @max(rect.right - rect.left, 1);
-                    const ht = @max(rect.bottom - rect.top, 1);
-                    _ = w32.MoveWindow(h, rect.left, rect.top, @intCast(w), @intCast(ht), 1);
-                    _ = w32.ShowWindow(h, w32.SW_SHOW);
+                if (entry.view.selectedTab()) |tab| {
+                    tab.content.setBounds(rect);
+                    tab.content.setVisible(true);
                 }
             } else {
                 if (entry.view.selectedHwnd()) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
@@ -263,11 +261,9 @@ pub fn layoutSplits(self: *Window) void {
                 content_rect.top += tabbar_paint.barHeight(self.scale);
             }
 
-            if (pane.selectedHwnd()) |h| {
-                const w = @max(content_rect.right - content_rect.left, 1);
-                const ht = @max(content_rect.bottom - content_rect.top, 1);
-                _ = w32.MoveWindow(h, content_rect.left, content_rect.top, @intCast(w), @intCast(ht), 1);
-                _ = w32.ShowWindow(h, w32.SW_SHOW);
+            if (pane.selectedTab()) |tab| {
+                tab.content.setBounds(content_rect);
+                tab.content.setVisible(true);
             }
         }
     }
