@@ -11,6 +11,9 @@ const Surface = @import("../Surface.zig");
 const WebPanel = @import("../web/WebPanel.zig");
 const w32 = @import("../platform/win32.zig");
 
+/// A rectangle in the parent window's client coordinates (physical pixels).
+pub const Rect = w32.RECT;
+
 /// The state of a tab without live content. Empty until hibernation
 /// (W5) and lazy restore keep what is needed to bring the content back.
 pub const Placeholder = struct {};
@@ -29,6 +32,18 @@ pub const TabContent = union(enum) {
             .web => |p| p.hwnd(),
             .placeholder => null,
         };
+    }
+
+    /// Move the content's HWND to `r` (the parent's client coordinates,
+    /// physical pixels; at least 1x1) and repaint it; no-op without an HWND.
+    /// Every variant moves `hwnd()` today (ruling D5): the terminal and the
+    /// browser host resize their children on `WM_SIZE`; W1-6c may give the
+    /// `.web` variant its own bounds handling.
+    pub fn setBounds(self: TabContent, r: Rect) void {
+        const h = self.hwnd() orelse return;
+        const width = @max(r.right - r.left, 1);
+        const height = @max(r.bottom - r.top, 1);
+        _ = w32.MoveWindow(h, r.left, r.top, width, height, 1);
     }
 
     /// Show or hide the content's HWND (no-op without one).
@@ -53,6 +68,16 @@ pub const TabContent = union(enum) {
             .placeholder => "placeholder",
         };
     }
+
+    /// Write the content's snapshot object (`wmux.debug.layout`, the
+    /// session's per-tab content, ADR-6.1): today `{"kind": kindName()}` for
+    /// every variant (ruling D5); the owners add their fields later.
+    pub fn snapshot(self: TabContent, w: *std.json.Stringify) std.json.Stringify.Error!void {
+        try w.beginObject();
+        try w.objectField("kind");
+        try w.write(self.kindName());
+        try w.endObject();
+    }
 };
 
 // ---------------------------------------------------------------------------
@@ -65,8 +90,18 @@ test "unit: model: placeholder content has no HWND and names its kind" {
     const content: TabContent = .{ .placeholder = .{} };
     try testing.expectEqual(@as(?w32.HWND, null), content.hwnd());
     try testing.expectEqualStrings("placeholder", content.kindName());
-    // Without an HWND, showing, hiding and focusing do nothing.
+    // Without an HWND, showing, hiding, moving and focusing do nothing.
     content.setVisible(true);
     content.setVisible(false);
+    content.setBounds(.{ .left = 0, .top = 0, .right = 10, .bottom = 10 });
     content.focus();
+}
+
+test "unit: model: snapshot writes the content kind" {
+    var out: std.io.Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+    var w: std.json.Stringify = .{ .writer = &out.writer };
+    const content: TabContent = .{ .placeholder = .{} };
+    try content.snapshot(&w);
+    try testing.expectEqualStrings("{\"kind\":\"placeholder\"}", out.written());
 }

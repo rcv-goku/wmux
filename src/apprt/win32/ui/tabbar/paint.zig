@@ -8,6 +8,7 @@ const std = @import("std");
 const Pane = @import("../../model/Pane.zig");
 const Window = @import("../Window.zig");
 const geometry = @import("logic/geometry.zig");
+const hints = @import("hints.zig");
 const titles = @import("../../model/logic/titles.zig");
 const w32 = @import("../../platform/win32.zig");
 
@@ -387,6 +388,9 @@ pub fn paintPane(
             w32.DT_CENTER | w32.DT_VCENTER | w32.DT_SINGLELINE | w32.DT_NOPREFIX,
         );
     }
+
+    // --- Modifier-hold hint chips (ui/tabbar/hints.zig, W1-5b) ---
+    hints.paintPane(self, mem_dc, geo, scale, is_focused);
 
     // --- BitBlt to screen at the container's position ---
     _ = w32.BitBlt(hdc, rect.left, rect.top, bar_w, bar_h, mem_dc, 0, 0, w32.SRCCOPY);
