@@ -130,7 +130,7 @@ $jobs = foreach ($f in (Get-ChildItem -LiteralPath $SuitesRoot -Recurse -File -F
         TestCount   = @(Select-String -LiteralPath $f.FullName -Pattern '^\s*Test-Case\b').Count
         # "# budget-sec: <n>" in the header raises the file's time budget (files whose Test-Cases
         # are generated in loops or that run nested runs).
-        BudgetSec   = $(($m = Select-String -LiteralPath $f.FullName -Pattern '^#\s*budget-sec:\s*(\d+)\s*$' | Select-Object -First 1); if ($m) { [int]$m.Matches[0].Groups[1].Value } else { 0 })
+        BudgetSec   = [int](@(Select-String -LiteralPath $f.FullName -Pattern '^#\s*budget-sec:\s*(\d+)\s*$' | Select-Object -First 1 | ForEach-Object { $_.Matches[0].Groups[1].Value }) + @('0'))[0]
         Quarantined = ($area -eq '_quarantine')
     }
 }
