@@ -273,6 +273,7 @@ $changed = @($changes.Files)
 $existing = @($changed | Where-Object { $_.Status -ne 'D' -and (Test-Path -LiteralPath (Join-Path $repo $_.Path) -PathType Leaf) })
 $uncommitted = @($changed | Where-Object { $_.Uncommitted -or $_.Untracked })
 $schemaRel = Get-WmuxSchemaPath
+$ledgerRel = 'docs/arch/manual-checks.md'
 
 $wpLabel = if ($wps.Count) { $wps -join '+' } else { '-' }
 Write-WmuxLine -Tag $tag -Message "mode=$mode wp=$wpLabel branch=$branch base=$baseRef merge-base=$($changes.MergeBase.Substring(0, 10)) head=$($changes.Head.Substring(0, 10))"
@@ -506,8 +507,10 @@ Add-Step 'batch' 'batch: both WP branches on one base, disjoint changes' @('batc
     $appends = @($specs | ForEach-Object { $_.Appends } | ForEach-Object Path)
     $shared = @($sets[0] | Where-Object { $sets[1] -contains $_ })
     foreach ($p in $shared) {
-        $ok = ($p -eq $schemaRel) -or @($appends | Where-Object { Test-WmuxGlobMatch -Path $p -Glob $_ }).Count
-        if ($ok) { $lines.Add("shared, allowed: $p (appends / merge-time artifact)") }
+        # The schema (merge-time artifact) and the manual-check ledger (rows any WP may append,
+        # AF-19) are implicitly shared by every WP, as in check-ownership.ps1.
+        $ok = ($p -eq $schemaRel) -or ($p -eq $ledgerRel) -or @($appends | Where-Object { Test-WmuxGlobMatch -Path $p -Glob $_ }).Count
+        if ($ok) { $lines.Add("shared, allowed: $p (appends / ledger / merge-time artifact)") }
         else { $problems.Add("both WPs change $p (ownership is not disjoint)") }
     }
     if ($specs.Count -eq 2) {
