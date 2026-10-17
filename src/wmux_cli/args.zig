@@ -187,6 +187,10 @@ pub fn parse(arena: Allocator, argv: []const []const u8, diag: *Diag) Error!Pars
 
 const testing = std.testing;
 
+test {
+    _ = @import("logic/args_cases.zig");
+}
+
 fn parseOk(arena: Allocator, argv: []const []const u8) !Parsed {
     var diag: Diag = .{};
     return parse(arena, argv, &diag);

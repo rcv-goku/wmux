@@ -38,6 +38,79 @@ pub fn writeResult(arena: Allocator, w: *Writer, v: std.json.Value, mode: idform
     try writeJson(w, try formatIds(arena, v, mode));
 }
 
+// ----- display sanitization (ruling D9, Appendix E D24) -----
+
+/// Whether single-line display fields (titles, names, URLs, notification
+/// text, list rows) from the server or a page are sanitized: in text mode
+/// when stdout is a console. `--json`, redirected output and content
+/// outputs (`read-screen`, `capture-pane`, browser values) stay raw.
+pub fn sanitizeDisplay(json: bool, stdout_is_console: bool) bool {
+    return !json and stdout_is_console;
+}
+
+/// C0 controls except tab, and C1 controls.
+fn isDisplayControl(cp: u21) bool {
+    return (cp < 0x20 and cp != '\t') or (cp >= 0x80 and cp <= 0x9f);
+}
+
+const replacement_utf8 = "\u{FFFD}";
+
+/// Writes one display field. With `sanitize`, every C0/C1 control character
+/// except tab, and every byte of an invalid UTF-8 sequence, becomes U+FFFD
+/// (so a title cannot move the cursor, recolor or retitle the console);
+/// otherwise `s` is written unchanged.
+pub fn writeDisplay(w: *Writer, s: []const u8, sanitize: bool) Writer.Error!void {
+    if (!sanitize) return w.writeAll(s);
+    var start: usize = 0;
+    var i: usize = 0;
+    while (i < s.len) {
+        const n: usize = std.unicode.utf8ByteSequenceLength(s[i]) catch 0;
+        if (n != 0 and i + n <= s.len) {
+            if (std.unicode.utf8Decode(s[i .. i + n])) |cp| {
+                if (!isDisplayControl(cp)) {
+                    i += n;
+                    continue;
+                }
+                try w.writeAll(s[start..i]);
+                try w.writeAll(replacement_utf8);
+                i += n;
+                start = i;
+                continue;
+            } else |_| {}
+        }
+        try w.writeAll(s[start..i]);
+        try w.writeAll(replacement_utf8);
+        i += 1;
+        start = i;
+    }
+    try w.writeAll(s[start..]);
+}
+
+/// Heap copy of `writeDisplay`.
+pub fn displayAlloc(gpa: Allocator, s: []const u8, sanitize: bool) Allocator.Error![]u8 {
+    var aw: std.Io.Writer.Allocating = .init(gpa);
+    defer aw.deinit();
+    writeDisplay(&aw.writer, s, sanitize) catch return error.OutOfMemory;
+    return aw.toOwnedSlice();
+}
+
+// ----- cmux text handles of the window commands (ruling D7, ADR-4.7) -----
+
+/// Handle mode for the text output of `list-windows`, `current-window`,
+/// `new-window` and `current-workspace`: UUIDs, as cmux's v1 text prints
+/// them, unless `--id-format` was given explicitly.
+pub fn uuidDefaultTextMode(id_format: idformat.Mode, explicit: bool) idformat.Mode {
+    return if (explicit) id_format else .uuids;
+}
+
+/// `list-windows --json` prints cmux's bare array: the `windows` array of a
+/// `{windows: [...]}` result; any other shape is returned unchanged.
+pub fn bareWindowsArray(result: std.json.Value) std.json.Value {
+    if (result != .object) return result;
+    const v = result.object.get("windows") orelse return result;
+    return if (v == .array) v else result;
+}
+
 /// Max `Details:` entries and bytes per value.
 pub const max_detail_entries = 16;
 pub const max_detail_value_bytes = 200;
@@ -405,4 +478,78 @@ test "unit: cli-output: console sink handles output larger than its buffers" {
     try sink.interface.flush();
     try sink.finish();
     try testing.expectEqualSlices(u16, try std.unicode.utf8ToUtf16LeAlloc(a, big.items), col.units.items);
+}
+
+fn expectDisplay(want: []const u8, s: []const u8, sanitize: bool) !void {
+    const got = try displayAlloc(testing.allocator, s, sanitize);
+    defer testing.allocator.free(got);
+    try testing.expectEqualStrings(want, got);
+}
+
+test "unit: cli-output: display sanitization replaces C0 and C1 controls except tab" {
+    const r = "\u{FFFD}";
+    try expectDisplay("", "", true);
+    try expectDisplay("plain title", "plain title", true);
+    try expectDisplay("a\tb", "a\tb", true);
+    try expectDisplay("a" ++ r ++ "b" ++ r ++ "c", "a\nb\rc", true);
+    try expectDisplay(r ++ "]0;owned" ++ r ++ r ++ "[31mred", "\x1b]0;owned\x07\x1b[31mred", true);
+    try expectDisplay(r ++ "x", "\x00x", true);
+    // C1: NEL U+0085 and CSI U+009B (two bytes each) become one U+FFFD.
+    try expectDisplay("a" ++ r ++ "b" ++ r ++ "c", "a\u{85}b\u{9b}c", true);
+    // DEL and U+00A0 are neither C0 nor C1.
+    try expectDisplay("a\x7fb\u{a0}c", "a\x7fb\u{a0}c", true);
+    try expectDisplay("h\u{e9}llo \u{65e5}\u{672c} \u{1F600}", "h\u{e9}llo \u{65e5}\u{672c} \u{1F600}", true);
+}
+
+test "unit: cli-output: display sanitization repairs malformed UTF-8" {
+    const r = "\u{FFFD}";
+    try expectDisplay("a" ++ r ++ "b", "a\xffb", true);
+    try expectDisplay("x" ++ r ++ r, "x\xe2\x82", true);
+    try expectDisplay(r ++ r, "\xc0\xaf", true);
+    try expectDisplay(r ++ r ++ r, "\xed\xa0\x80", true);
+}
+
+test "unit: cli-output: display text stays raw unless sanitizing" {
+    try expectDisplay("\x1b[2J\n\xff", "\x1b[2J\n\xff", false);
+    try testing.expect(sanitizeDisplay(false, true));
+    try testing.expect(!sanitizeDisplay(true, true));
+    try testing.expect(!sanitizeDisplay(false, false));
+    try testing.expect(!sanitizeDisplay(true, false));
+}
+
+test "unit: cli-output: display sanitization of a huge field" {
+    const gpa = testing.allocator;
+    const big = try gpa.alloc(u8, 200_000);
+    defer gpa.free(big);
+    for (big, 0..) |*b, i| b.* = if (i % 1000 == 999) '\n' else 'x';
+    const got = try displayAlloc(gpa, big, true);
+    defer gpa.free(got);
+    try testing.expectEqual(big.len + 200 * 2, got.len);
+    try testing.expect(std.mem.indexOfScalar(u8, got, '\n') == null);
+}
+
+test "unit: cli-output: D7 window commands print UUIDs unless --id-format is given" {
+    try testing.expectEqual(idformat.Mode.uuids, uuidDefaultTextMode(.refs, false));
+    try testing.expectEqual(idformat.Mode.refs, uuidDefaultTextMode(.refs, true));
+    try testing.expectEqual(idformat.Mode.both, uuidDefaultTextMode(.both, true));
+    var aw: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer aw.deinit();
+    try idformat.writeHandle(&aw.writer, uuidDefaultTextMode(.refs, false), "window:1", "9B69E0A4-0000-4000-8000-000000000001", .{});
+    try testing.expectEqualStrings("9B69E0A4-0000-4000-8000-000000000001", aw.written());
+}
+
+test "unit: cli-output: list-windows --json is the bare array" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const v = try parseValue(a, "{\"windows\":[{\"id\":\"AA\",\"ref\":\"window:1\"}]}");
+    const bare = bareWindowsArray(v);
+    try testing.expect(bare == .array);
+    try testing.expectEqual(@as(usize, 1), bare.array.items.len);
+    // Other shapes pass through.
+    for ([_][]const u8{ "[]", "{\"windows\":3}", "{}", "null", "\"x\"" }) |s| {
+        const o = try parseValue(a, s);
+        const got = bareWindowsArray(o);
+        try testing.expectEqual(std.meta.activeTag(o), std.meta.activeTag(got));
+    }
 }
