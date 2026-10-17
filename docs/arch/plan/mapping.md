@@ -76,7 +76,8 @@ Dates are commit dates (CDT, UTC-5). A branch merged twice was merged again afte
 | `319510c` | 2026-10-17 00:55 | `wp/W0-C2-tooling-gates` | W0-C2 | WP-02-tooling-gates | done | external:wave0-local-lane |
 | `b47fc46` | 2026-10-17 01:22 | `wp/W0-B2-harness-hardening` | W0-B2 | WP-02-harness-hardening | done | external:wave0-local-lane |
 | `9538cf4` | 2026-10-17 03:08 | `wp/W0-A4-spike-foldins` | W0-A4 | WP-04-spike-foldins-isolation | done | external:wave0-local-lane |
-| (part 2) | 2026-10-17 | `wp/W0-ST-stabilize` | W0-ST (part 2) | WP-09-w0-stabilization | done (status set before its merge; the wave-0 tag follows the merge) | integrator |
+| `f47b957` | 2026-10-17 | `wp/W0-ST-stabilize` | W0-ST (part 2) | WP-09-w0-stabilization | done (status set before its merge; the wave-0 tag follows the merge) | integrator |
+| `e5982b3` | 2026-10-17 | `wp/W1-IF-kickoff` | W1-IF | WP-10-w1-interface | done | integrator |
 
 Direct commits on master between merges (no branch): `c7598b0` (test-fast runs the gfx logic tests,
 `[W0-K]`) and `12abd0c`, `59ba772` (smoke-suite fixes, `[W0-A1]`).
@@ -103,7 +104,7 @@ None. The round-4 pre-builds (`wp/cf-rpc` W1-1a-t, `wp/cf-platform` PB-platform,
 PB-web-harness) and the local lane (`wp/W0-R-reconcile`, `wp/W0-ST-flakes`, `wp/W0-C2-tooling-gates`,
 `wp/W0-B2-harness-hardening`, `wp/W0-A4-spike-foldins`) merged between 2026-10-16 23:02 and
 2026-10-17 03:08 (table (a)); the local lane ran as workflow `wf_ede9528f-d43` (executor
-`external:wave0-local-lane`). W0-ST part 2 runs on `wp/W0-ST-stabilize`.
+`external:wave0-local-lane`). W0-ST part 2 merged as `f47b957` (tag `wave-0`); W1-IF merged as `e5982b3`, the base every W1 WP branches from.
 
 Stopped workflows: `wave0-proto-and-prebuilds` and `wave0-prebuilds-2` were stopped on 2026-10-15
 and left no branch in this repository. Their items kept their ids: W1-2a, PB-palette, PB-sidebar,
