@@ -232,6 +232,10 @@ fn liveIsZero(s: *PipeServer) bool {
     return s.counts().live == 0;
 }
 
+fn liveIsOne(s: *PipeServer) bool {
+    return s.counts().live == 1;
+}
+
 // ---------------------------------------------------------------------------
 // Live tests (Windows only)
 // ---------------------------------------------------------------------------
@@ -283,7 +287,8 @@ test "unit: rpc: live: pool saturation and pending expiry answer overloaded" {
     try f.init(.{ .name = "", .limits = .{ .max_live = 2, .max_pending = 1, .pending_wait_ms = 300 } });
     defer f.deinit();
     var c1 = try f.connect();
-    defer c1.close();
+    var c1_open = true;
+    defer if (c1_open) c1.close();
     try expectContains(try request(&c1, "{\"id\":1,\"method\":\"test.echo\"}"), "\"ok\":true");
     var c2 = try f.connect();
     defer c2.close();
@@ -307,10 +312,15 @@ test "unit: rpc: live: pool saturation and pending expiry answer overloaded" {
     try expectContains(expired, "\"reason\":\"pending_expired\"");
     try testing.expectError(error.Closed, c3.readLine(io_timeout_ms));
 
-    // A freed slot admits the next client.
+    // A freed slot admits the next client. Wait until the server has seen
+    // c1 leave: before that, a new client would wait in the 300 ms pending
+    // window and could expire on a loaded machine.
     c1.close();
-    c1 = try f.connect();
-    try expectContains(try request(&c1, "{\"id\":5,\"method\":\"test.echo\"}"), "\"id\":5,\"ok\":true");
+    c1_open = false;
+    try waitFor(f.server, liveIsOne);
+    var c5 = try f.connect();
+    defer c5.close();
+    try expectContains(try request(&c5, "{\"id\":5,\"method\":\"test.echo\"}"), "\"id\":5,\"ok\":true");
 }
 
 test "unit: rpc: live: a waiting client is admitted when a slot frees" {
@@ -334,9 +344,12 @@ test "unit: rpc: live: polling burst gets rate_limited with retry_after_ms" {
     defer f.deinit();
     var c = try f.connect();
     defer c.close();
-    for (0..12) |_| try c.writeLine("{\"id\":\"p\",\"method\":\"test.poll\"}", io_timeout_ms);
+    // Burst 9, one token per 100 ms: 30 polls see rate_limited unless
+    // serving them takes over 2 s.
+    const polls = 30;
+    for (0..polls) |_| try c.writeLine("{\"id\":\"p\",\"method\":\"test.poll\"}", io_timeout_ms);
     var limited: usize = 0;
-    for (0..12) |i| {
+    for (0..polls) |i| {
         const got = try c.readLine(io_timeout_ms);
         if (i == 0) try expectContains(got, "\"ok\":true");
         if (std.mem.indexOf(u8, got, "\"code\":\"rate_limited\"") != null) {
