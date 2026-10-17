@@ -10,16 +10,27 @@ on:
       - 'docs/**'
   pull_request:
     branches: [master]
+  # Nightly wave-end gate (AF-23): scripts/gate.ps1 -Full on master.
+  schedule:
+    - cron: '30 7 * * *'
   workflow_dispatch:
+    inputs:
+      full_gate:
+        description: 'Also run the full gate (scripts/gate.ps1 -Full)'
+        type: boolean
+        default: false
 
 # Cancel superseded runs on the same ref.
 concurrency:
-  group: ci-${{ github.ref }}
+  # The event is part of the group so a push to master never cancels the nightly gate.
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build-test:
     name: Build & test (x86_64-windows-gnu)
+    # The nightly run is the full gate below; it builds and tests everything itself.
+    if: github.event_name != 'schedule'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -91,6 +102,7 @@ jobs:
 
   tooling:
     name: Tooling checks (scripts, registries)
+    if: github.event_name != 'schedule'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -120,3 +132,80 @@ jobs:
       - name: Tooling self-tests
         shell: pwsh
         run: ./scripts/test-tooling.ps1
+
+  # jsdom tests of the web panels (src/web/<app>): every test/web-node/**/*.test.mjs,
+  # including the per-app directories (diff, feed, notifications, settings,
+  # task-manager, todo) next to test/web-node/markdown.test.mjs. Pure Node, so Linux.
+  web-node:
+    name: Web panels (Node, jsdom)
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install jsdom outside the tree
+        run: npm install --prefix "$RUNNER_TEMP/wmux-web-test-deps" --ignore-scripts --no-audit --no-fund jsdom@26
+
+      # node expands the quoted glob itself (Node >= 21), so ** reaches the
+      # per-app subdirectories; list the files first so a glob that matches
+      # nothing (or misses a directory) is visible in the log.
+      - name: List web-node test files
+        run: find test/web-node -name '*.test.mjs' | sort
+
+      - name: node --test test/web-node/**/*.test.mjs
+        env:
+          WMUX_WEB_TEST_DEPS: ${{ runner.temp }}/wmux-web-test-deps
+        run: node --test 'test/web-node/**/*.test.mjs'
+
+  # AF-23: the wave-end tier runs nightly on master (and on demand): all e2e
+  # suites, the unfiltered zig build test against test/known-failures.txt, the
+  # ReleaseFast build and the contract checks.
+  full-gate:
+    name: Nightly full gate (scripts/gate.ps1 -Full)
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_gate)
+    runs-on: windows-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Pin Zig global cache to build drive
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_ENV -Value "ZIG_GLOBAL_CACHE_DIR=$env:RUNNER_TEMP\zig-global"
+
+      - name: Cache Zig 0.15.2
+        id: cache-zig
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}\zig
+          key: zig-0.15.2-windows-x86_64
+
+      - name: Download Zig 0.15.2
+        if: steps.cache-zig.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest 'https://ziglang.org/download/0.15.2/zig-x86_64-windows-0.15.2.zip' -OutFile "$env:RUNNER_TEMP\zig.zip"
+          Expand-Archive "$env:RUNNER_TEMP\zig.zip" -DestinationPath "$env:RUNNER_TEMP\zig" -Force
+
+      - name: Add Zig to PATH
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP\zig\zig-x86_64-windows-0.15.2"
+
+      - name: scripts/gate.ps1 -Full
+        shell: pwsh
+        run: ./scripts/gate.ps1 -Full -Quiet -LogDir "$env:RUNNER_TEMP\wmux-gate"
+
+      - name: Upload gate logs, summary.json and e2e results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-gate-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/wmux-gate
+            test-results
+          if-no-files-found: ignore
