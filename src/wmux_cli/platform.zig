@@ -428,6 +428,9 @@ pub fn writeFileAtomicNative(gpa: Allocator, path: []const u8, bytes: []const u8
     var lock = try SidecarLock.acquire(gpa, lock_path, timeout_ms);
     defer lock.release();
 
+    // Windows `statFile` cannot open a directory (it fails instead of
+    // reporting `.directory`), so probe with `openDir` first.
+    if (isDirectory(target)) return error.WriteFailed;
     const existing: ?std.fs.File.Stat = cwd.statFile(target) catch null;
     if (existing) |st| if (st.kind == .directory) return error.WriteFailed;
     var nonce: u64 = undefined;
@@ -442,6 +445,12 @@ pub fn writeFileAtomicNative(gpa: Allocator, path: []const u8, bytes: []const u8
         cwd.deleteFile(tmp) catch {};
         return err;
     };
+}
+
+fn isDirectory(path: []const u8) bool {
+    var d = std.fs.cwd().openDir(path, .{}) catch return false;
+    d.close();
+    return true;
 }
 
 fn mapFsError(err: anyerror) WriteAtomicError {
@@ -649,25 +658,31 @@ test "unit: cli-platform: atomic write waits for the sidecar lock, then gives up
 }
 
 test "unit: cli-platform: atomic write keeps a symlink and the file mode" {
-    if (is_windows) return error.SkipZigTest;
     const gpa = testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.makePath("real");
     try tmp.dir.writeFile(.{ .sub_path = "real/cmux.json", .data = "{}" });
-    {
+    if (!is_windows) {
         var f = try tmp.dir.openFile("real/cmux.json", .{});
         defer f.close();
         try f.chmod(0o640);
     }
-    try tmp.dir.symLink("real/cmux.json", "link.json", .{});
+    // Windows: creating a symlink needs Developer Mode or elevation.
+    const rel = if (is_windows) "real\\cmux.json" else "real/cmux.json";
+    tmp.dir.symLink(rel, "link.json", .{}) catch |err| {
+        if (is_windows) return error.SkipZigTest;
+        return err;
+    };
     const link = try tmpPath(gpa, &tmp, "link.json");
     defer gpa.free(link);
     try writeFileAtomicNative(gpa, link, "{\"a\":1}", 1000);
     var buf: [std.fs.max_path_bytes]u8 = undefined;
-    try testing.expectEqualStrings("real/cmux.json", try tmp.dir.readLink("link.json", &buf));
-    const st = try tmp.dir.statFile("real/cmux.json");
-    try testing.expectEqual(@as(std.fs.File.Mode, 0o640), st.mode & 0o777);
+    try testing.expectEqualStrings(rel, try tmp.dir.readLink("link.json", &buf));
+    if (!is_windows) {
+        const st = try tmp.dir.statFile("real/cmux.json");
+        try testing.expectEqual(@as(std.fs.File.Mode, 0o640), st.mode & 0o777);
+    }
     const got = try tmp.dir.readFileAlloc(gpa, "real/cmux.json", 1024);
     defer gpa.free(got);
     try testing.expectEqualStrings("{\"a\":1}", got);
