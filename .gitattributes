@@ -55,6 +55,21 @@ src/wmux_proto/actions_catalog.zig merge=union
 src/wmux_proto/events_catalog.zig merge=union
 src/wmux_proto/settings/specs_manifest.zig merge=union
 
+# Test aggregators and the wmux_proto re-exports (AF-15): one sorted import line per
+# entry, enforced by scripts/check-manifest.ps1; re-sort after a union merge if needed.
+src/apprt/win32/fast_tests.zig merge=union
+src/apprt/win32/test_index.zig merge=union
+**/logic/tests.zig merge=union
+src/wmux_cli/logic/tests.zig merge=union
+src/wmux_proto/proto.zig merge=union
+
+#--------------------------------------------------------------------
+# Merge-time artifacts (AF-15): keep master's copy on merge (driver "ours" =
+# `git config merge.ours.driver true`, set by scripts/gate.ps1); gate.ps1 -Merge
+# regenerates the file on the merged tree and commits chore(schema).
+#--------------------------------------------------------------------
+docs/wmux/schema/wmux.schema.json merge=ours
+
 #--------------------------------------------------------------------
 # Linguist
 #--------------------------------------------------------------------
