@@ -5,10 +5,10 @@
 //!
 //! The Direct2D/DirectWrite/WIC tests live in `../tests.zig`.
 test {
-    _ = @import("geometry.zig");
     _ = @import("color.zig");
+    _ = @import("device_state.zig");
+    _ = @import("geometry.zig");
+    _ = @import("lru.zig");
     _ = @import("text_style.zig");
     _ = @import("utf16_map.zig");
-    _ = @import("lru.zig");
-    _ = @import("device_state.zig");
 }

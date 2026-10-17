@@ -1,51 +1,96 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-    Local WP gate (-Wp <id>) and integrator merge gate (-Full) of the wmux parity program.
+    Tiered gates of the wmux parity program: local WP gate (-Wp), per-merge gate (-Merge),
+    batched merge gate (-Batch a,b) and wave-end/nightly gate (-Full).
 
 .DESCRIPTION
-    Implements docs/arch/ARCHITECTURE.md ADR-12.5, ADR-14.9 and section 15.6. Every step
-    prints PASS / FAIL / SKIP / WARN; steps whose prerequisites do not exist yet (build
-    steps defined by W0-A3, the W0-B e2e harness, contract tests) are skipped with a notice.
-    A summary table is printed at the end and written to <log dir>/summary.json.
+    Implements docs/arch/ARCHITECTURE.md ADR-12.5, ADR-14.9, section 15.6 and AF-23 (tiered
+    gating, Appendix F.2). Every step prints PASS / FAIL / SKIP / WARN; steps whose
+    prerequisites do not exist yet (build steps, e2e suites, the web harness, contract tests)
+    are skipped with a notice. A summary table is printed at the end and written to
+    <log dir>/summary.json (step durations, total seconds, budget).
 
-    Steps (id: what)                                         -Wp   -Full
-      fmt        zig fmt --check on .zig/.zon changed vs base   x     x
-      pslint     PowerShell parse check of changed .ps1/.psm1   x     x
-      ownership  scripts/check-ownership.ps1 -Wp <id>           x     x (when the WP id is known)
-      manifest   scripts/check-manifest.ps1                     x     x
-      build      zig build (debug)                              x     x
-      release    zig build -Doptimize=ReleaseFast                     x (prefix zig-out\release)
-      test-fast  zig build test-fast (if the step exists)       x     x
-      test-cli   zig build test-cli (if the step exists)        x     x
-      unit       zig build test with -Dtest-filter=...          x     x
-                   -Wp:   "unit: <feature>" for the features the WP owns/changed; plus
-                          "unit: " and the legacy filters when shared code changed
-                   -Full: "unit: ", sidebar, wsl, win-pwd, ipc:
-                   (all filters go into ONE compile; -SplitFilters runs them one by one)
-      e2e        test/e2e/run.ps1 (if present)                  x     x
-                   -Wp:   suite "smoke" + the areas holding the WP's <id>*.e2e.ps1 suites
-                   -Full: all suites
-                   (tests zig-out\bin\wmux.exe from the build step via -Exe; -Build Debug
-                    when the build step did not run)
-      contract   settings-schema golden, test/cli/probes.ps1,         x
-                 test/contract/*.ps1 (each when present)
-      fulltest   zig build test, unfiltered, failures checked against test/known-failures.txt
-                 (only with -FullTest; ADR-12.2 nightly / wave tag)
+    Tiers
+      -Wp <id>        local gate of a WP worktree (before asking for a merge)
+      -Merge [-Wp]    per merge, run by the integrator on the rebased WP head or on the merge
+                      commit (budget 12 min, -BudgetSec): area unit filters + legacy filters,
+                      e2e smoke + legacy + regression + affected areas, contract tests; the
+                      settings schema is regenerated on the merged tree and committed
+      -Batch a,b      -Merge for two ownership-disjoint WPs gated on one base: HEAD is a batch
+                      branch holding both WP branches (section 14.9)
+      -Full           wave ends (N9) and the nightly CI job: all e2e suites, the unfiltered
+                      `zig build test` against test/known-failures.txt, contract tests
+
+    Steps (id: what)                                          -Wp  -Merge -Full
+      batch      both WP branches on the base, disjoint changes       B
+      fmt        zig fmt --check on .zig/.zon changed vs base    x     x     x
+      pslint     PowerShell parse check of changed scripts       x     x     x
+      ownership  check-ownership.ps1 per WP (-Head per branch    x     x     x (WP id known)
+                 with -Batch)
+      manifest   check-manifest.ps1                              x     x     x
+      schema     zig build settings-schema; commit                     x
+                 "chore(schema): ..." when the file changed
+      build      zig build (debug)                               x     x     x
+      release    zig build -Doptimize=ReleaseFast (prefix              x     x
+                 zig-out\release); with -Merge it runs in the
+                 background beside the other steps
+      test-fast  zig build test-fast                             x     x     x
+      test-cli   zig build test-cli                              x     x     x
+      unit       zig build test -Dtest-filter=...                x     x     x
+                   -Wp:    "unit: <feature>" for owned/changed features; "unit: " + legacy
+                           filters when shared code changed
+                   -Merge: the same area filters, always plus the legacy filters
+                   -Full:  "unit: " + legacy filters (fulltest runs everything)
+      e2e        test/e2e/run.ps1 (one run, -Suite a,b,...)      x     x     x
+                   -Wp:    smoke + the areas of the WP's suites
+                   -Merge: smoke, legacy, regression + the areas of the WP's suites, of suites
+                           whose "# covers:" tags name the spec's covers ids, of changed suite
+                           files and of changed feature ids that have a suite area
+                           (missing suites are skipped with a notice)
+                   -Full:  all suites
+      web        test/web/run.ps1 when src/web or test/web       x     x     x (always)
+                 changed (and the script exists)
+      contract   test/cli/probes.ps1, test/contract/*.ps1;             x     x
+                 -Full also checks the settings-schema golden
+      fulltest   zig build test (unfiltered) vs                              x (-NoFullTest
+                 test/known-failures.txt (-FullTest adds it                     drops it)
+                 to the other tiers)
 
 .PARAMETER Wp
-    Work-package id (W2-5, W1-1a, W0-D-S1 ...). Default: inferred from the worktree directory
-    or the wp/<id>-<slug> branch. Required for the local gate; optional with -Full.
+    Work-package id (W2-5, W1-1a, W0-D-S1, PB-notif ...). Default: inferred from the worktree
+    directory or the wp/<id>-<slug> branch. Required for -Wp and -Merge (unless -Batch).
+
+.PARAMETER Merge
+    Per-merge gate (AF-23).
+
+.PARAMETER Batch
+    Two WP ids gated together on one base (implies -Merge).
+
+.PARAMETER BatchRef
+    The branches of the -Batch WPs, in the same order (default: the one local branch
+    wp/<id> or wp/<id>-* of each id).
 
 .PARAMETER Full
-    Integrator merge gate (run on the rebased WP head before merging --no-ff).
+    Wave-end / nightly gate (AF-23).
 
 .PARAMETER FullTest
-    Also run the full, unfiltered `zig build test` and fail on failures not listed in
-    test/known-failures.txt.
+    Add the unfiltered `zig build test` to -Wp or -Merge.
+
+.PARAMETER NoFullTest
+    Drop the unfiltered `zig build test` from -Full.
+
+.PARAMETER NoSchemaCommit
+    -Merge: regenerate the settings schema but do not commit it (the step then WARNs when the
+    file changed).
+
+.PARAMETER BudgetSec
+    Time budget reported in summary.json (default 720 s for -Merge/-Batch, none otherwise).
+    Exceeding it is a warning, not a failure.
 
 .PARAMETER Base
-    Integration branch (default master; origin/master as fallback).
+    Integration branch (default master; origin/master as fallback). With -Merge on a merge
+    commit of the base branch itself, the first parent is the base of the diff.
 
 .PARAMETER UnitFilter
     Replace the computed unit test filters (e.g. -UnitFilter 'unit: notifications').
@@ -66,28 +111,31 @@
     Report the ownership step as SKIP instead of FAIL when docs/arch/wp/<id>.md is missing.
 
 .PARAMETER E2ETimeoutSec
-    Budget for the whole e2e step (default 600 s); the process tree is killed after it.
+    Budget for the e2e step (default 600 s); the process tree is killed after it.
 
 .PARAMETER Quiet
     Do not stream command output; print the tail of a log when its step fails.
 
 .PARAMETER DryRun
-    Print the plan (commands, filters, suites) without running anything.
+    Print the tier plan (commands, filters, suites) without running anything.
 
 .PARAMETER Zig
     Path to zig.exe (default: $env:ZIG, zig on PATH, ~\zig-x86_64-windows-0.15.2\zig.exe).
 
 .PARAMETER LogDir
-    Where step logs and summary.json go (default .zig-cache\wmux-gate\<timestamp>-<mode>).
+    Where step logs and summary.json go (default .zig-cache\wmux-gate\<timestamp>-<mode>-<id>).
 
 .EXAMPLE
     pwsh scripts/gate.ps1 -Wp W2-5
 
 .EXAMPLE
-    pwsh scripts/gate.ps1 -Full -Wp W2-5
+    pwsh scripts/gate.ps1 -Merge -Wp W2-5 -DryRun
 
 .EXAMPLE
-    pwsh scripts/gate.ps1 -Wp W2-5 -Only fmt,ownership,manifest -DryRun
+    pwsh scripts/gate.ps1 -Batch W1-4a,W1-6b
+
+.EXAMPLE
+    pwsh scripts/gate.ps1 -Full
 
 .NOTES
     Exit codes: 0 = no step failed, 1 = at least one step failed, 2 = usage error.
@@ -95,8 +143,14 @@
 [CmdletBinding()]
 param(
     [string]$Wp,
+    [switch]$Merge,
+    [string[]]$Batch,
+    [string[]]$BatchRef,
     [switch]$Full,
     [switch]$FullTest,
+    [switch]$NoFullTest,
+    [switch]$NoSchemaCommit,
+    [int]$BudgetSec = -1,
     [string]$Base = 'master',
     [string[]]$UnitFilter,
     [string[]]$Only,
@@ -118,7 +172,9 @@ Import-Module (Join-Path $PSScriptRoot 'lib/WmuxTooling.psm1') -Force
 
 $tag = 'gate'
 $LegacyFilters = @('sidebar', 'wsl', 'win-pwd', 'ipc:')
-$AllStepIds = @('fmt', 'pslint', 'ownership', 'manifest', 'build', 'release', 'test-fast', 'test-cli', 'unit', 'e2e', 'contract', 'fulltest')
+# e2e suite areas every merge runs (AF-11/AF-19: W0-B2 legacy-compat, plus-verbs, w0-regression).
+$MergeE2EAreas = @('smoke', 'legacy', 'regression')
+$AllStepIds = @('batch', 'fmt', 'pslint', 'ownership', 'manifest', 'schema', 'build', 'release', 'test-fast', 'test-cli', 'unit', 'e2e', 'web', 'contract', 'fulltest')
 
 function Exit-Usage([string]$Message) {
     Write-WmuxLine -Tag $tag -Level ERROR -Message $Message
@@ -129,30 +185,59 @@ function New-StepResult([string]$Result, [string]$Notes = '') {
     return [pscustomobject]@{ Result = $Result; Notes = $Notes }
 }
 
+function Split-List($Values) {
+    # `pwsh -File gate.ps1 -Only a,b` passes "a,b" as one string: accept both forms.
+    return , @($Values | Where-Object { $_ } | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+}
+
 # ------------------------------------------------------------------ context
 try {
     $repo = Get-WmuxRepoRoot -Path $PSScriptRoot
 } catch {
     Exit-Usage $_.Exception.Message
 }
-$mode = if ($Full) { 'full' } else { 'local' }
-# `pwsh -File gate.ps1 -Only a,b` passes "a,b" as one string: accept both forms.
-$Only = @($Only | Where-Object { $_ } | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-$Skip = @($Skip | Where-Object { $_ } | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+$Only = Split-List $Only
+$Skip = Split-List $Skip
+$Batch = Split-List $Batch
+$BatchRef = Split-List $BatchRef
 foreach ($s in @($Only) + @($Skip)) {
     if ($s -and $AllStepIds -notcontains $s) { Exit-Usage "Unknown step '$s'. Steps: $($AllStepIds -join ', ')" }
 }
-if (-not $Wp) { $Wp = Resolve-WmuxWpId -RepoRoot $repo }
-if ($mode -eq 'local' -and -not $Wp) { Exit-Usage 'Cannot infer the WP id; pass -Wp <id> (or -Full for the integrator gate).' }
-if ($Wp -and -not (Test-WmuxWpId $Wp)) { Exit-Usage "'$Wp' is not a WP id (expected e.g. W2-5, W1-1a, W0-D-S1)." }
+if ($Batch.Count) { $Merge = [switch]::new($true) }
+if ($Merge -and $Full) { Exit-Usage '-Merge (or -Batch) and -Full are different tiers; pass one of them.' }
+$mode = if ($Full) { 'full' } elseif ($Merge) { 'merge' } else { 'local' }
+$isBatch = $Batch.Count -gt 0
 
+if ($isBatch) {
+    if ($Batch.Count -ne 2) { Exit-Usage "-Batch takes two WP ids (section 14.9), got $($Batch.Count)." }
+    if ($Wp) { Exit-Usage '-Batch names the WPs; do not pass -Wp as well.' }
+    if ($BatchRef.Count -and $BatchRef.Count -ne $Batch.Count) { Exit-Usage '-BatchRef needs one branch per -Batch id.' }
+    foreach ($b in $Batch) { if (-not (Test-WmuxWpId $b)) { Exit-Usage "'$b' is not a WP id (expected e.g. W2-5, W1-1a, PB-notif)." } }
+    if ($Batch[0] -eq $Batch[1]) { Exit-Usage '-Batch needs two different WPs.' }
+    $wps = @($Batch)
+} else {
+    if (-not $Wp) { $Wp = Resolve-WmuxWpId -RepoRoot $repo }
+    if ($mode -ne 'full' -and -not $Wp) { Exit-Usage "Cannot infer the WP id; pass -Wp <id> (or -Full for the wave-end gate)." }
+    if ($Wp -and -not (Test-WmuxWpId $Wp)) { Exit-Usage "'$Wp' is not a WP id (expected e.g. W2-5, W1-1a, W0-D-S1, PB-notif)." }
+    $wps = @(if ($Wp) { $Wp })
+}
+if ($BudgetSec -lt 0) { $BudgetSec = if ($mode -eq 'merge') { 720 } else { 0 } }
+$runFullTest = ($mode -eq 'full' -and -not $NoFullTest) -or ($mode -ne 'full' -and $FullTest)
+
+$branch = Get-WmuxCurrentBranch -RepoRoot $repo
 try {
     $baseRef = Resolve-WmuxBaseRef -RepoRoot $repo -Base $Base
-    $changes = Get-WmuxChangedFiles -RepoRoot $repo -BaseRef $baseRef
+    $diffBase = $baseRef
+    $postMerge = $false
+    if ($mode -eq 'merge' -and $branch -and ($branch -eq $Base -or "origin/$branch" -eq $baseRef)) {
+        # Gate run on the merge commit itself (on the base branch): diff against its first parent.
+        $parents = @((Invoke-WmuxGit -RepoRoot $repo -Arguments @('rev-list', '--parents', '-n', '1', 'HEAD')).Output.Trim() -split '\s+')
+        if ($parents.Count -ge 3) { $diffBase = 'HEAD^1'; $postMerge = $true }
+    }
+    $changes = Get-WmuxChangedFiles -RepoRoot $repo -BaseRef $diffBase
 } catch {
     Exit-Usage $_.Exception.Message
 }
-$branch = Get-WmuxCurrentBranch -RepoRoot $repo
 # Zig is resolved up front but only required by the steps that run it.
 $zigExe = $null
 $zigError = $null
@@ -166,17 +251,20 @@ if ($zigExe) { $childEnv['ZIG'] = $zigExe }
 $T = Get-WmuxTargetArgs
 $pwshExe = Get-WmuxPwshExe
 
-$spec = $null
-$specError = $null
-if ($Wp) {
-    try { $spec = Get-WmuxWpSpec -RepoRoot $repo -Wp $Wp -BaseRef $baseRef } catch { $specError = $_.Exception.Message }
+$specs = [System.Collections.Generic.List[object]]::new()
+$specErrors = @{}
+foreach ($id in $wps) {
+    try {
+        $sp = Get-WmuxWpSpec -RepoRoot $repo -Wp $id -BaseRef $baseRef
+        if ($sp) { $specs.Add($sp) }
+    } catch { $specErrors[$id] = $_.Exception.Message }
 }
 
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 if ($LogDir) {
     $LogDir = Resolve-WmuxPath $LogDir
 } else {
-    $suffix = if ($Wp) { "$mode-$Wp" } else { $mode }
+    $suffix = if ($wps.Count) { "$mode-$($wps -join '+')" } else { $mode }
     $LogDir = Join-Path $repo ".zig-cache/wmux-gate/$stamp-$suffix"
 }
 if (-not $DryRun) { New-Item -ItemType Directory -Force -Path $LogDir | Out-Null }
@@ -184,11 +272,15 @@ if (-not $DryRun) { New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 $changed = @($changes.Files)
 $existing = @($changed | Where-Object { $_.Status -ne 'D' -and (Test-Path -LiteralPath (Join-Path $repo $_.Path) -PathType Leaf) })
 $uncommitted = @($changed | Where-Object { $_.Uncommitted -or $_.Untracked })
+$schemaRel = Get-WmuxSchemaPath
+$ledgerRel = 'docs/arch/manual-checks.md'
 
-Write-WmuxLine -Tag $tag -Message "mode=$mode wp=$(if ($Wp) { $Wp } else { '-' }) branch=$branch base=$baseRef merge-base=$($changes.MergeBase.Substring(0, 10)) head=$($changes.Head.Substring(0, 10))"
+$wpLabel = if ($wps.Count) { $wps -join '+' } else { '-' }
+Write-WmuxLine -Tag $tag -Message "mode=$mode wp=$wpLabel branch=$branch base=$baseRef merge-base=$($changes.MergeBase.Substring(0, 10)) head=$($changes.Head.Substring(0, 10))"
 Write-WmuxLine -Tag $tag -Message "repo=$repo"
 Write-WmuxLine -Tag $tag -Message "zig=$(if ($zigExe) { $zigExe } else { "<not found: $zigError>" }) cache=$($cache.Dir) ($($cache.Reason))"
-Write-WmuxLine -Tag $tag -Message "changed vs ${baseRef}: $($changed.Count) path(s), $($uncommitted.Count) uncommitted/untracked; logs: $LogDir"
+Write-WmuxLine -Tag $tag -Message "changed vs ${diffBase}: $($changed.Count) path(s), $($uncommitted.Count) uncommitted/untracked; logs: $LogDir"
+if ($postMerge) { Write-WmuxLine -Tag $tag -Level NOTE -Message "HEAD is a merge commit on ${branch}: the diff base is its first parent (post-merge gate)." }
 if ($uncommitted.Count -gt 0) {
     Write-WmuxLine -Tag $tag -Level NOTE -Message 'uncommitted changes are included in fmt/pslint/unit selection; only committed work is merged.'
 }
@@ -231,8 +323,14 @@ function Get-CheckWarnings([string]$Log) {
     return 0
 }
 
+function Test-StepSelected([string]$Id) {
+    if ($Only -and $Only -notcontains $Id) { return $false }
+    if ($Skip -contains $Id) { return $false }
+    return $true
+}
+
 function Get-FeatureAreas {
-    # Feature ids from owns globs and changed paths; $true in .Shared when code outside features changed.
+    # Feature ids from owns globs and changed paths; .Shared = code outside features changed.
     $areas = [System.Collections.Generic.SortedSet[string]]::new([System.StringComparer]::Ordinal)
     $shared = $false
     $relevant = 0
@@ -243,10 +341,11 @@ function Get-FeatureAreas {
         if ($p -match '^src/apprt/win32/features/([^/]+)/') { [void]$areas.Add($Matches[1]) }
         elseif ($p -match '^src/wmux_proto/settings/specs/([^/]+)\.zig$') { [void]$areas.Add($Matches[1]) }
         elseif ($p -match '^src/wmux_cli/' -or $p -match '^src/web/') { }
+        elseif (Test-WmuxAggregatorPath -Path $p) { }   # index lines only; the indexed files decide
         else { $shared = $true }
     }
-    if ($spec) {
-        foreach ($e in $spec.Owns) {
+    foreach ($sp in $specs) {
+        foreach ($e in $sp.Owns) {
             if ($e.Path -match '^src/apprt/win32/features/([A-Za-z0-9_]+)/') { [void]$areas.Add($Matches[1]) }
         }
     }
@@ -255,64 +354,128 @@ function Get-FeatureAreas {
 
 function Get-UnitPlan {
     if ($UnitFilter) { return [pscustomobject]@{ Filters = @($UnitFilter); Reason = 'from -UnitFilter' } }
-    if ($mode -eq 'full') { return [pscustomobject]@{ Filters = @('unit: ') + $LegacyFilters; Reason = 'merge gate filter set' } }
+    if ($mode -eq 'full') { return [pscustomobject]@{ Filters = @('unit: ') + $LegacyFilters; Reason = 'wave-end filter set' } }
     $a = Get-FeatureAreas
+    if ($mode -eq 'merge') {
+        if ($a.Shared) { return [pscustomobject]@{ Filters = @('unit: ') + $LegacyFilters; Reason = 'shared (non-feature) code changed; plus the legacy filters' } }
+        $area = @($a.Areas | ForEach-Object { "unit: $_" })
+        $why = if ($area.Count) { "features $($a.Areas -join ', ') plus the legacy filters" } else { 'legacy filters (no feature code changed)' }
+        return [pscustomobject]@{ Filters = $area + $LegacyFilters; Reason = $why }
+    }
     if ($a.Relevant -eq 0) { return [pscustomobject]@{ Filters = @(); Reason = 'no changes under src/, build.zig, pkg/, vendor/ or include/' } }
     if ($a.Shared) { return [pscustomobject]@{ Filters = @('unit: ') + $LegacyFilters; Reason = 'shared (non-feature) code changed' } }
-    if ($a.Areas.Count -eq 0) { return [pscustomobject]@{ Filters = @(); Reason = 'only CLI or web assets changed (test-cli / e2e cover them)' } }
+    if ($a.Areas.Count -eq 0) { return [pscustomobject]@{ Filters = @(); Reason = 'only CLI, web assets or aggregator lines changed (test-cli / test-fast / e2e cover them)' } }
     return [pscustomobject]@{ Filters = @($a.Areas | ForEach-Object { "unit: $_" }); Reason = "features $($a.Areas -join ', ')" }
 }
 
-function Get-WpSuites {
+$script:suiteIndex = $null
+function Get-SuiteIndex {
+    # Every e2e suite file outside _quarantine: { Rel, Area, Name, Tags }.
+    if ($null -ne $script:suiteIndex) { return $script:suiteIndex }
     $suitesDir = Join-Path $repo 'test/e2e/suites'
-    if (-not (Test-Path -LiteralPath $suitesDir -PathType Container) -or -not $Wp) { return , @() }
-    $rx = '^' + [regex]::Escape($Wp) + '(?![0-9A-Za-z])'
-    $all = @(Get-ChildItem -LiteralPath $suitesDir -Recurse -File -Filter '*.e2e.ps1')
-    $out = foreach ($f in $all) {
-        $rel = [System.IO.Path]::GetRelativePath($repo, $f.FullName).Replace('\', '/')
-        if ($rel -match '/_quarantine/') { continue }
-        $byName = $f.Name -match $rx
-        $byGlob = $false
-        if ($spec) { foreach ($e in $spec.Owns) { if ($e.Path -like 'test/e2e/suites/*' -and (Test-WmuxGlobMatch -Path $rel -Glob $e.Path)) { $byGlob = $true; break } } }
-        if ($byName -or $byGlob) { $rel }
+    $list = [System.Collections.Generic.List[object]]::new()
+    if (Test-Path -LiteralPath $suitesDir -PathType Container) {
+        foreach ($f in @(Get-ChildItem -LiteralPath $suitesDir -Recurse -File -Filter '*.e2e.ps1')) {
+            $rel = [System.IO.Path]::GetRelativePath($repo, $f.FullName).Replace('\', '/')
+            if ($rel -match '/_quarantine/') { continue }
+            $list.Add([pscustomobject]@{ Rel = $rel; Area = ($rel -split '/')[3]; Name = $f.Name; Tags = (Read-WmuxSuiteTags -Path $f.FullName) })
+        }
+    }
+    $script:suiteIndex = $list.ToArray()
+    return $script:suiteIndex
+}
+
+function Get-WpSuites {
+    # Suites of the gated WPs: file name <id>*.e2e.ps1, "# wp: <id>", or an owns glob.
+    $out = foreach ($s in (Get-SuiteIndex)) {
+        $hit = $false
+        foreach ($id in $wps) {
+            $rx = '^' + [regex]::Escape($id) + '(?![0-9A-Za-z])'
+            if ($s.Name -match $rx -or $s.Tags.Wp -eq $id) { $hit = $true; break }
+        }
+        if (-not $hit) {
+            foreach ($sp in $specs) { foreach ($e in $sp.Owns) { if ($e.Path -like 'test/e2e/suites/*' -and (Test-WmuxGlobMatch -Path $s.Rel -Glob $e.Path)) { $hit = $true; break } } }
+        }
+        if ($hit) { $s }
     }
     return , @($out)
+}
+
+function Get-E2EPlan {
+    # Returns { Areas (existing), Missing (wanted but absent), Why } for -Wp / -Merge.
+    $why = [ordered]@{}
+    function Add-Area([string]$Area, [string]$Reason) {
+        if (-not $Area) { return }
+        if (-not $why.Contains($Area)) { $why[$Area] = [System.Collections.Generic.List[string]]::new() }
+        if (-not $why[$Area].Contains($Reason)) { $why[$Area].Add($Reason) }
+    }
+    $index = Get-SuiteIndex
+    $existingAreas = @($index | ForEach-Object Area | Select-Object -Unique)
+    Add-Area 'smoke' 'always'
+    if ($mode -eq 'merge') { foreach ($a in $MergeE2EAreas) { Add-Area $a 'every merge' } }
+    foreach ($s in (Get-WpSuites)) { Add-Area $s.Area 'WP suite' }
+    if ($mode -eq 'merge') {
+        $covers = @($specs | ForEach-Object { @($_.Data['covers']) } | Where-Object { $_ })
+        if ($covers.Count) {
+            foreach ($s in $index) { if (@($s.Tags.Covers | Where-Object { $covers -contains $_ }).Count) { Add-Area $s.Area 'covers tag' } }
+        }
+        foreach ($f in $changed) {
+            if ($f.Path -match '^test/e2e/suites/([^/]+)/') { Add-Area $Matches[1] 'changed suite' }
+            elseif ($f.Path -match '^test/e2e/(?:[^/]+\.psm1|run\.ps1)$') { Add-Area '_selftest' 'harness changed' }
+            elseif ($f.Path -match '^src/apprt/win32/features/([^/]+)/' -and $existingAreas -contains $Matches[1]) { Add-Area $Matches[1] 'changed feature' }
+        }
+    }
+    $areas = @($why.Keys | Where-Object { $existingAreas -contains $_ })
+    $missing = @($why.Keys | Where-Object { $existingAreas -notcontains $_ })
+    $desc = @($areas | ForEach-Object { "$_ ($($why[$_] -join ', '))" })
+    return [pscustomobject]@{ Areas = $areas; Missing = $missing; Desc = $desc }
 }
 
 function Get-E2EBinaryArgs($Params) {
     # Test the wmux.exe this gate's build step produced (run.ps1 -Exe); let run.ps1 build it
     # (-Build Debug) only when the build step does not run in this invocation.
-    $built = if ($DryRun) { -not (($Only -and $Only -notcontains 'build') -or ($Skip -contains 'build')) }
+    $built = if ($DryRun) { Test-StepSelected 'build' }
     else { $script:results.Contains('build') -and $script:results['build'].Result -eq 'PASS' }
     if ($built -and $Params.ContainsKey('exe')) { return @('-Exe', (Join-Path $repo 'zig-out\bin\wmux.exe')) }
     if ($Params.ContainsKey('build')) { return @('-Build', 'Debug') }
     return @()
 }
 
-function Get-E2ERuns {
-    # Returns a list of argument arrays for test/e2e/run.ps1 plus a description.
+function Get-E2ERun {
+    # One run.ps1 invocation: { Label, Extra, Args, Missing } ($null Args when nothing to run).
     $run = Join-Path $repo 'test/e2e/run.ps1'
     $params = Get-WmuxScriptParameters -Path $run
     $common = @('-NoProfile', '-NonInteractive', '-File', $run)
-    $runs = [System.Collections.Generic.List[object]]::new()
-    $buildArgs = Get-E2EBinaryArgs $params
-    if ($mode -eq 'full') {
-        $extra = $buildArgs
-        if ($params.ContainsKey('parallel')) { $extra += @('-Parallel', '4') }
-        $runs.Add([pscustomobject]@{ Label = 'all suites'; Extra = $extra; Args = ($common + $extra) })
-        return , $runs.ToArray()
+    $extra = @(Get-E2EBinaryArgs $params)
+    if ($params.ContainsKey('parallel')) { $extra += @('-Parallel', '4') }
+    if ($mode -eq 'full' -or -not $params.ContainsKey('suite')) {
+        $label = if ($mode -eq 'full') { 'all suites' } else { 'all suites (run.ps1 has no -Suite)' }
+        return [pscustomobject]@{ Label = $label; Extra = $extra; Args = ($common + $extra); Missing = @(); Desc = @($label) }
     }
-    $suites = Get-WpSuites
-    $areas = @(@('smoke') + @($suites | ForEach-Object { ($_ -split '/')[3] } | Where-Object { $_ -and $_ -ne 'smoke' }) | Select-Object -Unique)
-    if ($params.ContainsKey('suite')) {
-        foreach ($a in $areas) {
-            $extra = @('-Suite', $a) + $buildArgs
-            $runs.Add([pscustomobject]@{ Label = "suite $a"; Extra = $extra; Args = ($common + $extra) })
-        }
-    } else {
-        $runs.Add([pscustomobject]@{ Label = 'all suites (run.ps1 has no -Suite)'; Extra = $buildArgs; Args = ($common + $buildArgs) })
+    $plan = Get-E2EPlan
+    if ($plan.Areas.Count -eq 0) { return [pscustomobject]@{ Label = 'no suite present'; Extra = @(); Args = $null; Missing = $plan.Missing; Desc = @() } }
+    $extra = @('-Suite', ($plan.Areas -join ',')) + $extra
+    return [pscustomobject]@{ Label = "suites $($plan.Areas -join ',')"; Extra = $extra; Args = ($common + $extra); Missing = $plan.Missing; Desc = $plan.Desc }
+}
+
+function Get-BatchRefs {
+    # Resolves the branch of each -Batch id: -BatchRef, else the single wp/<id>[-*] branch.
+    $refs = [System.Collections.Generic.List[string]]::new()
+    for ($i = 0; $i -lt $wps.Count; $i++) {
+        if ($BatchRef.Count) { $refs.Add($BatchRef[$i]); continue }
+        $id = $wps[$i]
+        $names = @(Split-WmuxLines (Invoke-WmuxGit -RepoRoot $repo -Arguments @('for-each-ref', '--format=%(refname:short)', "refs/heads/wp/$id", "refs/heads/wp/$id-*")).Output)
+        # wp/W1-1a-* also matches wp/W1-1a-t-*: drop branches of a longer known WP id.
+        $longer = @(Get-ChildItem -LiteralPath (Join-Path $repo 'docs/arch/wp') -Filter '*.md' -File -ErrorAction SilentlyContinue |
+                ForEach-Object BaseName | Where-Object { $_.StartsWith("$id-") })
+        $names = @($names | Where-Object {
+                $n = $_
+                -not @($longer | Where-Object { $n -eq "wp/$_" -or $n.StartsWith("wp/$_-") }).Count
+            })
+        if ($names.Count -ne 1) { throw "cannot pick the branch of ${id}: $(if ($names.Count) { $names -join ', ' } else { 'no wp/' + $id + '[-*] branch' }); pass -BatchRef." }
+        $refs.Add($names[0])
     }
-    return , $runs.ToArray()
+    return , $refs.ToArray()
 }
 
 # ------------------------------------------------------------------ steps
@@ -321,7 +484,50 @@ function Add-Step([string]$Id, [string]$Title, [string[]]$Modes, [scriptblock]$P
     $steps.Add([pscustomobject]@{ Id = $Id; Title = $Title; Modes = $Modes; Plan = $Plan; Run = $Run })
 }
 
-Add-Step 'fmt' 'zig fmt --check (changed files)' @('local', 'full') {
+Add-Step 'batch' 'batch: both WP branches on one base, disjoint changes' @('batch') {
+    $refs = try { (Get-BatchRefs) -join ', ' } catch { "<$($_.Exception.Message)>" }
+    return "branches $refs on $baseRef; HEAD must contain both; changed paths disjoint outside appends"
+} {
+    $refs = Get-BatchRefs
+    $log = Get-StepLog 'batch'
+    $lines = [System.Collections.Generic.List[string]]::new()
+    $problems = [System.Collections.Generic.List[string]]::new()
+    $baseSha = (Invoke-WmuxGit -RepoRoot $repo -Arguments @('rev-parse', "$baseRef^{commit}")).Output.Trim()
+    $sets = @()
+    for ($i = 0; $i -lt $wps.Count; $i++) {
+        $ref = $refs[$i]
+        $mb = (Invoke-WmuxGit -RepoRoot $repo -Arguments @('merge-base', $baseRef, $ref)).Output.Trim()
+        if ($mb -ne $baseSha) { $problems.Add("$($wps[$i]) ($ref) is not on the current $baseRef; rebase it first (both gates run on one base)") }
+        $inHead = (Invoke-WmuxGit -RepoRoot $repo -Arguments @('merge-base', '--is-ancestor', $ref, 'HEAD') -AllowFailure).ExitCode -eq 0
+        if (-not $inHead) { $problems.Add("HEAD does not contain $ref; gate a batch branch: git switch -c batch/$($wps -join '+') $baseRef; git merge --no-ff $($refs -join '; git merge --no-ff ')") }
+        $files = @((Get-WmuxChangedFiles -RepoRoot $repo -BaseRef $baseRef -Head $ref).Files | ForEach-Object Path)
+        $lines.Add("$($wps[$i]) = $ref, $($files.Count) changed path(s)")
+        $sets += , $files
+    }
+    $appends = @($specs | ForEach-Object { $_.Appends } | ForEach-Object Path)
+    $shared = @($sets[0] | Where-Object { $sets[1] -contains $_ })
+    foreach ($p in $shared) {
+        # The schema (merge-time artifact) and the manual-check ledger (rows any WP may append,
+        # AF-19) are implicitly shared by every WP, as in check-ownership.ps1.
+        $ok = ($p -eq $schemaRel) -or ($p -eq $ledgerRel) -or @($appends | Where-Object { Test-WmuxGlobMatch -Path $p -Glob $_ }).Count
+        if ($ok) { $lines.Add("shared, allowed: $p (appends / ledger / merge-time artifact)") }
+        else { $problems.Add("both WPs change $p (ownership is not disjoint)") }
+    }
+    if ($specs.Count -eq 2) {
+        foreach ($a in @($specs[0].Owns + $specs[0].Touches)) {
+            foreach ($b in @($specs[1].Owns + $specs[1].Touches)) {
+                if (Test-WmuxGlobOverlap -A $a.Path -B $b.Path) { $lines.Add("NOTE: spec globs overlap: '$($a.Path)' ($($wps[0])) / '$($b.Path)' ($($wps[1]))") }
+            }
+        }
+    }
+    Set-Content -LiteralPath $log -Value (@($lines) + @($problems | ForEach-Object { "ERROR: $_" })) -Encoding utf8
+    foreach ($l in $lines) { Write-WmuxLine -Tag $tag -Message $l }
+    foreach ($p in $problems) { Write-WmuxLine -Tag $tag -Level ERROR -Message $p }
+    if ($problems.Count) { return (New-StepResult FAIL ($problems -join '; ')) }
+    return (New-StepResult PASS "$($wps -join ' + ') disjoint on $($baseSha.Substring(0, 10))")
+}
+
+Add-Step 'fmt' 'zig fmt --check (changed files)' @('local', 'merge', 'full') {
     $files = @($existing | Where-Object { $_.Path -match '\.(zig|zon)$' })
     if ($files.Count -eq 0) { return 'skip: no changed .zig/.zon files' }
     return "zig fmt --check $($files.Count) file(s): $(($files | Select-Object -First 5 | ForEach-Object Path) -join ' ')$(if ($files.Count -gt 5) { ' ...' })"
@@ -330,15 +536,15 @@ Add-Step 'fmt' 'zig fmt --check (changed files)' @('local', 'full') {
     if ($files.Count -eq 0) { return (New-StepResult SKIP 'no changed .zig/.zon files') }
     $bad = 0
     for ($i = 0; $i -lt $files.Count; $i += 40) {
-        $batch = @($files[$i..([Math]::Min($i + 39, $files.Count - 1))])
-        $res = Invoke-Zig 'fmt' (@('fmt', '--check') + $batch) -Suffix "-$([int]($i / 40))"
+        $batchFiles = @($files[$i..([Math]::Min($i + 39, $files.Count - 1))])
+        $res = Invoke-Zig 'fmt' (@('fmt', '--check') + $batchFiles) -Suffix "-$([int]($i / 40))"
         if ($res.ExitCode -ne 0) { $bad++ }
     }
     if ($bad) { return (New-StepResult FAIL "files need zig fmt (listed above); run: zig fmt <file>") }
     return (New-StepResult PASS "$($files.Count) file(s) formatted")
 }
 
-Add-Step 'pslint' 'PowerShell parse (changed .ps1/.psm1/.psd1)' @('local', 'full') {
+Add-Step 'pslint' 'PowerShell parse (changed .ps1/.psm1/.psd1)' @('local', 'merge', 'full') {
     $files = @($existing | Where-Object { $_.Path -match '\.(ps1|psm1|psd1)$' })
     if ($files.Count -eq 0) { return 'skip: no changed PowerShell files' }
     return "parse $($files.Count) file(s)"
@@ -358,53 +564,126 @@ Add-Step 'pslint' 'PowerShell parse (changed .ps1/.psm1/.psd1)' @('local', 'full
     return (New-StepResult PASS "$($files.Count) file(s) parse")
 }
 
-Add-Step 'ownership' 'scripts/check-ownership.ps1' @('local', 'full') {
-    if (-not $Wp) { return 'skip: no WP id' }
-    return "pwsh scripts/check-ownership.ps1 -Wp $Wp -Base $Base"
-} {
-    if (-not $Wp) { return (New-StepResult SKIP 'no WP id (pass -Wp, or run on a wp/<id>-<slug> branch)') }
-    $res = Invoke-Logged -Id 'ownership' -FilePath $pwshExe -Arguments @('-NoProfile', '-NonInteractive', '-File', (Join-Path $PSScriptRoot 'check-ownership.ps1'), '-Wp', $Wp, '-Base', $Base)
-    $warn = Get-CheckWarnings $res.LogFile
-    switch ($res.ExitCode) {
-        0 { if ($warn) { return (New-StepResult WARN "$warn warning(s)") } else { return (New-StepResult PASS 'all changed paths covered by the spec') } }
-        1 { return (New-StepResult FAIL 'paths outside owns/touches/appends (see log)') }
-        2 {
-            if ($AllowMissingSpec -and -not $spec -and -not $specError) { return (New-StepResult SKIP "docs/arch/wp/$Wp.md missing (-AllowMissingSpec)") }
-            return (New-StepResult FAIL 'spec missing or invalid (see log)')
-        }
-        default { return (New-StepResult FAIL "exit code $($res.ExitCode)") }
+Add-Step 'ownership' 'scripts/check-ownership.ps1' @('local', 'merge', 'full') {
+    if (-not $wps.Count) { return 'skip: no WP id' }
+    if ($isBatch) {
+        $refs = try { Get-BatchRefs } catch { @('<branch?>', '<branch?>') }
+        return (@(for ($i = 0; $i -lt $wps.Count; $i++) { "check-ownership.ps1 -Wp $($wps[$i]) -Head $($refs[$i])" }) -join '; ')
     }
+    return "pwsh scripts/check-ownership.ps1 -Wp $($wps[0]) -Base $diffBase"
+} {
+    if (-not $wps.Count) { return (New-StepResult SKIP 'no WP id (pass -Wp, or run on a wp/<id>-<slug> branch)') }
+    $refs = if ($isBatch) { Get-BatchRefs } else { 'HEAD' }   # Get-BatchRefs returns one array object
+    $fails = @(); $missing = @(); $warnTotal = 0
+    for ($i = 0; $i -lt $wps.Count; $i++) {
+        $id = $wps[$i]
+        $argList = @('-NoProfile', '-NonInteractive', '-File', (Join-Path $PSScriptRoot 'check-ownership.ps1'), '-Wp', $id, '-Base', $(if ($isBatch) { $baseRef } else { $diffBase }))
+        if ($isBatch) { $argList += @('-Head', $refs[$i]) }
+        $res = Invoke-Logged -Id 'ownership' -FilePath $pwshExe -Arguments $argList -Suffix $(if ($wps.Count -gt 1) { "-$id" } else { '' })
+        $warnTotal += Get-CheckWarnings $res.LogFile
+        switch ($res.ExitCode) {
+            0 { }
+            1 { $fails += "$id paths outside owns/touches/appends" }
+            2 { $missing += $id }
+            default { $fails += "$id exit code $($res.ExitCode)" }
+        }
+    }
+    if ($missing.Count) {
+        $allMissing = @($missing | Where-Object { -not $specErrors.ContainsKey($_) -and -not @($specs | Where-Object Wp -EQ $_).Count })
+        if ($AllowMissingSpec -and $allMissing.Count -eq $missing.Count -and -not $fails.Count) { return (New-StepResult SKIP "spec missing for $($missing -join ', ') (-AllowMissingSpec)") }
+        $fails += "spec missing or invalid: $($missing -join ', ')"
+    }
+    if ($fails.Count) { return (New-StepResult FAIL "$($fails -join '; ') (see log)") }
+    if ($warnTotal) { return (New-StepResult WARN "$warnTotal warning(s)") }
+    return (New-StepResult PASS 'all changed paths covered by the spec')
 }
 
-Add-Step 'manifest' 'scripts/check-manifest.ps1' @('local', 'full') {
+Add-Step 'manifest' 'scripts/check-manifest.ps1' @('local', 'merge', 'full') {
     return 'pwsh scripts/check-manifest.ps1'
 } {
     $res = Invoke-Logged -Id 'manifest' -FilePath $pwshExe -Arguments @('-NoProfile', '-NonInteractive', '-File', (Join-Path $PSScriptRoot 'check-manifest.ps1'))
     $warn = Get-CheckWarnings $res.LogFile
     $skeleton = [bool](Select-String -LiteralPath $res.LogFile -Pattern 'skeleton not present yet' -SimpleMatch -Quiet)
     $note = if ($skeleton) { 'skeleton not present yet; ' } else { '' }
-    if ($res.ExitCode -ne 0) { return (New-StepResult FAIL "${note}registry errors (see log)") }
+    if ($res.ExitCode -ne 0) { return (New-StepResult FAIL "${note}registry or aggregator errors (see log)") }
     if ($warn) { return (New-StepResult WARN "$note$warn warning(s)") }
     return (New-StepResult PASS "${note}consistent")
 }
 
-Add-Step 'build' 'zig build (debug)' @('local', 'full') {
-    return "zig build $($T -join ' ')"
+# Settings schema as a merge-time artifact (AF-15): regenerate on the merged tree, commit.
+Add-Step 'schema' 'settings schema: regenerate and commit (merge-time artifact)' @('merge') {
+    if ((Get-BuildStepNames) -notcontains 'settings-schema') { return 'skip: build step settings-schema not defined' }
+    $how = if ($NoSchemaCommit) { 'report only (-NoSchemaCommit)' } else { "commit 'chore(schema): regenerate the settings schema [$wpLabel]' when it changed" }
+    return "zig build settings-schema $($T -join ' '); $how"
 } {
+    $names = Get-BuildStepNames
+    if ($names -contains '<unavailable>') { return (New-StepResult FAIL 'zig build -l failed (see zig-build-steps.log)') }
+    if ($names -notcontains 'settings-schema') { return (New-StepResult SKIP 'build step settings-schema not defined') }
+    if (Set-WmuxMergeDrivers -RepoRoot $repo) { Write-WmuxLine -Tag $tag -Level NOTE -Message 'defined the merge driver "ours" (git config merge.ours.driver true) for .gitattributes merge=ours.' }
+    $res = Invoke-Zig 'schema' (@('build', 'settings-schema') + $T)
+    if ($res.ExitCode -ne 0) { return (New-StepResult FAIL "zig build settings-schema exited $($res.ExitCode)") }
+    $st = (Invoke-WmuxGit -RepoRoot $repo -Arguments @('status', '--porcelain', '--', $schemaRel)).Output.Trim()
+    if (-not $st) { return (New-StepResult PASS "$schemaRel up to date") }
+    Write-Host $st
+    if ($NoSchemaCommit) { return (New-StepResult WARN "$schemaRel regenerated but not committed (-NoSchemaCommit)") }
+    if (-not $branch) { return (New-StepResult FAIL "$schemaRel changed but HEAD is detached; commit it on a branch") }
+    [void](Invoke-WmuxGit -RepoRoot $repo -Arguments @('add', '--', $schemaRel))
+    $msg = "chore(schema): regenerate the settings schema [$wpLabel]`n`nMerge-time artifact (AF-15): scripts/gate.ps1 -Merge ran zig build settings-schema on the merged tree."
+    $c = Invoke-WmuxGit -RepoRoot $repo -Arguments @('commit', '-q', '-m', $msg, '--', $schemaRel) -AllowFailure
+    if ($c.ExitCode -ne 0) { return (New-StepResult FAIL "git commit failed: $($c.Error.Trim())") }
+    $sha = (Invoke-WmuxGit -RepoRoot $repo -Arguments @('rev-parse', '--short', 'HEAD')).Output.Trim()
+    return (New-StepResult PASS "regenerated and committed $sha chore(schema)")
+}
+
+$script:releaseJob = $null
+function Start-ReleaseBuild {
+    # -Merge: the ReleaseFast build is the longest step; it starts with the debug build and
+    # runs beside the remaining steps (the 'release' step waits for it).
+    if ($script:releaseJob -or $mode -ne 'merge' -or -not (Test-StepSelected 'release') -or -not $zigExe) { return }
+    $script:releaseLog = Join-Path $LogDir 'release-background.log'
+    $prefix = Join-Path $repo 'zig-out/release'
+    Write-WmuxLine -Tag $tag -Level NOTE -Message "ReleaseFast build started in the background (log $($script:releaseLog))"
+    $script:releaseJob = Start-WmuxProcess -FilePath $zigExe -ArgumentList (@('build') + $T + @('-Doptimize=ReleaseFast', '--prefix', $prefix)) `
+        -WorkingDirectory $repo -LogFile $script:releaseLog -Environment $childEnv
+}
+
+Add-Step 'build' 'zig build (debug)' @('local', 'merge', 'full') {
+    $bg = if ($mode -eq 'merge' -and (Test-StepSelected 'release')) { ' (the ReleaseFast build starts beside it)' } else { '' }
+    return "zig build $($T -join ' ')$bg"
+} {
+    Start-ReleaseBuild
     $res = Invoke-Zig 'build' (@('build') + $T)
     if ($res.ExitCode -ne 0) { return (New-StepResult FAIL "exit code $($res.ExitCode)") }
     return (New-StepResult PASS 'zig-out\bin\wmux.exe')
 }
 
-Add-Step 'release' 'zig build -Doptimize=ReleaseFast' @('full') {
-    return "zig build $($T -join ' ') -Doptimize=ReleaseFast --prefix zig-out\release"
-} {
+function Complete-Release($Res) {
+    if ($Res.ExitCode -ne 0) { return (New-StepResult FAIL "exit code $($Res.ExitCode)") }
     $prefix = Join-Path $repo 'zig-out/release'
-    $res = Invoke-Zig 'release' (@('build') + $T + @('-Doptimize=ReleaseFast', '--prefix', $prefix))
-    if ($res.ExitCode -ne 0) { return (New-StepResult FAIL "exit code $($res.ExitCode)") }
     $dll = Join-Path $repo 'zig-out/bin/WebView2Loader.dll'
     if (Test-Path -LiteralPath $dll) { Copy-Item -LiteralPath $dll -Destination (Join-Path $prefix 'bin') -Force }
     return (New-StepResult PASS 'zig-out\release\bin\wmux.exe')
+}
+
+Add-Step 'release' 'zig build -Doptimize=ReleaseFast' @('merge', 'full') {
+    $how = if ($mode -eq 'merge') { ' (background, joined here)' } else { '' }
+    return "zig build $($T -join ' ') -Doptimize=ReleaseFast --prefix zig-out\release$how"
+} {
+    if ($mode -eq 'merge') {
+        if (-not $script:releaseJob) { Start-ReleaseBuild }
+        if ($script:releaseJob) {
+            $res = Wait-WmuxProcess -Handle $script:releaseJob -TimeoutSec 1800
+            $script:releaseJob = $null
+            $script:releaseSeconds = [int]$res.Duration.TotalSeconds
+            Write-WmuxLine -Tag $tag -Message "background ReleaseFast build took $($script:releaseSeconds) s"
+            if ($res.ExitCode -ne 0) { Get-Content -LiteralPath $res.LogFile -Tail 40 | ForEach-Object { Write-Host $_ } }
+            $r = Complete-Release $res
+            $r.Notes = "$($r.Notes) (background, $($script:releaseSeconds) s wall)"
+            return $r
+        }
+    }
+    $prefix = Join-Path $repo 'zig-out/release'
+    return (Complete-Release (Invoke-Zig 'release' (@('build') + $T + @('-Doptimize=ReleaseFast', '--prefix', $prefix))))
 }
 
 # test-fast and test-cli: the step id is also the zig build step name.
@@ -422,10 +701,10 @@ $optionalTestRun = {
     if ($res.ExitCode -ne 0) { return (New-StepResult FAIL "exit code $($res.ExitCode)") }
     return (New-StepResult PASS '')
 }
-Add-Step 'test-fast' 'zig build test-fast' @('local', 'full') $optionalTestPlan $optionalTestRun
-Add-Step 'test-cli' 'zig build test-cli' @('local', 'full') $optionalTestPlan $optionalTestRun
+Add-Step 'test-fast' 'zig build test-fast' @('local', 'merge', 'full') $optionalTestPlan $optionalTestRun
+Add-Step 'test-cli' 'zig build test-cli' @('local', 'merge', 'full') $optionalTestPlan $optionalTestRun
 
-Add-Step 'unit' 'zig build test -Dtest-filter=...' @('local', 'full') {
+Add-Step 'unit' 'zig build test -Dtest-filter=...' @('local', 'merge', 'full') {
     $plan = Get-UnitPlan
     if ($plan.Filters.Count -eq 0) { return "skip: $($plan.Reason)" }
     $how = if ($SplitFilters) { 'one compile per filter' } else { 'one compile' }
@@ -435,7 +714,7 @@ Add-Step 'unit' 'zig build test -Dtest-filter=...' @('local', 'full') {
     if ($plan.Filters.Count -eq 0) { return (New-StepResult SKIP $plan.Reason) }
     $src = Join-Path $repo 'src'
     $empty = @()
-    if ($mode -eq 'local' -and -not $UnitFilter) {
+    if ($mode -ne 'full' -and -not $UnitFilter) {
         $names = @(Get-ChildItem -LiteralPath $src -Recurse -File -Filter '*.zig' | Select-String -Pattern 'test\s+"[^"]*"' -AllMatches |
                 ForEach-Object { $_.Matches } | ForEach-Object { $_.Value })
         foreach ($f in $plan.Filters) {
@@ -459,45 +738,62 @@ Add-Step 'unit' 'zig build test -Dtest-filter=...' @('local', 'full') {
     return (New-StepResult PASS $desc)
 }
 
-Add-Step 'e2e' 'test/e2e/run.ps1' @('local', 'full') {
+Add-Step 'e2e' 'test/e2e/run.ps1' @('local', 'merge', 'full') {
     if (-not (Test-Path -LiteralPath (Join-Path $repo 'test/e2e/run.ps1'))) { return 'skip: test/e2e/run.ps1 not present yet (W0-B harness)' }
-    $runs = Get-E2ERuns
-    return (($runs | ForEach-Object { "run.ps1 $($_.Extra -join ' ')".TrimEnd() }) -join '; ')
+    $r = Get-E2ERun
+    $missing = if ($r.Missing.Count) { "; not present yet, skipped: $($r.Missing -join ', ')" } else { '' }
+    if (-not $r.Args) { return "skip: no suite present$missing" }
+    return "run.ps1 $($r.Extra -join ' ') [$($r.Desc -join '; ')]$missing"
 } {
     if (-not (Test-Path -LiteralPath (Join-Path $repo 'test/e2e/run.ps1'))) { return (New-StepResult SKIP 'test/e2e/run.ps1 not present yet (W0-B harness)') }
     if ($script:results.Contains('build') -and $script:results['build'].Result -eq 'FAIL') { return (New-StepResult SKIP 'debug build failed') }
-    $runs = Get-E2ERuns
-    $deadline = [DateTime]::UtcNow.AddSeconds($E2ETimeoutSec)
-    $failedRuns = @()
-    $i = 0
-    foreach ($r in $runs) {
-        $left = [int]($deadline - [DateTime]::UtcNow).TotalSeconds
-        if ($left -le 0) { $failedRuns += "$($r.Label) (budget exhausted)"; continue }
-        $res = Invoke-Logged -Id 'e2e' -FilePath $pwshExe -Arguments $r.Args -TimeoutSec $left -Suffix "-$i"
-        $i++
-        if ($res.TimedOut) { $failedRuns += "$($r.Label) (timeout)" }
-        elseif ($res.ExitCode -ne 0) { $failedRuns += $r.Label }
-    }
+    $r = Get-E2ERun
+    $missingNote = if ($r.Missing.Count) { "; suites not present yet (skipped): $($r.Missing -join ', ')" } else { '' }
+    foreach ($m in $r.Missing) { Write-WmuxLine -Tag $tag -Level SKIP -Message "e2e area '$m' has no suite yet (test/e2e/suites/$m/); skipped" }
+    if (-not $r.Args) { return (New-StepResult SKIP "no suite present$missingNote") }
+    $res = Invoke-Logged -Id 'e2e' -FilePath $pwshExe -Arguments $r.Args -TimeoutSec $E2ETimeoutSec
     $wpNote = ''
-    $wpSuites = Get-WpSuites
-    if ($mode -eq 'local' -and $wpSuites.Count -eq 0) {
-        $wpNote = "no $Wp*.e2e.ps1 suite (ADR-12.5 expects one per WP); "
+    $coversIds = @($specs | ForEach-Object { @($_.Data['covers']) } | Where-Object { $_ })
+    if ($mode -ne 'full' -and $wps.Count -and $coversIds.Count -and (Get-WpSuites).Count -eq 0) {
+        $wpNote = "no $($wps -join '/')*.e2e.ps1 suite (ADR-12.5 expects one per feature WP); "
     }
-    if ($failedRuns.Count) { return (New-StepResult FAIL "$wpNote$($failedRuns -join ', ') failed") }
-    if ($wpNote) { return (New-StepResult WARN "${wpNote}smoke passed") }
-    return (New-StepResult PASS (($runs | ForEach-Object Label) -join ', '))
+    if ($res.TimedOut) { return (New-StepResult FAIL "$wpNote$($r.Label) timed out after $E2ETimeoutSec s$missingNote") }
+    if ($res.ExitCode -ne 0) { return (New-StepResult FAIL "$wpNote$($r.Label) failed (exit $($res.ExitCode))$missingNote") }
+    if ($wpNote) { return (New-StepResult WARN "$wpNote$($r.Label) passed$missingNote") }
+    return (New-StepResult PASS "$($r.Label)$missingNote")
 }
 
-# Settings schema golden (section 15.2); the check needs a committed golden to compare with.
-$SchemaGolden = 'docs/wmux/schema/wmux.schema.json'
+# Headless web-panel harness (PB-web-harness): src/web and test/web changes, every -Full.
+function Get-WebPlan {
+    $script = Join-Path $repo 'test/web/run.ps1'
+    if (-not (Test-Path -LiteralPath $script -PathType Leaf)) { return [pscustomobject]@{ Run = $false; Why = 'test/web/run.ps1 not present yet (PB-web-harness)' } }
+    if ($mode -eq 'full') { return [pscustomobject]@{ Run = $true; Why = 'every -Full' } }
+    $hits = @($changed | Where-Object { $_.Path -match '^(src/web|test/web)/' })
+    if ($hits.Count -eq 0) { return [pscustomobject]@{ Run = $false; Why = 'nothing under src/web or test/web changed' } }
+    return [pscustomobject]@{ Run = $true; Why = "$($hits.Count) path(s) under src/web or test/web changed" }
+}
+
+Add-Step 'web' 'test/web/run.ps1 (headless web panels)' @('local', 'merge', 'full') {
+    $p = Get-WebPlan
+    if (-not $p.Run) { return "skip: $($p.Why)" }
+    return "pwsh test/web/run.ps1 ($($p.Why))"
+} {
+    $p = Get-WebPlan
+    if (-not $p.Run) { return (New-StepResult SKIP $p.Why) }
+    $res = Invoke-Logged -Id 'web' -FilePath $pwshExe -Arguments @('-NoProfile', '-NonInteractive', '-File', (Join-Path $repo 'test/web/run.ps1')) -TimeoutSec 900
+    if ($res.TimedOut) { return (New-StepResult FAIL 'test/web/run.ps1 timed out after 900 s') }
+    if ($res.ExitCode -ne 0) { return (New-StepResult FAIL "test/web/run.ps1 exited $($res.ExitCode)") }
+    return (New-StepResult PASS $p.Why)
+}
+
 function Test-SchemaGoldenTracked {
-    return ((Invoke-WmuxGit -RepoRoot $repo -Arguments @('ls-files', '--error-unmatch', '--', $SchemaGolden) -AllowFailure).ExitCode -eq 0)
+    return ((Invoke-WmuxGit -RepoRoot $repo -Arguments @('ls-files', '--error-unmatch', '--', $schemaRel) -AllowFailure).ExitCode -eq 0)
 }
 
-Add-Step 'contract' 'contract checks' @('full') {
+Add-Step 'contract' 'contract checks' @('merge', 'full') {
     $parts = @()
-    if ((Get-BuildStepNames) -contains 'settings-schema') {
-        $parts += if (Test-SchemaGoldenTracked) { 'settings-schema golden' } else { "settings-schema golden skipped ($SchemaGolden not committed yet)" }
+    if ($mode -eq 'full' -and (Get-BuildStepNames) -contains 'settings-schema') {
+        $parts += if (Test-SchemaGoldenTracked) { 'settings-schema golden' } else { "settings-schema golden skipped ($schemaRel not committed yet)" }
     }
     if (Test-Path -LiteralPath (Join-Path $repo 'test/cli/probes.ps1')) { $parts += 'test/cli/probes.ps1' }
     $parts += @(Get-ChildItem -LiteralPath (Join-Path $repo 'test/contract') -Filter '*.ps1' -File -ErrorAction SilentlyContinue | ForEach-Object { "test/contract/$($_.Name)" })
@@ -505,21 +801,22 @@ Add-Step 'contract' 'contract checks' @('full') {
     return ($parts -join ', ')
 } {
     $ran = @(); $failedChecks = @(); $notes = @()
-    $names = Get-BuildStepNames
-    if ($names -contains 'settings-schema') {
-        if (-not (Test-SchemaGoldenTracked)) {
-            # Nothing to compare with yet (the first WP that adds a setting commits it); running
-            # the generator would only drop an untracked file into the tree.
-            $notes += "settings-schema golden skipped: $SchemaGolden is not committed yet"
-        } else {
-            $ran += 'settings-schema'
-            $res = Invoke-Zig 'contract' (@('build', 'settings-schema') + $T) -Suffix '-schema'
-            if ($res.ExitCode -ne 0) { $failedChecks += 'settings-schema (build step failed)' }
-            else {
-                $st = Invoke-WmuxGit -RepoRoot $repo -Arguments @('status', '--porcelain', '--', 'docs/wmux/schema')
-                if ($st.Output.Trim()) {
-                    Write-Host $st.Output
-                    $failedChecks += 'settings-schema (docs/wmux/schema differs from the committed golden; commit the regenerated file)'
+    if ($mode -eq 'full') {
+        # The schema golden is checked at wave ends; -Merge regenerates it in the schema step.
+        $names = Get-BuildStepNames
+        if ($names -contains 'settings-schema') {
+            if (-not (Test-SchemaGoldenTracked)) {
+                $notes += "settings-schema golden skipped: $schemaRel is not committed yet"
+            } else {
+                $ran += 'settings-schema'
+                $res = Invoke-Zig 'contract' (@('build', 'settings-schema') + $T) -Suffix '-schema'
+                if ($res.ExitCode -ne 0) { $failedChecks += 'settings-schema (build step failed)' }
+                else {
+                    $st = Invoke-WmuxGit -RepoRoot $repo -Arguments @('status', '--porcelain', '--', 'docs/wmux/schema')
+                    if ($st.Output.Trim()) {
+                        Write-Host $st.Output
+                        $failedChecks += 'settings-schema (docs/wmux/schema differs from the committed golden; a merge skipped gate.ps1 -Merge)'
+                    }
                 }
             }
         }
@@ -537,7 +834,7 @@ Add-Step 'contract' 'contract checks' @('full') {
         if ($res.ExitCode -ne 0) { $failedChecks += $rel }
     }
     if ($ran.Count -eq 0) {
-        $why = if ($notes.Count) { $notes -join '; ' } else { 'no contract checks present yet (settings-schema step, test/cli/probes.ps1, test/contract/*.ps1)' }
+        $why = if ($notes.Count) { $notes -join '; ' } else { 'no contract checks present yet (test/cli/probes.ps1, test/contract/*.ps1)' }
         return (New-StepResult SKIP $why)
     }
     if ($failedChecks.Count) { return (New-StepResult FAIL ($failedChecks -join '; ')) }
@@ -578,40 +875,54 @@ Add-Step 'fulltest' 'zig build test (unfiltered) vs test/known-failures.txt' @('
 $script:results = [ordered]@{}
 $selected = @($steps | Where-Object {
         $s = $_
-        ($s.Modes -contains $mode) -or ($FullTest -and $s.Modes -contains 'fulltest')
+        ($s.Modes -contains $mode) -or ($isBatch -and $s.Modes -contains 'batch') -or ($runFullTest -and $s.Modes -contains 'fulltest')
     })
 $total = $selected.Count
+$tierName = if ($isBatch) { 'batch (merge tier)' } else { $mode }
+$budgetNote = if ($BudgetSec -gt 0) { ('budget {0}:{1:D2}' -f [int][Math]::Floor($BudgetSec / 60), ($BudgetSec % 60)) } else { 'no budget' }
+Write-WmuxLine -Tag $tag -Message "tier plan: $tierName -> $(($selected | ForEach-Object Id) -join ', ') ($budgetNote)"
 $stopped = $false
 $gateTimer = [System.Diagnostics.Stopwatch]::StartNew()
-foreach ($s in $selected) {
-    $script:stepIndex++
-    $r = $null
-    $elapsed = [TimeSpan]::Zero
-    if ($Only -and $Only -notcontains $s.Id) { $r = New-StepResult SKIP 'not selected (-Only)' }
-    elseif ($Skip -and $Skip -contains $s.Id) { $r = New-StepResult SKIP 'skipped (-Skip)' }
-    elseif ($stopped) { $r = New-StepResult SKIP 'not run (-FailFast)' }
-    elseif ($DryRun) {
-        $desc = (@(& $s.Plan $s) | ForEach-Object { "$_" }) -join ' '
-        Write-WmuxLine -Tag $tag -Message ("[{0}/{1}] {2,-9} {3}" -f $script:stepIndex, $total, $s.Id, $desc)
-        $r = New-StepResult PLAN $desc
-    } else {
-        Write-Host ''
-        Write-WmuxLine -Tag $tag -Message ("==> [{0}/{1}] {2}: {3}" -f $script:stepIndex, $total, $s.Id, $s.Title)
-        $t0 = [System.Diagnostics.Stopwatch]::StartNew()
-        try {
-            # Keep only the step's result object, even if a command leaked pipeline output.
-            $r = @(& $s.Run $s) | Where-Object { $_ -is [System.Management.Automation.PSCustomObject] -and $_.PSObject.Properties['Result'] } | Select-Object -Last 1
-        } catch {
-            $r = New-StepResult FAIL "error: $($_.Exception.Message)"
+try {
+    foreach ($s in $selected) {
+        $script:stepIndex++
+        $r = $null
+        $elapsed = [TimeSpan]::Zero
+        if ($Only -and $Only -notcontains $s.Id) { $r = New-StepResult SKIP 'not selected (-Only)' }
+        elseif ($Skip -and $Skip -contains $s.Id) { $r = New-StepResult SKIP 'skipped (-Skip)' }
+        elseif ($stopped) { $r = New-StepResult SKIP 'not run (-FailFast)' }
+        elseif ($DryRun) {
+            $desc = (@(& $s.Plan $s) | ForEach-Object { "$_" }) -join ' '
+            Write-WmuxLine -Tag $tag -Message ("[{0}/{1}] {2,-9} {3}" -f $script:stepIndex, $total, $s.Id, $desc)
+            $r = New-StepResult PLAN $desc
+        } else {
+            Write-Host ''
+            Write-WmuxLine -Tag $tag -Message ("==> [{0}/{1}] {2}: {3}" -f $script:stepIndex, $total, $s.Id, $s.Title)
+            $t0 = [System.Diagnostics.Stopwatch]::StartNew()
+            try {
+                # Keep only the step's result object, even if a command leaked pipeline output.
+                $r = @(& $s.Run $s) | Where-Object { $_ -is [System.Management.Automation.PSCustomObject] -and $_.PSObject.Properties['Result'] } | Select-Object -Last 1
+            } catch {
+                $r = New-StepResult FAIL "error: $($_.Exception.Message)"
+            }
+            $t0.Stop()
+            $elapsed = $t0.Elapsed
+            if ($null -eq $r) { $r = New-StepResult FAIL 'internal error: step returned no result' }
+            $level = switch ($r.Result) { 'PASS' { 'OK' } 'FAIL' { 'ERROR' } 'WARN' { 'WARN' } default { 'SKIP' } }
+            Write-WmuxLine -Tag $tag -Level $level -Message ("{0} {1} ({2:mm\:ss}) {3}" -f $s.Id, $r.Result, $elapsed, $r.Notes)
+            if ($FailFast -and $r.Result -eq 'FAIL') { $stopped = $true }
         }
-        $t0.Stop()
-        $elapsed = $t0.Elapsed
-        if ($null -eq $r) { $r = New-StepResult FAIL 'internal error: step returned no result' }
-        $level = switch ($r.Result) { 'PASS' { 'OK' } 'FAIL' { 'ERROR' } 'WARN' { 'WARN' } default { 'SKIP' } }
-        Write-WmuxLine -Tag $tag -Level $level -Message ("{0} {1} ({2:mm\:ss}) {3}" -f $s.Id, $r.Result, $elapsed, $r.Notes)
-        if ($FailFast -and $r.Result -eq 'FAIL') { $stopped = $true }
+        $seconds = [int]$elapsed.TotalSeconds
+        if ($s.Id -eq 'release' -and (Get-Variable -Name releaseSeconds -Scope Script -ErrorAction SilentlyContinue)) { $wall = $script:releaseSeconds } else { $wall = $seconds }
+        $script:results[$s.Id] = [pscustomobject]@{ Id = $s.Id; Title = $s.Title; Result = $r.Result; Seconds = $seconds; WallSeconds = $wall; Notes = $r.Notes }
     }
-    $script:results[$s.Id] = [pscustomobject]@{ Id = $s.Id; Title = $s.Title; Result = $r.Result; Seconds = [int]$elapsed.TotalSeconds; Notes = $r.Notes }
+} finally {
+    # A background ReleaseFast build never outlives the gate (Ctrl+C, FailFast, -Skip release).
+    if ($script:releaseJob) {
+        Stop-WmuxProcessTree -ProcessId $script:releaseJob.Process.Id
+        [void](Wait-WmuxProcess -Handle $script:releaseJob -TimeoutSec 30)
+        $script:releaseJob = $null
+    }
 }
 $gateTimer.Stop()
 
@@ -620,8 +931,10 @@ $rows = @($script:results.Values)
 $failedCount = @($rows | Where-Object Result -EQ 'FAIL').Count
 $skipCount = @($rows | Where-Object Result -EQ 'SKIP').Count
 $warnCount = @($rows | Where-Object Result -EQ 'WARN').Count
+$totalSeconds = [int]$gateTimer.Elapsed.TotalSeconds
+$withinBudget = ($BudgetSec -le 0) -or ($totalSeconds -le $BudgetSec)
 Write-Host ''
-Write-Host ("==== gate summary: {0} {1} @ {2} ====" -f $mode, $(if ($Wp) { $Wp } else { '-' }), $changes.Head.Substring(0, 10))
+Write-Host ("==== gate summary: {0} {1} @ {2} ====" -f $tierName, $wpLabel, $changes.Head.Substring(0, 10))
 Write-Host ('{0,-10} {1,-5} {2,6}  {3}' -f 'step', 'result', 'time', 'notes')
 foreach ($row in $rows) {
     $time = if ($row.Seconds -gt 0) { '{0}:{1:D2}' -f [int][Math]::Floor($row.Seconds / 60), ($row.Seconds % 60) } else { '-' }
@@ -630,19 +943,31 @@ foreach ($row in $rows) {
 }
 $verdict = if ($DryRun) { 'DRY RUN (nothing executed)' } elseif ($failedCount) { "GATE FAILED ($failedCount failed, $warnCount warned, $skipCount skipped)" } else { "GATE PASSED ($warnCount warned, $skipCount skipped)" }
 Write-Host ("{0} in {1:hh\:mm\:ss}" -f $verdict, $gateTimer.Elapsed)
+if (-not $DryRun -and $BudgetSec -gt 0) {
+    if ($withinBudget) { Write-WmuxLine -Tag $tag -Level OK -Message "within the $budgetNote ($totalSeconds s)" }
+    else { Write-WmuxLine -Tag $tag -Level WARN -Message "over the $budgetNote ($totalSeconds s > $BudgetSec s); see the step durations in summary.json" }
+}
 if (-not $DryRun) {
     Write-Host "logs: $LogDir"
+    $durations = [ordered]@{}
+    foreach ($row in $rows) { $durations[$row.Id] = $row.WallSeconds }
     $summaryObj = [ordered]@{
-        mode       = $mode
-        wp         = $Wp
-        branch     = $branch
-        base       = $baseRef
-        merge_base = $changes.MergeBase
-        head       = $changes.Head
-        started    = $stamp
-        seconds    = [int]$gateTimer.Elapsed.TotalSeconds
-        passed     = ($failedCount -eq 0)
-        steps      = $rows
+        mode           = $mode
+        tier           = $tierName
+        wp             = $(if ($wps.Count -eq 1) { $wps[0] } elseif ($wps.Count) { $wps -join '+' } else { $null })
+        wps            = @($wps)
+        branch         = $branch
+        base           = $baseRef
+        diff_base      = $diffBase
+        merge_base     = $changes.MergeBase
+        head           = $changes.Head
+        started        = $stamp
+        seconds        = $totalSeconds
+        budget_seconds = $BudgetSec
+        within_budget  = $withinBudget
+        passed         = ($failedCount -eq 0)
+        durations      = $durations
+        steps          = $rows
     }
     $summaryObj | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $LogDir 'summary.json') -Encoding utf8
 }

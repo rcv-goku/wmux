@@ -4,7 +4,7 @@
 
 test {
     _ = @import("lifecycle.zig");
-    _ = @import("store.zig");
     _ = @import("lifecycle_test.zig");
+    _ = @import("store.zig");
     _ = @import("store_test.zig");
 }
