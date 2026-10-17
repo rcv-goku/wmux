@@ -4,8 +4,10 @@
 //! cli\wmux.exe and cli\wmux.com (byte copies) and the cli\posix sh launchers.
 //!
 //! Dispatch (ADR-4.3): argv[0] (or `WMUX_ARGV0`) picks the brand or a shim;
-//! a legacy `+verb` is mapped (commands/legacy_plus.zig) or relayed to
-//! `wmux.exe`; then the cmux grammar (args.zig) selects a command from the
+//! a Ghostty-native `+action` is relayed to `..\wmux.exe`, a removed legacy
+//! wmux `+verb` keeps its legacy output over the legacy pipe (relay.zig,
+//! AF-11) or, without one, is mapped (commands/legacy_plus.zig); then the
+//! cmux grammar (args.zig) selects a command from the
 //! families in commands/manifest.zig. Help, version, guide and every
 //! `<command> --help` work without a socket. `cmux <path>` opens an existing
 //! path through the launch pipe. Command families register in
@@ -37,6 +39,7 @@ pub const platform = @import("platform.zig");
 pub const socket_status = @import("socket_status.zig");
 pub const version = @import("version.zig");
 pub const welcome = @import("welcome.zig");
+pub const relay = @import("relay.zig");
 const legacy_plus = @import("commands/legacy_plus.zig");
 const wmux_ns = @import("commands/wmux_ns.zig");
 
@@ -153,8 +156,26 @@ fn runInner(rt: Runtime, argv: []const []const u8) !u8 {
     var rest: []const []const u8 = if (argv.len > 0) argv[1..] else argv;
     var plus_rewritten = false;
 
-    // Legacy `+verb` at argv[1] (ADR-4.3 step 2, ADR-4.11).
+    // Legacy `+verb` at argv[1] (ADR-4.3 step 2, ADR-4.11, AF-11): Ghostty's
+    // own `+actions` run in `..\wmux.exe`; the removed wmux verbs keep their
+    // legacy output over the legacy pipe (relay.zig) and fall back to the
+    // cmux mapping when no legacy pipe exists.
     if (rest.len > 0 and rest[0].len > 1 and rest[0][0] == '+') {
+        const verb = rest[0][1..];
+        if (relay.isGhosttyAction(verb)) return relayToGui(rt, b, rest);
+        if (relay.isLegacyVerb(verb)) {
+            const io: relay.LegacyIo = .{
+                .arena = rt.arena,
+                .out = rt.out,
+                .err = rt.err,
+                .ghostty_pid = rt.env.get(proto.env_names.GHOSTTY_PID),
+            };
+            switch (relay.runLegacy(io, rt.platform, rest)) {
+                .done => |code| return code,
+                .relay_gui => return relayToGui(rt, b, rest),
+                .fallback => {},
+            }
+        }
         switch (try legacy_plus.map(rt.arena, rest)) {
             .relay => return relayToGui(rt, b, rest),
             .usage => |msg| {
@@ -394,6 +415,7 @@ test {
     _ = version;
     _ = welcome;
     _ = legacy_plus;
+    _ = relay;
     _ = @import("tests.zig");
     _ = @import("logic/tests.zig");
     _ = @import("hooks/tests.zig");
