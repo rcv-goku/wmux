@@ -2057,11 +2057,11 @@
    "wave": 11,
    "arch_id": "W1-2b",
    "arch_wave": "W1",
-   "status": "planned",
+   "status": "done",
    "executor": "plan",
    "est_size": "M",
    "units": 0,
-   "summary": "Completes the two-binary layout so the daily +verb workflow survives every later wave (critic issue 8, AF-11, AF-20). wmux.exe routes Ghostty-native +actions in-process and relays every other +verb, cmux command or global CLI option to <exe dir>/cli/cmux.exe (AttachConsole(ATTACH_PARENT_PROCESS) when std handles are null, inherited handles, exit code propagated); cmux.exe relays Ghostty-native +actions (+version, +list-themes, ...) to ../wmux.exe; the old src/cli wmux verb files and their +action entries are deleted (hooks.zig stays for W3-3a, ssh.zig for W6-1a) because W1-2a already serves +verbs through the legacy JSON adapter with byte-identical output. Release staging: release.ps1 stages cli/ (cmux.exe, wmux.exe, wmux.com, posix/) and share/wmux/** (web, schema, icons, shell-integration) next to the existing payload; installer [Files] entries; test/contract/release-smoke.ps1 (run by gate -Full) stages, installs silently to a temp dir and runs the installed CLI.",
+   "summary": "Completes the two-binary layout so the daily +verb workflow survives every later wave (critic issue 8, AF-11, AF-20). wmux.exe routes Ghostty-native +actions in-process and relays every other +verb, cmux command or global CLI option to <exe dir>/cli/cmux.exe (AttachConsole(ATTACH_PARENT_PROCESS) when std handles are null, inherited handles, exit code propagated); cmux.exe relays Ghostty-native +actions (+version, +list-themes, ...) to ../wmux.exe; the old src/cli wmux verb files and their +action entries are deleted (hooks.zig stays for W3-3a, ssh.zig for W6-1a) because W1-2a already serves +verbs through the legacy JSON adapter with byte-identical output. Release staging: release.ps1 stages cli/ (cmux.exe, wmux.exe, wmux.com, posix/) and share/wmux/** (web, schema, icons, shell-integration) next to the existing payload; installer [Files] entries; test/contract/release-smoke.ps1 (run by gate -Full) stages, installs silently to a temp dir and runs the installed CLI. Merged 6bb1230 (2026-10-17) on a green gate -Merge.",
    "features": [],
    "depends_on": [
     "WP-10-w1-interface",
