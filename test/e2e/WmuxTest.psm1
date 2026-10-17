@@ -12,8 +12,15 @@
     directories under $env:RUNNER_TEMP or $env:TEMP\wmux-e2e\<id>, a generated ghostty.conf
     with a deterministic cmd prompt (WMUX>), a toast sink, and a child environment from which
     inherited CMUX_*, WMUX_* and GHOSTTY_* variables (plus agent markers and credentials) are
-    removed. A focus sampler fails the current Test-Case with "focus stolen by test instance"
-    when a test instance ever owns the foreground window.
+    removed. A focus sampler (spike S2) watches the whole process tree of every instance (wmux,
+    conhost, shells, msedgewebview2; descendants refreshed every 250 ms, exited PIDs kept) and
+    fails the current Test-Case with "focus stolen by test instance" when a window of the tree
+    becomes foreground; its visibility guard fails it with "visible test window" when a
+    top-level window of the tree is visible, not cloaked and on a monitor (cloaked windows and
+    the (-32000,-32000) placement are accepted; the placement seen is reported as hidden_mode).
+    A violating tree is killed at once. Stop-WmuxInstance kills orphaned tree members (WebView2
+    outlives its host), waits until none is listed, and deletes the root in the background when
+    files are still locked; run.ps1 sweeps stale roots of dead runs.
 
     Transitional behavior until W1-1a lands the v2 server and the new pipe names:
       * Start-WmuxInstance detects the protocol. When the legacy pipe \\.\pipe\wmux-ipc-<pid>
@@ -54,7 +61,7 @@ $ErrorActionPreference = 'Stop'
 # `catch [WmuxRpcError]`; helpers live in the WmuxTestHarness namespace.
 # ---------------------------------------------------------------------------
 
-$script:HarnessTypesVersion = '3'
+$script:HarnessTypesVersion = '4'
 
 $script:HarnessTypeSource = @'
 using System;
@@ -151,6 +158,15 @@ public class WmuxInstance
     public Process Process;
     public IntPtr JobHandle;
     public List<object> Streams = new List<object>();
+    /// Placement of the hidden windows seen by the visibility guard (FocusSampler.PlacementOf):
+    /// "cloaked" (S2 / W0-A4), "offscreen" ((-32000,-32000), W0-A1), "none", ... Set at stop.
+    public string HiddenMode;
+    /// Processes of the instance tree recorded by the sampler (set at stop).
+    public object[] Tree;
+    /// Tree members still listed after the stop wait; deletion mode of the root ("sync",
+    /// "async" or "kept").
+    public string[] Survivors;
+    public string RootDeletion;
     /// Ids ("n:<number>" / "s:<string>") of requests whose reply has not arrived yet.
     public HashSet<string> OutstandingIds = new HashSet<string>();
 
@@ -351,20 +367,151 @@ namespace WmuxTestHarness
 {
     public static class Native
     {
-        public const string Version = "3";
+        public const string Version = "4";
 
         [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
         [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassNameW(IntPtr hWnd, StringBuilder buf, int max);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowTextW(IntPtr hWnd, StringBuilder buf, int max);
-        private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+        public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
         [DllImport("user32.dll")] private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+        [DllImport("user32.dll")] private static extern bool EnumChildWindows(IntPtr parent, EnumWindowsProc callback, IntPtr lParam);
         [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+        [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
         [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdc, uint flags);
         [DllImport("user32.dll")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
         [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
         [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+        [DllImport("user32.dll")] private static extern IntPtr MonitorFromRect(ref RECT rect, uint flags);
+        [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(IntPtr hWnd, int attribute, out int value, int size);
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern uint GetLongPathNameW(string shortPath, StringBuilder longPath, uint size);
+        [DllImport("kernel32.dll", SetLastError = true)] private static extern IntPtr CreateToolhelp32Snapshot(uint flags, uint pid);
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] private static extern bool Process32FirstW(IntPtr snapshot, ref PROCESSENTRY32W entry);
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] private static extern bool Process32NextW(IntPtr snapshot, ref PROCESSENTRY32W entry);
+        [DllImport("kernel32.dll", SetLastError = true)] private static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
+        [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetProcessTimes(IntPtr process, out long creation, out long exit, out long kernel, out long user);
+        [DllImport("kernel32.dll", SetLastError = true)] private static extern bool TerminateProcess(IntPtr process, uint exitCode);
+        [DllImport("kernel32.dll", SetLastError = true)] private static extern bool CloseHandle(IntPtr handle);
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct PROCESSENTRY32W
+        {
+            public uint dwSize, cntUsage, th32ProcessID;
+            public IntPtr th32DefaultHeapID;
+            public uint th32ModuleID, cntThreads, th32ParentProcessID;
+            public int pcPriClassBase;
+            public uint dwFlags;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)] public string szExeFile;
+        }
+
+        public const int DWMWA_CLOAKED = 14;
+        private const uint PROCESS_TERMINATE = 0x0001;
+        private const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+        /// DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2: physical pixels for GetWindowRect and PrintWindow.
+        public static readonly IntPtr PerMonitorAwareV2 = new IntPtr(-4);
+
+        /// One Toolhelp process entry.
+        public sealed class ProcEntry
+        {
+            public int Pid;
+            public int ParentPid;
+            public string Name;
+        }
+
+        /// Every process of the session (Toolhelp snapshot), by PID.
+        public static Dictionary<int, ProcEntry> SnapshotProcesses()
+        {
+            var map = new Dictionary<int, ProcEntry>();
+            IntPtr snap = CreateToolhelp32Snapshot(0x2 /* TH32CS_SNAPPROCESS */, 0);
+            if (snap == IntPtr.Zero || snap == new IntPtr(-1)) return map;
+            try
+            {
+                var pe = new PROCESSENTRY32W();
+                pe.dwSize = (uint)Marshal.SizeOf(typeof(PROCESSENTRY32W));
+                if (Process32FirstW(snap, ref pe))
+                {
+                    do
+                    {
+                        var e = new ProcEntry();
+                        e.Pid = (int)pe.th32ProcessID;
+                        e.ParentPid = (int)pe.th32ParentProcessID;
+                        e.Name = pe.szExeFile;
+                        map[e.Pid] = e;
+                    } while (Process32NextW(snap, ref pe));
+                }
+            }
+            finally { CloseHandle(snap); }
+            return map;
+        }
+
+        /// Creation time (FILETIME ticks) of a live or exiting process; 0 when it cannot be opened.
+        public static long ProcessCreationTime(int pid)
+        {
+            if (pid <= 0) return 0;
+            IntPtr h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, (uint)pid);
+            if (h == IntPtr.Zero) return 0;
+            try
+            {
+                long c, e, k, u;
+                return GetProcessTimes(h, out c, out e, out k, out u) ? c : 0;
+            }
+            finally { CloseHandle(h); }
+        }
+
+        /// Terminates pid only when its creation time still equals creationTime (never a recycled PID).
+        public static bool TerminateIfSame(int pid, long creationTime)
+        {
+            if (pid <= 0 || creationTime == 0) return false;
+            IntPtr h = OpenProcess(PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION, false, (uint)pid);
+            if (h == IntPtr.Zero) return false;
+            try
+            {
+                long c, e, k, u;
+                if (!GetProcessTimes(h, out c, out e, out k, out u) || c != creationTime) return false;
+                return TerminateProcess(h, 1);
+            }
+            finally { CloseHandle(h); }
+        }
+
+        /// DWMWA_CLOAKED of a window: null when the query fails (window being destroyed).
+        public static int? Cloaked(IntPtr hWnd)
+        {
+            int v;
+            if (DwmGetWindowAttribute(hWnd, DWMWA_CLOAKED, out v, 4) != 0) return null;
+            return v;
+        }
+
+        /// True when the window rectangle intersects a monitor (MONITOR_DEFAULTTONULL).
+        public static bool OnAnyMonitor(IntPtr hWnd)
+        {
+            RECT r;
+            if (!GetWindowRect(hWnd, out r) || r.Right <= r.Left || r.Bottom <= r.Top) return false;
+            return MonitorFromRect(ref r, 0) != IntPtr.Zero;
+        }
+
+        /// Child windows (any depth) of parent whose class equals className (null = all).
+        public static IntPtr[] ChildWindows(IntPtr parent, string className)
+        {
+            var list = new List<IntPtr>();
+            EnumWindowsProc cb = delegate (IntPtr h, IntPtr l)
+            {
+                if (className == null || ClassName(h) == className) list.Add(h);
+                return true;
+            };
+            EnumChildWindows(parent, cb, IntPtr.Zero);
+            GC.KeepAlive(cb);
+            return list.ToArray();
+        }
+
+        /// Every top-level window of the desktop.
+        public static IntPtr[] AllTopLevelWindows()
+        {
+            var list = new List<IntPtr>();
+            EnumWindowsProc cb = delegate (IntPtr h, IntPtr l) { list.Add(h); return true; };
+            EnumWindows(cb, IntPtr.Zero);
+            GC.KeepAlive(cb);
+            return list.ToArray();
+        }
 
         public static int ForegroundProcessId()
         {
@@ -746,35 +893,101 @@ namespace WmuxTestHarness
     public sealed class FocusViolation
     {
         public DateTime At;
+        /// "focus" (a window of a watched tree became foreground) or "visible" (visibility guard).
+        public string Kind = "focus";
         public int Pid;
+        public int Root;
         public long Hwnd;
+        public string Process;
         public string Class;
         public string Title;
+        public string Detail;
 
         public override string ToString()
         {
-            return At.ToString("HH:mm:ss.fff") + " pid=" + Pid + " hwnd=0x" + Hwnd.ToString("X") + " class=" + Class + " title=\"" + Title + "\"";
+            string s = At.ToString("HH:mm:ss.fff") + " pid=" + Pid;
+            if (Root != 0 && Root != Pid) s += " (tree of " + Root + ")";
+            if (!string.IsNullOrEmpty(Process)) s += " proc=" + Process;
+            s += " hwnd=0x" + Hwnd.ToString("X") + " class=" + Class + " title=\"" + Title + "\"";
+            if (!string.IsNullOrEmpty(Detail)) s += " " + Detail;
+            return s;
         }
     }
 
-    /// Samples GetWindowThreadProcessId(GetForegroundWindow()) every IntervalMs on a background
-    /// thread and records a violation each time the foreground window starts belonging to a
-    /// watched process id (Appendix D.2.7).
+    /// A process of a watched tree. Exited members stay (no PID is reused against a run).
+    public sealed class TreeMember
+    {
+        public int Pid;
+        public int ParentPid;
+        public string Name;
+        public long CreationTime;
+        public DateTime AddedAt;
+
+        public override string ToString() { return Name + "(" + Pid + ")"; }
+    }
+
+    /// Focus sampler and visibility guard (Appendix D.2 step 7, spike S2 section 6.2).
+    /// A background thread, made per-monitor-v2 DPI aware first, samples
+    /// GetWindowThreadProcessId(GetForegroundWindow()) every IntervalMs and records a "focus"
+    /// violation each time the foreground window starts belonging to a watched process tree:
+    /// the root PID plus every descendant (Toolhelp parent links, refreshed every TreeRefreshMs,
+    /// exited PIDs kept, creation times checked so a recycled PID never counts). Every
+    /// VisibleScanMs it also enumerates the top-level windows of guarded trees and records a
+    /// "visible" violation for a window that is visible, not minimized, not cloaked (only a
+    /// successful DWMWA_CLOAKED query of 0 counts) and on a monitor. Cloaked windows and windows
+    /// on no monitor (the (-32000,-32000) placement) are accepted; the placement seen is kept
+    /// per root (PlacementOf). Trees registered with killOnViolation are terminated at once.
     public static class FocusSampler
     {
+        private sealed class Root
+        {
+            public int Pid;
+            public bool GuardVisible;
+            public bool Kill;
+            public bool Teardown;
+            public readonly Dictionary<int, TreeMember> Members = new Dictionary<int, TreeMember>();
+            public readonly HashSet<long> ReportedVisible = new HashSet<long>();
+            public readonly HashSet<string> Placements = new HashSet<string>();
+        }
+
         private static readonly object Gate = new object();
-        private static readonly HashSet<int> Pids = new HashSet<int>();
+        private static readonly Dictionary<int, Root> Roots = new Dictionary<int, Root>();
         private static readonly List<FocusViolation> Violations = new List<FocusViolation>();
+        private static readonly List<FocusViolation> Visible = new List<FocusViolation>();
         private static Thread _thread;
         private static long _samples;
+        private static long _scans;
         private static IntPtr _lastHwnd = IntPtr.Zero;
         public static int IntervalMs = 100;
+        public static int TreeRefreshMs = 250;
+        public static int VisibleScanMs = 200;
+        public static volatile bool DpiAware;
 
-        public static void Watch(int pid)
+        /// Watches one process tree for focus only (no visibility guard, never kills).
+        public static void Watch(int pid) { WatchTree(pid, false, false); }
+
+        /// Watches the process tree rooted at pid. guardVisible enables the visibility guard;
+        /// killOnViolation terminates the tree on the first violation.
+        public static void WatchTree(int pid, bool guardVisible, bool killOnViolation)
         {
             lock (Gate)
             {
-                Pids.Add(pid);
+                Root r;
+                if (!Roots.TryGetValue(pid, out r))
+                {
+                    r = new Root();
+                    r.Pid = pid;
+                    Roots[pid] = r;
+                    var m = new TreeMember();
+                    m.Pid = pid;
+                    m.CreationTime = Native.ProcessCreationTime(pid);
+                    m.AddedAt = DateTime.UtcNow;
+                    try { m.Name = System.Diagnostics.Process.GetProcessById(pid).ProcessName + ".exe"; } catch { m.Name = "?"; }
+                    r.Members[pid] = m;
+                }
+                r.GuardVisible = guardVisible;
+                r.Kill = killOnViolation;
+                r.Teardown = false;
                 if (_thread == null)
                 {
                     _thread = new Thread(Loop);
@@ -783,55 +996,188 @@ namespace WmuxTestHarness
                     _thread.Start();
                 }
             }
+            RefreshTrees();
         }
 
         public static void Unwatch(int pid)
         {
-            lock (Gate) { Pids.Remove(pid); }
+            lock (Gate) { Roots.Remove(pid); }
         }
 
         public static bool IsWatching(int pid)
         {
-            lock (Gate) { return Pids.Contains(pid); }
+            lock (Gate) { return Roots.ContainsKey(pid); }
         }
 
-        public static int ViolationCount
+        /// Stops the visibility guard and the kill for a tree that is being shut down on purpose
+        /// (windows being destroyed answer DWM queries unreliably); focus is still sampled.
+        public static void BeginTeardown(int pid)
         {
-            get { lock (Gate) { return Violations.Count; } }
+            lock (Gate)
+            {
+                Root r;
+                if (Roots.TryGetValue(pid, out r)) { r.Teardown = true; r.Kill = false; }
+            }
         }
 
+        public static int ViolationCount { get { lock (Gate) { return Violations.Count; } } }
+        public static int VisibleCount { get { lock (Gate) { return Visible.Count; } } }
         public static long Samples { get { return Interlocked.Read(ref _samples); } }
-
+        public static long Scans { get { return Interlocked.Read(ref _scans); } }
         public static bool Running { get { lock (Gate) { return _thread != null; } } }
 
         public static FocusViolation[] Since(int index)
         {
-            lock (Gate)
-            {
-                if (index < 0) index = 0;
-                if (index >= Violations.Count) return new FocusViolation[0];
-                return Violations.GetRange(index, Violations.Count - index).ToArray();
-            }
+            lock (Gate) { return Slice(Violations, index); }
         }
 
+        public static FocusViolation[] VisibleSince(int index)
+        {
+            lock (Gate) { return Slice(Visible, index); }
+        }
+
+        private static FocusViolation[] Slice(List<FocusViolation> list, int index)
+        {
+            if (index < 0) index = 0;
+            if (index >= list.Count) return new FocusViolation[0];
+            return list.GetRange(index, list.Count - index).ToArray();
+        }
+
+        /// Focus violations whose window belonged to pid itself.
         public static FocusViolation[] ForPid(int pid)
         {
             lock (Gate) { return Violations.FindAll(v => v.Pid == pid).ToArray(); }
         }
 
+        /// Focus and visibility violations of the tree rooted at root.
+        public static FocusViolation[] ForRoot(int root)
+        {
+            lock (Gate)
+            {
+                var all = Violations.FindAll(v => v.Root == root || v.Pid == root);
+                all.AddRange(Visible.FindAll(v => v.Root == root));
+                return all.ToArray();
+            }
+        }
+
+        /// Members of the tree (live and exited) in the order they were found.
+        public static TreeMember[] TreeOf(int root)
+        {
+            lock (Gate)
+            {
+                Root r;
+                if (!Roots.TryGetValue(root, out r)) return new TreeMember[0];
+                var list = new List<TreeMember>(r.Members.Values);
+                list.Sort((a, b) => a.AddedAt.CompareTo(b.AddedAt));
+                return list.ToArray();
+            }
+        }
+
+        /// Placement of the visible top-level windows seen so far: "cloaked", "offscreen"
+        /// (visible but on no monitor, the (-32000,-32000) placement), combinations joined with
+        /// "+", "onscreen" when the guard fired, or "none" when no visible window was seen.
+        public static string PlacementOf(int root)
+        {
+            lock (Gate)
+            {
+                Root r;
+                if (!Roots.TryGetValue(root, out r) || r.Placements.Count == 0) return "none";
+                var p = new List<string>(r.Placements);
+                p.Sort(StringComparer.Ordinal);
+                return string.Join("+", p);
+            }
+        }
+
         private static void Loop()
         {
+            try { DpiAware = Native.SetThreadDpiAwarenessContext(Native.PerMonitorAwareV2) != IntPtr.Zero; } catch { }
+            var clock = Stopwatch.StartNew();
+            long lastTree = 0, lastScan = 0;
             while (true)
             {
+                long now = clock.ElapsedMilliseconds;
+                try { if (now - lastTree >= TreeRefreshMs) { RefreshTrees(); lastTree = now; } } catch { }
+                try { if (now - lastScan >= VisibleScanMs) { ScanVisibleOnce(); lastScan = now; } } catch { }
                 try { SampleOnce(); } catch { }
                 Thread.Sleep(Math.Max(10, IntervalMs));
             }
         }
 
-        /// One synchronous sample; public so self-tests can drive the detector deterministically.
+        /// Adds the live descendants of every watched root (public for deterministic tests).
+        public static void RefreshTrees()
+        {
+            Root[] roots;
+            lock (Gate)
+            {
+                if (Roots.Count == 0) return;
+                roots = new Root[Roots.Count];
+                Roots.Values.CopyTo(roots, 0);
+            }
+            Dictionary<int, Native.ProcEntry> snap = Native.SnapshotProcesses();
+            foreach (Root r in roots)
+            {
+                bool grew = true;
+                while (grew)
+                {
+                    grew = false;
+                    foreach (Native.ProcEntry e in snap.Values)
+                    {
+                        if (e.Pid == e.ParentPid || e.Pid <= 4) continue;
+                        TreeMember parent;
+                        lock (Gate)
+                        {
+                            if (r.Members.ContainsKey(e.Pid) || !r.Members.TryGetValue(e.ParentPid, out parent)) continue;
+                        }
+                        // The parent entry must be the process we recorded, not a recycled PID.
+                        long parentNow = Native.ProcessCreationTime(e.ParentPid);
+                        if (parent.CreationTime != 0 && parentNow != 0 && parentNow != parent.CreationTime) continue;
+                        long ct = Native.ProcessCreationTime(e.Pid);
+                        if (ct != 0 && parent.CreationTime != 0 && ct < parent.CreationTime) continue;
+                        var m = new TreeMember();
+                        m.Pid = e.Pid;
+                        m.ParentPid = e.ParentPid;
+                        m.Name = e.Name;
+                        m.CreationTime = ct;
+                        m.AddedAt = DateTime.UtcNow;
+                        lock (Gate) { if (!r.Members.ContainsKey(e.Pid)) { r.Members[e.Pid] = m; grew = true; } }
+                    }
+                }
+            }
+        }
+
+        /// The root whose tree contains pid (creation time checked), or 0.
+        private static int RootOf(int pid, out TreeMember member, out bool kill)
+        {
+            member = null;
+            kill = false;
+            Root hit = null;
+            lock (Gate)
+            {
+                foreach (Root r in Roots.Values)
+                {
+                    TreeMember m;
+                    if (r.Members.TryGetValue(pid, out m)) { hit = r; member = m; kill = r.Kill; break; }
+                }
+            }
+            if (hit == null) return 0;
+            if (member.CreationTime != 0)
+            {
+                long now = Native.ProcessCreationTime(pid);
+                if (now != 0 && now != member.CreationTime) { member = null; kill = false; return 0; }
+            }
+            return hit.Pid;
+        }
+
+        /// One synchronous foreground sample; public so self-tests can drive the detector.
         public static bool SampleOnce()
         {
-            IntPtr fg = Native.ForegroundWindow();
+            return SampleWindow(Native.ForegroundWindow());
+        }
+
+        /// Evaluates fg as if it were the foreground window (the sampler's decision without a
+        /// real focus change; self-tests use it so they never take focus from the user).
+        public static bool SampleWindow(IntPtr fg)
+        {
             Interlocked.Increment(ref _samples);
             if (fg == IntPtr.Zero)
             {
@@ -839,25 +1185,412 @@ namespace WmuxTestHarness
                 return false;
             }
             int pid = Native.WindowProcessId(fg);
+            TreeMember member;
+            bool kill;
+            int root = RootOf(pid, out member, out kill);
+            if (root == 0)
+            {
+                lock (Gate) { _lastHwnd = IntPtr.Zero; }
+                return false;
+            }
+            bool fresh;
             lock (Gate)
             {
-                if (!Pids.Contains(pid))
-                {
-                    _lastHwnd = IntPtr.Zero;
-                    return false;
-                }
-                if (fg != _lastHwnd)
+                fresh = fg != _lastHwnd;
+                if (fresh)
                 {
                     var v = new FocusViolation();
                     v.At = DateTime.UtcNow;
+                    v.Kind = "focus";
                     v.Pid = pid;
+                    v.Root = root;
                     v.Hwnd = fg.ToInt64();
+                    v.Process = member.Name;
                     try { v.Class = Native.ClassName(fg); v.Title = Native.Title(fg); } catch { }
                     Violations.Add(v);
                     _lastHwnd = fg;
                 }
-                return true;
             }
+            if (fresh && kill) KillTree(root);
+            return true;
+        }
+
+        /// One synchronous visibility scan over the guarded trees; true when a new visible
+        /// window was found. Public so self-tests can drive the guard.
+        public static bool ScanVisibleOnce()
+        {
+            var owner = new Dictionary<int, Root>();
+            lock (Gate)
+            {
+                foreach (Root r in Roots.Values)
+                {
+                    if (!r.GuardVisible || r.Teardown) continue;
+                    foreach (int p in r.Members.Keys) owner[p] = r;
+                }
+            }
+            Interlocked.Increment(ref _scans);
+            if (owner.Count == 0) return false;
+            bool found = false;
+            var kills = new List<int>();
+            foreach (IntPtr h in Native.AllTopLevelWindows())
+            {
+                int pid = Native.WindowProcessId(h);
+                Root r;
+                if (!owner.TryGetValue(pid, out r)) continue;
+                if (!Native.IsWindowVisible(h) || Native.IsIconic(h)) continue;
+                Native.RECT rect;
+                if (!Native.GetWindowRect(h, out rect) || rect.Right <= rect.Left || rect.Bottom <= rect.Top) continue;
+                int? cloaked = Native.Cloaked(h);
+                if (cloaked == null) continue;
+                if (cloaked.Value != 0) { bool on = Native.OnAnyMonitor(h); lock (Gate) { r.Placements.Add(on ? "cloaked" : "cloaked-offscreen"); } continue; }
+                if (!Native.OnAnyMonitor(h)) { lock (Gate) { r.Placements.Add("offscreen"); } continue; }
+                // Re-check after the slower calls: a window hidden meanwhile is not a hit.
+                if (!Native.IsWindowVisible(h)) continue;
+                TreeMember m;
+                bool kill;
+                if (RootOf(pid, out m, out kill) != r.Pid) continue;
+                lock (Gate)
+                {
+                    if (r.Teardown) continue;
+                    r.Placements.Add("onscreen");
+                    if (!r.ReportedVisible.Add(h.ToInt64())) continue;
+                    var v = new FocusViolation();
+                    v.At = DateTime.UtcNow;
+                    v.Kind = "visible";
+                    v.Pid = pid;
+                    v.Root = r.Pid;
+                    v.Hwnd = h.ToInt64();
+                    v.Process = m != null ? m.Name : null;
+                    try { v.Class = Native.ClassName(h); v.Title = Native.Title(h); } catch { }
+                    v.Detail = "rect=(" + rect.Left + "," + rect.Top + ")-(" + rect.Right + "," + rect.Bottom + ") cloaked=0";
+                    Visible.Add(v);
+                    found = true;
+                    if (r.Kill) kills.Add(r.Pid);
+                }
+            }
+            foreach (int k in kills) KillTree(k);
+            return found;
+        }
+
+        /// Terminates every live member of the tree whose creation time still matches.
+        public static int KillTree(int root)
+        {
+            return KillMembers(TreeOf(root));
+        }
+
+        public static int KillMembers(TreeMember[] members)
+        {
+            int n = 0;
+            if (members == null) return 0;
+            foreach (TreeMember m in members)
+            {
+                try { if (Native.TerminateIfSame(m.Pid, m.CreationTime)) n++; } catch { }
+            }
+            return n;
+        }
+
+        /// Members that still exist (listed by Toolhelp with the same image name and, when it
+        /// can be read, the same creation time). Includes processes still in teardown.
+        public static TreeMember[] AliveMembers(TreeMember[] members)
+        {
+            var alive = new List<TreeMember>();
+            if (members == null) return alive.ToArray();
+            var snap = Native.SnapshotProcesses();
+            foreach (TreeMember m in members)
+            {
+                Native.ProcEntry e;
+                if (!snap.TryGetValue(m.Pid, out e)) continue;
+                if (m.Name != null && m.Name != "?" && !string.Equals(e.Name, m.Name, StringComparison.OrdinalIgnoreCase)) continue;
+                long ct = Native.ProcessCreationTime(m.Pid);
+                if (ct != 0 && m.CreationTime != 0 && ct != m.CreationTime) continue;
+                alive.Add(m);
+            }
+            return alive.ToArray();
+        }
+    }
+
+    /// PrintWindow capture into a 32bpp DIB (no System.Drawing), region statistics and a
+    /// minimal PNG writer (spike S2, S2Native.PrintWindowCapture and SavePng).
+    public sealed class Capture
+    {
+        [DllImport("user32.dll")] private static extern IntPtr GetDC(IntPtr hWnd);
+        [DllImport("user32.dll")] private static extern int ReleaseDC(IntPtr hWnd, IntPtr hdc);
+        [DllImport("gdi32.dll")] private static extern IntPtr CreateCompatibleDC(IntPtr hdc);
+        [DllImport("gdi32.dll")] private static extern bool DeleteDC(IntPtr hdc);
+        [DllImport("gdi32.dll")] private static extern IntPtr SelectObject(IntPtr hdc, IntPtr obj);
+        [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr obj);
+        [DllImport("gdi32.dll")] private static extern bool GdiFlush();
+        [DllImport("gdi32.dll")] private static extern IntPtr CreateDIBSection(IntPtr hdc, ref BITMAPINFOHEADER bmi, uint usage, out IntPtr bits, IntPtr section, uint offset);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct BITMAPINFOHEADER
+        {
+            public int biSize, biWidth, biHeight;
+            public short biPlanes, biBitCount;
+            public int biCompression, biSizeImage, biXPelsPerMeter, biYPelsPerMeter, biClrUsed, biClrImportant;
+        }
+
+        public bool Ok;
+        public int Error;
+        public int Left, Top, Width, Height;
+        public int[] Pixels;
+
+        /// PrintWindow(hWnd, PW_RENDERFULLCONTENT) of the whole window, with the calling thread
+        /// switched to per-monitor-v2 DPI awareness for the duration (physical pixels).
+        public static Capture Window(IntPtr hWnd)
+        {
+            IntPtr old = IntPtr.Zero;
+            try { old = Native.SetThreadDpiAwarenessContext(Native.PerMonitorAwareV2); } catch { }
+            try
+            {
+                Native.RECT r;
+                Native.GetWindowRect(hWnd, out r);
+                var cap = new Capture();
+                cap.Left = r.Left;
+                cap.Top = r.Top;
+                cap.Width = r.Right - r.Left;
+                cap.Height = r.Bottom - r.Top;
+                if (cap.Width <= 0 || cap.Height <= 0) return cap;
+                IntPtr screen = GetDC(IntPtr.Zero);
+                IntPtr mem = CreateCompatibleDC(screen);
+                var bmi = new BITMAPINFOHEADER();
+                bmi.biSize = Marshal.SizeOf(typeof(BITMAPINFOHEADER));
+                bmi.biWidth = cap.Width;
+                bmi.biHeight = -cap.Height;
+                bmi.biPlanes = 1;
+                bmi.biBitCount = 32;
+                IntPtr bits;
+                IntPtr dib = CreateDIBSection(mem, ref bmi, 0, out bits, IntPtr.Zero, 0);
+                IntPtr prev = SelectObject(mem, dib);
+                try
+                {
+                    cap.Ok = Native.PrintWindow(hWnd, mem, 2 /* PW_RENDERFULLCONTENT */);
+                    cap.Error = cap.Ok ? 0 : Marshal.GetLastWin32Error();
+                    GdiFlush();
+                    cap.Pixels = new int[cap.Width * cap.Height];
+                    if (bits != IntPtr.Zero) Marshal.Copy(bits, cap.Pixels, 0, cap.Pixels.Length);
+                }
+                finally
+                {
+                    SelectObject(mem, prev);
+                    DeleteObject(dib);
+                    DeleteDC(mem);
+                    ReleaseDC(IntPtr.Zero, screen);
+                }
+                return cap;
+            }
+            finally
+            {
+                if (old != IntPtr.Zero) { try { Native.SetThreadDpiAwarenessContext(old); } catch { } }
+            }
+        }
+
+        /// Window() on a background thread: null when PrintWindow does not return within
+        /// timeoutMs (a hung UI thread never answers WM_PRINT; the thread is abandoned).
+        public static Capture WindowWithTimeout(IntPtr hWnd, int timeoutMs)
+        {
+            Capture result = null;
+            Exception error = null;
+            var t = new Thread(() => { try { result = Window(hWnd); } catch (Exception ex) { error = ex; } });
+            t.IsBackground = true;
+            t.Name = "wmux-e2e-capture";
+            t.Start();
+            if (!t.Join(Math.Max(1, timeoutMs))) return null;
+            if (error != null) throw new InvalidOperationException("capture failed: " + error.Message, error);
+            return result;
+        }
+
+        /// Screen rectangle of a window in the same (per-monitor-v2) coordinates as Window().
+        public static Native.RECT ScreenRect(IntPtr hWnd)
+        {
+            IntPtr old = IntPtr.Zero;
+            try { old = Native.SetThreadDpiAwarenessContext(Native.PerMonitorAwareV2); } catch { }
+            try
+            {
+                Native.RECT r;
+                Native.GetWindowRect(hWnd, out r);
+                return r;
+            }
+            finally
+            {
+                if (old != IntPtr.Zero) { try { Native.SetThreadDpiAwarenessContext(old); } catch { } }
+            }
+        }
+
+        /// Distinct RGB colours and the dominant colour fraction of a region (window coordinates).
+        public RegionStats Stats(int x, int y, int w, int h)
+        {
+            var s = new RegionStats();
+            if (Pixels == null) return s;
+            int x0 = Math.Max(0, x), y0 = Math.Max(0, y);
+            int x1 = Math.Min(Width, x + w), y1 = Math.Min(Height, y + h);
+            if (x1 <= x0 || y1 <= y0) return s;
+            var counts = new Dictionary<int, int>();
+            long total = 0;
+            for (int yy = y0; yy < y1; yy++)
+            {
+                int row = yy * Width;
+                for (int xx = x0; xx < x1; xx++)
+                {
+                    int rgb = Pixels[row + xx] & 0xFFFFFF;
+                    int n;
+                    counts.TryGetValue(rgb, out n);
+                    counts[rgb] = n + 1;
+                    total++;
+                }
+            }
+            int best = 0;
+            foreach (var kv in counts) if (kv.Value > best) { best = kv.Value; s.Dominant = kv.Key; }
+            s.Pixels = total;
+            s.Distinct = counts.Count;
+            s.DominantFraction = total > 0 ? (double)best / total : 1.0;
+            return s;
+        }
+
+        /// Minimal PNG writer (RGB8, filter 0, zlib).
+        public void SavePng(string path)
+        {
+            int w = Width, h = Height;
+            var raw = new byte[h * (1 + w * 3)];
+            int o = 0;
+            for (int y = 0; y < h; y++)
+            {
+                raw[o++] = 0;
+                for (int x = 0; x < w; x++)
+                {
+                    int p = Pixels[y * w + x];
+                    raw[o++] = (byte)((p >> 16) & 0xFF);
+                    raw[o++] = (byte)((p >> 8) & 0xFF);
+                    raw[o++] = (byte)(p & 0xFF);
+                }
+            }
+            byte[] idat;
+            using (var ms = new MemoryStream())
+            {
+                using (var z = new System.IO.Compression.ZLibStream(ms, System.IO.Compression.CompressionLevel.Fastest, true)) z.Write(raw, 0, raw.Length);
+                idat = ms.ToArray();
+            }
+            using (var fs = new FileStream(path, FileMode.Create, FileAccess.Write))
+            {
+                fs.Write(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A }, 0, 8);
+                var ihdr = new byte[13];
+                WriteBE(ihdr, 0, (uint)w);
+                WriteBE(ihdr, 4, (uint)h);
+                ihdr[8] = 8;
+                ihdr[9] = 2;
+                WriteChunk(fs, "IHDR", ihdr);
+                WriteChunk(fs, "IDAT", idat);
+                WriteChunk(fs, "IEND", new byte[0]);
+            }
+        }
+
+        private static void WriteBE(byte[] b, int off, uint v) { b[off] = (byte)(v >> 24); b[off + 1] = (byte)(v >> 16); b[off + 2] = (byte)(v >> 8); b[off + 3] = (byte)v; }
+
+        private static uint[] _crc;
+        private static uint Crc(byte[] type, byte[] data)
+        {
+            if (_crc == null)
+            {
+                var t = new uint[256];
+                for (uint n = 0; n < 256; n++) { uint c = n; for (int k = 0; k < 8; k++) c = (c & 1) != 0 ? 0xEDB88320u ^ (c >> 1) : c >> 1; t[n] = c; }
+                _crc = t;
+            }
+            uint crc = 0xFFFFFFFFu;
+            foreach (byte x in type) crc = _crc[(crc ^ x) & 0xFF] ^ (crc >> 8);
+            foreach (byte x in data) crc = _crc[(crc ^ x) & 0xFF] ^ (crc >> 8);
+            return crc ^ 0xFFFFFFFFu;
+        }
+
+        private static void WriteChunk(Stream s, string type, byte[] data)
+        {
+            var len = new byte[4];
+            WriteBE(len, 0, (uint)data.Length);
+            s.Write(len, 0, 4);
+            var t = Encoding.ASCII.GetBytes(type);
+            s.Write(t, 0, 4);
+            s.Write(data, 0, data.Length);
+            var crc = new byte[4];
+            WriteBE(crc, 0, Crc(t, data));
+            s.Write(crc, 0, 4);
+        }
+    }
+
+    public sealed class RegionStats
+    {
+        public long Pixels;
+        public int Distinct;
+        public int Dominant;
+        public double DominantFraction = 1.0;
+
+        /// S2 rule for a rendered terminal: at least 3 colours and no colour above 99.9 %.
+        public bool NotBlank { get { return Pixels > 0 && Distinct >= 3 && DominantFraction < 0.999; } }
+
+        public override string ToString()
+        {
+            return "pixels=" + Pixels + " colors=" + Distinct + " dominant=0x" + (Dominant & 0xFFFFFF).ToString("X6") + " (" + (DominantFraction * 100).ToString("F2") + "%)";
+        }
+    }
+
+    /// Self-test fixtures: a tiny no-activate tool window in a chosen placement. It never takes
+    /// focus (WS_EX_NOACTIVATE, SW_SHOWNOACTIVATE), lets clicks through (WS_EX_TRANSPARENT) and
+    /// is nearly transparent (layered, alpha 1), so the on-screen variant cannot disturb the user.
+    public static class Fixtures
+    {
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern IntPtr CreateWindowExW(uint exStyle, string cls, string title, uint style, int x, int y, int w, int h, IntPtr parent, IntPtr menu, IntPtr inst, IntPtr param);
+        [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr hWnd, int cmd);
+        [DllImport("user32.dll")] private static extern bool DestroyWindow(IntPtr hWnd);
+        [DllImport("user32.dll")] private static extern bool SetLayeredWindowAttributes(IntPtr hWnd, uint key, byte alpha, uint flags);
+        [DllImport("user32.dll")] private static extern bool PeekMessageW(out MSG msg, IntPtr hWnd, uint min, uint max, uint remove);
+        [DllImport("user32.dll")] private static extern bool TranslateMessage(ref MSG msg);
+        [DllImport("user32.dll")] private static extern IntPtr DispatchMessageW(ref MSG msg);
+        [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(IntPtr hWnd, int attr, ref int value, int size);
+        [DllImport("user32.dll")] private static extern IntPtr MonitorFromPoint(POINT pt, uint flags);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern bool GetMonitorInfoW(IntPtr mon, ref MONITORINFO info);
+
+        [StructLayout(LayoutKind.Sequential)] private struct POINT { public int X, Y; }
+        [StructLayout(LayoutKind.Sequential)] private struct MSG { public IntPtr hwnd; public uint message; public IntPtr wParam, lParam; public uint time; public POINT pt; }
+        [StructLayout(LayoutKind.Sequential)] private struct MONITORINFO { public int cbSize; public Native.RECT rcMonitor, rcWork; public uint dwFlags; }
+
+        /// Shows the window ("onscreen", "offscreen" or "cloaked"), pumps messages for holdMs,
+        /// then destroys it. Returns 0; 2 when cloaking was requested but did not take effect
+        /// (the window is then never shown); 3 when the window could not be created.
+        public static int ShowProbeWindow(string placement, int holdMs)
+        {
+            const uint WS_POPUP = 0x80000000;
+            const uint WS_EX_TOPMOST = 0x8, WS_EX_TRANSPARENT = 0x20, WS_EX_TOOLWINDOW = 0x80, WS_EX_LAYERED = 0x80000, WS_EX_NOACTIVATE = 0x08000000;
+            int x = -32000, y = -32000;
+            if (placement != "offscreen")
+            {
+                var mi = new MONITORINFO();
+                mi.cbSize = Marshal.SizeOf(typeof(MONITORINFO));
+                IntPtr mon = MonitorFromPoint(new POINT(), 1 /* MONITOR_DEFAULTTOPRIMARY */);
+                if (GetMonitorInfoW(mon, ref mi)) { x = mi.rcWork.Right - 40; y = mi.rcWork.Bottom - 40; } else { x = 0; y = 0; }
+            }
+            IntPtr h = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_TOPMOST,
+                "STATIC", "wmux-e2e-probe-" + placement, WS_POPUP, x, y, 24, 24, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+            if (h == IntPtr.Zero) return 3;
+            try
+            {
+                SetLayeredWindowAttributes(h, 0, 1, 0x2 /* LWA_ALPHA */);
+                if (placement == "cloaked")
+                {
+                    int on = 1;
+                    DwmSetWindowAttribute(h, 13 /* DWMWA_CLOAK */, ref on, 4);
+                    int? c = Native.Cloaked(h);
+                    if (c == null || c.Value == 0) return 2;
+                }
+                ShowWindow(h, 4 /* SW_SHOWNOACTIVATE */);
+                var sw = Stopwatch.StartNew();
+                while (sw.ElapsedMilliseconds < holdMs)
+                {
+                    MSG msg;
+                    while (PeekMessageW(out msg, IntPtr.Zero, 0, 0, 1)) { TranslateMessage(ref msg); DispatchMessageW(ref msg); }
+                    Thread.Sleep(20);
+                }
+                return 0;
+            }
+            finally { DestroyWindow(h); }
         }
     }
 
@@ -1803,34 +2536,75 @@ function Get-WmuxArtifactBase {
     return (Join-Path $script:RepoRoot ('test-results\artifacts\' + (Get-WmuxSlug $leaf)))
 }
 
+function Get-WmuxWindowPlacement {
+    # Where a top-level window is, as the user would see it: 'cloaked' (DWMWA_CLOAKED != 0, on a
+    # monitor: the S2 placement, GL capturable), 'cloaked-offscreen' (cloaked and on no
+    # monitor), 'offscreen' (visible but on no monitor, the (-32000,-32000) placement),
+    # 'onscreen', 'hidden' (not visible) or 'unknown' (the DWM query failed).
+    param([Parameter(Mandatory)][IntPtr]$Hwnd)
+    if (-not [WmuxTestHarness.Native]::IsWindowVisible($Hwnd)) { return 'hidden' }
+    $cloaked = [WmuxTestHarness.Native]::Cloaked($Hwnd)
+    if ($null -eq $cloaked) { return 'unknown' }
+    if ($cloaked -ne 0) { if ([WmuxTestHarness.Native]::OnAnyMonitor($Hwnd)) { return 'cloaked' } else { return 'cloaked-offscreen' } }
+    if (-not [WmuxTestHarness.Native]::OnAnyMonitor($Hwnd)) { return 'offscreen' }
+    return 'onscreen'
+}
+
+function Get-WmuxTerminalCheck {
+    # DWMWA_CLOAKED-aware "terminal rendered" check of a capture (spike S2 section 6.2): the
+    # WmuxTerminal children must show at least 3 colours and no colour above 99.9 %. GL output
+    # reaches PrintWindow only for a window on a monitor, so the check is 'inconclusive' unless
+    # the window is cloaked; 'ok' or 'blank' otherwise, 'none' without a terminal child.
+    param([Parameter(Mandatory)][IntPtr]$Hwnd, [Parameter(Mandatory)]$Capture, [Parameter(Mandatory)][string]$Placement)
+    $terminals = @([WmuxTestHarness.Native]::ChildWindows($Hwnd, 'WmuxTerminal') | Where-Object { [WmuxTestHarness.Native]::IsWindowVisible($_) })
+    $result = [ordered]@{ check = 'none'; stats = $null; reason = 'no visible WmuxTerminal child window' }
+    if ($terminals.Count -eq 0) { return $result }
+    $best = $null
+    foreach ($t in $terminals) {
+        $r = [WmuxTestHarness.Capture]::ScreenRect($t)
+        $stats = $Capture.Stats($r.Left - $Capture.Left, $r.Top - $Capture.Top, $r.Right - $r.Left, $r.Bottom - $r.Top)
+        if ($null -eq $best -or $stats.Pixels -gt $best.Pixels) { $best = $stats }
+    }
+    $result.stats = $best.ToString()
+    if ($Placement -ne 'cloaked') {
+        $result.check = 'inconclusive'
+        $result.reason = "window is $Placement, not cloaked on a monitor: GL output is not capturable there (spike S2)"
+    } elseif ($best.NotBlank) {
+        $result.check = 'ok'
+        $result.reason = $null
+    } else {
+        $result.check = 'blank'
+        $result.reason = "terminal area looks blank: $($best.ToString())"
+    }
+    return $result
+}
+
 function Save-WmuxWindowCapture {
-    # PrintWindow(PW_RENDERFULLCONTENT) of a top-level WmuxWindow; works off-screen, no focus change.
+    # PrintWindow(PW_RENDERFULLCONTENT) of a top-level WmuxWindow on a per-monitor-v2 DPI aware
+    # thread; works off-screen and cloaked, never changes focus, gives up after 10 s when the UI
+    # thread is hung. Returns the placement and the terminal check (Get-WmuxTerminalCheck).
     param([Parameter(Mandatory)][WmuxInstance]$Instance, [Parameter(Mandatory)][string]$Path, $Window)
     $hwnds = @([WmuxTestHarness.Native]::TopLevelWindows($Instance.Pid, 'WmuxWindow'))
-    if ($hwnds.Count -eq 0) { $hwnds = @([WmuxTestHarness.Native]::TopLevelWindows($Instance.Pid, $null) | Where-Object { [WmuxTestHarness.Native]::IsWindowVisible($_) }) }
+    if ($hwnds.Count -eq 0) { $hwnds = @([WmuxTestHarness.Native]::TopLevelWindows($Instance.Pid, [NullString]::Value) | Where-Object { [WmuxTestHarness.Native]::IsWindowVisible($_) }) }
     if ($hwnds.Count -eq 0) { throw (New-WmuxHarnessError -Code 'harness_transport' -Message "no top-level window found for pid $($Instance.Pid)" -Method 'screenshot') }
     $index = 0
     if ($null -ne $Window -and (Test-WmuxIsNumber $Window)) { $index = [int]$Window }
     if ($index -ge $hwnds.Count) { throw (New-WmuxHarnessError -Code 'harness_transport' -Message "window index $index out of range ($($hwnds.Count) windows)" -Method 'screenshot') }
     $hwnd = $hwnds[$index]
-    Add-Type -AssemblyName System.Drawing
-    $oldCtx = [IntPtr]::Zero
-    try { $oldCtx = [WmuxTestHarness.Native]::SetThreadDpiAwarenessContext([IntPtr](-4)) } catch { }
-    try {
-        $rect = [WmuxTestHarness.Native+RECT]::new()
-        $null = [WmuxTestHarness.Native]::GetWindowRect($hwnd, [ref]$rect)
-        $w = $rect.Right - $rect.Left
-        $h = $rect.Bottom - $rect.Top
-        if ($w -le 0 -or $h -le 0) { throw (New-WmuxHarnessError -Code 'harness_transport' -Message "window has an empty rect ${w}x${h}" -Method 'screenshot') }
-        $bmp = [System.Drawing.Bitmap]::new($w, $h)
-        try {
-            $g = [System.Drawing.Graphics]::FromImage($bmp)
-            $hdc = $g.GetHdc()
-            try { $null = [WmuxTestHarness.Native]::PrintWindow($hwnd, $hdc, 2) } finally { $g.ReleaseHdc($hdc); $g.Dispose() }
-            $bmp.Save($Path, [System.Drawing.Imaging.ImageFormat]::Png)
-        } finally { $bmp.Dispose() }
-    } finally {
-        if ($oldCtx -ne [IntPtr]::Zero) { try { $null = [WmuxTestHarness.Native]::SetThreadDpiAwarenessContext($oldCtx) } catch { } }
+    $cap = [WmuxTestHarness.Capture]::WindowWithTimeout($hwnd, 10000)
+    if ($null -eq $cap) { throw (New-WmuxHarnessError -Code 'harness_timeout' -Message "PrintWindow did not return within 10 s (wmux UI thread of pid $($Instance.Pid) not responding)" -Method 'screenshot') }
+    if ($cap.Width -le 0 -or $cap.Height -le 0) { throw (New-WmuxHarnessError -Code 'harness_transport' -Message "window has an empty rect $($cap.Width)x$($cap.Height)" -Method 'screenshot') }
+    $cap.SavePng($Path)
+    $placement = Get-WmuxWindowPlacement -Hwnd $hwnd
+    $check = Get-WmuxTerminalCheck -Hwnd $hwnd -Capture $cap -Placement $placement
+    return [pscustomobject]@{
+        Placement      = $placement
+        Cloaked        = [WmuxTestHarness.Native]::Cloaked($hwnd)
+        TerminalCheck  = $check.check
+        TerminalStats  = $check.stats
+        TerminalReason = $check.reason
+        Width          = $cap.Width
+        Height         = $cap.Height
     }
 }
 
@@ -1883,27 +2657,89 @@ function Copy-WmuxArtifacts {
     $summary = [ordered]@{
         pid = $Instance.Pid; channel = $Instance.Channel; protocol = $Instance.Protocol; exe = $Instance.Exe
         pipe = $Instance.Pipe; exit_code = $Instance.ExitCode; root = $Instance.Root; test = $Instance.TestName
-        focus_violations = @([WmuxTestHarness.FocusSampler]::ForPid($Instance.Pid) | ForEach-Object { $_.ToString() })
+        hidden_mode = $Instance.HiddenMode
+        focus_violations = @([WmuxTestHarness.FocusSampler]::ForRoot($Instance.Pid) | ForEach-Object { "$($_.Kind): $($_.ToString())" })
+        tree = @($Instance.Tree | ForEach-Object { [string]$_ })
+        survivors = @($Instance.Survivors)
     }
     [IO.File]::WriteAllText((Join-Path $Destination 'instance.json'), (ConvertTo-Json -InputObject $summary -Depth 5), $script:Utf8NoBom)
 }
 
+# Background root deleter (spike S2: the WebView2 user-data folder stays locked for 25-60 s
+# after the instance is gone). Runs detached from the test, retries until the root is gone or
+# the deadline passes, and only ever deletes a directory directly under a 'wmux-e2e' folder.
+$script:RootDeleterScript = @'
+param([Parameter(Mandatory)][string]$Root, [int]$DeadlineSec = 90)
+$ErrorActionPreference = 'SilentlyContinue'
+if ((Split-Path -Leaf (Split-Path -Parent $Root)) -ne 'wmux-e2e') { exit 2 }
+$clock = [Diagnostics.Stopwatch]::StartNew()
+while ($clock.Elapsed.TotalSeconds -lt $DeadlineSec) {
+    if (-not (Test-Path -LiteralPath $Root)) { exit 0 }
+    try { Remove-Item -LiteralPath $Root -Recurse -Force -ErrorAction Stop; exit 0 } catch { }
+    [Threading.Thread]::Sleep(500)
+}
+exit 1
+'@
+
+function Get-WmuxRootDeleterPath {
+    $dir = Join-Path (Join-Path (Get-WmuxTempBase) 'wmux-e2e') 'typecache'
+    $hash = ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($script:RootDeleterScript)))).Substring(0, 12).ToLowerInvariant()
+    $path = Join-Path $dir "Remove-WmuxRoot.$hash.ps1"
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        $null = New-Item -ItemType Directory -Force -Path $dir
+        $tmp = "$path.$PID.tmp"
+        [IO.File]::WriteAllText($tmp, $script:RootDeleterScript, $script:Utf8NoBom)
+        try { [IO.File]::Move($tmp, $path) } catch { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+    }
+    return $path
+}
+
+function Start-WmuxRootDeleter {
+    # Deletes the root asynchronously in a hidden, detached pwsh (never blocks or fails a test).
+    param([Parameter(Mandatory)][string]$Root, [int]$DeadlineSec = 90)
+    $psi = [System.Diagnostics.ProcessStartInfo]::new([Environment]::ProcessPath)
+    foreach ($a in @('-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', (Get-WmuxRootDeleterPath), '-Root', $Root, '-DeadlineSec', [string]$DeadlineSec)) { $psi.ArgumentList.Add($a) }
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.WorkingDirectory = [IO.Path]::GetTempPath()
+    $p = [System.Diagnostics.Process]::Start($psi)
+    $p.Dispose()
+}
+
 function Remove-WmuxInstanceRoot {
+    # One synchronous attempt; when files are still locked (WebView2), a background deleter
+    # retries for up to 90 s. Returns 'sync', 'async', 'none' (nothing to delete) or 'refused'.
     param([Parameter(Mandatory)][WmuxInstance]$Instance)
     $root = $Instance.Root
-    if (-not $root -or -not (Test-Path -LiteralPath $root)) { return $true }
+    if (-not $root -or -not (Test-Path -LiteralPath $root)) { return 'none' }
     # Guard: only ever delete a harness root.
-    if ((Split-Path -Leaf (Split-Path -Parent $root)) -ne 'wmux-e2e') { return $false }
-    for ($i = 0; $i -lt 20; $i++) {
-        try {
-            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction Stop
-            return $true
-        } catch {
-            Start-Sleep -Milliseconds 150
-        }
+    if ((Split-Path -Leaf (Split-Path -Parent $root)) -ne 'wmux-e2e') { return 'refused' }
+    try {
+        Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction Stop
+        return 'sync'
+    } catch { }
+    if (-not (Test-Path -LiteralPath $root)) { return 'sync' }
+    try {
+        Start-WmuxRootDeleter -Root $root
+        return 'async'
+    } catch {
+        Write-Warning "WmuxTest: could not start the background deleter for $root ($($_.Exception.Message)); the next run.ps1 sweep removes it"
+        return 'refused'
     }
-    Write-Warning "WmuxTest: could not delete $root (files still in use)"
-    return $false
+}
+
+function Write-WmuxRootOwner {
+    # <root>\owner.json lets run.ps1's stale-root sweep tell live roots (their harness process
+    # still runs) from leftovers of killed runs.
+    param([Parameter(Mandatory)][string]$Root)
+    $me = [System.Diagnostics.Process]::GetCurrentProcess()
+    $owner = [ordered]@{
+        harness_pid      = $me.Id
+        harness_started  = $me.StartTime.ToUniversalTime().ToString('o')
+        created_at       = [DateTime]::UtcNow.ToString('o')
+        worktree         = $script:RepoRoot
+    }
+    [IO.File]::WriteAllText((Join-Path $Root 'owner.json'), (ConvertTo-Json -InputObject $owner), $script:Utf8NoBom)
 }
 
 function Complete-WmuxInstanceCleanup {
@@ -1919,8 +2755,9 @@ function Complete-WmuxInstanceCleanup {
     }
     if ($Instance.KeepArtifacts) {
         Write-Host "WmuxTest: keeping instance root $($Instance.Root)" -ForegroundColor DarkYellow
+        $Instance.RootDeletion = 'kept'
     } else {
-        $null = Remove-WmuxInstanceRoot -Instance $Instance
+        $Instance.RootDeletion = Remove-WmuxInstanceRoot -Instance $Instance
     }
     $null = $script:State.Instances.Remove($Instance)
     return $dest
@@ -1943,6 +2780,28 @@ function Stop-WmuxProcessTree {
     }
     if ($null -ne $p) {
         try { $null = $p.WaitForExit(5000) } catch { }
+    }
+}
+
+function Stop-WmuxOrphans {
+    # After the root process is gone: terminate every recorded member of the tree that still
+    # runs (msedgewebview2 outlives a graceful exit by 30-60 s and Kill(true) cannot reach it
+    # once wmux has exited; spike S2), then wait up to -WaitSec until none of them is listed
+    # any more (killed processes stay listed while they tear down). Never fails the test;
+    # leftovers are recorded in $Instance.Survivors.
+    param([Parameter(Mandatory)][WmuxInstance]$Instance, [AllowNull()][object[]]$Members, [double]$WaitSec = 15)
+    $list = [WmuxTestHarness.TreeMember[]]@($Members | Where-Object { $null -ne $_ })
+    if ($list.Count -eq 0) { $Instance.Survivors = @(); return }
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    $alive = [WmuxTestHarness.FocusSampler]::AliveMembers($list)
+    if ($alive.Count -gt 0) { $null = [WmuxTestHarness.FocusSampler]::KillMembers($alive) }
+    while ($alive.Count -gt 0 -and $clock.Elapsed.TotalSeconds -lt $WaitSec) {
+        Start-Sleep -Milliseconds 100
+        $alive = [WmuxTestHarness.FocusSampler]::AliveMembers($alive)
+    }
+    $Instance.Survivors = @($alive | ForEach-Object { $_.ToString() })
+    if ($alive.Count -gt 0) {
+        Write-Host "       WmuxTest: processes of instance pid $($Instance.Pid) still listed $([int]$WaitSec) s after the stop: $($Instance.Survivors -join ', ')" -ForegroundColor DarkYellow
     }
 }
 
@@ -2220,6 +3079,7 @@ function Start-WmuxInstance {
         localappdata = Join-Path $root 'localappdata'
     }
     foreach ($d in $dirs.Values) { $null = New-Item -ItemType Directory -Force -Path $d }
+    Write-WmuxRootOwner -Root $root
 
     $settingsDoc = ConvertTo-WmuxSettingsDocument -Settings $Settings
     [IO.File]::WriteAllText((Join-Path $dirs.config 'wmux.json'), (ConvertTo-Json -InputObject $settingsDoc -Depth 64), $script:Utf8NoBom)
@@ -2284,7 +3144,9 @@ function Start-WmuxInstance {
         $script:State.CurrentTest.Instances.Add($inst)
         [WmuxTestHarness.Watchdog]::Add($proc)
     }
-    [WmuxTestHarness.FocusSampler]::Watch($inst.Pid)
+    # Whole process tree (wmux, conhost, shells, msedgewebview2): focus sampler, visibility guard
+    # and kill on a violation (spike S2). -Visible instances are only focus-sampled.
+    [WmuxTestHarness.FocusSampler]::WatchTree($inst.Pid, -not $Visible, -not $Visible)
 
     try {
         Wait-WmuxInstanceReady -Instance $inst -TimeoutSec $TimeoutSec
@@ -2322,6 +3184,12 @@ function Stop-WmuxInstance {
     }
     foreach ($s in @($Instance.Streams)) { try { $s.Close() } catch { } }
 
+    # The tree goes away on purpose from here: no visibility guard or kill while windows are
+    # destroyed; the members recorded so far are the orphan candidates.
+    [WmuxTestHarness.FocusSampler]::BeginTeardown($Instance.Pid)
+    try { [WmuxTestHarness.FocusSampler]::RefreshTrees() } catch { }
+    $members = [WmuxTestHarness.FocusSampler]::TreeOf($Instance.Pid)
+
     if ($alive -and $Instance.Protocol -eq 'v2') {
         $saved = $script:State.FailMark
         try { $null = Invoke-WmuxRpc $Instance 'wmux.debug.app.quit' -TimeoutSec ([Math]::Max(1, [Math]::Min(5, $TimeoutSec))) } catch { } finally { $script:State.FailMark = $saved }
@@ -2332,8 +3200,11 @@ function Stop-WmuxInstance {
     Stop-WmuxProcessTree -Instance $Instance
     try { if ($p.HasExited) { $Instance.ExitCode = $p.ExitCode } } catch { }
     [WmuxTestHarness.Watchdog]::Remove($Instance.Pid)
+    Stop-WmuxOrphans -Instance $Instance -Members $members
 
-    if ([WmuxTestHarness.FocusSampler]::ForPid($Instance.Pid).Count -gt 0) { $Instance.Failed = $true }
+    if ([WmuxTestHarness.FocusSampler]::ForRoot($Instance.Pid).Count -gt 0) { $Instance.Failed = $true }
+    $Instance.HiddenMode = [WmuxTestHarness.FocusSampler]::PlacementOf($Instance.Pid)
+    $Instance.Tree = @($members | ForEach-Object { $_ })
     [WmuxTestHarness.FocusSampler]::Unwatch($Instance.Pid)
     $Instance.Stopped = $true
 
@@ -2710,9 +3581,16 @@ function Get-WmuxScreenshot {
     <#
     .SYNOPSIS
         Saves a PNG of an instance window via wmux.debug.window.screenshot (v2). Legacy
-        instances fall back to a harness-side PrintWindow capture of the WmuxWindow.
+        instances fall back to a harness-side PrintWindow capture of the WmuxWindow (DPI aware,
+        10 s limit for a hung UI thread).
     .OUTPUTS
-        [System.IO.FileInfo]
+        [System.IO.FileInfo] with note properties (DWMWA_CLOAKED-aware, spike S2):
+        Placement      cloaked | cloaked-offscreen | offscreen | onscreen | hidden | unknown
+        Cloaked        DWMWA_CLOAKED value, $null when the query failed
+        TerminalCheck  ok | blank | inconclusive | none: the WmuxTerminal area shows 3+ colours
+                       and no colour above 99.9 %; GL output reaches PrintWindow only on a
+                       monitor, so anything but a cloaked window is 'inconclusive'
+        TerminalStats, TerminalReason  details for the message of an assertion or skip
     #>
     [CmdletBinding()]
     param(
@@ -2740,10 +3618,19 @@ function Get-WmuxScreenshot {
                     throw (New-WmuxHarnessError -Code 'harness_bad_reply' -Message "wmux.debug.window.screenshot produced no image: $(Format-WmuxValue $r)" -Method 'wmux.debug.window.screenshot')
                 }
             }
+            $info = [pscustomobject]@{ Placement = 'unknown'; Cloaked = $null; TerminalCheck = 'none'; TerminalStats = $null; TerminalReason = 'captured by the app (wmux.debug.window.screenshot)' }
+            $main = @([WmuxTestHarness.Native]::TopLevelWindows($Instance.Pid, 'WmuxWindow'))
+            if ($main.Count -gt 0) { $info.Placement = Get-WmuxWindowPlacement -Hwnd $main[0]; $info.Cloaked = [WmuxTestHarness.Native]::Cloaked($main[0]) }
         } else {
-            Save-WmuxWindowCapture -Instance $Instance -Path $full -Window $Window
+            $info = Save-WmuxWindowCapture -Instance $Instance -Path $full -Window $Window
         }
-        return (Get-Item -LiteralPath $full)
+        # DWMWA_CLOAKED-aware result (spike S2): Placement cloaked|offscreen|onscreen|hidden|unknown;
+        # TerminalCheck ok|blank|inconclusive|none (inconclusive whenever the window is not cloaked).
+        $item = Get-Item -LiteralPath $full
+        foreach ($p in 'Placement', 'Cloaked', 'TerminalCheck', 'TerminalStats', 'TerminalReason') {
+            $item | Add-Member -NotePropertyName $p -NotePropertyValue $info.$p -Force
+        }
+        return $item
     } catch {
         Set-WmuxFailMark
         throw
@@ -2942,6 +3829,7 @@ function Test-Case {
         Streams   = [System.Collections.Generic.List[object]]::new()
     }
     $focusBase = [WmuxTestHarness.FocusSampler]::ViolationCount
+    $visibleBase = [WmuxTestHarness.FocusSampler]::VisibleCount
     $started = [DateTime]::UtcNow
     $script:State.CurrentTest = $test
     $script:State.FailMark = $false
@@ -2950,6 +3838,7 @@ function Test-Case {
     $message = $null
     $details = $null
     $violations = @()
+    $visible = @()
     $artifacts = $null
     $savedEap = $global:ErrorActionPreference
     $sw = [Diagnostics.Stopwatch]::StartNew()
@@ -3012,6 +3901,19 @@ function Test-Case {
             $message = 'focus stolen by test instance: ' + (($violations | ForEach-Object { $_.ToString() }) -join '; ')
             if ($first -and $first -ne $message) { $message += ". Test error: $first" }
         }
+        $visible = @([WmuxTestHarness.FocusSampler]::VisibleSince($visibleBase))
+        if ($visible.Count -gt 0) {
+            $first = $message
+            $text = 'visible test window: ' + (($visible | ForEach-Object { $_.ToString() }) -join '; ')
+            if ($kind -eq 'focus') {
+                $message = "$first. $text"
+            } else {
+                $kind = 'visible'
+                $message = $text
+                if ($first -and $status -eq 'failed') { $message += ". Test error: $first" }
+            }
+            $status = 'failed'
+        }
         if ($status -eq 'failed') {
             foreach ($inst in $test.Instances) { $inst.Failed = $true }
         }
@@ -3037,8 +3939,9 @@ function Test-Case {
         artifacts        = $artifacts
         attempt          = $attempt
         started_at       = $started.ToString('o')
-        instances        = @($test.Instances | ForEach-Object { [ordered]@{ pid = $_.Pid; channel = $_.Channel; protocol = $_.Protocol; exit_code = $_.ExitCode } })
+        instances        = @($test.Instances | ForEach-Object { [ordered]@{ pid = $_.Pid; channel = $_.Channel; protocol = $_.Protocol; exit_code = $_.ExitCode; hidden_mode = $_.HiddenMode; root_deletion = $_.RootDeletion; survivors = @($_.Survivors) } })
         focus_violations = @($violations | ForEach-Object { $_.ToString() })
+        visible_windows  = @($visible | ForEach-Object { $_.ToString() })
     }
     Write-WmuxTestResult -Result $result
 }

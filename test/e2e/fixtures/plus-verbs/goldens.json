@@ -1,0 +1,633 @@
+{
+  "//": "Legacy +verb goldens for test/e2e/suites/legacy/plus-verbs.e2e.ps1; captured with WMUX_E2E_PLUSVERBS_CAPTURE (see README.md). Masks: <ROOT> <PID> <ID> <V> <REF>.",
+  "source": "aa1f532 (chore: bump PE version to 1.1.0.0), debug build, CLI against a hidden master instance",
+  "captured": "2026-10-17",
+  "groups": {
+    "help": {
+      "browser --help": {
+        "argv": [
+          "+browser",
+          "--help"
+        ],
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "error: ActionHelpRequested\n"
+      },
+      "workspace --help": {
+        "argv": [
+          "+workspace",
+          "--help"
+        ],
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "error: ActionHelpRequested\n"
+      },
+      "tab --help": {
+        "argv": [
+          "+tab",
+          "--help"
+        ],
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "error: ActionHelpRequested\n"
+      },
+      "send --help": {
+        "argv": [
+          "+send",
+          "--help"
+        ],
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "error: ActionHelpRequested\n"
+      },
+      "notify --help": {
+        "argv": [
+          "+notify",
+          "--help"
+        ],
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "error: ActionHelpRequested\n"
+      },
+      "surface --help": {
+        "argv": [
+          "+surface",
+          "--help"
+        ],
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "error: ActionHelpRequested\n"
+      },
+      "split --help": {
+        "argv": [
+          "+split",
+          "--help"
+        ],
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "error: ActionHelpRequested\n"
+      },
+      "status --help": {
+        "argv": [
+          "+status",
+          "--help"
+        ],
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "error: ActionHelpRequested\n"
+      },
+      "log --help": {
+        "argv": [
+          "+log",
+          "--help"
+        ],
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "error: ActionHelpRequested\n"
+      },
+      "read-screen --help": {
+        "argv": [
+          "+read-screen",
+          "--help"
+        ],
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "error: ActionHelpRequested\n"
+      },
+      "capture-pane --help": {
+        "argv": [
+          "+capture-pane",
+          "--help"
+        ],
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "error: ActionHelpRequested\n"
+      },
+      "session --help": {
+        "argv": [
+          "+session",
+          "--help"
+        ],
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "error: ActionHelpRequested\n"
+      },
+      "hooks --help": {
+        "argv": [
+          "+hooks",
+          "--help"
+        ],
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "error: ActionHelpRequested\n"
+      },
+      "ssh --help": {
+        "argv": [
+          "+ssh",
+          "--help"
+        ],
+        "exit_code": 0,
+        "stdout": "Wrap `ssh` to automatically configure Ghostty terminal integration on\nremote hosts.\n\nAny arguments that aren't recognized as `+ssh` flags are passed to\nthe real `ssh` binary unchanged. You can use `--` as an explicit\ndisambiguator if needed, though it's almost never required: `ssh`\nhas no long flags, and `+ssh` defines no short flags, so there's\nnothing to collide.\n\nThis is typically called via Ghostty's shell integration. When\n`shell-integration-features` includes `ssh-env` or `ssh-terminfo`,\neach shell defines an `ssh` function that runs:\n\n    ghostty +ssh <flags> -- \"$@\"\n\nYou can also run `ghostty +ssh` directly, or alias it yourself (e.g.\n`alias ssh='ghostty +ssh --'`) if you prefer not to use the shell\nintegration.\n\n`+ssh` performs up to two pieces of setup before launching `ssh`:\n\n  1. **Environment forwarding** (`--forward-env`). Sets `TERM` to\n     `xterm-256color` and requests `SendEnv` forwarding of\n     `COLORTERM`, `TERM_PROGRAM`, and `TERM_PROGRAM_VERSION` so the\n     remote shell can still detect that it's running inside Ghostty.\n     The remote `sshd_config` must list these in `AcceptEnv` for\n     forwarding to succeed.\n\n  2. **Terminfo install** (`--terminfo`). On the first connection to a\n     given destination, installs Ghostty's terminfo entry on the remote\n     host using `infocmp -x xterm-ghostty | ssh tic -x -` over a\n     shared `ControlMaster` connection. Successful installs are cached\n     (see `ghostty +ssh-cache`) so subsequent connections skip this\n     step. When terminfo is successfully installed or already cached,\n     `TERM` is set to `xterm-ghostty` instead of `xterm-256color`.\n\nIf `--terminfo` install fails (e.g. `tic` not available on the\nremote, filesystem permissions), a warning is logged and the\nconnection continues with `TERM=xterm-256color`.\n\nFlags:\n\n  * `--forward-env=<bool>`: Enable `TERM` / `SendEnv` environment\n    forwarding. Default: `true`.\n\n  * `--terminfo=<bool>`: Enable automatic terminfo install on first\n    connection. Default: `true`.\n\n  * `--cache=<bool>`: Use the terminfo install cache. Default: `true`.\n    When `false`, both the cache read (skip-if-installed) and the\n    cache write (record-on-success) are bypassed, and every\n    connection performs the install. To one-shot reinstall a single\n    host while keeping the cache in use, prefer `ghostty +ssh-cache\n    --remove=<host>` followed by a normal connection.\n\n  * `--ssh=<path>`: Path to the `ssh` binary to execute. Default: the\n    first `ssh` found on `PATH`.\n\n  * `--workspace=<bool>`: Instead of running ssh inline, create a\n    dedicated workspace in a running Ghostty instance via IPC. The\n    workspace is named after the resolved hostname, and its first tab\n    runs the ssh command. New tabs opened in the workspace inherit the\n    ssh connection. Default: `false`. Windows only.\n\n  * `--focus=<bool>`: When creating a workspace (`--workspace`), switch\n    to the new workspace immediately. Default: `true`. Ignored without\n    `--workspace`.\n\n  * `--verbose`: Print +ssh status lines to stderr, and surface\n    remote stderr during the terminfo install.\n\nExamples:\n\n  # Basic invocation using defaults:\n  ghostty +ssh user@example.com\n\n  # Forward Ghostty env vars but skip the terminfo install:\n  ghostty +ssh --terminfo=false user@example.com\n\n  # `ssh` flags (short-form `-p`, etc.) pass through unchanged:\n  ghostty +ssh -p 2222 -i ~/.ssh/id_ed25519 user@example.com\n\n  # Use `--` explicitly if your ssh args might collide with our flags:\n  ghostty +ssh -- --some-rare-ssh-arg user@example.com\n\n  # Create a dedicated workspace for the SSH connection (Windows):\n  ghostty +ssh --workspace user@example.com\n\n  # Create a workspace without switching to it:\n  ghostty +ssh --workspace --focus=false user@example.com\n\nPass `--verbose` to see what `+ssh` is doing. For cache inspection\nand management, see `ghostty +ssh-cache`.\n\nAvailable since: 1.4.0\n",
+        "stderr": ""
+      },
+      "new-window --help": {
+        "argv": [
+          "+new-window",
+          "--help"
+        ],
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "+new-window is not supported on this platform.\n"
+      },
+      "toggle-quick-terminal --help": {
+        "argv": [
+          "+toggle-quick-terminal",
+          "--help"
+        ],
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    "core": {
+      "workspace list": {
+        "argv": [
+          "+workspace",
+          "list"
+        ],
+        "exit_code": 0,
+        "stdout": "[{\"index\":0,\"name\":\"\",\"active\":true,\"tab_count\":1}]\n",
+        "stderr": ""
+      },
+      "workspace new": {
+        "argv": [
+          "+workspace",
+          "new",
+          "--name",
+          "pv-two"
+        ],
+        "exit_code": 0,
+        "stdout": "{\"index\":1}\n",
+        "stderr": ""
+      },
+      "workspace list (two)": {
+        "argv": [
+          "+workspace",
+          "list"
+        ],
+        "exit_code": 0,
+        "stdout": "[{\"index\":0,\"name\":\"\",\"active\":true,\"tab_count\":1},{\"index\":1,\"name\":\"pv-two\",\"active\":false,\"tab_count\":1}]\n",
+        "stderr": ""
+      },
+      "workspace select": {
+        "argv": [
+          "+workspace",
+          "select",
+          "1"
+        ],
+        "exit_code": 0,
+        "stdout": "null\n",
+        "stderr": ""
+      },
+      "workspace select back": {
+        "argv": [
+          "+workspace",
+          "select",
+          "0"
+        ],
+        "exit_code": 0,
+        "stdout": "null\n",
+        "stderr": ""
+      },
+      "workspace select unknown": {
+        "argv": [
+          "+workspace",
+          "select",
+          "99"
+        ],
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "UnknownWorkspace\n"
+      },
+      "workspace (no subcommand)": {
+        "argv": [
+          "+workspace"
+        ],
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "usage: ghostty +workspace <list|new|select|close> [args]\n"
+      },
+      "tab list": {
+        "argv": [
+          "+tab",
+          "list"
+        ],
+        "exit_code": 0,
+        "stdout": "[{\"index\":0,\"title\":\"C:\\\\Windows\\\\SYSTEM32\\\\cmd.exe\",\"active\":true}]\n",
+        "stderr": ""
+      },
+      "tab new": {
+        "argv": [
+          "+tab",
+          "new"
+        ],
+        "exit_code": 0,
+        "stdout": "{\"index\":1}\n",
+        "stderr": ""
+      },
+      "tab list (two)": {
+        "argv": [
+          "+tab",
+          "list"
+        ],
+        "exit_code": 0,
+        "stdout": "[{\"index\":0,\"title\":\"C:\\\\Windows\\\\SYSTEM32\\\\cmd.exe\",\"active\":false},{\"index\":1,\"title\":\"C:\\\\Windows\\\\SYSTEM32\\\\cmd.exe\",\"active\":true}]\n",
+        "stderr": ""
+      },
+      "tab select": {
+        "argv": [
+          "+tab",
+          "select",
+          "0"
+        ],
+        "exit_code": 0,
+        "stdout": "null\n",
+        "stderr": ""
+      },
+      "tab (unknown subcommand)": {
+        "argv": [
+          "+tab",
+          "frob"
+        ],
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "unknown subcommand 'frob'\n"
+      },
+      "send": {
+        "argv": [
+          "+send",
+          "echo PV-MARK-1",
+          "--enter"
+        ],
+        "exit_code": 0,
+        "stdout": "null\n",
+        "stderr": ""
+      },
+      "read-screen": {
+        "argv": [
+          "+read-screen",
+          "--lines",
+          "3"
+        ],
+        "exit_code": 0,
+        "stdout": "\"PV-MARK-1\\n\\nWMUX>\"\n",
+        "stderr": ""
+      },
+      "capture-pane": {
+        "argv": [
+          "+capture-pane"
+        ],
+        "exit_code": 0,
+        "stdout": "\"\\nWMUX>echo PV-MARK-1\\nPV-MARK-1\\n\\nWMUX>\"\n",
+        "stderr": ""
+      },
+      "capture-pane --file": {
+        "argv": [
+          "+capture-pane",
+          "--file",
+          "<ROOT>\\work\\pv-capture.txt"
+        ],
+        "exit_code": 0,
+        "stdout": "\"<ROOT>\\\\work\\\\pv-capture.txt\"\n",
+        "stderr": ""
+      },
+      "split": {
+        "argv": [
+          "+split",
+          "right"
+        ],
+        "exit_code": 0,
+        "stdout": "{\"id\":<ID>}\n",
+        "stderr": ""
+      },
+      "surface list": {
+        "argv": [
+          "+surface",
+          "list"
+        ],
+        "exit_code": 0,
+        "stdout": "[{\"pane\":0,\"tab\":0,\"id\":<ID>,\"type\":\"terminal\",\"focused\":false,\"title\":\"C:\\\\Windows\\\\SYSTEM32\\\\cmd.exe\"},{\"pane\":1,\"tab\":0,\"id\":<ID>,\"type\":\"terminal\",\"focused\":true,\"title\":\"C:\\\\Windows\\\\SYSTEM32\\\\cmd.exe\"},{\"pane\":1,\"tab\":1,\"id\":<ID>,\"type\":\"terminal\",\"focused\":false,\"title\":\"C:\\\\Windows\\\\SYSTEM32\\\\cmd.exe\"}]\n",
+        "stderr": ""
+      },
+      "surface focus": {
+        "argv": [
+          "+surface",
+          "focus",
+          "--pane",
+          "0",
+          "--tab",
+          "0"
+        ],
+        "exit_code": 0,
+        "stdout": "null\n",
+        "stderr": ""
+      },
+      "status set": {
+        "argv": [
+          "+status",
+          "set",
+          "pv-busy"
+        ],
+        "exit_code": 0,
+        "stdout": "null\n",
+        "stderr": ""
+      },
+      "status progress": {
+        "argv": [
+          "+status",
+          "progress",
+          "40"
+        ],
+        "exit_code": 0,
+        "stdout": "null\n",
+        "stderr": ""
+      },
+      "status progress clear": {
+        "argv": [
+          "+status",
+          "progress",
+          "clear"
+        ],
+        "exit_code": 0,
+        "stdout": "null\n",
+        "stderr": ""
+      },
+      "status progress out of range": {
+        "argv": [
+          "+status",
+          "progress",
+          "400"
+        ],
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "progress must be 0-100 or 'clear'\n"
+      },
+      "log": {
+        "argv": [
+          "+log",
+          "hello from plus-verbs"
+        ],
+        "exit_code": 0,
+        "stdout": "null\n",
+        "stderr": ""
+      },
+      "notify ring": {
+        "argv": [
+          "+notify",
+          "ring",
+          "--workspace",
+          "1"
+        ],
+        "exit_code": 0,
+        "stdout": "null\n",
+        "stderr": ""
+      },
+      "notify clear": {
+        "argv": [
+          "+notify",
+          "clear",
+          "--workspace",
+          "1"
+        ],
+        "exit_code": 0,
+        "stdout": "null\n",
+        "stderr": ""
+      },
+      "notify next": {
+        "argv": [
+          "+notify",
+          "next"
+        ],
+        "exit_code": 0,
+        "stdout": "{\"jumped\":true,\"surface\":<ID>}\n",
+        "stderr": ""
+      },
+      "notify toggle-read": {
+        "argv": [
+          "+notify",
+          "toggle-read"
+        ],
+        "exit_code": 0,
+        "stdout": "{\"toggled\":true,\"read\":false}\n",
+        "stderr": ""
+      },
+      "notify mark-oldest-next": {
+        "argv": [
+          "+notify",
+          "mark-oldest-next"
+        ],
+        "exit_code": 0,
+        "stdout": "{\"jumped\":false}\n",
+        "stderr": ""
+      },
+      "session capture": {
+        "argv": [
+          "+session",
+          "capture",
+          "--kind",
+          "pv-agent",
+          "--id",
+          "pv-session-1"
+        ],
+        "exit_code": 0,
+        "stdout": "{\"surface\":<ID>,\"agent\":\"unknown\"}\n",
+        "stderr": ""
+      },
+      "session show": {
+        "argv": [
+          "+session",
+          "show"
+        ],
+        "exit_code": 0,
+        "stdout": "[{\"surface\":<ID>,\"agent\":\"unknown\",\"session\":\"pv-session-1\"}]\n",
+        "stderr": ""
+      },
+      "session resume (no recipe)": {
+        "argv": [
+          "+session",
+          "resume"
+        ],
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "NoResumeRecipe\n"
+      },
+      "tab close": {
+        "argv": [
+          "+tab",
+          "close",
+          "1",
+          "--pane",
+          "1"
+        ],
+        "exit_code": 0,
+        "stdout": "null\n",
+        "stderr": ""
+      },
+      "workspace close": {
+        "argv": [
+          "+workspace",
+          "close",
+          "1"
+        ],
+        "exit_code": 0,
+        "stdout": "null\n",
+        "stderr": ""
+      },
+      "workspace list (final)": {
+        "argv": [
+          "+workspace",
+          "list"
+        ],
+        "exit_code": 0,
+        "stdout": "[{\"index\":0,\"name\":\"\",\"active\":true,\"tab_count\":1}]\n",
+        "stderr": ""
+      },
+      "new-window": {
+        "argv": [
+          "+new-window"
+        ],
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "+new-window is not supported on this platform.\n"
+      },
+      "toggle-quick-terminal": {
+        "argv": [
+          "+toggle-quick-terminal"
+        ],
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    "browser": {
+      "browser open": {
+        "argv": [
+          "+browser",
+          "open",
+          "about:blank",
+          "--tab"
+        ],
+        "exit_code": 0,
+        "stdout": "{\"id\":1}\n",
+        "stderr": ""
+      },
+      "browser navigate": {
+        "argv": [
+          "+browser",
+          "navigate",
+          "data:text/html,<title>pv</title><button id=b onclick=\"document.title='clicked'\">Go</button><input id=i aria-label=field>"
+        ],
+        "exit_code": 0,
+        "stdout": "null\n",
+        "stderr": ""
+      },
+      "browser eval": {
+        "argv": [
+          "+browser",
+          "eval",
+          "document.title"
+        ],
+        "exit_code": 0,
+        "stdout": "\"pv\"\n",
+        "stderr": ""
+      },
+      "browser list": {
+        "argv": [
+          "+browser",
+          "list"
+        ],
+        "exit_code": 0,
+        "stdout": "connected instance pipe: \\\\.\\pipe\\wmux-ipc-<PID>\n",
+        "stderr": ""
+      },
+      "browser snapshot": {
+        "argv": [
+          "+browser",
+          "snapshot"
+        ],
+        "exit_code": 0,
+        "stdout": "[{\"ref\":<REF>,\"role\":\"RootWebArea\",\"name\":\"pv\"},{\"ref\":<REF>,\"role\":\"button\",\"name\":\"Go\"},{\"ref\":<REF>,\"role\":\"textbox\",\"name\":\"field\"},{\"ref\":<REF>,\"role\":\"StaticText\",\"name\":\"Go\"}]\n",
+        "stderr": ""
+      },
+      "browser click": {
+        "argv": [
+          "+browser",
+          "click",
+          "7"
+        ],
+        "exit_code": 0,
+        "stdout": "\"ok\"\n",
+        "stderr": ""
+      },
+      "browser fill": {
+        "argv": [
+          "+browser",
+          "fill",
+          "2",
+          "pv-text"
+        ],
+        "exit_code": 0,
+        "stdout": "\"ok\"\n",
+        "stderr": ""
+      },
+      "browser eval (after input)": {
+        "argv": [
+          "+browser",
+          "eval",
+          "document.title + \"|\" + document.getElementById(\"i\").value"
+        ],
+        "exit_code": 0,
+        "stdout": "\"clicked|pv-text\"\n",
+        "stderr": ""
+      },
+      "browser (unknown subcommand)": {
+        "argv": [
+          "+browser",
+          "frob"
+        ],
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "unknown subcommand 'frob'\n"
+      }
+    },
+    "session": {
+      "session save": {
+        "argv": [
+          "+session",
+          "save"
+        ],
+        "exit_code": 0,
+        "stdout": "null\n",
+        "stderr": ""
+      },
+      "session restore": {
+        "argv": [
+          "+session",
+          "restore"
+        ],
+        "exit_code": 0,
+        "stdout": "null\n",
+        "stderr": ""
+      },
+      "session workspace list": {
+        "argv": [
+          "+workspace",
+          "list"
+        ],
+        "exit_code": 0,
+        "stdout": "[{\"index\":0,\"name\":\"\",\"active\":true,\"tab_count\":1}]\n",
+        "stderr": ""
+      }
+    }
+  }
+}

@@ -89,6 +89,23 @@ Test-Case 'legacy: an unknown command is answered with an error and the pipe kee
     } finally { Stop-WmuxInstance $w }
 }
 
+Test-Case 'harness: the whole instance tree is watched and stays hidden' {
+    # Spike S2 (W0-B2): the focus sampler and the visibility guard cover wmux, conhost and the
+    # shell, not just the wmux pid; hidden windows are cloaked (S2, W0-A4) or off-screen (W0-A1).
+    $w = Start-WmuxInstance
+    try {
+        $null = Wait-WmuxScreen $w -Surface @{} -Pattern '(?m)^WMUX>' -TimeoutSec 30
+        $null = Wait-WmuxCondition -TimeoutSec 10 {
+            [WmuxTestHarness.FocusSampler]::RefreshTrees()
+            $names = @([WmuxTestHarness.FocusSampler]::TreeOf($w.Pid) | ForEach-Object { $_.Name.ToLowerInvariant() })
+            ($names -contains 'conhost.exe') -and ($names -contains 'cmd.exe')
+        }
+        $placement = Wait-WmuxCondition -TimeoutSec 10 { $p = [WmuxTestHarness.FocusSampler]::PlacementOf($w.Pid); if ($p -ne 'none') { $p } }
+        Write-Host "hidden mode: $placement"
+        Assert-Match '^(cloaked|offscreen|cloaked-offscreen)(\+(cloaked|offscreen|cloaked-offscreen))*$' $placement 'every visible window of the instance is cloaked or off-screen'
+    } finally { Stop-WmuxInstance $w }
+}
+
 Test-Case 'cli: the CLI reaches the test instance and nothing else' {
     $w = Start-WmuxInstance
     try {
