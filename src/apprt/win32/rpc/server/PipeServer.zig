@@ -6,7 +6,9 @@
 //!   (squatting defense: `error.PipeNameInUse` when the name exists); every
 //!   instance has a current-user-only DACL, PIPE_REJECT_REMOTE_CLIENTS and a
 //!   non-inheritable handle. The instance count is explicit:
-//!   max_live + max_pending + 2 (the spare and one being rejected).
+//!   max_live + max_pending + 2 (the spare and one being rejected). The
+//!   next spare is opened before an instance closes, so while the server
+//!   runs the name always exists (no ERROR_FILE_NOT_FOUND, no squatting).
 //! - Admission (admission.zig, cmux numbers): 64 live, 64 pending for at
 //!   most 15 s, 16 pre-authorization readers; overflow is accepted,
 //!   answered `overloaded {retryable, retry_after_ms, reason}` and closed.
@@ -316,7 +318,10 @@ fn acceptLoop(self: *PipeServer) void {
             .stop => return,
         };
         const pipe = self.spare;
-        self.spare = windows.INVALID_HANDLE_VALUE;
+        // Open the next instance before this one can close (its connection
+        // thread or `rejectInline` closes it); see `recycleSpare`. At the
+        // instance limit other instances are open and the loop retries.
+        self.spare = self.createInstance(false) catch windows.INVALID_HANDLE_VALUE;
         self.admit(pipe);
         self.reapFinished();
     }
@@ -347,9 +352,20 @@ fn waitConnect(self: *PipeServer, ov: *w32.OVERLAPPED) ConnectWait {
     }
 }
 
+/// Replaces a spare whose client left before or during the connect. The
+/// new instance is opened before the old one closes: while no instance is
+/// open the pipe name does not exist, so clients get ERROR_FILE_NOT_FOUND
+/// and another process could claim the name (ADR-3.1). Without a new
+/// instance the old one is disconnected and reused.
 fn recycleSpare(self: *PipeServer) void {
-    if (self.spare != windows.INVALID_HANDLE_VALUE) windows.CloseHandle(self.spare);
-    self.spare = windows.INVALID_HANDLE_VALUE;
+    const old = self.spare;
+    if (old == windows.INVALID_HANDLE_VALUE) return;
+    const fresh = self.createInstance(false) catch {
+        _ = w32.DisconnectNamedPipe(old);
+        return;
+    };
+    self.spare = fresh;
+    windows.CloseHandle(old);
 }
 
 /// Waits up to `ms` for a finished connection (reaping it) or stop.

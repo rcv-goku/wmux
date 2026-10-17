@@ -59,6 +59,7 @@ pub const w32 = struct {
     pub const TOKEN_USER = extern struct { User: SID_AND_ATTRIBUTES };
 
     pub extern "kernel32" fn ConnectNamedPipe(hNamedPipe: HANDLE, lpOverlapped: ?*OVERLAPPED) callconv(.winapi) BOOL;
+    pub extern "kernel32" fn DisconnectNamedPipe(hNamedPipe: HANDLE) callconv(.winapi) BOOL;
     pub extern "kernel32" fn GetOverlappedResult(hFile: HANDLE, lpOverlapped: *OVERLAPPED, lpNumberOfBytesTransferred: *DWORD, bWait: BOOL) callconv(.winapi) BOOL;
     pub extern "kernel32" fn CreateEventW(lpEventAttributes: ?*windows.SECURITY_ATTRIBUTES, bManualReset: BOOL, bInitialState: BOOL, lpName: ?windows.LPCWSTR) callconv(.winapi) ?HANDLE;
     pub extern "kernel32" fn SetEvent(hEvent: HANDLE) callconv(.winapi) BOOL;

@@ -464,6 +464,56 @@ test "unit: rpc: live: a second server on the same name fails with PipeNameInUse
     try testing.expectError(error.PipeNameInUse, PipeServer.start(testing.allocator, .{ .name = f.name }, h2.handler()));
 }
 
+/// Connects and leaves at once, counting connects that found no pipe.
+const Prober = struct {
+    name: []const u8,
+    budget_ns: u64,
+    connects: usize = 0,
+    not_found: usize = 0,
+    err: ?anyerror = null,
+
+    fn run(self: *Prober) void {
+        var timer = std.time.Timer.start() catch |err| {
+            self.err = err;
+            return;
+        };
+        while (timer.read() < self.budget_ns) {
+            var c = PipeClient.connect(testing.allocator, self.name, 1_000) catch |err| switch (err) {
+                error.NotFound => {
+                    self.not_found += 1;
+                    continue;
+                },
+                error.Busy => continue,
+                else => {
+                    self.err = err;
+                    return;
+                },
+            };
+            self.connects += 1;
+            c.close();
+        }
+    }
+};
+
+test "unit: rpc: live: the pipe name never disappears while clients connect and leave at once" {
+    if (!is_windows) return error.SkipZigTest;
+    var f: Fixture = undefined;
+    try f.init(.{ .name = "" });
+    defer f.deinit();
+    // These clients send nothing, so each connection closes its instance
+    // right away. With no instance open the name does not exist: a client
+    // gets ERROR_FILE_NOT_FOUND and another process could claim the name.
+    var probers: [2]Prober = @splat(.{ .name = f.name, .budget_ns = 400 * std.time.ns_per_ms });
+    var threads: [2]std.Thread = undefined;
+    for (&threads, &probers) |*t, *p| t.* = try std.Thread.spawn(.{}, Prober.run, .{p});
+    for (threads) |t| t.join();
+    for (probers) |p| {
+        if (p.err) |err| return err;
+        try testing.expectEqual(@as(usize, 0), p.not_found);
+        try testing.expect(p.connects > 0);
+    }
+}
+
 const LaunchSink = struct {
     mutex: std.Thread.Mutex = .{},
     calls: usize = 0,
