@@ -99,7 +99,7 @@ pub fn init(app: *App) !void {
     var pol = try policy.read(gpa, base.policy_file);
     var pol_owned = true;
     defer if (pol_owned) pol.deinit();
-    const pairs = try legacy_keys.collect(a, &app.config);
+    var pairs = try legacy_keys.collect(a, &app.config);
 
     var outcome = try loader.load(gpa, .{
         .cmux_path = base.cmux_path,
@@ -110,7 +110,7 @@ pub fn init(app: *App) !void {
         .policy = pol.items,
         .policy_file = base.policy_file,
     });
-    const snap: *Snapshot = switch (outcome) {
+    var snap: *Snapshot = switch (outcome) {
         .ok => |s| s,
         .failed => |*f| failed: {
             defer f.deinit();
@@ -140,6 +140,32 @@ pub fn init(app: *App) !void {
             app.config.deinit();
             app.config = cfg;
             log.info("ghostty config loaded with the wmux overlay and settings overrides", .{});
+            // The overlay may set legacy keys too: resolve rev 1 with the
+            // keys of the configuration actually in effect (the overrides
+            // file only carries JSON-sourced values, so it is unchanged).
+            const fresh = legacy_keys.collect(a, &app.config) catch pairs;
+            if (legacy_keys.fingerprint(fresh) != legacy_keys.fingerprint(pairs)) {
+                pairs = fresh;
+                if (loader.load(gpa, .{
+                    .cmux_path = base.cmux_path,
+                    .wmux_path = base.wmux_path,
+                    .project_cwd = base.project_cwd,
+                    .home = base.home,
+                    .ghostty_pairs = pairs,
+                    .policy = pol.items,
+                    .policy_file = base.policy_file,
+                })) |again| switch (again) {
+                    .ok => |s| {
+                        snap.release();
+                        snap = s;
+                    },
+                    // Still broken: keep the fallback (and its records).
+                    .failed => |f| {
+                        var tmp = f;
+                        tmp.deinit();
+                    },
+                } else |err| log.warn("settings reload with the overlay keys failed: {}", .{err});
+            }
         } else |err| log.warn("ghostty config with overlay failed to load: {}", .{err});
     }
     ghostty_layer.reportDiagnostics(app, &app.config);

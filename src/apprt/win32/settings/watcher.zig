@@ -105,8 +105,11 @@ const DirWatch = struct {
     buffer: [16 * 1024]u8 align(@alignOf(windows.FILE_NOTIFY_INFORMATION)),
     /// Base names of the watched files in this directory.
     names: std.ArrayList([]u8),
-    /// Watches the whole subtree (an ancestor of a missing directory).
-    subtree: bool = false,
+    /// The nearest existing ancestor of a missing directory: `names`
+    /// holds the first missing component, whose creation rebuilds the
+    /// watches. Never a recursive watch: on `%USERPROFILE%` that would
+    /// see every AppData write and overflow constantly.
+    ancestor: bool = false,
 };
 
 pub const Watcher = struct {
@@ -154,6 +157,7 @@ pub const Watcher = struct {
         const stop = w32.CreateEventW(null, 1, 0, null) orelse return error.Win32Error;
         errdefer _ = w32.CloseHandle(stop);
         const wake = w32.CreateEventW(null, 0, 0, null) orelse return error.Win32Error;
+        errdefer _ = w32.CloseHandle(wake);
         self.* = .{
             .gpa = gpa,
             .app = app,
@@ -165,6 +169,15 @@ pub const Watcher = struct {
             .pairs_arena = .init(gpa),
             .policy_values = policy_values,
         };
+        // On error the policy values stay with the caller.
+        errdefer {
+            freeList(gpa, &self.settings_files);
+            freeList(gpa, &self.ghostty_files);
+            self.base_arena.deinit();
+            self.pairs_arena.deinit();
+            self.shared_pairs_arena.deinit();
+            self.book.deinit(gpa);
+        }
         const ba = self.base_arena.allocator();
         inline for (std.meta.fields(BaseInputs)) |f| {
             if (@field(base, f.name)) |v| @field(self.base, f.name) = try ba.dupe(u8, v);
@@ -301,7 +314,12 @@ pub const Watcher = struct {
             } else if (rc >= w32.WAIT_OBJECT_0 + 2 and rc < w32.WAIT_OBJECT_0 + n) {
                 const idx: usize = rc - w32.WAIT_OBJECT_0;
                 if (idx >= dir_base) {
-                    if (self.onDirEvent(self.dirs.items[idx - dir_base])) quiet.touch(t);
+                    const d = self.dirs.items[idx - dir_base];
+                    if (self.onDirEvent(d)) {
+                        // A missing directory appeared: watch it (frees `d`).
+                        if (d.ancestor) self.rebuildDirs();
+                        quiet.touch(t);
+                    }
                 } else {
                     for (reg_slot, 0..) |slot, i| if (slot == idx) {
                         if (reg_keys[i]) |key| _ = policy.armNotify(key, reg_events[i].?);
@@ -582,20 +600,23 @@ pub const Watcher = struct {
 
     fn addWatch(self: *Watcher, file: []const u8) void {
         const gpa = self.gpa;
-        const name = std.fs.path.basename(file);
         // A missing directory (cmux.json before ~/.config/cmux exists) is
         // watched through its nearest existing ancestor, up to three
-        // levels up, with a subtree watch; deeper gaps rely on the poll.
+        // levels up, for the creation of its first missing component
+        // (`rebuildDirs` then goes one level deeper); deeper gaps rely on
+        // the poll.
+        var name = std.fs.path.basename(file);
         var dir = std.fs.path.dirname(file) orelse return;
-        var subtree = false;
+        var ancestor = false;
         var up: usize = 0;
         while (!dirExists(dir)) : (up += 1) {
             if (up >= 3) return;
+            name = std.fs.path.basename(dir);
             dir = std.fs.path.dirname(dir) orelse return;
-            subtree = true;
+            ancestor = true;
         }
         for (self.dirs.items) |d| {
-            if (!std.ascii.eqlIgnoreCase(d.path, dir) or d.subtree != subtree) continue;
+            if (!std.ascii.eqlIgnoreCase(d.path, dir) or d.ancestor != ancestor) continue;
             for (d.names.items) |n| if (std.ascii.eqlIgnoreCase(n, name)) return;
             const copy = gpa.dupe(u8, name) catch return;
             d.names.append(gpa, copy) catch gpa.free(copy);
@@ -633,7 +654,7 @@ pub const Watcher = struct {
             .handle = h,
             .event = ev,
             .overlapped = std.mem.zeroes(windows.OVERLAPPED),
-            .subtree = subtree,
+            .ancestor = ancestor,
             .buffer = undefined,
             .names = .empty,
         };
@@ -660,8 +681,8 @@ fn armDir(d: *DirWatch) void {
         d.handle,
         &d.buffer,
         d.buffer.len,
-        @intFromBool(d.subtree),
-        .{ .file_name = true, .size = true, .last_write = true, .creation = true },
+        0, // never recursive
+        .{ .file_name = true, .dir_name = true, .size = true, .last_write = true, .creation = true },
         null,
         &d.overlapped,
         null,
@@ -675,8 +696,18 @@ fn dirExists(path: []const u8) bool {
     return true;
 }
 
+/// The watcher thread's clock base (only that thread calls `now`).
+var clock_base: ?std.time.Instant = null;
+
+/// Monotonic milliseconds (QueryPerformanceCounter): a wall-clock change
+/// must not stall the debounce or the policy poll.
 fn now() i64 {
-    return std.time.milliTimestamp();
+    const t = std.time.Instant.now() catch return 0;
+    const base = clock_base orelse blk: {
+        clock_base = t;
+        break :blk t;
+    };
+    return @intCast(t.since(base) / std.time.ns_per_ms);
 }
 
 fn hashFile(gpa: Allocator, path: []const u8) ?u64 {
