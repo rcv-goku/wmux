@@ -286,6 +286,19 @@ function Assert-W12cLiveV2 {
     }
 }
 
+# The v2 server (W1-1a) can land before the workspace handlers (W1-1b): a live instance that
+# answers workspace.current with method_not_found cannot run the live checks yet.
+function Test-W12cWorkspaceRpc {
+    param($Instance)
+    try {
+        Invoke-WmuxRpc $Instance 'workspace.current' @{} | Out-Null
+        return $true
+    } catch [WmuxRpcError] {
+        if ($_.Exception.Code -eq 'method_not_found') { return $false }
+        throw
+    }
+}
+
 # Opens a fresh directory with `cmux open <dir>` (workspace.create {cwd, focus}) under a ConPTY:
 # 1. against a recording v2 pipe (always): the request carries focus = $ExpectFocus;
 # 2. against a live instance when it speaks v2: the new workspace takes (or leaves) the selection.
@@ -322,6 +335,10 @@ function Test-W12cFocusDefault {
         $script:W12cLiveProtocol = $w.Protocol
         if ($w.Protocol -ne 'v2') {
             Write-Host "$Label`: live selection check skipped (the app speaks the legacy protocol; the v2 server lands in W1-1a)"
+            return
+        }
+        if (-not (Test-W12cWorkspaceRpc $w)) {
+            Write-Host "$Label`: live selection check skipped (the v2 workspace handlers land in W1-1b)"
             return
         }
         $before = Get-W12cCurrentWorkspace $w
@@ -362,6 +379,9 @@ Test-Case 'cli: --json and --id-format work before or after the command; rpc sta
     $w = Start-WmuxInstance
     try {
         Assert-W12cLiveV2 $w '--json/--id-format against a live instance'
+        if (-not (Test-W12cWorkspaceRpc $w)) {
+            throw [WmuxSkipException]::new('--json/--id-format against a live instance: the v2 workspace handlers land in W1-1b')
+        }
         $quiet = @{ CMUX_QUIET = '1' }
         $a = Invoke-WmuxCli $w @('--json', 'list-workspaces') -Env $quiet
         $b = Invoke-WmuxCli $w @('list-workspaces', '--json') -Env $quiet
