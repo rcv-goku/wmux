@@ -100,10 +100,10 @@ pub const LineFramer = struct {
                 continue;
             }
             const tail_len = self.buf.items.len - self.tail_start;
-            // CR of a CRLF terminator does not count against the cap.
-            var seg_len = seg.len;
-            if (nl != null and seg_len > 0 and seg[seg_len - 1] == '\r') seg_len -= 1;
-            if (tail_len + seg_len > self.max_line) {
+            // CR of a CRLF terminator does not count against the cap, also
+            // when the LF arrives in a later chunk (a trailing CR may still
+            // be a terminator; if content follows it, it counts then).
+            if (self.contentLen(seg) > self.max_line) {
                 try self.pending.append(gpa, .{ .oversized = tail_len + seg.len });
                 self.buf.shrinkRetainingCapacity(self.tail_start);
                 if (nl == null) {
@@ -126,13 +126,22 @@ pub const LineFramer = struct {
         }
         // A tail already over the cap (possible after lowering it) is
         // reported now rather than buffered further.
-        if (!self.discarding and self.buf.items.len - self.tail_start > self.max_line) {
+        if (!self.discarding and self.contentLen("") > self.max_line) {
             const len = self.buf.items.len - self.tail_start;
             try self.pending.append(gpa, .{ .oversized = len });
             self.buf.shrinkRetainingCapacity(self.tail_start);
             self.discarding = true;
             self.discard_len = len;
         }
+    }
+
+    /// Length of the current partial line plus `seg`, not counting a final
+    /// CR (a possible CRLF terminator).
+    fn contentLen(self: *const LineFramer, seg: []const u8) usize {
+        const tail = self.buf.items[self.tail_start..];
+        const len = tail.len + seg.len;
+        const last: ?u8 = if (seg.len > 0) seg[seg.len - 1] else if (tail.len > 0) tail[tail.len - 1] else null;
+        return if (last == '\r') len - 1 else len;
     }
 
     /// The oldest unreturned event, or null when more input is needed.
@@ -294,4 +303,18 @@ test "unit: rpc: framer setMaxLine raises the cap for the current line" {
     try testing.expect(f.next().? == .oversized);
     try f.feed(testing.allocator, "d\nok\n");
     try expectLine(&f, "ok");
+}
+test "unit: rpc: framer CR of a CRLF split across chunks does not count against the cap" {
+    var f: LineFramer = .init(8);
+    defer f.deinit(testing.allocator);
+    try f.feed(testing.allocator, "12345678\r");
+    try testing.expect(f.next() == null);
+    try f.feed(testing.allocator, "\nok\n");
+    try expectLine(&f, "12345678");
+    try expectLine(&f, "ok");
+    // A CR that turns out to be content still counts.
+    try f.feed(testing.allocator, "12345678\r");
+    try f.feed(testing.allocator, "x\n");
+    try testing.expect(f.next().? == .oversized);
+    try testing.expect(f.next() == null);
 }
