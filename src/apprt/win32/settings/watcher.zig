@@ -105,6 +105,8 @@ const DirWatch = struct {
     buffer: [16 * 1024]u8 align(@alignOf(windows.FILE_NOTIFY_INFORMATION)),
     /// Base names of the watched files in this directory.
     names: std.ArrayList([]u8),
+    /// Watches the whole subtree (an ancestor of a missing directory).
+    subtree: bool = false,
 };
 
 pub const Watcher = struct {
@@ -264,6 +266,10 @@ pub const Watcher = struct {
             if (k) |key| _ = w32.RegCloseKey(key);
             if (e) |ev| _ = w32.CloseHandle(ev);
         };
+
+        log.info("settings watcher started dirs={d} files={d}", .{ self.dirs.items.len, self.settings_files.items.len + self.ghostty_files.items.len });
+        // Changes made between the startup load and arming the watches.
+        self.checkAll(&triggers, false);
 
         while (true) {
             var handles: [64]windows.HANDLE = undefined;
@@ -576,10 +582,20 @@ pub const Watcher = struct {
 
     fn addWatch(self: *Watcher, file: []const u8) void {
         const gpa = self.gpa;
-        const dir = std.fs.path.dirname(file) orelse return;
         const name = std.fs.path.basename(file);
+        // A missing directory (cmux.json before ~/.config/cmux exists) is
+        // watched through its nearest existing ancestor, up to three
+        // levels up, with a subtree watch; deeper gaps rely on the poll.
+        var dir = std.fs.path.dirname(file) orelse return;
+        var subtree = false;
+        var up: usize = 0;
+        while (!dirExists(dir)) : (up += 1) {
+            if (up >= 3) return;
+            dir = std.fs.path.dirname(dir) orelse return;
+            subtree = true;
+        }
         for (self.dirs.items) |d| {
-            if (!std.ascii.eqlIgnoreCase(d.path, dir)) continue;
+            if (!std.ascii.eqlIgnoreCase(d.path, dir) or d.subtree != subtree) continue;
             for (d.names.items) |n| if (std.ascii.eqlIgnoreCase(n, name)) return;
             const copy = gpa.dupe(u8, name) catch return;
             d.names.append(gpa, copy) catch gpa.free(copy);
@@ -617,6 +633,7 @@ pub const Watcher = struct {
             .handle = h,
             .event = ev,
             .overlapped = std.mem.zeroes(windows.OVERLAPPED),
+            .subtree = subtree,
             .buffer = undefined,
             .names = .empty,
         };
@@ -643,13 +660,19 @@ fn armDir(d: *DirWatch) void {
         d.handle,
         &d.buffer,
         d.buffer.len,
-        0,
+        @intFromBool(d.subtree),
         .{ .file_name = true, .size = true, .last_write = true, .creation = true },
         null,
         &d.overlapped,
         null,
     );
     if (ok == 0) log.warn("ReadDirectoryChangesW failed for {s}", .{d.path});
+}
+
+fn dirExists(path: []const u8) bool {
+    var d = std.fs.cwd().openDir(path, .{}) catch return false;
+    d.close();
+    return true;
 }
 
 fn now() i64 {
