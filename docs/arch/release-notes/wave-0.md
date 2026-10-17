@@ -75,7 +75,7 @@ that merges `wp/W0-ST-stabilize` with `scripts/gate.ps1 -Full` green (AF-2).
   in-process clipboard, message boxes auto-answered with their default button; window placement is
   neither restored nor saved and closing a window saves no session unless
   `WMUX_TEST_SESSION_RESTORE=1`. The explicit `session-save` command still writes
-  `session-state.json` (pending decision (b) below). (W0-A1, W0-A4)
+  `session-state.json` (owner decision (b) below, answered 2026-10-17). (W0-A1, W0-A4)
 - `WMUX_TEST_HIDDEN=1`: every top-level window is DWM-cloaked at the primary work-area origin with a
   1600x1000 client size clamped to the work area, never activated, not in the taskbar or Alt-Tab, and
   does not save or restore its placement; the UI thread's `WH_CBT` hook also refuses every
@@ -166,37 +166,42 @@ that merges `wp/W0-ST-stabilize` with `scripts/gate.ps1 -Full` green (AF-2).
   `check-ownership.ps1` rules, a nightly `gate.ps1 -Full` CI job and a Node job for
   `test/web-node/**/*.test.mjs`.
 
-## Pending owner decisions
+## Owner decisions (pending at the wave-0 tag; answered 2026-10-17)
 
-Listed for the program owner (the lead architect, AF-19); W0-ST does not decide them.
+Listed for the program owner (the lead architect, AF-19); W0-ST did not decide them. The program owner
+answered all five on 2026-10-17 as recommended; W1-IF recorded the answers (ARCHITECTURE Appendix F.2,
+entry of 2026-10-17).
 
-(a) **D6 premise.** Ruling D6 chose hyphenated `workspace.action` / `tab.action` names on the premise
+(a) **D6 premise.** *Answered: the Appendix B.4 clarification is confirmed; no CLI change.* Ruling D6 chose hyphenated `workspace.action` / `tab.action` names on the premise
 that the CLI already sends hyphens. It does not: `workspace-action` sends cmux's underscore wire
 spelling (`set_description`, `mark_read`, pinned by the "unit: cli-workspace: workspace-action
 actions" test); only `tab-action` sends hyphens. Commit `5b4789e` (W0-R) clarified Appendix B.4: the
 hyphenated names of D6 stay and the handlers accept both spellings, as cmux does (its v2 parsing maps
 `-` to `_`). Decide: confirm that ADR clarification, or change the CLI in W2-1/W4-5.
 
-(b) **Explicit session-save in test mode.** W0-A4 gated only the session save on `WM_CLOSE`; the
+(b) **Explicit session-save in test mode.** *Answered: the explicit command writes in test mode; only
+automatic saves are gated (ADR-12.3); the W0-A4 acceptance text is amended, the suites stay.* W0-A4 gated only the session save on `WM_CLOSE`; the
 explicit legacy `session-save` command still writes `session-state.json` in test mode, and the W0-B2
 suites assert that it does (`legacy-compat.e2e.ps1:219-220`, `w0-regression.e2e.ps1:247-249`). The
 W0-A4 acceptance text ("a legacy session-save plus WM_CLOSE leaves STATE without window-state and
 session-state.json") reads the other way. Decide whether the explicit command writes in test mode,
 then amend the suites or the acceptance text.
 
-(c) **check-ownership implicit rules.** W0-C2 made two rules implicit for every WP: a sort-only edit
+(c) **check-ownership implicit rules.** *Answered: acknowledged as a gloss on AF-15/AF-19.* W0-C2 made two rules implicit for every WP: a sort-only edit
 to a `merge=union` aggregator (`fast_tests.zig`, `test_index.zig`, `**/logic/tests.zig`,
 `proto.zig`) and appending rows to `docs/arch/manual-checks.md`. They are documented in
 `docs/arch/README.md` and the script header but not in the plan or a spec. Acknowledge them as a gloss
 on AF-15/AF-19 (or reject them).
 
-(d) **Sink formats, `WMUX_TEST_FILE_DIALOG` and `WMUX_LOG` (for ADR-12.3 / Appendix G).** W0-A4
+(d) **Sink formats, `WMUX_TEST_FILE_DIALOG` and `WMUX_LOG` (for ADR-12.3 / Appendix G).** *Answered: recorded
+in ADR-12.3 and Appendix G.2 as chosen.* W0-A4
 chose: `WMUX_TEST_FILE_DIALOG` = a path or `cancel` (unset = cancel); external sink line
 `{kind, verb, target, timestamp_ms}`; sound sink line `{kind, source, type, sound, timestamp_ms}`;
 `WMUX_LOG` levels `off`/`error`/`warn`/`info`/`debug` (default `info`); the explicit session-save
 command is not gated in test mode (see (b)). Record them in ADR-12.3 / Appendix G or change them.
 
-(e) **RPC transport values chosen by the W1-1a-t worker** (record in Appendix E or change in
+(e) **RPC transport values chosen by the W1-1a-t worker** *(answered: recorded in Appendix E D34;
+W1-1a/W1-1b may still tune them through their specs)* (record in Appendix E or change in
 W1-1a/W1-1b): `overloaded` replies carry `retry_after_ms` 250 (pool, pre-authorization or accept
 buffer saturated), 1000 (pending wait expired) and 2000 (server stopping); an oversized line is
 answered `{"id":null,"ok":false,"error":{"code":"invalid_request","message":"Request too large","data":{"max_bytes":1048576}}}`;

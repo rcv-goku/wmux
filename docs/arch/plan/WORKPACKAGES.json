@@ -1629,7 +1629,7 @@
    "acceptance": [
     "unit: app: hidden placement clamps a 1600x1000 client into a 1024x768 work area and keeps the window on the primary monitor; unit: model: display order lists pinned workspaces first, then groups flattened in display order (model/logic/fake.zig)",
     "e2e (W0-B2 harness): a hidden instance reports DWMWA_CLOAKED=1, is not an Alt-Tab candidate, has no taskbar button, WindowFromPoint at its centre returns another window, and Get-WmuxScreenshot shows a non-blank terminal child (3+ colors, dominant color under 99.9%)",
-    "e2e: in test mode a legacy session-save plus WM_CLOSE leaves STATE without window-state and session-state.json; open_url appends one line to WMUX_TEST_EXTERNAL_SINK; a forced MessageBeep appends to WMUX_TEST_SOUND_SINK; STATE/logs/wmux.log exists",
+    "e2e: in test mode WM_CLOSE leaves STATE without window-state and session-state.json while an explicit legacy session-save still writes session-state.json (only automatic saves are gated; owner decision 2026-10-17 (b), ADR-12.3); open_url appends one line to WMUX_TEST_EXTERNAL_SINK; a forced MessageBeep appends to WMUX_TEST_SOUND_SINK; STATE/logs/wmux.log exists",
     "e2e: every child window of WmuxWindow has WS_CLIPSIBLINGS (GetWindowLongPtr enumeration in the harness); the sampler records 0 violations over -Suite smoke,legacy,regression -Parallel 4",
     "zig build (debug and ReleaseFast) links without runtimeobject or combase; zig build test -Dtest-filter=\"unit: \" green"
    ],
