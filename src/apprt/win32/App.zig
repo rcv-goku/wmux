@@ -21,6 +21,7 @@ const model_registry = @import("model/registry.zig");
 // app/ plumbing (ARCHITECTURE.md ADR-1.6).
 const app_clipboard = @import("app/clipboard.zig");
 const app_foreground = @import("app/foreground.zig");
+const app_logger = @import("app/logger.zig");
 const app_modal = @import("app/modal.zig");
 const app_tasks = @import("app/tasks.zig");
 const app_timers = @import("app/timers.zig");
@@ -304,6 +305,10 @@ pub fn init(
         .runtime_env = RuntimeEnv.load(alloc),
     };
     errdefer self.runtime_env.deinit(alloc);
+    // STATE\logs\wmux.log from here on, so the rest of startup logs to it
+    // (W1-1a integrator grant; Window.init starting it again is a no-op).
+    app_logger.start(alloc, &self.runtime_env);
+    errdefer app_logger.stop();
     self.clipboard.init(alloc, self.runtime_env.test_mode);
     errdefer self.clipboard.deinit();
 
@@ -619,6 +624,9 @@ pub fn terminate(self: *App) void {
         w32.CoUninitialize();
         self.com_initialized = false;
     }
+
+    // Last: restore stderr and close STATE\logs\wmux.log.
+    app_logger.stop();
 }
 
 /// Wake up the message loop from any thread by posting a message
