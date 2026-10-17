@@ -90,8 +90,30 @@ New-Item -ItemType Directory -Force -Path $fixtureRoot | Out-Null
 try {
     # ------------------------------------------------------------ module
     Write-Host 'module: WP ids'
-    foreach ($id in 'W2-5', 'W1-1a', 'W0-D-S1', 'W0-C', 'W12-3', 'W5a-3') { Test-That "valid id $id" (Test-WmuxWpId $id) }
-    foreach ($id in 'w2-5', 'W2', 'W2-', 'X1-2', 'W2-5 ', 'W2_5', 'W5ab-1', 'W5a') { Test-That "invalid id '$id'" (-not (Test-WmuxWpId $id)) }
+    foreach ($id in 'W2-5', 'W1-1a', 'W0-D-S1', 'W0-C', 'W12-3', 'W5a-3', 'PB-notif', 'PB-web-taskmgr-todo', 'W1-1a-t') { Test-That "valid id $id" (Test-WmuxWpId $id) }
+    foreach ($id in 'w2-5', 'W2', 'W2-', 'X1-2', 'W2-5 ', 'W2_5', 'W5ab-1', 'W5a', 'PB', 'PB-', 'pb-notif', 'PB_notif', 'PBX-1') { Test-That "invalid id '$id'" (-not (Test-WmuxWpId $id)) }
+
+    Write-Host 'module: file classes and aggregators (AF-15)'
+    Test-That 'frozen: fast_tests.zig' (Test-WmuxFrozenPath 'src/apprt/win32/fast_tests.zig')
+    Test-That 'frozen: src/terminal (plan note 6)' (Test-WmuxFrozenPath 'src/terminal/PageList.zig')
+    Test-That 'not frozen: a feature file' (-not (Test-WmuxFrozenPath 'src/apprt/win32/features/todo/logic/model.zig'))
+    Test-That 'aggregator: feature logic/tests.zig' (Test-WmuxAggregatorPath 'src/apprt/win32/features/todo/logic/tests.zig')
+    Test-That 'aggregator: proto.zig and wmux_cli logic/tests.zig' ((Test-WmuxAggregatorPath 'src/wmux_proto/proto.zig') -and (Test-WmuxAggregatorPath 'src/wmux_cli/logic/tests.zig'))
+    Test-That 'aggregator: not a logic file' (-not (Test-WmuxAggregatorPath 'src/apprt/win32/features/todo/logic/model.zig'))
+    Test-That 'schema path' ((Get-WmuxSchemaPath) -eq 'docs/wmux/schema/wmux.schema.json')
+    $okLines = @('//! index', 'const std = @import("std");', 'test {', '    _ = @import("a.zig");', '    // a note inside the run', '    _ = @import("b.zig");', '}',
+        'pub const zeta = @import("zeta.zig");', 'pub const alpha = struct {', '    pub const a = @import("x/a.zig");', '};')
+    Test-That 'aggregator: sorted runs pass (helpers and comments ignored)' ((Get-WmuxAggregatorIssues -Lines $okLines).Count -eq 0)
+    $bad = Get-WmuxAggregatorIssues -Lines @('test {', '    _ = @import("b.zig");', '    _ = @import("a.zig");', '    _ = @import("a.zig");', '    _ = @import("c.zig"); _ = @import("d.zig");', '}')
+    Test-That 'aggregator: unsorted entry' (@($bad | Where-Object { $_.Line -eq 3 -and $_.Message -match 'not sorted' }).Count -eq 1) ($bad | Out-String)
+    Test-That 'aggregator: duplicate entry' (@($bad | Where-Object { $_.Line -eq 4 -and $_.Message -match 'duplicate' }).Count -eq 1) ($bad | Out-String)
+    Test-That 'aggregator: two imports on one line' (@($bad | Where-Object { $_.Line -eq 5 -and $_.Message -match 'one entry per line' }).Count -eq 1) ($bad | Out-String)
+    Test-That 'glob overlap: dir glob vs file' (Test-WmuxGlobOverlap 'src/web/todo/**' 'src/web/todo/app.js')
+    Test-That 'glob overlap: disjoint suites' (-not (Test-WmuxGlobOverlap 'test/e2e/suites/p/W1-4a.e2e.ps1' 'test/e2e/suites/p/W1-4b*.e2e.ps1'))
+    $ledgerFile = Join-Path $fixtureRoot 'manual-checks.md'
+    Write-Fixture $fixtureRoot 'manual-checks.md' @('# ledger', '', '| id | check |', '|---|---|', '| `core-ime-composition` | IME |', '| toasts-real-click | click |')
+    $led = Read-WmuxManualLedger -Path $ledgerFile
+    Test-That 'ledger: rows read, header skipped' (($led.Count -eq 2) -and $led.Contains('core-ime-composition') -and -not $led.Contains('id'))
 
     Write-Host 'module: YAML front matter'
     $template = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot '../docs/arch/wp/_template.md'))
@@ -267,6 +289,64 @@ try {
     $r = Invoke-Script 'check-ownership.ps1' @('-Wp', 'nope', '-RepoRoot', $repo)
     Test-That 'ownership: invalid id exits 2' ($r.Code -eq 2) $r.Output
 
+    # f) AF-15 merge-time artifact and aggregators; PB ids; -Head
+    Invoke-FixtureGit $repo @('checkout', '-q', 'master')
+    Write-Fixture $repo 'docs/wmux/schema/wmux.schema.json' @('{', '  "type": "object"', '}')
+    Write-Fixture $repo 'src/apprt/win32/fast_tests.zig' @('test {', '    _ = @import("features/a/logic/tests.zig");', '    _ = @import("features/c/logic/tests.zig");', '}')
+    Write-Fixture $repo 'src/apprt/win32/features/bar/logic/tests.zig' @('test {', '    _ = @import("a.zig");', '    _ = @import("b.zig");', '}')
+    Write-Fixture $repo 'docs/arch/wp/W9-2.md' @(
+        '---', 'id: W9-2', 'title: Appender', 'wave: 1', 'size: S', 'depends: []', 'covers: []',
+        'owns:', '  - src/apprt/win32/features/b/**',
+        'touches: []',
+        'appends:', '  - src/apprt/win32/fast_tests.zig',
+        'apis_needed: []', 'ccr: []', 'deviations: []', '---')
+    Write-Fixture $repo 'docs/arch/wp/PB-notif.md' @(
+        '---', 'id: PB-notif', 'title: Pre-build', 'wave: 0', 'size: M', 'depends: []', 'covers: []',
+        'owns:', '  - src/apprt/win32/features/notifications/logic/**', 'touches: []', 'appends: []',
+        'apis_needed: []', 'ccr: []', 'deviations: []', '---')
+    Invoke-FixtureGit $repo @('add', '-A')
+    Invoke-FixtureGit $repo @('commit', '-q', '-m', 'aggregators')
+
+    Invoke-FixtureGit $repo @('checkout', '-q', '-b', 'wp/W9-1-schema')
+    Write-Fixture $repo 'docs/wmux/schema/wmux.schema.json' @('{', '  "type": "object",', '  "properties": {}', '}')
+    Invoke-FixtureGit $repo @('commit', '-q', '-am', 'schema')
+    $r = Invoke-Script 'check-ownership.ps1' @('-Wp', 'W9-1', '-RepoRoot', $repo)
+    Test-That 'ownership: a branch changing the settings schema passes for any WP (AF-15)' (($r.Code -eq 0) -and ($r.Output -match 'merge-time artifact')) $r.Output
+
+    Invoke-FixtureGit $repo @('checkout', '-q', 'master')
+    Invoke-FixtureGit $repo @('checkout', '-q', '-b', 'wp/W9-2-append')
+    Write-Fixture $repo 'src/apprt/win32/fast_tests.zig' @('test {', '    _ = @import("features/a/logic/tests.zig");', '    _ = @import("features/b/logic/tests.zig");', '    _ = @import("features/c/logic/tests.zig");', '}')
+    Write-Fixture $repo 'src/apprt/win32/features/b/logic/tests.zig' @('test {}')
+    Invoke-FixtureGit $repo @('add', '-A')
+    Invoke-FixtureGit $repo @('commit', '-q', '-m', 'append')
+    $r = Invoke-Script 'check-ownership.ps1' @('-Wp', 'W9-2', '-RepoRoot', $repo)
+    Test-That 'ownership: a declared append to a frozen aggregator passes' ($r.Code -eq 0) $r.Output
+    Write-Fixture $repo 'src/apprt/win32/fast_tests.zig' @('test {', '    _ = @import("features/b/logic/tests.zig");', '}')
+    $r = Invoke-Script 'check-ownership.ps1' @('-Wp', 'W9-2', '-RepoRoot', $repo)
+    Test-That 'ownership: removing lines from a frozen appended file fails' (($r.Code -eq 1) -and ($r.Output -match 'It is frozen')) $r.Output
+    Invoke-FixtureGit $repo @('checkout', '-q', '--', '.')
+    $r = Invoke-Script 'check-ownership.ps1' @('-Wp', 'W9-1', '-RepoRoot', $repo, '-Head', 'wp/W9-1-schema')
+    Test-That 'ownership: -Head checks another branch (committed only)' (($r.Code -eq 0) -and ($r.Output -match 'at wp/W9-1-schema') -and ($r.Output -match '1 changed path')) $r.Output
+
+    Invoke-FixtureGit $repo @('checkout', '-q', 'master')
+    Invoke-FixtureGit $repo @('checkout', '-q', '-b', 'wp/W9-1-sort')
+    Write-Fixture $repo 'src/apprt/win32/features/bar/logic/tests.zig' @('test {', '    _ = @import("b.zig");', '    _ = @import("a.zig");', '}')
+    Invoke-FixtureGit $repo @('commit', '-q', '-am', 'reorder')
+    $r = Invoke-Script 'check-ownership.ps1' @('-Wp', 'W9-1', '-RepoRoot', $repo)
+    Test-That 'ownership: a sort-only edit of any aggregator passes' (($r.Code -eq 0) -and ($r.Output -match 're-sorted')) $r.Output
+    Write-Fixture $repo 'src/apprt/win32/features/bar/logic/tests.zig' @('test {', '    _ = @import("b.zig");', '    _ = @import("c.zig");', '}')
+    $r = Invoke-Script 'check-ownership.ps1' @('-Wp', 'W9-1', '-RepoRoot', $repo)
+    Test-That 'ownership: changing an aggregator beyond a re-sort is not implicit' ($r.Code -eq 1) $r.Output
+    Invoke-FixtureGit $repo @('checkout', '-q', '--', '.')
+
+    Invoke-FixtureGit $repo @('checkout', '-q', 'master')
+    Invoke-FixtureGit $repo @('checkout', '-q', '-b', 'wp/PB-notif-store')
+    Write-Fixture $repo 'src/apprt/win32/features/notifications/logic/store.zig' @('// store')
+    Invoke-FixtureGit $repo @('add', '-A')
+    Invoke-FixtureGit $repo @('commit', '-q', '-m', 'pb')
+    $r = Invoke-Script 'check-ownership.ps1' @('-RepoRoot', $repo)
+    Test-That 'ownership: PB-notif inferred from wp/PB-notif-store and accepted' (($r.Code -eq 0) -and ($r.Output -match 'PB-notif vs')) $r.Output
+
     # ------------------------------------------------------------ check-manifest
     Write-Host 'check-manifest: fixture trees'
     $sk = Join-Path $fixtureRoot 'skeleton'
@@ -342,6 +422,88 @@ try {
     $r = Invoke-Script 'check-manifest.ps1' @('-RepoRoot', $al)
     Test-That 'manifest: new aliases after wave-0 warn (both forms)' (($r.Code -eq 0) -and ($r.Output -match 'new alias after Wave 0 \(pub const clearNotifs = ring\.clearNotifs;\)') -and ($r.Output -match 'new alias after Wave 0 \(pub const later = ') -and ($r.Output -match '0 error\(s\), 2 warning\(s\)')) $r.Output
 
+    # Shared-appendable aggregators and the manual-check ledger.
+    $ag = Join-Path $fixtureRoot 'aggregators'
+    Write-Fixture $ag 'src/apprt/win32/App.zig' @('const std = @import("std");')
+    Write-Fixture $ag 'src/apprt/win32/model/logic/tests.zig' @('test {', '    _ = @import("b.zig");', '    _ = @import("a.zig");', '}')
+    Write-Fixture $ag 'src/apprt/win32/model/logic/a.zig' @('// a')
+    Write-Fixture $ag 'src/apprt/win32/model/logic/b.zig' @('// b')
+    Write-Fixture $ag 'src/wmux_proto/proto.zig' @('pub const b = @import("b.zig");', 'pub const a = @import("a.zig");')
+    Write-Fixture $ag 'test/e2e/suites/core/W2-1.e2e.ps1' @('# wp: W2-1', '# covers: core-a', '# manual: core-ime-composition "IME needs a human"', 'Import-Module nothing')
+    $r = Invoke-Script 'check-manifest.ps1' @('-RepoRoot', $ag)
+    Test-That 'manifest: unsorted logic/tests.zig is an error' (($r.Code -eq 1) -and ($r.Output -match 'model/logic/tests\.zig:3: not sorted')) $r.Output
+    Test-That 'manifest: unsorted proto.zig re-exports are an error' ($r.Output -match 'proto\.zig:2: not sorted') $r.Output
+    Test-That 'manifest: manual waiver without a ledger row warns' ($r.Output -match "'# manual: core-ime-composition' has no row in docs/arch/manual-checks\.md") $r.Output
+    Write-Fixture $ag 'src/apprt/win32/model/logic/tests.zig' @('test {', '    _ = @import("a.zig");', '    _ = @import("b.zig");', '}')
+    Write-Fixture $ag 'src/wmux_proto/proto.zig' @('pub const a = @import("a.zig");', 'pub const b = @import("b.zig");')
+    Write-Fixture $ag 'docs/arch/manual-checks.md' @('| id | check |', '|---|---|', '| core-ime-composition | IME |')
+    $r = Invoke-Script 'check-manifest.ps1' @('-RepoRoot', $ag)
+    Test-That 'manifest: sorted aggregators and a ledger row pass cleanly' (($r.Code -eq 0) -and ($r.Output -match '0 error\(s\), 0 warning\(s\)')) $r.Output
+
+    # ------------------------------------------------------------ new-wp-specs
+    Write-Host 'new-wp-specs.ps1: fixture plans'
+    $pr = Join-Path $fixtureRoot 'plan-tree'
+    Write-Fixture $pr 'src/apprt/win32/features/todo/mod.zig' @('pub const id = "todo";')
+    Write-Fixture $pr 'src/apprt/win32/fast_tests.zig' @('test {}')
+    Write-Fixture $pr 'src/apprt/win32/App.zig' @('// app')
+    function New-PlanWp([string]$Id, [string]$Arch, [int]$Wave, [string[]]$New = @(), [string[]]$Touched = @(), [object[]]$Touches = @(), [string[]]$Appends = @(), [string[]]$Depends = @()) {
+        return [ordered]@{
+            id = $Id; title = "Fixture $Arch"; wave = $Wave; arch_id = $Arch; arch_wave = 'W3'; status = 'planned'; executor = 'plan'
+            est_size = 'M'; units = 3; summary = "Fixture work package $Arch."; features = @("feat-$Arch"); depends_on = $Depends; merge_after = @()
+            files_new = $New; files_touched = $Touched; touches = $Touches; appends = $Appends
+            acceptance = @("unit: $($Arch): works", 'e2e: it shows'); derived_from = @()
+        }
+    }
+    function Write-Plan([string]$Name, [object[]]$Wps) {
+        $path = Join-Path $fixtureRoot $Name
+        [System.IO.File]::WriteAllText($path, (ConvertTo-Json -InputObject ([ordered]@{ waves = @(); work_packages = $Wps; notes = @() }) -Depth 8), $utf8)
+        return $path
+    }
+    function Invoke-Specs([string]$PlanPath, [string]$Out, [string[]]$Extra = @()) {
+        return (Invoke-Script 'new-wp-specs.ps1' (@('-Plan', $PlanPath, '-Wave', '31', '-OutDir', $Out, '-RepoRoot', $pr) + $Extra))
+    }
+    $good = @(
+        (New-PlanWp 'WP-30-if' 'W3-IF' 30),
+        (New-PlanWp 'WP-31-a' 'W3-1a' 31 -New @('src/apprt/win32/features/todo/logic/model.zig', 'test/e2e/suites/todo/W3-1a.e2e.ps1') -Touched @('src/apprt/win32/features/todo/mod.zig', 'src/apprt/win32/App.zig') `
+                -Touches @([ordered]@{ path = 'src/apprt/win32/App.zig'; reason = 'one-line hook: wire the store' }) -Appends @('src/apprt/win32/fast_tests.zig') -Depends @('WP-30-if')),
+        (New-PlanWp 'WP-31-b' 'PB-todo' 31 -New @('src/web/todo/**') -Appends @('src/apprt/win32/fast_tests.zig'))
+    )
+    $out = Join-Path $fixtureRoot 'specs-good'
+    $r = Invoke-Specs (Write-Plan 'plan-good.json' $good) $out
+    Test-That 'specs: a clean wave renders one spec per WP and exits 0' (($r.Code -eq 0) -and (Test-Path (Join-Path $out 'W3-1a.md')) -and (Test-Path (Join-Path $out 'PB-todo.md')) -and -not (Test-Path (Join-Path $out 'W3-IF.md'))) $r.Output
+    if (Test-Path (Join-Path $out 'W3-1a.md')) {
+        $sp = Get-WmuxWpSpec -RepoRoot $repo -Wp 'W3-1a' -SpecPath (Join-Path $out 'W3-1a.md')
+        Test-That 'specs: owns = files_new + non-frozen files_touched' ((@($sp.Owns | ForEach-Object Path) -join '|') -eq 'src/apprt/win32/features/todo/logic/model.zig|test/e2e/suites/todo/W3-1a.e2e.ps1|src/apprt/win32/features/todo/mod.zig') ($sp.Owns | Out-String)
+        Test-That 'specs: touches keep their reasons' (($sp.Touches.Count -eq 1) -and ($sp.Touches[0].Reason -eq 'one-line hook: wire the store'))
+        Test-That 'specs: appends, wave, depends and covers' ((@($sp.Appends | ForEach-Object Path) -join '|') -eq 'src/apprt/win32/fast_tests.zig' -and $sp.Data['wave'] -eq '3' -and (@($sp.Data['depends']) -join ',') -eq 'W3-IF' -and (@($sp.Data['covers']) -join ',') -eq 'feat-W3-1a')
+    }
+    $r = Invoke-Specs (Join-Path $fixtureRoot 'plan-good.json') $out
+    Test-That 'specs: an existing spec needs -Force' (($r.Code -eq 1) -and ($r.Output -match 'pass -Force')) $r.Output
+    $r = Invoke-Specs (Join-Path $fixtureRoot 'plan-good.json') $out @('-Force')
+    Test-That 'specs: -Force overwrites' ($r.Code -eq 0) $r.Output
+
+    $cases = @(
+        @('placeholder path', @((New-PlanWp 'WP-31-a' 'W3-1a' 31 -New @('src/apprt/win32/features/<id>/logic/x.zig'))), 'placeholder path in files_new'),
+        @('existing files_new', @((New-PlanWp 'WP-31-a' 'W3-1a' 31 -New @('src/apprt/win32/features/todo/mod.zig'))), 'already exists in the tree'),
+        @('frozen path without touches', @((New-PlanWp 'WP-31-a' 'W3-1a' 31 -Touched @('src/apprt/win32/App.zig'))), 'frozen path without a touches entry'),
+        @('same-wave overlap', @((New-PlanWp 'WP-31-a' 'W3-1a' 31 -New @('src/web/todo/**')), (New-PlanWp 'WP-31-b' 'W3-1b' 31 -New @('src/web/todo/app.js'))), 'both touch .* outside appends'),
+        @('append vs edit in one wave', @((New-PlanWp 'WP-31-a' 'W3-1a' 31 -Appends @('src/apprt/win32/fast_tests.zig')), (New-PlanWp 'WP-31-b' 'W3-1b' 31 -Touched @('src/apprt/win32/fast_tests.zig') -Touches @([ordered]@{ path = 'src/apprt/win32/fast_tests.zig'; reason = 'rewrite' }))), 'outside appends'),
+        @('touches without reason', @((New-PlanWp 'WP-31-a' 'W3-1a' 31 -Touched @('src/apprt/win32/App.zig') -Touches @([ordered]@{ path = 'src/apprt/win32/App.zig'; reason = '' }))), 'has no reason')
+    )
+    $k = 0
+    foreach ($c in $cases) {
+        $k++
+        $o = Join-Path $fixtureRoot "specs-bad-$k"
+        $r = Invoke-Specs (Write-Plan "plan-bad-$k.json" $c[1]) $o
+        Test-That "specs: fails on $($c[0])" (($r.Code -eq 1) -and ($r.Output -match $c[2]) -and -not (Test-Path (Join-Path $o '*.md'))) $r.Output
+    }
+    $r = Invoke-Specs (Join-Path $fixtureRoot 'plan-bad-2.json') (Join-Path $fixtureRoot 'specs-drift') @('-AllowExisting')
+    Test-That 'specs: -AllowExisting turns plan drift into a warning' (($r.Code -eq 0) -and ($r.Output -match 'WARN: .*already exists') -and (Select-String -LiteralPath (Join-Path $fixtureRoot 'specs-drift/W3-1a.md') -Pattern 'Plan drift' -Quiet)) $r.Output
+    $r = Invoke-Specs (Join-Path $fixtureRoot 'plan-good.json') (Join-Path $fixtureRoot 'specs-check') @('-Check')
+    Test-That 'specs: -Check validates and writes nothing' (($r.Code -eq 0) -and -not (Test-Path (Join-Path $fixtureRoot 'specs-check'))) $r.Output
+    $r = Invoke-Script 'new-wp-specs.ps1' @('-Plan', (Join-Path $fixtureRoot 'plan-good.json'))
+    Test-That 'specs: no -Wave/-Wp is a usage error' ($r.Code -eq 2) $r.Output
+
     # ------------------------------------------------------------ gate / new-worktree (no execution)
     Write-Host 'gate.ps1 and new-worktree.ps1: plans only'
     $r = Invoke-Script 'gate.ps1' @('-Full', '-DryRun', '-FullTest')
@@ -350,6 +512,19 @@ try {
     Test-That 'gate: -Only filters steps' (($r.Code -eq 0) -and ($r.Output -match 'not selected')) $r.Output
     $r = Invoke-Script 'gate.ps1' @('-Wp', 'W0-C', '-DryRun', '-Skip', 'bogus')
     Test-That 'gate: unknown step is a usage error' ($r.Code -eq 2) $r.Output
+    $r = Invoke-Script 'gate.ps1' @('-Merge', '-Wp', 'W0-C2', '-DryRun')
+    Test-That 'gate: -Merge -DryRun prints the merge tier plan' (($r.Code -eq 0) -and ($r.Output -match 'tier plan: merge -> fmt, pslint, ownership, manifest, schema, build, release, test-fast, test-cli, unit, e2e, web, contract \(budget 12:00\)') -and ($r.Output -match "'sidebar', 'wsl', 'win-pwd', 'ipc:'") -and ($r.Output -match 'background')) $r.Output
+    Test-That 'gate: -Merge plans smoke + legacy + regression (missing suites skipped)' ($r.Output -match 'e2e .*smoke' -and $r.Output -match '(?s)e2e .*(legacy|-Suite [^ ]*legacy)') $r.Output
+    $r = Invoke-Script 'gate.ps1' @('-Full', '-DryRun')
+    Test-That 'gate: -Full includes the unfiltered suite by default' (($r.Code -eq 0) -and ($r.Output -match 'tier plan: full -> .*fulltest')) $r.Output
+    $r = Invoke-Script 'gate.ps1' @('-Full', '-DryRun', '-NoFullTest')
+    Test-That 'gate: -NoFullTest drops it' (($r.Code -eq 0) -and ($r.Output -notmatch 'tier plan: full -> .*fulltest')) $r.Output
+    $r = Invoke-Script 'gate.ps1' @('-Batch', 'W0-C2,W0-B2', '-BatchRef', 'HEAD,HEAD', '-DryRun')
+    Test-That 'gate: -Batch -DryRun plans the batch tier' (($r.Code -eq 0) -and ($r.Output -match 'tier plan: batch \(merge tier\) -> batch, fmt') -and ($r.Output -match '-Wp W0-B2 -Head HEAD')) $r.Output
+    $r = Invoke-Script 'gate.ps1' @('-Batch', 'W0-C2', '-DryRun')
+    Test-That 'gate: -Batch needs two ids' ($r.Code -eq 2) $r.Output
+    $r = Invoke-Script 'gate.ps1' @('-Merge', '-Full', '-Wp', 'W0-C2', '-DryRun')
+    Test-That 'gate: -Merge and -Full are exclusive' ($r.Code -eq 2) $r.Output
     $wtRoot = Join-Path $fixtureRoot 'wt'
     $r = Invoke-Script 'new-worktree.ps1' @('-Wp', 'W9-99', '-Root', $wtRoot, '-NoBuild', '-WhatIf') -Child
     Test-That 'new-worktree: -WhatIf plans and creates nothing' (($r.Code -eq 0) -and ($r.Output -match 'What if') -and -not (Test-Path (Join-Path $wtRoot 'W9-99'))) $r.Output
