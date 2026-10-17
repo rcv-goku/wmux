@@ -15,7 +15,10 @@
       - features/<id>/mod.zig declares `pub const id` different from the directory name
       - features/<id>/state.zig is missing
       - a logic/*.zig file (any logic/ directory under src/apprt/win32) is not referenced
-        from its logic/tests.zig, or logic/tests.zig is missing
+        from its logic/tests.zig, or logic/tests.zig is missing. Exempt: model/logic/fake.zig
+        (ADR-12.1, CCR W0-A2-1, ruling D1): it holds a SplitTree from src/datastruct, outside
+        the test-fast module root, so it can never be std-only; ui/Window.zig's test block
+        runs it in the full suite
       - a feature's logic/tests.zig is not referenced from its mod.zig
       - a logic/tests.zig is not reachable from fast_tests.zig (when fast_tests.zig exists)
     Warnings:
@@ -239,6 +242,11 @@ if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
 }
 
 # ---------------------------------------------------------------- logic tests
+# Logic files that need no logic/tests.zig reference (exact repo-relative paths). The fake
+# model graphs of ADR-12.1 build real model objects whose SplitTree import leaves the
+# test-fast module root, so the file can never be std-only (CCR W0-A2-1, ruling D1).
+$logicExempt = @('src/apprt/win32/model/logic/fake.zig')
+$logicExempted = 0
 $logicDirs = @(Get-ChildItem -LiteralPath $win32 -Directory -Recurse -Filter 'logic' -ErrorAction SilentlyContinue |
         Where-Object { $_.FullName -notmatch '[\\/](?:\.zig-cache|zig-cache|zig-out)[\\/]' } |
         Where-Object { $_.Parent.Name -ne 'logic' -and $_.FullName -notmatch '[\\/]logic[\\/].*[\\/]logic$' })
@@ -257,6 +265,7 @@ foreach ($ld in $logicDirs) {
     }
     $importCache = @{}
     foreach ($f in $members) {
+        if ($logicExempt -contains (Get-RelPath $f.FullName)) { $logicExempted++; continue }
         $full = [System.IO.Path]::GetFullPath($f.FullName)
         $referenced = $false
         $dir = $f.Directory
@@ -272,7 +281,8 @@ foreach ($ld in $logicDirs) {
         if (-not $referenced) { Add-Error "$(Get-RelPath $f.FullName) is not referenced from $(Get-RelPath $rootTest) (ADR-12.1)." }
     }
 }
-Write-WmuxLine -Tag $tag -Message "logic: $($logicDirs.Count) logic dir(s), $logicFiles logic file(s)"
+$exemptNote = if ($logicExempted -gt 0) { " ($logicExempted exempt from the tests.zig rule)" } else { '' }
+Write-WmuxLine -Tag $tag -Message "logic: $($logicDirs.Count) logic dir(s), $logicFiles logic file(s)$exemptNote"
 
 $fastTests = Join-Path $win32 'fast_tests.zig'
 if (Test-Path -LiteralPath $fastTests -PathType Leaf) {
@@ -328,7 +338,7 @@ foreach ($rel in $aliasFiles) {
 if (-not $isGit) {
     Write-Note 'not a git checkout; alias baseline check skipped.'
 } elseif (-not $baselineOk) {
-    Write-Note "W0 in progress (no '$AliasBaseline' tag yet): $aliasTotal alias line(s) in App.zig/Window.zig, allowed until Wave 0 ends."
+    Write-Note "W0 in progress (no '$AliasBaseline' tag yet): $aliasTotal alias line(s) in App.zig/Window.zig; once the tag exists only aliases added after it are reported (existing ones may stay, ruling D16)."
 }
 
 # ---------------------------------------------------------------- result

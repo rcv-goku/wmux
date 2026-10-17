@@ -283,6 +283,8 @@ try {
     }
     Write-Fixture $sk 'src/apprt/win32/model/logic/tests.zig' @('test { _ = @import("layout.zig"); }')
     Write-Fixture $sk 'src/apprt/win32/model/logic/layout.zig' @('// layout')
+    # Exempt (ruling D1): full-suite-only fake model graphs, never referenced from logic/tests.zig.
+    Write-Fixture $sk 'src/apprt/win32/model/logic/fake.zig' @('// fake model graphs (full suite only)')
     Write-Fixture $sk 'src/apprt/win32/features/manifest.zig' @('pub const modules = .{', '    @import("alpha/mod.zig"),', '    @import("beta/mod.zig"),', '};')
     $ext = @()
     foreach ($s in 'App', 'Window', 'Workspace', 'Pane', 'Tab') {
@@ -300,10 +302,12 @@ try {
         '}')
     $r = Invoke-Script 'check-manifest.ps1' @('-RepoRoot', $sk)
     Test-That 'manifest: consistent skeleton passes' (($r.Code -eq 0) -and ($r.Output -match '0 error\(s\), 0 warning\(s\)')) $r.Output
+    Test-That 'manifest: model/logic/fake.zig is exempt from the tests.zig rule' (($r.Output -notmatch 'fake\.zig is not referenced') -and ($r.Output -match '1 exempt from the tests\.zig rule')) $r.Output
 
     # break it in several ways
     Write-Fixture $sk 'src/apprt/win32/features/gamma/mod.zig' @('pub const id = "gamma";')
     Write-Fixture $sk 'src/apprt/win32/features/alpha/logic/orphan.zig' @('// not referenced')
+    Write-Fixture $sk 'src/apprt/win32/features/alpha/logic/fake.zig' @('// only model/logic/fake.zig is exempt')
     Write-Fixture $sk 'src/apprt/win32/features/beta/mod.zig' @('pub const id = "betta";', '// _ = @import("logic/tests.zig"); commented out')
     Write-Fixture $sk 'src/apprt/win32/model/logic/tests.zig' @('// _ = @import("layout.zig");')
     Write-Fixture $sk 'src/apprt/win32/fast_tests.zig' @('test {', '    _ = @import("features/alpha/logic/tests.zig");', '}')
@@ -315,6 +319,7 @@ try {
     Test-That 'manifest: id mismatch' ($r.Output -match 'declares id "betta"')
     Test-That 'manifest: mod.zig must reference logic/tests.zig' ($r.Output -match 'features/beta/mod\.zig does not reference logic/tests\.zig')
     Test-That 'manifest: unreferenced logic file' ($r.Output -match 'features/alpha/logic/orphan\.zig is not referenced')
+    Test-That 'manifest: a fake.zig outside model/logic is not exempt' ($r.Output -match 'features/alpha/logic/fake\.zig is not referenced')
     Test-That 'manifest: commented import does not count' ($r.Output -match 'model/logic/layout\.zig is not referenced')
     Test-That 'manifest: fast_tests reachability' ($r.Output -match 'features/beta/logic/tests\.zig is not reachable')
     $r2 = Invoke-Script 'check-manifest.ps1' @('-RepoRoot', $sk, '-WarningsAsErrors')
