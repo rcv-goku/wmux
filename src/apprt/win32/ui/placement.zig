@@ -13,10 +13,12 @@ const w32 = @import("../platform/win32.zig");
 /// Build the absolute path to the window-state file:
 /// %LOCALAPPDATA%\ghostty\window-state, or <WMUX_STATE_DIR>\window-state
 /// (app/paths.zig). Caller owns the returned slice. A WMUX_TEST_HIDDEN
-/// instance has no window-state file (ADR-12.3: placement save and
-/// restore are skipped), so savePlacement/restorePlacement are no-ops.
+/// instance, and a WMUX_TEST_MODE instance without
+/// WMUX_TEST_SESSION_RESTORE, has no window-state file (ADR-12.3:
+/// placement save and restore are skipped), so savePlacement and
+/// restorePlacement are no-ops there.
 pub fn windowStatePath(app: *const App, alloc: std.mem.Allocator) ![]u8 {
-    if (app.runtime_env.test_hidden) return error.HiddenTestInstance;
+    if (!app.runtime_env.placementPersistenceAllowed()) return error.PlacementNotPersisted;
     return app_paths.windowStatePath(alloc, &app.runtime_env);
 }
 

@@ -921,7 +921,11 @@ pub fn windowWndProc(
             window.savePlacement();
             // Persist the session layout (workspaces/tabs/cwds) alongside
             // the window geometry so it can be restored on next launch.
-            SessionState.save(window.app.core_app.alloc, window) catch {};
+            // A test instance leaves no session state behind unless
+            // WMUX_TEST_SESSION_RESTORE asks for it (ADR-12.3).
+            if (window.app.runtime_env.sessionSaveOnCloseAllowed()) {
+                SessionState.save(window.app.core_app.alloc, window) catch {};
+            }
             window.close();
             return 0;
         },
