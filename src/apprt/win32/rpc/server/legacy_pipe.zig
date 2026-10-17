@@ -85,7 +85,17 @@ pub const Server = struct {
         capture: *Captured,
     };
 
-    const Pending = struct { sink: Sink, since_ms: i64 };
+    const Pending = struct {
+        sink: Sink,
+        since_ms: i64,
+        /// The handler runs synchronously on the UI thread right now: its
+        /// reply waits in `held` until it returned (and its defers ran, e.g.
+        /// closing a file it names in the reply), like the pre-W1-1a server
+        /// that wrote the reply on the UI thread.
+        holding: bool = false,
+        /// The legacy reply line produced while `holding` (owned).
+        held: ?[]u8 = null,
+    };
 
     /// Entries older than this are dropped on the next `register` (their
     /// request expired long ago: legacy requests have 60 s).
@@ -99,6 +109,8 @@ pub const Server = struct {
     pub fn deinit(self: *Server) void {
         self.mutex.lock();
         defer self.mutex.unlock();
+        var it = self.pending.valueIterator();
+        while (it.next()) |p| self.freeHeld(p.*);
         self.pending.deinit(self.gpa);
     }
 
@@ -123,7 +135,9 @@ pub const Server = struct {
         while (it.next()) |e| {
             if (now - e.value_ptr.since_ms > stale_after_ms) stale.append(self.gpa, e.key_ptr.*) catch return;
         }
-        for (stale.items) |t| _ = self.pending.remove(t);
+        for (stale.items) |t| {
+            if (self.pending.fetchRemove(t)) |kv| self.freeHeld(kv.value);
+        }
     }
 
     /// Forgets a token whose request will never reply (it expired before
@@ -131,7 +145,37 @@ pub const Server = struct {
     pub fn cancel(self: *Server, token: u64) void {
         self.mutex.lock();
         defer self.mutex.unlock();
-        _ = self.pending.remove(token);
+        if (self.pending.fetchRemove(token)) |kv| self.freeHeld(kv.value);
+    }
+
+    fn freeHeld(self: *Server, p: Pending) void {
+        if (p.held) |h| self.gpa.free(h);
+    }
+
+    /// The handler of `token` starts running synchronously (UI thread):
+    /// hold its reply until `endSync`.
+    pub fn beginSync(self: *Server, token: u64) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.pending.getPtr(token)) |e| e.holding = true;
+    }
+
+    /// The handler of `token` returned: deliver a reply it produced, or
+    /// let a later (async) reply go out directly.
+    pub fn endSync(self: *Server, token: u64) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        const e = self.pending.getPtr(token) orelse return;
+        const line = e.held orelse {
+            e.holding = false;
+            return;
+        };
+        const kv = self.pending.fetchRemove(token).?;
+        defer self.gpa.free(line);
+        switch (kv.value.sink) {
+            .conn => |c| _ = c.server.complete(c.token, trimNewline(line)),
+            .capture => {},
+        }
     }
 
     /// Drops every pending reply bound to `server` (before it is freed).
@@ -145,7 +189,9 @@ pub const Server = struct {
             .conn => |c| if (c.server == server) doomed.append(self.gpa, e.key_ptr.*) catch {},
             .capture => {},
         };
-        for (doomed.items) |t| _ = self.pending.remove(t);
+        for (doomed.items) |t| {
+            if (self.pending.fetchRemove(t)) |kv| self.freeHeld(kv.value);
+        }
     }
 
     /// Send a success response for request `id` (a hub token). Thread-safe.
@@ -166,7 +212,21 @@ pub const Server = struct {
     fn deliver(self: *Server, id: u64, outcome: Outcome) error{ NotConnected, OutOfMemory }!void {
         self.mutex.lock();
         defer self.mutex.unlock();
-        const kv = self.pending.fetchRemove(id) orelse return error.NotConnected;
+        const entry = self.pending.getPtr(id) orelse return error.NotConnected;
+        if (entry.held != null) return error.NotConnected; // already answered
+        if (entry.holding) {
+            switch (entry.sink) {
+                .conn => |c| {
+                    entry.held = switch (outcome) {
+                        .ok => |data| try legacy_json.serializeOk(self.gpa, c.client_id, data),
+                        .err => |msg| try legacy_json.serializeError(self.gpa, c.client_id, msg),
+                    };
+                    return;
+                },
+                .capture => {},
+            }
+        }
+        const kv = self.pending.fetchRemove(id).?;
         switch (kv.value.sink) {
             .conn => |c| {
                 const line = switch (outcome) {
@@ -283,6 +343,10 @@ const Call = struct {
             self.hub.cancel(hub_token);
             return;
         }
+        // A synchronous reply goes out once the handler returned (its
+        // defers ran): e.g. capture-pane closes the file it names first.
+        self.hub.beginSync(hub_token);
+        defer self.hub.endSync(hub_token);
         rpc_registry.legacyCommand(req.cmd).handler(app, req) catch |err| {
             self.hub.sendError(hub_token, @errorName(err)) catch {};
         };
@@ -376,6 +440,16 @@ test "unit: rpc: legacy hub routes a reply by token once and keeps the legacy sh
     hub.cancel(t3);
     try testing.expectError(error.NotConnected, hub.sendOk(t3, null));
     try testing.expect(cap3 == .none);
+
+    // A handler that returns without replying leaves its token open for
+    // a later (async) reply.
+    var cap4: Captured = .none;
+    const t4 = try hub.register(.{ .capture = &cap4 });
+    hub.beginSync(t4);
+    hub.endSync(t4);
+    try hub.sendOk(t4, "\"late\"");
+    defer cap4.deinit(testing.allocator);
+    try testing.expectEqualStrings("\"late\"", cap4.ok);
 }
 
 test "unit: rpc: legacy reply lines are byte-identical to the pre-W1-1a server" {
