@@ -16,8 +16,10 @@
 //! window stays invisible and click-through), and shown only with
 //! SW_SHOWNOACTIVATE. Only when cloaking fails is it moved to
 //! (-32000, -32000) instead. A thread-local WH_CBT hook on the UI thread
-//! refuses every activation and moves unowned top-level windows created
-//! by user32 itself (MessageBox, menus, tooltips) off-screen.
+//! refuses every activation, applies the S2 focus policy "gate" (SetFocus
+//! only when the target's root window is already active, W0-A4) and moves
+//! unowned top-level windows created by user32 itself (MessageBox, menus,
+//! tooltips) off-screen.
 
 const std = @import("std");
 
@@ -291,13 +293,32 @@ pub fn isUnownedTopLevel(style: u32, parent: ?w32.HWND) bool {
     return style & w32.WS_CHILD == 0 and parent == null;
 }
 
+/// The S2 focus policy "gate": SetFocus(`target`) may run only when the
+/// target's root window is already the thread's active window, because
+/// SetFocus on a child of an inactive top-level window activates that
+/// window first (spike S2 p6). `root` and `active` are
+/// GetAncestor(target, GA_ROOT) and GetActiveWindow(). Pure
+/// (unit-tested). Under WMUX_TEST_HIDDEN nothing is ever active, so every
+/// SetFocus is refused; logical focus (`wmux.debug.focus_state`) stays the
+/// asserted truth.
+pub fn setFocusAllowed(root: ?w32.HWND, active: ?w32.HWND) bool {
+    const r = root orelse return true; // focus removal (SetFocus(null))
+    return active == r;
+}
+
 /// HCBT_ACTIVATE: nothing on the UI thread may activate (returning
-/// nonzero refuses it). HCBT_CREATEWND: unowned top-level windows start
-/// off-screen; our own top-level windows are then placed and cloaked by
-/// finishTopLevelCreate, while user32's own (MessageBox, menus, tooltips)
-/// stay off any monitor. Owned windows inherit their owner's cloak.
+/// nonzero refuses it). HCBT_SETFOCUS: the focus gate (setFocusAllowed),
+/// so no SetFocus call anywhere in the apprt can activate a window.
+/// HCBT_CREATEWND: unowned top-level windows start off-screen; our own
+/// top-level windows are then placed and cloaked by finishTopLevelCreate,
+/// while user32's own (MessageBox, menus, tooltips) stay off any monitor.
+/// Owned windows inherit their owner's cloak.
 fn cbtProc(code: i32, wparam: usize, lparam: isize) callconv(.winapi) isize {
     if (code == w32.HCBT_ACTIVATE) return 1;
+    if (code == w32.HCBT_SETFOCUS and wparam != 0) {
+        const target: w32.HWND = @ptrFromInt(wparam);
+        if (!setFocusAllowed(w32.GetAncestor(target, w32.GA_ROOT), w32.GetActiveWindow())) return 1;
+    }
     if (code == w32.HCBT_CREATEWND) {
         const cbt: *w32.CBT_CREATEWNDW = @ptrFromInt(@as(usize, @bitCast(lparam)));
         const cs = cbt.lpcs;
@@ -341,6 +362,37 @@ test "unit: app: foreground hidden geometry clamps the client to a small work ar
     const tiny = hiddenGeometry(.{ .left = 5, .top = 5, .right = 5, .bottom = 5 }, .{ .left = 0, .top = 0, .right = 0, .bottom = 0 });
     try testing.expectEqual(@as(i32, 1), tiny.width);
     try testing.expectEqual(@as(i32, 1), tiny.height);
+}
+
+test "unit: app: hidden placement clamps a 1600x1000 client into a 1024x768 work area on the primary monitor" {
+    // A CI-sized display: the primary monitor is (0,0)-(1024,768) and has
+    // no taskbar, so the work area is the whole monitor. Overlapped frame
+    // at 96 DPI: 8 px sides and bottom, a 31 px caption.
+    const monitor: w32.RECT = .{ .left = 0, .top = 0, .right = 1024, .bottom = 768 };
+    const frame: w32.RECT = .{ .left = -8, .top = -31, .right = 8, .bottom = 8 };
+    const g = hiddenGeometry(monitor, frame);
+
+    // The client is clamped to what fits (1008x729 instead of 1600x1000)...
+    const client_w = g.width - (frame.right - frame.left);
+    const client_h = g.height - (frame.bottom - frame.top);
+    try testing.expectEqual(@as(i32, 1024 - 16), client_w);
+    try testing.expectEqual(@as(i32, 768 - 39), client_h);
+    try testing.expect(client_w < hidden_client_width and client_h < hidden_client_height);
+
+    // ...and the whole outer rect stays on the primary monitor (GL
+    // presents are clipped to window ∩ monitors, spike S2 p5).
+    try testing.expect(g.x >= monitor.left and g.y >= monitor.top);
+    try testing.expect(g.x + g.width <= monitor.right);
+    try testing.expect(g.y + g.height <= monitor.bottom);
+}
+
+test "unit: app: foreground focus gate allows SetFocus only inside the active root" {
+    const root: w32.HWND = @ptrFromInt(0x1000);
+    const other: w32.HWND = @ptrFromInt(0x2000);
+    try testing.expect(setFocusAllowed(root, root));
+    try testing.expect(!setFocusAllowed(root, other));
+    try testing.expect(!setFocusAllowed(root, null)); // nothing active (hidden mode)
+    try testing.expect(setFocusAllowed(null, null)); // SetFocus(null) removes focus
 }
 
 test "unit: app: foreground CBT hook moves only unowned top-level creations" {
