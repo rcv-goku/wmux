@@ -49,6 +49,7 @@ test {
     _ = @import("input/actions.zig");
     _ = @import("input/router.zig");
     _ = @import("platform/taskbar.zig");
+    _ = @import("platform/tests.zig");
     _ = @import("rpc/compat/legacy_json.zig");
     _ = @import("rpc/registry.zig");
     _ = @import("rpc/server/legacy_pipe.zig");

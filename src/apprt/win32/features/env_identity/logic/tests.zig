@@ -2,4 +2,8 @@
 //! here and name tests "unit: env_identity: <behavior>". Logic files use only std,
 //! wmux_proto and sibling logic files; they run in `zig build test-fast`.
 
-test {}
+test {
+    _ = @import("env_table.zig");
+    _ = @import("ports.zig");
+    _ = @import("wslenv.zig");
+}

@@ -91,14 +91,30 @@ pub const Error = error{
 /// only: log it next to the returned error).
 pub threadlocal var last_error: u32 = 0;
 
-/// Map a Win32 error code (GetLastError) to `Error`.
-pub fn errorFromWin32(code: u32) Error {
+/// The kernel32 call a Win32 error came from: the same code means
+/// different things per call (`errorFromWin32`).
+pub const Call = enum {
+    create_job,
+    set_information,
+    query_information,
+    assign_process,
+    is_process_in_job,
+    open_process,
+    terminate_job,
+    attribute_list,
+};
+
+/// Map a Win32 error code (GetLastError) of `call` to `Error`. Only
+/// OpenProcess reports a missing pid, as ERROR_INVALID_PARAMETER
+/// (`ProcessNotFound`); every other call keeps `InvalidParameter`, and
+/// ERROR_FILE_NOT_FOUND is `Unexpected` everywhere (no job call means a
+/// missing process by it).
+pub fn errorFromWin32(call: Call, code: u32) Error {
     return switch (code) {
         ERROR_ACCESS_DENIED => error.AccessDenied,
         ERROR_INVALID_HANDLE => error.InvalidHandle,
-        ERROR_INVALID_PARAMETER => error.InvalidParameter,
+        ERROR_INVALID_PARAMETER => if (call == .open_process) error.ProcessNotFound else error.InvalidParameter,
         ERROR_NOT_ENOUGH_MEMORY, ERROR_OUTOFMEMORY => error.OutOfMemory,
-        ERROR_FILE_NOT_FOUND => error.ProcessNotFound,
         ERROR_NOT_SUPPORTED => error.NotSupported,
         else => error.Unexpected,
     };
@@ -283,10 +299,10 @@ extern "kernel32" fn UpdateProcThreadAttribute(
 ) callconv(.winapi) BOOL;
 extern "kernel32" fn DeleteProcThreadAttributeList(list: *anyopaque) callconv(.winapi) void;
 
-fn lastError() Error {
+fn lastError(call: Call) Error {
     const code = GetLastError();
     last_error = code;
-    return errorFromWin32(code);
+    return errorFromWin32(call, code);
 }
 
 // ─── Job ────────────────────────────────────────────────────────────────
@@ -300,7 +316,7 @@ pub const Job = struct {
     /// Create an unnamed job (named jobs would be reachable by other
     /// same-session processes) and apply `limits` when any flag is set.
     pub fn create(limits: Limits) Error!Job {
-        const h = CreateJobObjectW(null, null) orelse return lastError();
+        const h = CreateJobObjectW(null, null) orelse return lastError(.create_job);
         var job: Job = .{ .handle = h };
         errdefer job.deinit();
         if (limits.flags() != 0) try job.setLimits(limits);
@@ -322,7 +338,7 @@ pub const Job = struct {
             JobObjectExtendedLimitInformation,
             &info,
             @sizeOf(JOBOBJECT_EXTENDED_LIMIT_INFORMATION),
-        ) == 0) return lastError();
+        ) == 0) return lastError(.set_information);
     }
 
     /// Current limit flags (QueryInformationJobObject).
@@ -334,7 +350,7 @@ pub const Job = struct {
             &info,
             @sizeOf(JOBOBJECT_EXTENDED_LIMIT_INFORMATION),
             null,
-        ) == 0) return lastError();
+        ) == 0) return lastError(.query_information);
         return Limits.fromFlags(info.BasicLimitInformation.LimitFlags);
     }
 
@@ -342,7 +358,7 @@ pub const Job = struct {
     /// PROCESS_TERMINATE. If the process is already in another job, this one
     /// is nested below it (Windows 8+).
     pub fn assign(self: Job, process: HANDLE) Error!void {
-        if (AssignProcessToJobObject(self.handle, process) == 0) return lastError();
+        if (AssignProcessToJobObject(self.handle, process) == 0) return lastError(.assign_process);
     }
 
     /// Put the calling process in this job (the instance job, ADR-3.9).
@@ -368,27 +384,22 @@ pub const Job = struct {
 
     /// TerminateJobObject: end every process in the job with `exit_code`.
     pub fn terminate(self: Job, exit_code: u32) Error!void {
-        if (TerminateJobObject(self.handle, exit_code) == 0) return lastError();
+        if (TerminateJobObject(self.handle, exit_code) == 0) return lastError(.terminate_job);
     }
 };
 
 /// IsProcessInJob. `job` null asks whether the process is in any job.
 pub fn isProcessInJob(process: HANDLE, job: ?HANDLE) Error!bool {
     var result: BOOL = 0;
-    if (IsProcessInJob(process, job, &result) == 0) return lastError();
+    if (IsProcessInJob(process, job, &result) == 0) return lastError(.is_process_in_job);
     return result != 0;
 }
 
 /// Open `pid` with PROCESS_QUERY_LIMITED_INFORMATION and ask IsProcessInJob.
 /// A pid that no longer exists is `error.ProcessNotFound`.
 pub fn isPidInJob(pid: u32, job: ?HANDLE) Error!bool {
-    const process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) orelse {
-        const code = GetLastError();
-        last_error = code;
-        // OpenProcess reports a missing pid as ERROR_INVALID_PARAMETER.
-        if (code == ERROR_INVALID_PARAMETER) return error.ProcessNotFound;
-        return errorFromWin32(code);
-    };
+    // OpenProcess reports a missing pid as ERROR_INVALID_PARAMETER.
+    const process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) orelse return lastError(.open_process);
     defer _ = CloseHandle(process);
     return isProcessInJob(process, job);
 }
@@ -413,7 +424,7 @@ pub fn queryProcessIds(gpa: std.mem.Allocator, job: ?HANDLE) Error![]u32 {
             const code = GetLastError();
             if (code != ERROR_MORE_DATA) {
                 last_error = code;
-                return errorFromWin32(code);
+                return errorFromWin32(.query_information, code);
             }
         }
         const view = decodePidList(words);
@@ -445,7 +456,7 @@ pub const AttributeList = struct {
             const code = GetLastError();
             if (code != ERROR_INSUFFICIENT_BUFFER) {
                 last_error = code;
-                return errorFromWin32(code);
+                return errorFromWin32(.attribute_list, code);
             }
         }
         if (size == 0) return error.Unexpected;
@@ -453,7 +464,7 @@ pub const AttributeList = struct {
         errdefer gpa.free(words);
         @memset(words, 0);
         var actual = words.len * @sizeOf(usize);
-        if (InitializeProcThreadAttributeList(words.ptr, count, 0, &actual) == 0) return lastError();
+        if (InitializeProcThreadAttributeList(words.ptr, count, 0, &actual) == 0) return lastError(.attribute_list);
         return .{ .words = words };
     }
 
@@ -470,7 +481,7 @@ pub const AttributeList = struct {
 
     /// UpdateProcThreadAttribute(attribute, value, size).
     pub fn update(self: AttributeList, attribute: usize, value: *const anyopaque, size: usize) Error!void {
-        if (UpdateProcThreadAttribute(self.ptr(), 0, attribute, value, size, null, null) == 0) return lastError();
+        if (UpdateProcThreadAttribute(self.ptr(), 0, attribute, value, size, null, null) == 0) return lastError(.attribute_list);
     }
 
     /// PROC_THREAD_ATTRIBUTE_JOB_LIST: the child starts inside `jobs`
@@ -519,15 +530,23 @@ test "unit: platform: job structure layout matches winnt.h" {
     try std.testing.expectEqual(@as(usize, 8), pid_list_header_bytes);
 }
 
-test "unit: platform: job error mapping" {
-    try std.testing.expectEqual(error.AccessDenied, errorFromWin32(ERROR_ACCESS_DENIED));
-    try std.testing.expectEqual(error.InvalidHandle, errorFromWin32(ERROR_INVALID_HANDLE));
-    try std.testing.expectEqual(error.InvalidParameter, errorFromWin32(ERROR_INVALID_PARAMETER));
-    try std.testing.expectEqual(error.OutOfMemory, errorFromWin32(ERROR_NOT_ENOUGH_MEMORY));
-    try std.testing.expectEqual(error.OutOfMemory, errorFromWin32(ERROR_OUTOFMEMORY));
-    try std.testing.expectEqual(error.NotSupported, errorFromWin32(ERROR_NOT_SUPPORTED));
-    try std.testing.expectEqual(error.Unexpected, errorFromWin32(0));
-    try std.testing.expectEqual(error.Unexpected, errorFromWin32(0xFFFF_FFFF));
+test "unit: platform: job error mapping per call" {
+    const t = std.testing;
+    inline for (@typeInfo(Call).@"enum".fields) |f| {
+        const call: Call = @enumFromInt(f.value);
+        try t.expectEqual(error.AccessDenied, errorFromWin32(call, ERROR_ACCESS_DENIED));
+        try t.expectEqual(error.InvalidHandle, errorFromWin32(call, ERROR_INVALID_HANDLE));
+        try t.expectEqual(error.OutOfMemory, errorFromWin32(call, ERROR_NOT_ENOUGH_MEMORY));
+        try t.expectEqual(error.OutOfMemory, errorFromWin32(call, ERROR_OUTOFMEMORY));
+        try t.expectEqual(error.NotSupported, errorFromWin32(call, ERROR_NOT_SUPPORTED));
+        // No job call reports a missing process as ERROR_FILE_NOT_FOUND.
+        try t.expectEqual(error.Unexpected, errorFromWin32(call, ERROR_FILE_NOT_FOUND));
+        try t.expectEqual(error.Unexpected, errorFromWin32(call, 0));
+        try t.expectEqual(error.Unexpected, errorFromWin32(call, 0xFFFF_FFFF));
+        // Only OpenProcess means a missing pid by ERROR_INVALID_PARAMETER.
+        const want: Error = if (call == .open_process) error.ProcessNotFound else error.InvalidParameter;
+        try t.expectEqual(want, errorFromWin32(call, ERROR_INVALID_PARAMETER));
+    }
 }
 
 test "unit: platform: job pid-list buffer sizing" {

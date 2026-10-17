@@ -33,15 +33,15 @@ function prompt {
     # Skip on the very first prompt (no command has run yet).
     if ($Script:__ghostty_prompt_state -ne 'initial') {
         $exitCode = if ($cmdSuccess) { 0 } else { if ($realLASTEXITCODE) { $realLASTEXITCODE } else { 1 } }
-        [Console]::Write("`e]133;D;$exitCode`a")
+        [Console]::Write("$([char]27)]133;D;$exitCode$([char]7)")
     }
 
     # OSC 133;A — fresh line / new prompt.
-    [Console]::Write("`e]133;A`a")
+    [Console]::Write("$([char]27)]133;A$([char]7)")
 
     # Cursor shape: blinking bar at prompt (if cursor feature enabled).
     if ($GhosttyFeatures -contains 'cursor') {
-        [Console]::Write("`e[5 q")
+        [Console]::Write("$([char]27)[5 q")
     }
 
     # OSC 7 — report current working directory as a file:// URI.
@@ -58,27 +58,27 @@ function prompt {
         $escaped = ($segments | ForEach-Object { [uri]::EscapeDataString($_) }) -join '/'
         if ($escaped.StartsWith('//')) {
             # UNC path: //server/share/... -> file://server/share/...
-            [Console]::Write("`e]7;file:$escaped`a")
+            [Console]::Write("$([char]27)]7;file:$escaped$([char]7)")
         } else {
-            [Console]::Write("`e]7;file://$env:COMPUTERNAME/$escaped`a")
+            [Console]::Write("$([char]27)]7;file://$env:COMPUTERNAME/$escaped$([char]7)")
         }
     } else {
         # Non-filesystem provider (registry, cert store, ...): report an
         # empty pwd so the terminal resets any stale value.
-        [Console]::Write("`e]7;`a")
+        [Console]::Write("$([char]27)]7;$([char]7)")
     }
 
     # OSC 2 — window title (current directory).
     if ($GhosttyFeatures -contains 'title') {
         $leaf = Split-Path -Leaf (Get-Location)
-        [Console]::Write("`e]2;$leaf`a")
+        [Console]::Write("$([char]27)]2;$leaf$([char]7)")
     }
 
     # Call the original prompt to get the prompt string.
     $promptText = __ghostty_original_prompt
 
     # OSC 133;B — end of prompt, start of user input.
-    [Console]::Write("`e]133;B`a")
+    [Console]::Write("$([char]27)]133;B$([char]7)")
 
     $Script:__ghostty_prompt_state = 'prompt-end'
 
@@ -93,11 +93,11 @@ function prompt {
 if (Get-Module -Name PSReadLine -ErrorAction SilentlyContinue) {
     Set-PSReadLineKeyHandler -Key Enter -ScriptBlock {
         # OSC 133;C — end of input, start of output.
-        [Console]::Write("`e]133;C`a")
+        [Console]::Write("$([char]27)]133;C$([char]7)")
 
         # Reset cursor to default shape before command runs.
         if ($GhosttyFeatures -contains 'cursor') {
-            [Console]::Write("`e[0 q")
+            [Console]::Write("$([char]27)[0 q")
         }
 
         $Script:__ghostty_prompt_state = 'pre-exec'
