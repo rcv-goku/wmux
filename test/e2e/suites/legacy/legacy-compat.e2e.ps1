@@ -213,6 +213,9 @@ Test-Case 'legacy-compat: session-capture, -list, -resume, -save and -restore' {
         $null = Send-Legacy $w 'session-resume' @{ surface = (Get-FirstUnusedSurfaceId $rows) } -Expect 'unknown_surface'
         $split = Send-Legacy $w 'new-split' @{ dir = 'down' }
         $null = Send-Legacy $w 'session-resume' @{ surface = $split.id } -Expect 'no_session'
+        # session-restore tears the current terminals down: let the new split's shell start
+        # first (a just-created terminal can hang its teardown, ADR-12.7 / W0-ST).
+        Wait-Prompt $w @{ pane = 1 }
         $null = Send-Legacy $w 'session-save'
         Assert-True (Test-Path -LiteralPath (Join-Path $w.StateDir 'session-state.json') -PathType Leaf) 'session-save writes WMUX_STATE_DIR\session-state.json (never the user profile)'
         $null = Send-Legacy $w 'session-restore'

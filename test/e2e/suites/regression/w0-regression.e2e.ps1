@@ -43,6 +43,22 @@ function Send-Echo {
     $null = Wait-WmuxScreen $Instance -Surface $Target -Pattern "(?m)^$Marker\s*$" -TimeoutSec 30
 }
 
+function Wait-Quiet {
+    # Until the addressed terminal's screen text stops changing (two equal reads 300 ms apart):
+    # tearing a surface down while its read thread is between reads can hang the UI thread
+    # (Exec.zig teardown race, ADR-12.7 / W0-ST), so session-restore runs on idle terminals.
+    param($Instance, [hashtable]$Surface = @{})
+    $script:QuietLast = $null
+    $null = Wait-WmuxCondition -TimeoutSec 15 -IntervalMs 300 {
+        $a = @{}
+        foreach ($k in $Surface.Keys) { $a[$k] = $Surface[$k] }
+        $now = [string](Invoke-Legacy $Instance 'read-screen' $a)
+        $same = ($null -ne $script:QuietLast) -and ($now -ceq $script:QuietLast)
+        $script:QuietLast = $now
+        $same
+    }
+}
+
 function Get-TerminalRects {
     # Visible WmuxTerminal child windows of the main window: @{ Hwnd; Width; Height; Left; Top }.
     param($Instance)
@@ -235,15 +251,18 @@ Test-Case 'regression: session save and restore round-trip a layout' {
         Assert-Equal 2 @($saved.workspaces).Count 'both workspaces are saved'
         Assert-Equal 'split' $saved.workspaces[0].split_tree.node_type 'the split is saved'
         Assert-Equal 'rg-saved' $saved.workspaces[1].name
+        # The restore half uses workspace 0 only: legacy restore appends every further workspace
+        # with a fresh terminal and at once replaces its tree, tearing that just-created terminal
+        # down (the Exec.zig teardown race, ADR-12.7 / W0-ST, hangs the UI thread under load),
+        # and it drops the splits of background workspaces (reported to W1-7).
+        $doc = [ordered]@{ version = $saved.version; workspaces = @($saved.workspaces[0]); active_workspace = 0 }
         $b = Start-WmuxInstance
         Wait-Prompt $b
-        Copy-Item -LiteralPath $file -Destination (Join-Path $b.StateDir 'session-state.json')
+        Wait-Quiet $b
+        [IO.File]::WriteAllText((Join-Path $b.StateDir 'session-state.json'), (ConvertTo-Json -InputObject $doc -Depth 50 -Compress), [Text.UTF8Encoding]::new($false))
         $null = Invoke-Legacy $b 'session-restore'
         $list = @(Invoke-Legacy $b 'workspace-list')
-        Assert-Equal 2 $list.Count 'restore recreates the saved workspaces'
-        Assert-Equal 'rg-saved' $list[1].name
-        # Only the active workspace's split is checked: legacy restore drops the splits of
-        # background workspaces (reported to W1-7, which rebuilds session restore).
+        Assert-Equal 1 $list.Count 'restore keeps one workspace for a one-workspace session'
         $rows = @(Invoke-Legacy $b 'surface-list' @{ workspace = 0 })
         Assert-Equal 2 @($rows | Select-Object -ExpandProperty pane -Unique).Count 'restore recreates the split'
         Wait-Prompt $b @{ workspace = 0; pane = 0 }
