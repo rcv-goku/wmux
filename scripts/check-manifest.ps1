@@ -21,7 +21,13 @@
         runs it in the full suite
       - a feature's logic/tests.zig is not referenced from its mod.zig
       - a logic/tests.zig is not reachable from fast_tests.zig (when fast_tests.zig exists)
+      - a shared-appendable aggregator (merge=union, AF-15: fast_tests.zig, test_index.zig,
+        every **/logic/tests.zig, src/wmux_cli/logic/tests.zig, src/wmux_proto/proto.zig) has
+        two imports on one line, or a run of import lines that is unsorted (ordinal, by line
+        text) or holds a duplicate
     Warnings:
+      - a `# manual: <id>` waiver of an e2e suite without a row in docs/arch/manual-checks.md
+        (the non-blocking manual-check ledger, AF-19)
       - manifest entries or ext fields not sorted; an expected *Ext struct missing; an ext
         field type that does not import <id>/state.zig; a features/ subdirectory without
         mod.zig; a pre-seeded module of ARCHITECTURE section 1.5 missing from the manifest
@@ -303,6 +309,49 @@ if (Test-Path -LiteralPath $fastTests -PathType Leaf) {
     }
 } elseif ($rootTests.Count -gt 0) {
     Write-Note 'src/apprt/win32/fast_tests.zig does not exist yet (W0-A3); fast-test reachability not checked.'
+}
+
+# ---------------------------------------------------------------- shared-appendable aggregators
+# AF-15: fast_tests.zig, test_index.zig, every **/logic/tests.zig, src/wmux_cli/logic/tests.zig
+# and proto.zig merge with merge=union, so each entry is one import line and every run of
+# import lines stays sorted (a union merge of two sorted appends is re-sorted by hand).
+$srcDir = Join-Path $RepoRoot 'src'
+$aggregators = [System.Collections.Generic.List[string]]::new()
+if (Test-Path -LiteralPath $srcDir -PathType Container) {
+    foreach ($f in @(Get-ChildItem -LiteralPath $srcDir -Recurse -File -Filter '*.zig' -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName -notmatch '[\\/](?:\.zig-cache|zig-cache|zig-out)[\\/]' })) {
+        $rel = Get-RelPath $f.FullName
+        if (Test-WmuxAggregatorPath -Path $rel) { $aggregators.Add($rel) }
+    }
+}
+$aggregatorIssues = 0
+foreach ($rel in ($aggregators | Sort-Object)) {
+    foreach ($issue in (Get-WmuxAggregatorIssues -Lines ([System.IO.File]::ReadAllLines((Join-Path $RepoRoot $rel))))) {
+        $aggregatorIssues++
+        Add-Error "${rel}:$($issue.Line): $($issue.Message) (shared-appendable, merge=union: one sorted import line per entry, AF-15)."
+    }
+}
+Write-WmuxLine -Tag $tag -Message "aggregators: $($aggregators.Count) shared-appendable file(s), $aggregatorIssues ordering issue(s)"
+
+# ---------------------------------------------------------------- manual-check ledger
+# AF-19: every `# manual: <id>` waiver of an e2e suite has a row in docs/arch/manual-checks.md
+# (non-blocking ledger), else a warning.
+$suitesRoot = Join-Path $RepoRoot 'test/e2e/suites'
+$ledgerPath = Join-Path $RepoRoot 'docs/arch/manual-checks.md'
+if (Test-Path -LiteralPath $suitesRoot -PathType Container) {
+    $ledger = Read-WmuxManualLedger -Path $ledgerPath
+    $waivers = 0
+    foreach ($suite in @(Get-ChildItem -LiteralPath $suitesRoot -Recurse -File -Filter '*.e2e.ps1' -ErrorAction SilentlyContinue)) {
+        $rel = Get-RelPath $suite.FullName
+        foreach ($m in (Read-WmuxSuiteTags -Path $suite.FullName).Manual) {
+            $waivers++
+            if (-not $ledger.Contains($m.Id)) {
+                Add-Warning "${rel}:$($m.Line): '# manual: $($m.Id)' has no row in docs/arch/manual-checks.md (AF-19 ledger)."
+            }
+        }
+    }
+    $ledgerNote = if (Test-Path -LiteralPath $ledgerPath -PathType Leaf) { "$($ledger.Count) ledger row(s)" } else { 'no docs/arch/manual-checks.md' }
+    Write-WmuxLine -Tag $tag -Message "manual checks: $waivers waiver(s) in e2e suites, $ledgerNote"
 }
 
 # ---------------------------------------------------------------- W0 aliases
