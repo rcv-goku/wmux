@@ -50,6 +50,20 @@ _entrypoint() {
         builtin return 1
     fi
 
+    # wmux (W1-3): the POSIX launchers of the bundled CLI (cli/posix/cmux and
+    # cli/posix/wmux next to CMUX_BUNDLED_CLI_PATH) go first on PATH, so
+    # `wmux` and `cmux` resolve without the .exe in MSYS zsh.
+    if [[ -n ${CMUX_BUNDLED_CLI_PATH-} ]]; then
+        builtin local cli_dir=$CMUX_BUNDLED_CLI_PATH
+        if (( $+commands[cygpath] )); then
+            cli_dir=$(cygpath -u -- $cli_dir)
+        fi
+        cli_dir=${cli_dir%/*}
+        if [[ -d $cli_dir/posix && ":$PATH:" != *":$cli_dir/posix:"* ]]; then
+            builtin export PATH=$cli_dir/posix:$PATH
+        fi
+    fi
+
     # 0: no OSC 133 [AC] marks have been written yet.
     # 1: the last written OSC 133 C has not been closed with D yet.
     # 2: none of the above.

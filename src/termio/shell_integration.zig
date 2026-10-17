@@ -12,6 +12,9 @@ const log = std.log.scoped(.shell_integration);
 /// Shell types we support
 pub const Shell = enum {
     bash,
+    /// Windows cmd.exe: no script, only a PROMPT with OSC 9;9 and OSC 133
+    /// marks (W1-3).
+    cmd,
     elvish,
     fish,
     nushell,
@@ -80,6 +83,8 @@ pub fn setup(
             env,
         ),
 
+        .cmd => try setupCmd(alloc_arena, command, env),
+
         .elvish, .fish => xdg: {
             if (!try setupXdgDataDirs(alloc_arena, resource_dir, env)) return null;
             break :xdg try command.clone(alloc_arena);
@@ -146,9 +151,22 @@ fn detectShell(alloc: Allocator, command: config.Command) !?Shell {
     defer arg_iter.deinit();
 
     const arg0 = arg_iter.next() orelse return null;
-    const exe = std.fs.path.basename(arg0);
+    return detectShellExe(arg0, windowsSystemBashExists);
+}
 
-    if (std.mem.eql(u8, "bash", exe)) {
+/// The shell `arg0` names. On Windows, executable names match without
+/// case and with or without `.exe`, so Git Bash/MSYS `bash.exe` and
+/// `zsh.exe` get their integration (W1-3); `bash.exe` in the system
+/// directory is the WSL launcher, which forwards to Linux bash and cannot
+/// take a Windows-side integration. A bare `bash` resolves there first
+/// (CreateProcessW searches the system directory before PATH), so it
+/// counts as the WSL launcher when `system_bash_exists()` says that file
+/// exists. Pure except for that callback (unit-tested with fakes).
+fn detectShellExe(arg0: []const u8, system_bash_exists: *const fn () bool) ?Shell {
+    const exe = std.fs.path.basename(arg0);
+    const windows = comptime builtin.os.tag == .windows;
+
+    if (std.mem.eql(u8, "bash", exe) or (windows and exeNameIs(exe, "bash"))) {
         // Apple distributes their own patched version of Bash 3.2
         // on macOS that disables the ENV-based POSIX startup path.
         // This means we're unable to perform our automatic shell
@@ -162,6 +180,11 @@ fn detectShell(alloc: Allocator, command: config.Command) !?Shell {
                 return null;
             }
         }
+        if (windows) {
+            if (std.fs.path.dirname(arg0)) |dir| {
+                if (isWindowsSystemDir(dir)) return null;
+            } else if (system_bash_exists()) return null;
+        }
         return .bash;
     }
 
@@ -172,9 +195,47 @@ fn detectShell(alloc: Allocator, command: config.Command) !?Shell {
         std.mem.eql(u8, "powershell", exe) or
         std.mem.eql(u8, "pwsh.exe", exe) or
         std.mem.eql(u8, "pwsh", exe)) return .powershell;
-    if (std.mem.eql(u8, "zsh", exe)) return .zsh;
+    if (windows and (exeNameIs(exe, "powershell") or exeNameIs(exe, "pwsh"))) return .powershell;
+    if (std.mem.eql(u8, "zsh", exe) or (windows and exeNameIs(exe, "zsh"))) return .zsh;
+    if (windows and exeNameIs(exe, "cmd")) return .cmd;
 
     return null;
+}
+
+/// `exe` is `name` or `name.exe`, ignoring case (Windows file names).
+fn exeNameIs(exe: []const u8, name: []const u8) bool {
+    if (std.ascii.eqlIgnoreCase(exe, name)) return true;
+    return exe.len == name.len + 4 and
+        std.ascii.eqlIgnoreCase(exe[0..name.len], name) and
+        std.ascii.eqlIgnoreCase(exe[name.len..], ".exe");
+}
+
+/// `dir` is the Windows system directory (System32, or SysNative and
+/// SysWOW64, its 32-bit views), where `bash.exe` is the WSL launcher.
+fn isWindowsSystemDir(dir: []const u8) bool {
+    const base = std.fs.path.basename(dir);
+    return std.ascii.eqlIgnoreCase(base, "system32") or
+        std.ascii.eqlIgnoreCase(base, "sysnative") or
+        std.ascii.eqlIgnoreCase(base, "syswow64");
+}
+
+/// Whether `%SystemRoot%\System32\bash.exe` (the WSL launcher) exists.
+fn windowsSystemBashExists() bool {
+    if (comptime builtin.os.tag != .windows) return false;
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&buf);
+    const root = std.process.getEnvVarOwned(fba.allocator(), "SystemRoot") catch return false;
+    const path = std.fs.path.join(fba.allocator(), &.{ root, "System32", "bash.exe" }) catch return false;
+    std.fs.cwd().access(path, .{}) catch return false;
+    return true;
+}
+
+fn fakeNoSystemBash() bool {
+    return false;
+}
+
+fn fakeSystemBash() bool {
+    return true;
 }
 
 test detectShell {
@@ -182,7 +243,6 @@ test detectShell {
     const alloc = testing.allocator;
 
     try testing.expect(try detectShell(alloc, .{ .shell = "sh" }) == null);
-    try testing.expectEqual(.bash, try detectShell(alloc, .{ .shell = "bash" }));
     try testing.expectEqual(.elvish, try detectShell(alloc, .{ .shell = "elvish" }));
     try testing.expectEqual(.fish, try detectShell(alloc, .{ .shell = "fish" }));
     try testing.expectEqual(.nushell, try detectShell(alloc, .{ .shell = "nu" }));
@@ -192,8 +252,33 @@ test detectShell {
         try testing.expect(try detectShell(alloc, .{ .shell = "/bin/bash" }) == null);
     }
 
-    try testing.expectEqual(.bash, try detectShell(alloc, .{ .shell = "bash -c 'command'" }));
     try testing.expectEqual(.bash, try detectShell(alloc, .{ .shell = "\"/a b/bash\"" }));
+    // A bare `bash` depends on the system's WSL launcher on Windows.
+    try testing.expectEqual(.bash, detectShellExe("bash", fakeNoSystemBash));
+}
+
+test "unit: shell integration: Windows names, Git Bash and the WSL launcher" {
+    if (comptime builtin.os.tag != .windows) return error.SkipZigTest;
+    const testing = std.testing;
+    const d = detectShellExe;
+    // Git Bash / MSYS (W1-3).
+    try testing.expectEqual(Shell.bash, d("C:\\Program Files\\Git\\bin\\bash.exe", fakeSystemBash).?);
+    try testing.expectEqual(Shell.bash, d("C:\\msys64\\usr\\bin\\BASH.EXE", fakeSystemBash).?);
+    try testing.expectEqual(Shell.bash, d("bash.exe", fakeNoSystemBash).?);
+    try testing.expectEqual(Shell.zsh, d("C:\\msys64\\usr\\bin\\zsh.exe", fakeSystemBash).?);
+    try testing.expectEqual(Shell.zsh, d("zsh.exe", fakeSystemBash).?);
+    // The WSL launcher never gets the Windows-side bash integration.
+    try testing.expect(d("C:\\Windows\\System32\\bash.exe", fakeNoSystemBash) == null);
+    try testing.expect(d("C:\\WINDOWS\\sysnative\\bash.exe", fakeNoSystemBash) == null);
+    try testing.expect(d("bash.exe", fakeSystemBash) == null);
+    try testing.expect(d("bash", fakeSystemBash) == null);
+    // cmd.exe and PowerShell spellings.
+    try testing.expectEqual(Shell.cmd, d("cmd.exe", fakeSystemBash).?);
+    try testing.expectEqual(Shell.cmd, d("C:\\Windows\\System32\\CMD.EXE", fakeSystemBash).?);
+    try testing.expectEqual(Shell.powershell, d("PowerShell.exe", fakeSystemBash).?);
+    try testing.expectEqual(Shell.powershell, d("C:\\Program Files\\PowerShell\\7\\PWSH.EXE", fakeSystemBash).?);
+    try testing.expect(d("bashful.exe", fakeSystemBash) == null);
+    try testing.expect(d("cmd.exe.bak", fakeSystemBash) == null);
 }
 
 /// Set up the shell integration features environment variable.
@@ -951,6 +1036,55 @@ fn setupPowershell(
     }
 
     return .{ .shell = try alloc.dupeZ(u8, try cmd.toOwnedSlice()) };
+}
+
+/// cmd.exe's own default prompt (`$P$G`), used when PROMPT is unset.
+pub const cmd_default_prompt = "$P$G";
+
+/// The integrated cmd.exe prompt (W1-3, ARCHITECTURE.md ADR-9.6): OSC 9;9
+/// reports the working directory, OSC 133;A/B mark the prompt, around the
+/// default `$P$G` text. `$e` is ESC and `$e\` the string terminator.
+pub const cmd_integration_prompt = "$e]9;9;$P$e\\$e]133;A$e\\$P$G$e]133;B$e\\";
+
+/// Setup cmd.exe integration: there is no script to inject, only the
+/// PROMPT variable, and only while the user kept cmd's default prompt (an
+/// own PROMPT, or a `prompt` command at startup, wins). The command is
+/// unchanged.
+fn setupCmd(
+    alloc: Allocator,
+    command: config.Command,
+    env: *EnvMap,
+) !?config.Command {
+    const current = env.get("PROMPT");
+    if (current == null or std.ascii.eqlIgnoreCase(current.?, cmd_default_prompt)) {
+        try env.put("PROMPT", cmd_integration_prompt);
+    }
+    return try command.clone(alloc);
+}
+
+test "unit: shell integration: cmd PROMPT gets OSC 9;9 and 133 only when default" {
+    const testing = std.testing;
+    var arena = ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    var env = EnvMap.init(testing.allocator);
+    defer env.deinit();
+
+    // Unset: the integration prompt, command unchanged.
+    const cmd = try setupCmd(alloc, .{ .shell = "cmd.exe /d" }, &env);
+    try testing.expectEqualStrings("cmd.exe /d", cmd.?.shell);
+    try testing.expectEqualStrings("$e]9;9;$P$e\\$e]133;A$e\\$P$G$e]133;B$e\\", env.get("PROMPT").?);
+
+    // cmd's default, in any case: replaced.
+    try env.put("PROMPT", "$p$g");
+    _ = try setupCmd(alloc, .{ .shell = "cmd.exe" }, &env);
+    try testing.expectEqualStrings(cmd_integration_prompt, env.get("PROMPT").?);
+
+    // A custom prompt is the user's: kept.
+    try env.put("PROMPT", "$T $P$G");
+    _ = try setupCmd(alloc, .{ .shell = "cmd.exe" }, &env);
+    try testing.expectEqualStrings("$T $P$G", env.get("PROMPT").?);
 }
 
 /// Setup the zsh automatic shell integration. This works by setting

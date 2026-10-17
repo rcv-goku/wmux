@@ -79,6 +79,21 @@ if [ -n "$GHOSTTY_BASH_INJECT" ]; then
   builtin unset GHOSTTY_BASH_RCFILE
 fi
 
+# wmux (W1-3): put the POSIX launchers of the bundled CLI (cli/posix/cmux and
+# cli/posix/wmux next to CMUX_BUNDLED_CLI_PATH) first on PATH, so `wmux` and
+# `cmux` resolve without the .exe in Git Bash and MSYS.
+if [[ -n "${CMUX_BUNDLED_CLI_PATH-}" ]]; then
+  builtin declare __ghostty_cli_dir="$CMUX_BUNDLED_CLI_PATH"
+  if builtin command -v cygpath >/dev/null 2>&1; then
+    __ghostty_cli_dir="$(cygpath -u -- "$__ghostty_cli_dir")"
+  fi
+  __ghostty_cli_dir="${__ghostty_cli_dir%/*}"
+  if [[ -d "$__ghostty_cli_dir/posix" && ":$PATH:" != *":$__ghostty_cli_dir/posix:"* ]]; then
+    builtin export PATH="$__ghostty_cli_dir/posix:$PATH"
+  fi
+  builtin unset __ghostty_cli_dir
+fi
+
 # Add Ghostty binary to PATH if the path feature is enabled
 if [[ "$GHOSTTY_SHELL_FEATURES" == *"path"* && -n "$GHOSTTY_BIN_DIR" ]]; then
   if [[ ":$PATH:" != *":$GHOSTTY_BIN_DIR:"* ]]; then
