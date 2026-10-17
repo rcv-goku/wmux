@@ -304,7 +304,10 @@ function Test-W12cFocusDefault {
         $creates = @($fake.Lines | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.method -eq 'workspace.create' })
         Assert-Equal 1 $creates.Count "$Label`: one workspace.create request; requests: $($fake.Lines -join ' | ')"
         Assert-Equal $dir ([string]$creates[0].params.cwd) "$Label`: workspace.create cwd"
-        Assert-Equal $ExpectFocus ([bool]$creates[0].params.focus) "$Label`: workspace.create focus"
+        # An absent `focus` would read as $false: require the explicit boolean the CLI always sends.
+        $focusProp = $creates[0].params.PSObject.Properties['focus']
+        Assert-True ($null -ne $focusProp -and $focusProp.Value -is [bool]) "$Label`: workspace.create carries an explicit boolean focus; request: $($fake.Lines -join ' | ')"
+        Assert-Equal $ExpectFocus $focusProp.Value "$Label`: workspace.create focus"
     } finally {
         $fake.Dispose()
         Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
