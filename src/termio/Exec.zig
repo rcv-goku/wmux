@@ -196,6 +196,7 @@ pub fn threadEnter(
                             .{
                                 handle,
                                 &exec.exited,
+                                &exec.stopping,
                                 &td.surface_mailbox,
                                 exec.start,
                             },
@@ -227,6 +228,10 @@ pub fn threadEnter(
 pub fn threadExit(self: *Exec, td: *termio.Termio.ThreadData) void {
     assert(td.backend == .exec);
     const exec = &td.backend.exec;
+
+    // Teardown started: a blocked child_exited push must not wait for the
+    // mailbox any more (processExitWindows).
+    if (comptime builtin.os.tag == .windows) exec.stopping.store(true, .release);
 
     if (comptime builtin.os.tag == .windows) {
         if (exec.exited.load(.acquire)) self.subprocess.externalExit();
@@ -422,6 +427,7 @@ fn flatpakExit(
 fn processExitWindows(
     process_handle: windows.HANDLE,
     exited_flag: *std.atomic.Value(bool),
+    stopping: *const std.atomic.Value(bool),
     surface_mailbox: *apprt.surface.Mailbox,
     start: std.time.Instant,
 ) void {
@@ -446,12 +452,20 @@ fn processExitWindows(
 
     log.debug("child process exited status={} runtime={}ms", .{ exit_code, runtime_ms });
 
-    _ = surface_mailbox.push(.{
-        .child_exited = .{
-            .exit_code = exit_code,
-            .runtime_ms = runtime_ms,
-        },
-    }, .{ .forever = {} });
+    // Bounded waits instead of `.forever`: while the surface is being torn
+    // down its UI thread joins the termio thread, which joins this one, so
+    // nobody drains a full mailbox; once threadExit set `stopping` the
+    // message is dropped (the surface is going away anyway).
+    const msg: apprt.surface.Message = .{ .child_exited = .{
+        .exit_code = exit_code,
+        .runtime_ms = runtime_ms,
+    } };
+    while (surface_mailbox.push(msg, .{ .ns = 100 * std.time.ns_per_ms }) == 0) {
+        if (stopping.load(.acquire)) {
+            log.debug("teardown started, child_exited not delivered", .{});
+            return;
+        }
+    }
 }
 
 fn termiosTimer(
@@ -647,6 +661,13 @@ pub const ThreadData = struct {
     /// Windows-only: a thread that waits for the child process to exit.
     process_watcher_thread: if (builtin.os.tag == .windows) ?std.Thread else void =
         if (builtin.os.tag == .windows) null else {},
+
+    /// Windows-only: set by threadExit before it joins the process
+    /// watcher, so a child_exited push waiting on a full app mailbox gives
+    /// up instead of deadlocking the teardown (the UI thread that drains
+    /// the mailbox is the one joining this termio thread).
+    stopping: if (builtin.os.tag == .windows) std.atomic.Value(bool) else void =
+        if (builtin.os.tag == .windows) std.atomic.Value(bool).init(false) else {},
 
     /// The data stream is the main IO for the pty.
     write_stream: xev.Stream,
@@ -1600,9 +1621,12 @@ pub const ReadThread = struct {
             // it starts cancelling (see stopReadThreadWindows).
             var quit_bytes: windows.DWORD = 0;
             if (windows.exp.kernel32.PeekNamedPipe(quit, null, 0, null, &quit_bytes, null) == 0) {
+                // The quit pipe's write end is gone (threadExit closed it
+                // or the termio state is being torn down): nothing can ask
+                // us to stop any more, so stop now.
                 const err = windows.kernel32.GetLastError();
-                log.err("quit pipe reader error err={}", .{err});
-                unreachable;
+                log.warn("quit pipe reader error, read thread exiting err={}", .{err});
+                return;
             }
 
             if (quit_bytes > 0) {
@@ -1617,9 +1641,20 @@ pub const ReadThread = struct {
                     // Cancelled by threadExit: check for the quit signal.
                     .OPERATION_ABORTED => continue,
 
+                    // The pseudoconsole closed its output (the shell and
+                    // conhost are gone): a clean end of the stream.
+                    .BROKEN_PIPE, .HANDLE_EOF, .PIPE_NOT_CONNECTED, .NO_DATA => {
+                        log.info("pty closed, read thread exiting err={}", .{err});
+                        return;
+                    },
+
+                    // Anything else (an invalid handle during teardown,
+                    // ...) also ends the reader: looping would spin and
+                    // there is nothing to recover. Formerly `unreachable`,
+                    // undefined behavior in ReleaseFast.
                     else => {
-                        log.err("io reader error err={}", .{err});
-                        unreachable;
+                        log.err("io reader error, read thread exiting err={}", .{err});
+                        return;
                     },
                 }
             }
