@@ -20,8 +20,9 @@ The unnamed `test` block at the end of `src/terminal/search/Thread.zig`:
   runs on every exit path and before the earlier deferred `thread.deinit`, `ud.deinit` and
   `t.deinit`;
 - the completion wait (`ud.reset.timedWait`) grows from 100 ms to 10 s;
-- the explicit `thread.stop.notify()` / `os_thread.join()` after the wait are removed (the
-  defer does it).
+- after a successful wait the test still stops and joins the thread explicitly before its
+  assertions (the callback frees and reallocates `ud.viewport`, so reading it while the thread
+  runs would race a late notification); a `joined` flag keeps the defer from joining twice.
 
 ## Why
 `try ud.reset.timedWait(100 * std.time.ns_per_ms)` returned `error.Timeout` under CPU load
@@ -36,15 +37,17 @@ ADR-12.7). Core file, ruling D17.
 +++ b/src/terminal/search/Thread.zig
 @@ test
      var os_thread = try std.Thread.spawn(.{}, threadMain, .{&thread});
-+    defer {
++    var joined = false;
++    defer if (!joined) {
 +        thread.stop.notify() catch |err| log.err(...);
 +        os_thread.join();
-+    }
++    };
 @@
 -    try ud.reset.timedWait(100 * std.time.ns_per_ms);
--    try thread.stop.notify();
--    os_thread.join();
 +    try ud.reset.timedWait(10 * std.time.ns_per_s);
+     try thread.stop.notify();
+     os_thread.join();
++    joined = true;
 ```
 
 ## Stub until merged
