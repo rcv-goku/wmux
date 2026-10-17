@@ -35,6 +35,13 @@ pub const Writer = struct {
     thread: ?std.Thread = null,
     /// Serializes the file sequence between the thread and `writeSync`.
     io_mutex: std.Thread.Mutex = .{},
+    /// Submission order: every `submit`/`writeSync` takes the next number
+    /// (under `mutex`); `written` (under `io_mutex`) is the newest one on
+    /// disk. Bytes the thread took before a newer `writeSync` overtook it
+    /// are dropped instead of overwriting the newer file.
+    seq: u64 = 0,
+    pending_seq: u64 = 0,
+    written: u64 = 0,
 
     /// Completed writes (diagnostics and tests).
     writes: std.atomic.Value(u32) = .init(0),
@@ -63,24 +70,30 @@ pub const Writer = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
         if (self.pending) |old| self.gpa.free(old);
+        self.seq += 1;
         self.pending = bytes;
+        self.pending_seq = self.seq;
         self.cond.signal();
     }
 
     /// Write `bytes` now on the calling thread (borrowed). A submission
     /// still pending is dropped: `bytes` is newer.
     pub fn writeSync(self: *Writer, bytes: []const u8) !void {
-        {
+        const my_seq = blk: {
             self.mutex.lock();
             defer self.mutex.unlock();
             if (self.pending) |old| {
                 self.gpa.free(old);
                 self.pending = null;
             }
-        }
+            self.seq += 1;
+            break :blk self.seq;
+        };
         self.io_mutex.lock();
         defer self.io_mutex.unlock();
+        if (my_seq < self.written) return;
         try atomicWrite(self.gpa, self.dir, bytes);
+        self.written = my_seq;
         _ = self.writes.fetchAdd(1, .monotonic);
     }
 
@@ -105,18 +118,23 @@ pub const Writer = struct {
 
     fn run(self: *Writer) void {
         while (true) {
+            var my_seq: u64 = 0;
             const bytes: []u8 = blk: {
                 self.mutex.lock();
                 defer self.mutex.unlock();
                 while (self.pending == null and !self.stopping) self.cond.wait(&self.mutex);
                 const p = self.pending orelse return; // stopping, nothing left
                 self.pending = null;
+                my_seq = self.pending_seq;
                 break :blk p;
             };
             defer self.gpa.free(bytes);
             self.io_mutex.lock();
             defer self.io_mutex.unlock();
+            // A newer writeSync reached the file first: these bytes are stale.
+            if (my_seq < self.written) continue;
             if (atomicWrite(self.gpa, self.dir, bytes)) {
+                self.written = my_seq;
                 _ = self.writes.fetchAdd(1, .monotonic);
             } else |err| {
                 log.warn("session save failed err={}", .{err});
@@ -225,4 +243,24 @@ test "unit: session: atomic write keeps a backup and coalesces submissions" {
     w.stop();
     try testing.expectEqualStrings("{\"n\":4}", try tmp.dir.readFile(integrity.session_file, &buf));
     try testing.expect(w.writes.load(.monotonic) <= 4);
+}
+
+test "unit: session: bytes overtaken by a newer synchronous save are not written" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = try tmp.dir.realpathAlloc(testing.allocator, ".");
+    defer testing.allocator.free(dir);
+
+    var w = try Writer.init(testing.allocator, dir);
+    defer w.deinit();
+    // The thread took submission 1, then a writeSync (2) reached the file
+    // before it: run the thread body on this thread with that state.
+    try w.writeSync("{\"n\":2}");
+    w.pending = try testing.allocator.dupe(u8, "{\"n\":1}");
+    w.pending_seq = w.written - 1;
+    w.stopping = true;
+    w.run();
+    var buf: [64]u8 = undefined;
+    try testing.expectEqualStrings("{\"n\":2}", try tmp.dir.readFile(integrity.session_file, &buf));
+    try testing.expect(w.pending == null);
 }

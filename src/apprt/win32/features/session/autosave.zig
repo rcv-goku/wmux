@@ -74,7 +74,7 @@ pub const Core = struct {
     /// The deferred spawns of that restore (restore.zig).
     spawner: ?*restore.Spawner = null,
     /// Notices raised during `init`, shown once the message loop runs
-    /// (the first window exists and STATEogswmux.log is open).
+    /// (the first window exists and STATE\logs\wmux.log is open).
     notices: std.ArrayList(notice.Notice) = .empty,
 
     pub fn deinit(self: *Core) void {
@@ -147,7 +147,14 @@ fn destroyImpl(app: *App, clear_running: bool) void {
         if (hook.ctx == @as(*anyopaque, core)) app.handles.on_reserve = null;
     }
     core.writer.stop();
-    if (clear_running) markers.clearRunning(core.session_dir);
+    if (clear_running) {
+        markers.clearRunning(core.session_dir);
+        // An orderly exit while the staggered restore was still running
+        // (the user closed wmux within the first seconds) is not a crashed
+        // restore: leaving `session.restoring` would make the next launch
+        // skip the restore and set the session aside.
+        if (core.restoring) markers.clearRestoring(core.session_dir);
+    }
     core.deinit();
     app.features.session.core = null;
     core.gpa.destroy(core);
