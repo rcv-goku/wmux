@@ -692,3 +692,8 @@ test "unit: debug: key chords parse modifiers, named keys and characters" {
     try testing.expect(parseChord("f13") == null);
     try testing.expect(parseChord("hyper+a") == null);
 }
+
+test "unit: debug: the hotkeys provider hook compiles and clears" {
+    setHotkeysProvider(null);
+    try testing.expect(hotkeys_provider == null);
+}

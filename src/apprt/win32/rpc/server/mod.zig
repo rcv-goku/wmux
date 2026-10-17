@@ -359,3 +359,10 @@ test {
     _ = @import("../reply.zig");
     _ = @import("../../app/single_instance.zig");
 }
+
+test "unit: rpc: entry points other WPs call compile" {
+    // Referenced so they are compiled before their first caller lands
+    // (event streams, W2-4; deferred handlers, W2-8).
+    _ = &PipeServer.pushLine;
+    _ = &reply.completeRaw;
+}
