@@ -302,6 +302,59 @@ pub fn show(site: MenuSite, ctx: *Context, owner: w32.HWND, screen: w32.POINT) v
     chosen.callback(ctx, chosen.arg);
 }
 
+// ---------------------------------------------------------------------------
+// Introspection (wmux.debug.menu.list / menu.invoke, W1-1a, AF-19)
+// ---------------------------------------------------------------------------
+
+/// The `MenuSite` named `name` (its tag name, e.g. "workspace_row").
+pub fn siteByName(name: []const u8) ?MenuSite {
+    return std.meta.stringToEnum(MenuSite, name);
+}
+
+/// Builds the `site` menu for `ctx` exactly as `show` would, in display
+/// order, without showing it. The caller deinits the builder.
+pub fn buildForInspection(gpa: Allocator, site: MenuSite, ctx: *Context) Allocator.Error!MenuBuilder {
+    var b = MenuBuilder.init(gpa, site, ctx);
+    errdefer b.deinit();
+    try contrib.collectMenu(&b);
+    b.sort();
+    return b;
+}
+
+/// The display row of `b` whose title is `title` (exactly, else the only
+/// row it is an ASCII case-insensitive prefix of, ignoring a tab-separated
+/// accelerator hint), or null.
+pub fn findEntry(b: *const MenuBuilder, title: []const u8) ?usize {
+    for (b.entries.items, 0..) |e, i| {
+        if (std.mem.eql(u8, labelOf(e.title), title)) return i;
+    }
+    var found: ?usize = null;
+    for (b.entries.items, 0..) |e, i| {
+        if (!std.ascii.startsWithIgnoreCase(labelOf(e.title), title)) continue;
+        if (found != null) return null; // ambiguous
+        found = i;
+    }
+    return found;
+}
+
+/// A menu title without its accelerator hint (`"Close\tCtrl+W"` → `"Close"`).
+pub fn labelOf(title: []const u8) []const u8 {
+    const tab = std.mem.indexOfScalar(u8, title, '\t') orelse return title;
+    return title[0..tab];
+}
+
+/// Runs row `index` of `b` as if it had been chosen in the popup: the
+/// targets are captured and re-resolved like after the modal loop. False
+/// when the row is grayed or a target vanished.
+pub fn invokeEntry(b: *const MenuBuilder, index: usize) bool {
+    const entry = b.commandEntry(index + 1) orelse return false;
+    const ctx = b.ctx;
+    ctx.capture();
+    if (!ctx.resolve()) return false;
+    entry.callback(ctx, entry.arg);
+    return true;
+}
+
 /// `show` anchored at window client coordinates (x, y).
 fn showAt(self: *Window, site: MenuSite, ctx: *Context, x: i32, y: i32) void {
     const hwnd = self.hwnd orelse return;
@@ -591,4 +644,26 @@ test "unit: distro menu label formats the default marker" {
         defer alloc.free(label);
         try testing.expectEqualStrings("Ubuntu-24.04 (default)", label);
     }
+}
+
+test "unit: ui: menu introspection finds rows by exact title or unique prefix" {
+    var ctx = testContext();
+    var b = MenuBuilder.init(testing.allocator, .workspace_row, &ctx);
+    defer b.deinit();
+    const items = [_]MenuItem{
+        .{ .site = .workspace_row, .order = 0, .title = "Rename Workspace", .callback = testNoop },
+        .{ .site = .workspace_row, .order = 1, .title = "Edit Description", .callback = testNoop },
+        .{ .site = .workspace_row, .order = 2, .title = "Close Workspace\tCtrl+W", .callback = testNoop },
+        .{ .site = .workspace_row, .order = 3, .title = "Close Others", .callback = testNoop },
+    };
+    try b.addItems(&items);
+    b.sort();
+    try testing.expectEqual(@as(?usize, 0), findEntry(&b, "Rename"));
+    try testing.expectEqual(@as(?usize, 0), findEntry(&b, "rename workspace"));
+    try testing.expectEqual(@as(?usize, 2), findEntry(&b, "Close Workspace"));
+    try testing.expectEqual(@as(?usize, null), findEntry(&b, "Close")); // ambiguous
+    try testing.expectEqual(@as(?usize, null), findEntry(&b, "Paste"));
+    try testing.expectEqualStrings("Close Workspace", labelOf(b.entries.items[2].title));
+    try testing.expectEqual(MenuSite.workspace_row, siteByName("workspace_row").?);
+    try testing.expect(siteByName("nope") == null);
 }

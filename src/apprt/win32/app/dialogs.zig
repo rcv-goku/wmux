@@ -12,7 +12,9 @@
 //! automation, open windows outside the instance's process tree, or make
 //! noise):
 //!
-//! - message boxes return their default button at once;
+//! - message boxes return their default button at once (or the next
+//!   answer queued by `wmux.debug.dialogs.answer`) and are recorded for
+//!   `wmux.debug.dialogs.list` (W1-1a);
 //! - file dialogs answer from WMUX_TEST_FILE_DIALOG (a path is the
 //!   selection; unset, empty or "cancel" cancels);
 //! - external launches append one JSON line to WMUX_TEST_EXTERNAL_SINK;
@@ -44,8 +46,9 @@ pub fn messageBox(
     flags: u32,
 ) i32 {
     if (app.runtime_env.test_mode) {
-        const answer = defaultButtonId(flags);
+        const answer = takePresetAnswer() orelse defaultButtonId(flags);
         log.info("test mode: message box auto-answered with id={d}", .{answer});
+        recordDialog(text, caption, flags, answer);
         return answer;
     }
     app.modal.enter();
@@ -79,6 +82,116 @@ pub fn defaultButtonId(flags: u32) i32 {
     };
     const index: usize = (flags >> 8) & 0xF; // MB_DEFBUTTON1..4 = 0x000..0x300
     return if (index < buttons.len) buttons[index] else buttons[0];
+}
+
+// ---------------------------------------------------------------------------
+// Test-mode dialog log and preset answers (wmux.debug.dialogs.list/answer,
+// W1-1a). Process-wide, guarded by one mutex; the message box path runs on
+// the UI thread, the debug hooks too.
+// ---------------------------------------------------------------------------
+
+/// One auto-answered message box.
+pub const DialogRecord = struct {
+    kind: []const u8 = "message_box",
+    caption: []const u8,
+    text: []const u8,
+    /// The MB_* flags.
+    flags: u32,
+    /// The button id returned (IDOK = 1, IDCANCEL = 2, IDYES = 6, ...).
+    answer: i32,
+    timestamp_ms: i64,
+};
+
+/// The most recent records kept (older ones are dropped).
+pub const max_records = 256;
+
+var records_mutex: std.Thread.Mutex = .{};
+var records: std.ArrayList(DialogRecord) = .empty;
+var presets: std.ArrayList(i32) = .empty;
+/// Owns the record strings and both lists (page allocator: process-wide
+/// test state, released by `resetTestRecords`).
+const records_alloc = std.heap.page_allocator;
+
+fn recordDialog(text: [*:0]const u16, caption: [*:0]const u16, flags: u32, answer: i32) void {
+    const t = std.unicode.utf16LeToUtf8Alloc(records_alloc, std.mem.span(text)) catch return;
+    const c = std.unicode.utf16LeToUtf8Alloc(records_alloc, std.mem.span(caption)) catch {
+        records_alloc.free(t);
+        return;
+    };
+    records_mutex.lock();
+    defer records_mutex.unlock();
+    if (records.items.len >= max_records) {
+        const old = records.orderedRemove(0);
+        records_alloc.free(old.text);
+        records_alloc.free(old.caption);
+    }
+    records.append(records_alloc, .{
+        .caption = c,
+        .text = t,
+        .flags = flags,
+        .answer = answer,
+        .timestamp_ms = std.time.milliTimestamp(),
+    }) catch {
+        records_alloc.free(t);
+        records_alloc.free(c);
+    };
+}
+
+fn takePresetAnswer() ?i32 {
+    records_mutex.lock();
+    defer records_mutex.unlock();
+    if (presets.items.len == 0) return null;
+    return presets.orderedRemove(0);
+}
+
+/// A copy of the auto-answered message boxes, oldest first, allocated in
+/// `arena`.
+pub fn testRecords(arena: Allocator) Allocator.Error![]DialogRecord {
+    records_mutex.lock();
+    defer records_mutex.unlock();
+    const out = try arena.alloc(DialogRecord, records.items.len);
+    for (records.items, out) |r, *o| {
+        o.* = r;
+        o.caption = try arena.dupe(u8, r.caption);
+        o.text = try arena.dupe(u8, r.text);
+    }
+    return out;
+}
+
+/// Queue `answer` (a button id) for the next test-mode message box; the
+/// default button answers again once the queue is empty. Returns the
+/// queue length.
+pub fn presetAnswer(answer: i32) Allocator.Error!usize {
+    records_mutex.lock();
+    defer records_mutex.unlock();
+    try presets.append(records_alloc, answer);
+    return presets.items.len;
+}
+
+/// The button id a `wmux.debug.dialogs.answer` name stands for ("ok",
+/// "cancel", "abort", "retry", "ignore", "yes", "no", "try_again",
+/// "continue"); null for anything else. Pure (unit-tested).
+pub fn answerIdByName(name: []const u8) ?i32 {
+    const table = [_]struct { []const u8, i32 }{
+        .{ "ok", 1 },  .{ "cancel", 2 }, .{ "abort", 3 },      .{ "retry", 4 },     .{ "ignore", 5 },
+        .{ "yes", 6 }, .{ "no", 7 },     .{ "try_again", 10 }, .{ "continue", 11 },
+    };
+    for (table) |e| if (std.ascii.eqlIgnoreCase(e[0], name)) return e[1];
+    return null;
+}
+
+/// Forget the records and preset answers (the control server stop).
+pub fn resetTestRecords() void {
+    records_mutex.lock();
+    defer records_mutex.unlock();
+    for (records.items) |r| {
+        records_alloc.free(r.text);
+        records_alloc.free(r.caption);
+    }
+    records.deinit(records_alloc);
+    records = .empty;
+    presets.deinit(records_alloc);
+    presets = .empty;
 }
 
 // ---------------------------------------------------------------------------
@@ -488,4 +601,25 @@ test "unit: app: dialogs IFileDialog vtable slots" {
     try testing.expectEqual(@as(usize, 17), @offsetOf(IFileDialog.VTable, "SetTitle") / @sizeOf(usize));
     try testing.expectEqual(@as(usize, 20), @offsetOf(IFileDialog.VTable, "GetResult") / @sizeOf(usize));
     try testing.expectEqual(@as(usize, 5), @offsetOf(IShellItem.VTable, "GetDisplayName") / @sizeOf(usize));
+}
+
+test "unit: app: dialogs test answers by name and the preset queue" {
+    try testing.expectEqual(@as(?i32, 1), answerIdByName("OK"));
+    try testing.expectEqual(@as(?i32, 7), answerIdByName("no"));
+    try testing.expectEqual(@as(?i32, 10), answerIdByName("try_again"));
+    try testing.expectEqual(@as(?i32, null), answerIdByName("maybe"));
+    defer resetTestRecords();
+    try testing.expectEqual(@as(usize, 1), try presetAnswer(6));
+    try testing.expectEqual(@as(usize, 2), try presetAnswer(2));
+    try testing.expectEqual(@as(?i32, 6), takePresetAnswer());
+    try testing.expectEqual(@as(?i32, 2), takePresetAnswer());
+    try testing.expectEqual(@as(?i32, null), takePresetAnswer());
+    recordDialog(std.unicode.utf8ToUtf16LeStringLiteral("Close?"), std.unicode.utf8ToUtf16LeStringLiteral("wmux"), 1, 2);
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const list = try testRecords(arena_state.allocator());
+    try testing.expectEqual(@as(usize, 1), list.len);
+    try testing.expectEqualStrings("Close?", list[0].text);
+    try testing.expectEqualStrings("wmux", list[0].caption);
+    try testing.expectEqual(@as(i32, 2), list[0].answer);
 }
