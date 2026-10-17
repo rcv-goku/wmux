@@ -61,9 +61,8 @@ pub fn parseFlags(args: []const []const u8) FlagError!?bool {
     return result;
 }
 
-/// Message for `error.InvalidFocusValue` (usage error, exit 2; cmux's
-/// wording).
-pub const invalid_value_message = "--focus must be true|false";
+/// Message for `error.InvalidFocusValue` (usage error, exit 2).
+pub const invalid_value_message = "--focus must be true or false";
 
 /// True when any coding-agent marker is set non-empty. `all_names` is the
 /// list of every variable name in the environment (for the `CMUX_AGENT_*`

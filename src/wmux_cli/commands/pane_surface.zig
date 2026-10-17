@@ -617,7 +617,7 @@ test "unit: cli-ps: new-split argument validation" {
     try pt.expectUsage(h.run(&.{ "cmux", "new-split", "right", "--surface", "" }), "cmux: Surface handle is blank\n");
     try pt.expectUsage(h.run(&.{ "cmux", "new-split", "right", "--surface", "pane:1" }), "Invalid surface handle: pane:1 (expected UUID, ref like surface:1, or index)");
     try pt.expectUsage(h.run(&.{ "cmux", "new-split", "right", "--workspace", " " }), "No workspace selected: --workspace was blank and CMUX_WORKSPACE_ID is unset");
-    try pt.expectUsage(h.run(&.{ "cmux", "new-split", "right", "--focus=maybe" }), "--focus must be true|false");
+    try pt.expectUsage(h.run(&.{ "cmux", "new-split", "right", "--focus=maybe" }), "--focus must be true or false");
     try testing.expectEqual(@as(usize, 0), h.requests().len);
 }
 
