@@ -1022,6 +1022,15 @@ fn setupPowershell(
         try cmd.appendArg(exe);
     } else return null;
 
+    // The user's own arguments go first: everything after -Command is
+    // command text, so a trailing `-NoProfile` would be passed to our
+    // script instead of PowerShell (W1-3). A command line that already
+    // runs a command or a file is not interactive: no integration.
+    while (iter.next()) |arg| {
+        if (powershellRunsCommand(arg)) return null;
+        try cmd.appendArg(arg);
+    }
+
     // Add -NoExit so PowerShell stays interactive after sourcing.
     try cmd.appendArg("-NoExit");
 
@@ -1030,12 +1039,48 @@ fn setupPowershell(
     try cmd.appendArg("-Command");
     try cmd.appendArg(source_cmd);
 
-    // Pass through remaining arguments.
-    while (iter.next()) |arg| {
-        try cmd.appendArg(arg);
-    }
-
     return .{ .shell = try alloc.dupeZ(u8, try cmd.toOwnedSlice()) };
+}
+
+/// A PowerShell parameter that runs a command or a file (any unambiguous
+/// prefix: `-c`, `-Com`, `-f`, `-File`, `-e`, `-EncodedCommand`,
+/// `-CommandWithArgs`, with `-` or `/`).
+fn powershellRunsCommand(arg: []const u8) bool {
+    if (arg.len < 2 or (arg[0] != '-' and arg[0] != '/')) return false;
+    const name = arg[1..];
+    const runners = [_][]const u8{ "command", "file", "encodedcommand", "commandwithargs" };
+    for (runners) |r| {
+        if (name.len <= r.len and std.ascii.eqlIgnoreCase(name, r[0..name.len])) {
+            // `-e` and `-c` alone are the documented short forms; longer
+            // prefixes of other parameters (`-ex` ExecutionPolicy, `-co`
+            // ConfigurationName...) must spell enough of the runner.
+            if (name.len == 1 or name.len >= 3) return true;
+        }
+    }
+    return false;
+}
+
+test "unit: shell integration: PowerShell user arguments go before -Command" {
+    const testing = std.testing;
+    var arena = ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    var res: TmpResourcesDir = try .init(testing.allocator, .powershell);
+    defer res.deinit();
+    var env = EnvMap.init(testing.allocator);
+    defer env.deinit();
+
+    const cmd = (try setupPowershell(alloc, .{ .shell = "powershell.exe -NoLogo -NoProfile" }, res.path, &env)).?;
+    try testing.expect(std.mem.startsWith(u8, cmd.shell, "powershell.exe -NoLogo -NoProfile -NoExit -Command "));
+    // A command line that runs something is left alone.
+    try testing.expect(try setupPowershell(alloc, .{ .shell = "pwsh -NoProfile -c Get-Date" }, res.path, &env) == null);
+    try testing.expect(try setupPowershell(alloc, .{ .shell = "pwsh -File x.ps1" }, res.path, &env) == null);
+    try testing.expect(powershellRunsCommand("-EncodedCommand"));
+    try testing.expect(powershellRunsCommand("/com"));
+    try testing.expect(!powershellRunsCommand("-ExecutionPolicy"));
+    try testing.expect(!powershellRunsCommand("-NoProfile"));
+    try testing.expect(!powershellRunsCommand("-co"));
 }
 
 /// cmd.exe's own default prompt (`$P$G`), used when PROMPT is unset.
