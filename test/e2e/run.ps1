@@ -12,7 +12,12 @@
 
     Per-test timeout: every Test-Case has a watchdog of -TestTimeoutSec (default 120 s) inside the
     test process, and the runner kills a file whose process outlives
-    TestTimeoutSec * <number of Test-Case blocks> plus a grace period (status "timeout").
+    TestTimeoutSec * <number of Test-Case blocks> plus a grace period (status "timeout"); a
+    "# budget-sec: <n>" header line raises that budget for a file.
+
+    Before running, stale instance roots under %RUNNER_TEMP% or %TEMP%\wmux-e2e are swept: roots
+    whose owner.json names a harness process that no longer runs, and roots without owner.json
+    older than 24 h. Roots of live runs (any worktree) are kept.
 
     Exit codes:
         0  every file passed or was skipped (flaky files allowed)
