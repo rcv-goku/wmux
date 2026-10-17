@@ -3639,10 +3639,23 @@ function Get-WmuxScreenshot {
         $full = [IO.Path]::GetFullPath($Path, (Get-Location).ProviderPath)
         $dir = Split-Path -Parent $full
         if ($dir) { $null = New-Item -ItemType Directory -Force -Path $dir }
-        if ($Instance.Protocol -eq 'v2') {
+        # A v2 app can predate the wmux.debug.window.screenshot hook (the v2 server lands in
+        # W1-1a, the hook later): method_not_found falls back to the harness capture.
+        $appShot = $Instance.Protocol -eq 'v2'
+        $r = $null
+        if ($appShot) {
             $params = [ordered]@{ path = $full }
             if ($PSBoundParameters.ContainsKey('Window')) { $params.window_id = $Window }
-            $r = Invoke-WmuxRpc $Instance 'wmux.debug.window.screenshot' $params
+            $saved = $script:State.FailMark
+            try {
+                $r = Invoke-WmuxRpc $Instance 'wmux.debug.window.screenshot' $params
+            } catch [WmuxRpcError] {
+                if ($_.Exception.Code -ne 'method_not_found') { throw }
+                $script:State.FailMark = $saved
+                $appShot = $false
+            }
+        }
+        if ($appShot) {
             if (-not (Test-Path -LiteralPath $full -PathType Leaf)) {
                 $b64 = @((Get-WmuxProp $r 'png_base64'), (Get-WmuxProp $r 'base64'), (Get-WmuxProp $r 'data')) | Where-Object { $_ -is [string] -and $_ } | Select-Object -First 1
                 $rpath = Get-WmuxProp $r 'path'
