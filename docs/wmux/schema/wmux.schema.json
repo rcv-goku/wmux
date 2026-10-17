@@ -39,6 +39,71 @@
         ]
       },
       "default": []
+    },
+    "automation": {
+      "type": "object",
+      "properties": {
+        "portBase": {
+          "title": "Workspace port base",
+          "description": "First port of the per-workspace port blocks: each workspace's terminals get CMUX_PORT = base + ordinal * range, CMUX_PORT_END and CMUX_PORT_RANGE. New terminals only.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 9100,
+          "x-cmux-scopes": [
+            "global"
+          ],
+          "x-wmux-section": "automation",
+          "x-wmux-keywords": [
+            "port",
+            "CMUX_PORT",
+            "environment"
+          ]
+        },
+        "portRange": {
+          "title": "Ports per workspace",
+          "description": "Number of ports reserved for each workspace (CMUX_PORT_RANGE). New terminals only.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 10,
+          "x-cmux-scopes": [
+            "global"
+          ],
+          "x-wmux-section": "automation",
+          "x-wmux-keywords": [
+            "port",
+            "CMUX_PORT_RANGE",
+            "environment"
+          ]
+        }
+      }
+    },
+    "wmux": {
+      "type": "object",
+      "properties": {
+        "agents": {
+          "type": "object",
+          "properties": {
+            "preserveAuthEnv": {
+              "title": "Keep Anthropic credentials in terminals",
+              "description": "When false (default), ANTHROPIC_API_KEY, ANTHROPIC_MODEL, ANTHROPIC_SMALL_FAST_MODEL, CLAUDE_CODE_USE_BEDROCK and CLAUDE_CODE_USE_VERTEX inherited by wmux are removed from the environment of new terminals.",
+              "type": "boolean",
+              "default": false,
+              "x-cmux-scopes": [
+                "global"
+              ],
+              "x-wmux-section": "automation",
+              "x-wmux-keywords": [
+                "anthropic",
+                "claude",
+                "api key",
+                "environment"
+              ]
+            }
+          }
+        }
+      }
     }
   }
 }
