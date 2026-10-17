@@ -1,817 +1,388 @@
-//! Legacy wmux-v1 named-pipe transport for agent-scriptable control of a
-//! running wmux instance (`\\.\pipe\wmux-ipc-<pid>`). Two layers:
+//! The legacy wmux-v1 JSON protocol over the v2 transport (ARCHITECTURE.md
+//! ADR-3.1 "legacy pipe", ADR-3.7; W1-1a). Legacy requests
+//! (`{"id":N,"cmd":"...","args":{...}}`) arrive on two pipes, both served
+//! by the thread-per-connection `PipeServer`:
 //!
-//!   (a) a thin Win32 named-pipe layer (extern decls + a security
-//!       descriptor restricting the pipe to the current user);
-//!   (b) `Server`, which ties it to the protocol in
-//!       `rpc/compat/legacy_json.zig`: a dedicated pipe thread accepts one
-//!       client at a time, reads newline-delimited requests,
-//!       heap-allocates each parsed `Request`, and hands it to a callback.
-//!       In production the callback hands the request to App's UI
-//!       thread; here it is modeled as a plain function pointer so the
-//!       module stays standalone. Responses may be written from any
-//!       thread via send{Ok,Error}.
+//! - the control pipe, when a line sniffs as legacy JSON (rpc/dispatch.zig);
+//! - `\\.\pipe\wmux-ipc-<pid>`, legacy only, for one release (removed at
+//!   M3 by W3-1c, AF-18).
 //!
-//! Concurrency note (the reason the pipe is opened FILE_FLAG_OVERLAPPED):
-//! a synchronous duplex pipe handle serializes *all* I/O on the file
-//! object, so a WriteFile issued from another thread (e.g. the GUI
-//! thread answering a request) blocks behind the pipe thread's pending
-//! ReadFile — deadlocking request/response. Overlapped I/O keeps reads
-//! and writes independent and gives us clean shutdown via an event +
-//! CancelIoEx instead of the dummy-connect / CancelSynchronousIo hacks
-//! needed for synchronous handles.
+//! Every command runs over the registry (`rpc/registry.zig`
+//! `legacyCommand`): authorization (the read-only mode) and admission come
+//! first, then the command's optional pipe-thread `prepare` stage, then the
+//! handler on the UI thread through the UI lane (modal hold for commands
+//! that are not read-only).
 //!
-//! Moved out of `ipc.zig` in W0-A1 (ARCHITECTURE.md ADR-1.8, ADR-3.2).
+//! Handlers reply through `app.ipc_server` (`Server.sendOk`/`sendError`,
+//! any thread, possibly long after the handler returned for the async
+//! browser commands). `Server` is the reply hub: before a request reaches
+//! its handler its `id` is replaced with a hub token, and the reply is
+//! routed back to the connection and request that sent it (with the
+//! client's original id), or captured for an in-process caller. A reply
+//! whose client left or whose request expired is dropped by the transport.
+//! Replies keep the legacy shapes `{"id":N,"ok":true,"data":...}` and
+//! `{"id":N,"ok":false,"error":"..."}` byte for byte.
 
 const std = @import("std");
-const builtin = @import("builtin");
-const windows = std.os.windows;
-const kernel32 = windows.kernel32;
 const Allocator = std.mem.Allocator;
-const testing = std.testing;
+const proto = @import("wmux_proto");
 
+const App = @import("../../App.zig");
+const PipeServer = @import("PipeServer.zig");
+const deadline = @import("../logic/deadline.zig");
+const lanes = @import("../lanes.zig");
 const legacy_json = @import("../compat/legacy_json.zig");
-const ErrorCode = legacy_json.ErrorCode;
-const LineFramer = legacy_json.LineFramer;
+const rpc_registry = @import("../registry.zig");
+
+const Connection = PipeServer.Connection;
 const Request = legacy_json.Request;
-const parseLine = legacy_json.parseLine;
-const serializeError = legacy_json.serializeError;
-const serializeOk = legacy_json.serializeOk;
+const Token = PipeServer.Token;
 
 const log = std.log.scoped(.win32_ipc);
 
-// ---------------------------------------------------------------------------
-// Win32 pipe layer
-// ---------------------------------------------------------------------------
+/// The error text of a command refused by the read-only mode (unchanged
+/// from the pre-W1-1a server).
+pub const read_only_message = "socket-control=read-only: command refused";
 
-// Constants not exposed by std.os.windows.
-const FILE_FLAG_FIRST_PIPE_INSTANCE: u32 = 0x00080000;
-const FILE_FLAG_OVERLAPPED: u32 = 0x40000000;
-const PIPE_REJECT_REMOTE_CLIENTS: u32 = 0x00000008;
-const TOKEN_QUERY: u32 = 0x0008;
-const TOKEN_USER_CLASS: c_int = 1; // TOKEN_INFORMATION_CLASS.TokenUser
-const SDDL_REVISION_1: u32 = 1;
+/// What a captured reply holds (in-process callers, see `Server.runCaptured`).
+pub const Captured = union(enum) {
+    /// No reply (the handler went async or never answered).
+    none,
+    /// `data` JSON text (`null` when the handler sent none), owned.
+    ok: []u8,
+    /// The error string, owned.
+    err: []u8,
 
-const SID_AND_ATTRIBUTES = extern struct {
-    Sid: ?*anyopaque,
-    Attributes: windows.DWORD,
-};
-
-const TOKEN_USER = extern struct {
-    User: SID_AND_ATTRIBUTES,
-};
-
-extern "kernel32" fn ConnectNamedPipe(
-    hNamedPipe: windows.HANDLE,
-    lpOverlapped: ?*windows.OVERLAPPED,
-) callconv(.winapi) windows.BOOL;
-
-extern "kernel32" fn DisconnectNamedPipe(
-    hNamedPipe: windows.HANDLE,
-) callconv(.winapi) windows.BOOL;
-
-extern "kernel32" fn GetOverlappedResult(
-    hFile: windows.HANDLE,
-    lpOverlapped: *windows.OVERLAPPED,
-    lpNumberOfBytesTransferred: *windows.DWORD,
-    bWait: windows.BOOL,
-) callconv(.winapi) windows.BOOL;
-
-extern "kernel32" fn CreateEventW(
-    lpEventAttributes: ?*windows.SECURITY_ATTRIBUTES,
-    bManualReset: windows.BOOL,
-    bInitialState: windows.BOOL,
-    lpName: ?windows.LPCWSTR,
-) callconv(.winapi) ?windows.HANDLE;
-
-extern "kernel32" fn SetEvent(hEvent: windows.HANDLE) callconv(.winapi) windows.BOOL;
-
-extern "kernel32" fn ResetEvent(hEvent: windows.HANDLE) callconv(.winapi) windows.BOOL;
-
-extern "kernel32" fn WaitForMultipleObjects(
-    nCount: windows.DWORD,
-    lpHandles: [*]const windows.HANDLE,
-    bWaitAll: windows.BOOL,
-    dwMilliseconds: windows.DWORD,
-) callconv(.winapi) windows.DWORD;
-
-extern "kernel32" fn LocalFree(hMem: ?*anyopaque) callconv(.winapi) ?*anyopaque;
-
-extern "advapi32" fn OpenProcessToken(
-    ProcessHandle: windows.HANDLE,
-    DesiredAccess: windows.DWORD,
-    TokenHandle: *windows.HANDLE,
-) callconv(.winapi) windows.BOOL;
-
-extern "advapi32" fn GetTokenInformation(
-    TokenHandle: windows.HANDLE,
-    TokenInformationClass: c_int,
-    TokenInformation: ?*anyopaque,
-    TokenInformationLength: windows.DWORD,
-    ReturnLength: *windows.DWORD,
-) callconv(.winapi) windows.BOOL;
-
-extern "advapi32" fn ConvertSidToStringSidW(
-    Sid: *anyopaque,
-    StringSid: *?windows.LPWSTR,
-) callconv(.winapi) windows.BOOL;
-
-extern "advapi32" fn ConvertStringSecurityDescriptorToSecurityDescriptorW(
-    StringSecurityDescriptor: windows.LPCWSTR,
-    StringSDRevision: windows.DWORD,
-    SecurityDescriptor: *?*anyopaque,
-    SecurityDescriptorSize: ?*windows.ULONG,
-) callconv(.winapi) windows.BOOL;
-
-/// Security descriptor restricting the pipe to the current user:
-/// SDDL "D:P(A;;GA;;;<user-sid>)" — a protected DACL (no inherited
-/// ACEs) with a single ACE granting GENERIC_ALL to the process owner's
-/// SID. Everyone else — other local users, services, and (belt and
-/// suspenders, on top of PIPE_REJECT_REMOTE_CLIENTS) remote clients —
-/// is implicitly denied.
-const PipeSecurity = struct {
-    descriptor: *anyopaque,
-
-    fn init(alloc: Allocator) !PipeSecurity {
-        // Current process token → TOKEN_USER → SID.
-        var token: windows.HANDLE = undefined;
-        if (OpenProcessToken(
-            windows.GetCurrentProcess(),
-            TOKEN_QUERY,
-            &token,
-        ) == 0) return error.OpenProcessTokenFailed;
-        defer windows.CloseHandle(token);
-
-        var token_buf: [256]u8 align(@alignOf(TOKEN_USER)) = undefined;
-        var needed: windows.DWORD = 0;
-        if (GetTokenInformation(
-            token,
-            TOKEN_USER_CLASS,
-            &token_buf,
-            token_buf.len,
-            &needed,
-        ) == 0) return error.GetTokenInformationFailed;
-        const user: *const TOKEN_USER = @ptrCast(&token_buf);
-        const sid = user.User.Sid orelse return error.GetTokenInformationFailed;
-
-        // SID → "S-1-5-21-..." string.
-        var sid_w: ?windows.LPWSTR = null;
-        if (ConvertSidToStringSidW(sid, &sid_w) == 0) {
-            return error.ConvertSidFailed;
+    pub fn deinit(self: *Captured, gpa: Allocator) void {
+        switch (self.*) {
+            .none => {},
+            .ok, .err => |s| gpa.free(s),
         }
-        defer _ = LocalFree(sid_w);
-        const sid_utf8 = try std.unicode.utf16LeToUtf8Alloc(
-            alloc,
-            std.mem.span(sid_w.?),
-        );
-        defer alloc.free(sid_utf8);
-
-        // SDDL string → security descriptor (LocalAlloc'd by the OS).
-        const sddl = try std.fmt.allocPrint(
-            alloc,
-            "D:P(A;;GA;;;{s})",
-            .{sid_utf8},
-        );
-        defer alloc.free(sddl);
-        const sddl_w = try std.unicode.utf8ToUtf16LeAllocZ(alloc, sddl);
-        defer alloc.free(sddl_w);
-
-        var sd: ?*anyopaque = null;
-        if (ConvertStringSecurityDescriptorToSecurityDescriptorW(
-            sddl_w.ptr,
-            SDDL_REVISION_1,
-            &sd,
-            null,
-        ) == 0) return error.ConvertSddlFailed;
-
-        return .{ .descriptor = sd.? };
-    }
-
-    fn deinit(self: *PipeSecurity) void {
-        _ = LocalFree(self.descriptor);
-        self.* = undefined;
+        self.* = .none;
     }
 };
 
-/// Format the production pipe name "wmux-ipc-<pid>" into buf. The CLI
-/// clients (+browser/+workspace/+tab/+send) resolve the target window's
-/// pid and open \\.\pipe\wmux-ipc-<pid> with CreateFileW.
-pub fn defaultPipeName(buf: []u8) std.fmt.BufPrintError![]u8 {
-    return std.fmt.bufPrint(
-        buf,
-        "wmux-ipc-{d}",
-        .{windows.GetCurrentProcessId()},
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Server
-// ---------------------------------------------------------------------------
-
-/// Invoked on the pipe thread for each successfully parsed request.
-/// The callee takes ownership of `req` and must call `req.destroy()`
-/// exactly once. In production wiring this PostMessageW's the request
-/// pointer to App's msg_hwnd and the GUI thread answers later via
-/// `server.sendOk` / `server.sendError`; answering directly from the
-/// callback also works. The signature deliberately does not mention
-/// `*Server` (that would create a type dependency loop through the
-/// callback field); owners reach their server through `ctx`.
-pub const RequestCallback = *const fn (ctx: ?*anyopaque, req: *Request) void;
-
+/// The legacy reply hub (`app.ipc_server`). Thread-safe.
 pub const Server = struct {
-    alloc: Allocator,
-    /// Full "\\.\pipe\<name>" path, NUL-terminated UTF-16, owned.
-    path_w: [:0]u16,
-    pipe: windows.HANDLE,
-    callback: RequestCallback,
-    callback_ctx: ?*anyopaque,
+    gpa: Allocator,
+    app: *App,
+    /// The UI lane shared with the v2 dispatcher.
+    ui: *lanes.UiLane,
+    /// `socket-control = read-only`: only read-only commands run.
+    read_only: bool = false,
+    /// The `wmux-ipc-<pid>` pipe, while it runs.
+    pipe: ?*PipeServer = null,
 
-    /// Manual-reset, signaled once by stop(); every subsequent wait
-    /// returns immediately.
-    stop_event: windows.HANDLE,
-    /// Completion event for connect/read overlapped ops (pipe thread only).
-    io_event: windows.HANDLE,
-    /// Completion event for write overlapped ops; guarded by write_mutex.
-    write_event: windows.HANDLE,
+    mutex: std.Thread.Mutex = .{},
+    next_token: u64 = 1,
+    pending: std.AutoHashMapUnmanaged(u64, Pending) = .empty,
 
-    /// Serializes senders so each response is one atomic pipe message.
-    write_mutex: std.Thread.Mutex = .{},
-    running: std.atomic.Value(bool),
-    connected: std.atomic.Value(bool),
-    thread: ?std.Thread = null,
+    pub const Sink = union(enum) {
+        /// Write the reply to request `token` of `server`, echoing the
+        /// client's id.
+        conn: struct { server: *PipeServer, token: Token, client_id: u64 },
+        /// Store the reply for an in-process caller.
+        capture: *Captured,
+    };
 
-    /// Create the pipe \\.\pipe\<name> and spawn the pipe thread.
-    /// `name` is the bare pipe name (see `defaultPipeName`).
-    pub fn start(
-        alloc: Allocator,
-        name: []const u8,
-        callback: RequestCallback,
-        callback_ctx: ?*anyopaque,
-    ) !*Server {
-        const path = try std.fmt.allocPrint(alloc, "\\\\.\\pipe\\{s}", .{name});
-        defer alloc.free(path);
-        const path_w = try std.unicode.utf8ToUtf16LeAllocZ(alloc, path);
-        errdefer alloc.free(path_w);
+    const Pending = struct { sink: Sink, since_ms: i64 };
 
-        var sec = try PipeSecurity.init(alloc);
-        defer sec.deinit();
-        var sa = windows.SECURITY_ATTRIBUTES{
-            .nLength = @sizeOf(windows.SECURITY_ATTRIBUTES),
-            .lpSecurityDescriptor = sec.descriptor,
-            .bInheritHandle = windows.FALSE,
+    /// Entries older than this are dropped on the next `register` (their
+    /// request expired long ago: legacy requests have 60 s).
+    const stale_after_ms: i64 = 10 * 60 * 1000;
+
+    pub fn init(gpa: Allocator, app: *App, ui: *lanes.UiLane, read_only: bool) Server {
+        return .{ .gpa = gpa, .app = app, .ui = ui, .read_only = read_only };
+    }
+
+    /// Frees the pending table (after every pipe server stopped).
+    pub fn deinit(self: *Server) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.pending.deinit(self.gpa);
+    }
+
+    /// Hands out a token for `sink`; the request's `id` becomes this token.
+    pub fn register(self: *Server, sink: Sink) Allocator.Error!u64 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        const now = std.time.milliTimestamp();
+        self.pruneLocked(now);
+        const t = self.next_token;
+        self.next_token +%= 1;
+        if (self.next_token == 0) self.next_token = 1;
+        try self.pending.put(self.gpa, t, .{ .sink = sink, .since_ms = now });
+        return t;
+    }
+
+    fn pruneLocked(self: *Server, now: i64) void {
+        if (self.pending.count() < 1024) return;
+        var stale: std.ArrayList(u64) = .empty;
+        defer stale.deinit(self.gpa);
+        var it = self.pending.iterator();
+        while (it.next()) |e| {
+            if (now - e.value_ptr.since_ms > stale_after_ms) stale.append(self.gpa, e.key_ptr.*) catch return;
+        }
+        for (stale.items) |t| _ = self.pending.remove(t);
+    }
+
+    /// Forgets a token whose request will never reply (it expired before
+    /// its handler ran).
+    pub fn cancel(self: *Server, token: u64) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        _ = self.pending.remove(token);
+    }
+
+    /// Drops every pending reply bound to `server` (before it is freed).
+    pub fn forgetServer(self: *Server, server: *PipeServer) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        var doomed: std.ArrayList(u64) = .empty;
+        defer doomed.deinit(self.gpa);
+        var it = self.pending.iterator();
+        while (it.next()) |e| switch (e.value_ptr.sink) {
+            .conn => |c| if (c.server == server) doomed.append(self.gpa, e.key_ptr.*) catch {},
+            .capture => {},
         };
-
-        // The pipe is created here, synchronously, so a client may
-        // CreateFileW the moment start() returns. FIRST_PIPE_INSTANCE
-        // defeats pipe-squatting: creation fails if the name already
-        // exists. Message type so each WriteFile is one message; byte
-        // read mode because the newline framing handles splitting and
-        // never needs ERROR_MORE_DATA handling.
-        const pipe = kernel32.CreateNamedPipeW(
-            path_w.ptr,
-            windows.PIPE_ACCESS_DUPLEX |
-                FILE_FLAG_FIRST_PIPE_INSTANCE |
-                FILE_FLAG_OVERLAPPED,
-            windows.PIPE_TYPE_MESSAGE |
-                windows.PIPE_READMODE_BYTE |
-                windows.PIPE_WAIT |
-                PIPE_REJECT_REMOTE_CLIENTS,
-            1, // single instance: one agent client at a time
-            64 * 1024,
-            64 * 1024,
-            0,
-            &sa,
-        );
-        if (pipe == windows.INVALID_HANDLE_VALUE) return error.CreatePipeFailed;
-        errdefer windows.CloseHandle(pipe);
-
-        const stop_event = CreateEventW(null, windows.TRUE, windows.FALSE, null) orelse
-            return error.CreateEventFailed;
-        errdefer windows.CloseHandle(stop_event);
-        const io_event = CreateEventW(null, windows.TRUE, windows.FALSE, null) orelse
-            return error.CreateEventFailed;
-        errdefer windows.CloseHandle(io_event);
-        const write_event = CreateEventW(null, windows.TRUE, windows.FALSE, null) orelse
-            return error.CreateEventFailed;
-        errdefer windows.CloseHandle(write_event);
-
-        const self = try alloc.create(Server);
-        errdefer alloc.destroy(self);
-        self.* = .{
-            .alloc = alloc,
-            .path_w = path_w,
-            .pipe = pipe,
-            .callback = callback,
-            .callback_ctx = callback_ctx,
-            .stop_event = stop_event,
-            .io_event = io_event,
-            .write_event = write_event,
-            .running = std.atomic.Value(bool).init(true),
-            .connected = std.atomic.Value(bool).init(false),
-        };
-        self.thread = try std.Thread.spawn(.{}, run, .{self});
-        return self;
+        for (doomed.items) |t| _ = self.pending.remove(t);
     }
 
-    /// Stop the pipe thread and free everything, including `self`.
-    ///
-    /// Unblocking mechanism: because every blocking op on the pipe
-    /// thread (ConnectNamedPipe / ReadFile) is overlapped and actually
-    /// waits on WaitForMultipleObjects({io_event, stop_event}), stop()
-    /// only has to signal stop_event and CancelIoEx any in-flight op.
-    /// No client-side dummy connect or CancelSynchronousIo needed —
-    /// those are the workarounds for synchronous handles, which we
-    /// can't use anyway (see the module doc on the sync-handle
-    /// write/read deadlock).
-    ///
-    /// Must be the last call into the server: callers are responsible
-    /// for ensuring no sendOk/sendError is in flight on other threads
-    /// (in production, App stops IPC before tearing down the GUI
-    /// thread's response path).
-    pub fn stop(self: *Server) void {
-        self.running.store(false, .release);
-        _ = SetEvent(self.stop_event);
-        // Cancels pending I/O issued by any thread on this handle,
-        // including a sender blocked in GetOverlappedResult.
-        _ = kernel32.CancelIoEx(self.pipe, null);
-        if (self.thread) |thread| {
-            thread.join();
-            self.thread = null;
-        }
-        windows.CloseHandle(self.pipe);
-        windows.CloseHandle(self.stop_event);
-        windows.CloseHandle(self.io_event);
-        windows.CloseHandle(self.write_event);
-        self.alloc.free(self.path_w);
-        self.alloc.destroy(self);
+    /// Send a success response for request `id` (a hub token). Thread-safe.
+    /// `data_json` must already be valid serialized JSON; null sends
+    /// `"data":null`.
+    pub fn sendOk(self: *Server, id: u64, data_json: ?[]const u8) error{ NotConnected, OutOfMemory }!void {
+        return self.deliver(id, .{ .ok = data_json });
     }
 
-    /// Send a success response. Thread-safe. `data_json` must already
-    /// be valid serialized JSON; null sends "data":null.
-    pub fn sendOk(self: *Server, id: u64, data_json: ?[]const u8) !void {
-        const msg = try serializeOk(self.alloc, id, data_json);
-        defer self.alloc.free(msg);
-        try self.writeAll(msg);
+    /// Send an error response for request `id`. Thread-safe. `msg` is
+    /// JSON-escaped.
+    pub fn sendError(self: *Server, id: u64, msg: []const u8) error{ NotConnected, OutOfMemory }!void {
+        return self.deliver(id, .{ .err = msg });
     }
 
-    /// Send an error response. Thread-safe. `msg` is JSON-escaped.
-    pub fn sendError(self: *Server, id: u64, msg: []const u8) !void {
-        const out = try serializeError(self.alloc, id, msg);
-        defer self.alloc.free(out);
-        try self.writeAll(out);
-    }
+    const Outcome = union(enum) { ok: ?[]const u8, err: []const u8 };
 
-    // -- pipe thread ------------------------------------------------------
-
-    fn run(self: *Server) void {
-        while (self.running.load(.acquire)) {
-            switch (self.acceptOne()) {
-                .connected => {
-                    self.connected.store(true, .release);
-                    self.readLoop();
-                    self.connected.store(false, .release);
-                    _ = DisconnectNamedPipe(self.pipe);
-                },
-                // A client connected and vanished before we accepted.
-                .retry => _ = DisconnectNamedPipe(self.pipe),
-                .shutdown => return,
-            }
-        }
-    }
-
-    const AcceptResult = enum { connected, retry, shutdown };
-
-    fn acceptOne(self: *Server) AcceptResult {
-        var ov = std.mem.zeroes(windows.OVERLAPPED);
-        ov.hEvent = self.io_event;
-        _ = ResetEvent(self.io_event);
-
-        var pending = false;
-        if (ConnectNamedPipe(self.pipe, &ov) == 0) {
-            switch (windows.GetLastError()) {
-                .PIPE_CONNECTED => {}, // client raced us; already connected
-                .IO_PENDING => pending = true,
-                .NO_DATA => return .retry,
-                else => |err| {
-                    log.warn(
-                        "ConnectNamedPipe failed, stopping IPC server: error={d}",
-                        .{@intFromEnum(err)},
-                    );
-                    return .shutdown;
-                },
-            }
-        }
-        if (pending) {
-            if (self.completeOverlapped(&ov) == null) return .shutdown;
-        }
-        if (!self.running.load(.acquire)) return .shutdown;
-        return .connected;
-    }
-
-    fn readLoop(self: *Server) void {
-        var framer: LineFramer = .{};
-        defer framer.deinit(self.alloc);
-
-        var buf: [4096]u8 = undefined;
-        while (self.running.load(.acquire)) {
-            const n = self.readChunk(&buf) orelse return;
-            if (n == 0) continue;
-
-            framer.feed(self.alloc, buf[0..n]) catch |err| {
-                if (err == error.MessageTooLong) {
-                    self.sendError(0, ErrorCode.message_too_long.message()) catch {};
-                }
-                // Framing state is unrecoverable; drop the connection.
-                return;
-            };
-            while (framer.next()) |line| {
-                if (line.len == 0) continue;
-                self.dispatchLine(line);
-            }
-        }
-    }
-
-    /// One overlapped ReadFile. Returns bytes read, or null when the
-    /// client disconnected or the server is stopping.
-    fn readChunk(self: *Server, buf: []u8) ?windows.DWORD {
-        var ov = std.mem.zeroes(windows.OVERLAPPED);
-        ov.hEvent = self.io_event;
-        _ = ResetEvent(self.io_event);
-
-        if (kernel32.ReadFile(
-            self.pipe,
-            @ptrCast(buf.ptr),
-            @intCast(buf.len),
-            null,
-            &ov,
-        ) == 0) {
-            switch (windows.GetLastError()) {
-                .IO_PENDING => {},
-                else => return null, // BROKEN_PIPE etc.: client gone
-            }
-        }
-        return self.completeOverlapped(&ov);
-    }
-
-    /// Wait for an overlapped connect/read on io_event to complete,
-    /// racing the stop event. Returns bytes transferred, or null on
-    /// stop or failure. On stop the op is canceled and drained so the
-    /// kernel is done with `ov` before it leaves the caller's stack.
-    fn completeOverlapped(
-        self: *Server,
-        ov: *windows.OVERLAPPED,
-    ) ?windows.DWORD {
-        const handles = [_]windows.HANDLE{ self.io_event, self.stop_event };
-        const which = WaitForMultipleObjects(
-            handles.len,
-            &handles,
-            windows.FALSE,
-            windows.INFINITE,
-        );
-        var n: windows.DWORD = 0;
-        if (which != windows.WAIT_OBJECT_0) {
-            // Stop requested (or the wait itself failed): cancel + drain.
-            _ = kernel32.CancelIoEx(self.pipe, ov);
-            _ = GetOverlappedResult(self.pipe, ov, &n, windows.TRUE);
-            return null;
-        }
-        if (GetOverlappedResult(self.pipe, ov, &n, windows.TRUE) == 0) return null;
-        return n;
-    }
-
-    fn dispatchLine(self: *Server, line: []const u8) void {
-        const result = parseLine(self.alloc, line) catch {
-            // OOM: an error response would also have to allocate.
-            return;
-        };
-        switch (result) {
-            .ok => |req| self.callback(self.callback_ctx, req),
-            .err => |failure| self.sendError(
-                failure.id,
-                failure.code.message(),
-            ) catch |err| {
-                log.warn("failed to send IPC error response: {}", .{err});
+    fn deliver(self: *Server, id: u64, outcome: Outcome) error{ NotConnected, OutOfMemory }!void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        const kv = self.pending.fetchRemove(id) orelse return error.NotConnected;
+        switch (kv.value.sink) {
+            .conn => |c| {
+                const line = switch (outcome) {
+                    .ok => |data| try legacy_json.serializeOk(self.gpa, c.client_id, data),
+                    .err => |msg| try legacy_json.serializeError(self.gpa, c.client_id, msg),
+                };
+                defer self.gpa.free(line);
+                // Under the hub mutex: `forgetServer` runs before a server
+                // is freed, so `c.server` is alive here.
+                if (c.server.complete(c.token, trimNewline(line)) == .dropped) return error.NotConnected;
+            },
+            .capture => |cap| {
+                cap.deinit(self.gpa);
+                cap.* = switch (outcome) {
+                    .ok => |data| .{ .ok = try self.gpa.dupe(u8, data orelse "null") },
+                    .err => |msg| .{ .err = try self.gpa.dupe(u8, msg) },
+                };
             },
         }
     }
 
-    /// Write one response as a single pipe message. Thread-safe: the
-    /// write mutex serializes concurrent senders, and overlapped I/O
-    /// keeps writes independent of the pipe thread's pending ReadFile.
-    fn writeAll(
-        self: *Server,
-        bytes: []const u8,
-    ) error{ NotConnected, WriteFailed }!void {
-        if (!self.connected.load(.acquire)) return error.NotConnected;
-        self.write_mutex.lock();
-        defer self.write_mutex.unlock();
+    /// Handles one legacy line received by `conn` (any connection thread):
+    /// the control pipe after sniffing, or the legacy pipe. Replies are
+    /// legacy JSON; parse failures answer at once.
+    pub fn dispatchLine(self: *Server, conn: *Connection, req: *PipeServer.Request, payload: []const u8) void {
+        const server = conn.server;
+        req.deadline_ms = deadline.legacy_deadline_ms;
+        req.stage = deadline.stage_main_actor;
+        const parsed = legacy_json.parseLine(self.gpa, payload) catch {
+            req.legacy_id = 0;
+            return completeError(self.gpa, server, req.token, 0, "out of memory");
+        };
+        const lreq = switch (parsed) {
+            .err => |f| {
+                req.legacy_id = f.id;
+                return completeError(self.gpa, server, req.token, f.id, f.code.message());
+            },
+            .ok => |r| r,
+        };
+        req.legacy_id = lreq.id;
+        const command = rpc_registry.legacyCommand(lreq.cmd);
 
-        var ov = std.mem.zeroes(windows.OVERLAPPED);
-        ov.hEvent = self.write_event;
-        _ = ResetEvent(self.write_event);
+        // Authorization before any side effect: a refused command never
+        // reaches `prepare` (W1-1a carried follow-up).
+        if (self.read_only and !command.read_only) {
+            completeError(self.gpa, server, req.token, lreq.id, read_only_message);
+            return lreq.destroy();
+        }
 
-        if (kernel32.WriteFile(
-            self.pipe,
-            bytes.ptr,
-            @intCast(bytes.len),
-            null,
-            &ov,
-        ) == 0) {
-            switch (windows.GetLastError()) {
-                .IO_PENDING => {},
-                else => return error.WriteFailed,
-            }
+        const client_id = lreq.id;
+        lreq.id = self.register(.{ .conn = .{ .server = server, .token = req.token, .client_id = client_id } }) catch {
+            completeError(self.gpa, server, req.token, client_id, "out of memory");
+            return lreq.destroy();
+        };
+
+        // The optional pipe-thread stage (only `workspace-new --worktree`,
+        // which runs `git worktree add` off the UI thread). When it fails it
+        // has already answered through the hub.
+        if (command.prepare) |prepare| {
+            if (!prepare(self.app, lreq)) return lreq.destroy();
         }
-        var n: windows.DWORD = 0;
-        if (GetOverlappedResult(self.pipe, &ov, &n, windows.TRUE) == 0) {
-            return error.WriteFailed;
-        }
-        if (n != bytes.len) return error.WriteFailed;
+
+        const call = self.gpa.create(Call) catch {
+            self.sendError(lreq.id, "out of memory") catch {};
+            return lreq.destroy();
+        };
+        call.* = .{
+            .hub = self,
+            .gpa = self.gpa,
+            .server = server,
+            .token = req.token,
+            .req = lreq,
+            .item = .{ .run = Call.run, .destroy = Call.destroy, .read_only = command.read_only },
+        };
+        self.ui.post(&call.item);
+    }
+
+    /// Runs legacy request `lreq` on the UI thread now and returns its
+    /// reply, if the handler answered synchronously (UI thread; takes
+    /// ownership of `lreq`). Used by in-process bridges.
+    pub fn runCaptured(self: *Server, lreq: *Request) Captured {
+        defer lreq.destroy();
+        var cap: Captured = .none;
+        lreq.id = self.register(.{ .capture = &cap }) catch return .{ .err = self.gpa.dupe(u8, "OutOfMemory") catch return .none };
+        const token = lreq.id;
+        rpc_registry.legacyCommand(lreq.cmd).handler(self.app, lreq) catch |err| {
+            self.sendError(token, @errorName(err)) catch {};
+        };
+        // An async handler keeps the token; its late reply must not write
+        // into this stack slot.
+        self.cancel(token);
+        return cap;
     }
 };
 
-// ---------------------------------------------------------------------------
-// App glue: start the server, hand requests to the UI thread, dispatch
-// them through the registry's legacy commands. (Moved from App.zig in W0-A1;
-// W1-1 replaces this with rpc/server/PipeServer.zig + rpc/dispatch.zig.)
-// ---------------------------------------------------------------------------
-
-const App = @import("../../App.zig");
-const rpc_registry = @import("../registry.zig");
-const tasks = @import("../../app/tasks.zig");
-
-const app_log = std.log.scoped(.win32);
-
-/// A parsed request travelling from the pipe thread to the UI thread
-/// (which owns all HWND/WebView2 access) through `app.tasks`.
-const RequestTask = struct {
-    task: tasks.Task = .{ .run = run, .destroy = destroy },
+/// A legacy request on its way to the UI thread.
+const Call = struct {
+    hub: *Server,
+    /// Kept here: a call destroyed after the hub was freed (still queued in
+    /// app.tasks at shutdown) must not touch the hub.
     gpa: Allocator,
-    /// Owned until `run` hands it to handleRequest (which destroys it).
+    server: *PipeServer,
+    token: Token,
     req: ?*Request,
+    item: lanes.UiItem,
 
-    fn run(app: *App, task: *tasks.Task) void {
-        const self: *RequestTask = @fieldParentPtr("task", task);
+    fn run(item: *lanes.UiItem, app: *App) void {
+        const self: *Call = @fieldParentPtr("item", item);
         const req = self.req orelse return;
-        self.req = null;
-        handleRequest(app, req);
+        const hub_token = req.id;
+        // Skipped when the request expired (or its client left) while
+        // queued: the command never runs.
+        if (!self.server.begin(self.token)) {
+            self.hub.cancel(hub_token);
+            return;
+        }
+        rpc_registry.legacyCommand(req.cmd).handler(app, req) catch |err| {
+            self.hub.sendError(hub_token, @errorName(err)) catch {};
+        };
     }
 
-    fn destroy(task: *tasks.Task) void {
-        const self: *RequestTask = @fieldParentPtr("task", task);
-        if (self.req) |req| req.destroy();
+    fn destroy(item: *lanes.UiItem) void {
+        const self: *Call = @fieldParentPtr("item", item);
+        if (self.req) |r| r.destroy();
         self.gpa.destroy(self);
     }
 };
 
-/// Start the named-pipe IPC server on pipe wmux-ipc-<pid>. The pipe
-/// thread parses requests and posts each to the UI thread; the UI thread
-/// drives the browser/workspace/tab/send commands in handleRequest.
-/// Failure (e.g. a stale pipe) leaves ipc_server null — the CLI is then
-/// unavailable but the app runs.
-pub fn start(self: *App) void {
-    // `socket-control = off` disables the agent-control IPC entirely; the
-    // CLI verbs then report no running instance. `on`/`read-only` both
-    // start the server (read-only is enforced per-verb in
-    // handleRequest, not by withholding the pipe).
-    if (self.config.@"socket-control" == .off) {
-        app_log.info("socket-control=off: agent IPC server not started", .{});
-        return;
-    }
-    const alloc = self.core_app.alloc;
-    var name_buf: [64]u8 = undefined;
-    const name = defaultPipeName(&name_buf) catch return;
-    self.ipc_server = Server.start(alloc, name, onRequest, self) catch |err| {
-        app_log.warn("failed to start browser IPC server: {}", .{err});
-        return;
-    };
+fn trimNewline(line: []const u8) []const u8 {
+    return std.mem.trimRight(u8, line, "\r\n");
 }
 
-/// Pipe-thread callback: hand the parsed request to the UI thread as an
-/// `app.tasks` task. If the task cannot be allocated the request would
-/// otherwise leak, so destroy it here. ctx is the *App.
-///
-/// A command's optional `prepare` stage runs HERE, on the pipe thread,
-/// before the UI ever sees the request (only `workspace-new --worktree`,
-/// which shells out to git; see features/workspaces/legacy.zig). When it
-/// fails it has already answered the client, and the request is dropped
-/// without reaching the UI.
-fn onRequest(ctx: ?*anyopaque, req: *Request) void {
-    const self: *App = @ptrCast(@alignCast(ctx.?));
-
-    if (rpc_registry.legacyCommand(req.cmd).prepare) |prepare| {
-        if (!prepare(self, req)) {
-            // prepare already answered the client with the error; drop
-            // the request.
-            req.destroy();
-            return;
-        }
-    }
-
-    const task = req.gpa.create(RequestTask) catch {
-        req.destroy();
-        return;
-    };
-    task.* = .{ .gpa = req.gpa, .req = req };
-    self.tasks.post(&task.task);
+fn completeError(gpa: Allocator, server: *PipeServer, token: Token, id: u64, msg: []const u8) void {
+    const line = legacy_json.serializeError(gpa, id, msg) catch return;
+    defer gpa.free(line);
+    _ = server.complete(token, trimNewline(line));
 }
 
-/// Handle one IPC request on the UI thread (from its RequestTask):
-/// look the command up in the registry (rpc/registry.zig), enforce
-/// read-only mode, run its handler (which answers via the server), name
-/// any returned error to the client, then destroy the request. Async
-/// handlers (eval, snapshot, click, fill) reply later from their
-/// WebView2/CDP completion, so they must NOT also answer here.
-pub fn handleRequest(self: *App, req: *Request) void {
-    defer req.destroy();
-    const server = self.ipc_server orelse return;
-    const command = rpc_registry.legacyCommand(req.cmd);
+/// `PipeServer.Handler` of the `wmux-ipc-<pid>` pipe: every line is legacy.
+pub fn handler(hub: *Server) PipeServer.Handler {
+    return .{ .ctx = hub, .dispatch = legacyPipeDispatch };
+}
 
-    // read-only mode: refuse any verb that would change state, spawn a
-    // process, or inject input. The server still answers (with an error)
-    // so the client gets a clear signal rather than a hang.
-    if (self.config.@"socket-control" == .@"read-only" and !command.read_only) {
-        server.sendError(req.id, "socket-control=read-only: command refused") catch {};
-        return;
-    }
+fn legacyPipeDispatch(ctx: ?*anyopaque, conn: *Connection, req: *PipeServer.Request) void {
+    const hub: *Server = @ptrCast(@alignCast(ctx.?));
+    hub.dispatchLine(conn, req, req.line);
+}
 
-    command.handler(self, req) catch |err| {
-        server.sendError(req.id, @errorName(err)) catch {};
-    };
+/// The legacy pipe name `\\.\pipe\wmux-ipc-<pid>` of this process (heap).
+pub fn legacyPipeName(gpa: Allocator) Allocator.Error![]u8 {
+    return proto.pipe_name.legacyName(gpa, std.os.windows.GetCurrentProcessId());
+}
+
+/// Starts the `wmux-ipc-<pid>` server for `hub`. Legacy framing: 1 MiB
+/// lines, legacy-shaped transport replies.
+pub fn startPipe(hub: *Server) !void {
+    const name = try legacyPipeName(hub.gpa);
+    defer hub.gpa.free(name);
+    hub.pipe = try PipeServer.start(hub.gpa, .{
+        .name = name,
+        .first_instance = true,
+        .max_line_bytes = legacy_json.max_line_bytes,
+        .default_deadline_ms = deadline.legacy_deadline_ms,
+        .legacy_replies = true,
+    }, handler(hub));
+}
+
+/// Stops and frees the legacy pipe server (joins its threads).
+pub fn stopPipe(hub: *Server) void {
+    const p = hub.pipe orelse return;
+    p.stop();
+    hub.forgetServer(p);
+    hub.pipe = null;
+    p.deinit();
 }
 
 // ---------------------------------------------------------------------------
-// Tests: end-to-end over a real named pipe (Windows only)
+// Tests
 // ---------------------------------------------------------------------------
 
-test "ipc: end-to-end request and response over a named pipe" {
-    if (builtin.os.tag != .windows) return error.SkipZigTest;
-    const alloc = testing.allocator;
+const testing = std.testing;
 
-    var name_buf: [64]u8 = undefined;
-    const name = try std.fmt.bufPrint(
-        &name_buf,
-        "wmux-ipc-test-{d}",
-        .{windows.GetCurrentProcessId()},
-    );
+test "unit: rpc: legacy hub routes a reply by token once and keeps the legacy shapes" {
+    var ui: lanes.UiLane = .{};
+    var hub = Server.init(testing.allocator, undefined, &ui, false);
+    defer hub.deinit();
 
-    const TestCtx = struct {
-        server: ?*Server = null,
+    var cap: Captured = .none;
+    const t = try hub.register(.{ .capture = &cap });
+    try hub.sendOk(t, "{\"x\":1}");
+    defer cap.deinit(testing.allocator);
+    try testing.expectEqualStrings("{\"x\":1}", cap.ok);
+    // A second reply for the same token is not delivered.
+    try testing.expectError(error.NotConnected, hub.sendError(t, "late"));
+    // Unknown tokens are dropped.
+    try testing.expectError(error.NotConnected, hub.sendOk(9999, null));
 
-        fn onRequest(ctx_ptr: ?*anyopaque, req: *Request) void {
-            const ctx: *@This() = @ptrCast(@alignCast(ctx_ptr.?));
-            const server = ctx.server.?;
-            defer req.destroy();
-            if (req.cmd != .open) {
-                server.sendError(req.id, "expected open") catch {};
-                return;
-            }
-            server.sendOk(req.id, "\"opened\"") catch {};
-        }
-    };
-    var ctx: TestCtx = .{};
+    var cap2: Captured = .none;
+    const t2 = try hub.register(.{ .capture = &cap2 });
+    try testing.expect(t2 != t);
+    try hub.sendError(t2, "UnknownWorkspace");
+    defer cap2.deinit(testing.allocator);
+    try testing.expectEqualStrings("UnknownWorkspace", cap2.err);
 
-    const server = try Server.start(alloc, name, TestCtx.onRequest, &ctx);
-    defer server.stop();
-    // Safe: no client can connect (and thus no callback can fire)
-    // until we CreateFileW below.
-    ctx.server = server;
-
-    // --- client side, plain synchronous CreateFileW like the CLI ---
-    const path = try std.fmt.allocPrint(alloc, "\\\\.\\pipe\\{s}", .{name});
-    defer alloc.free(path);
-    const path_w = try std.unicode.utf8ToUtf16LeAllocZ(alloc, path);
-    defer alloc.free(path_w);
-
-    const client = kernel32.CreateFileW(
-        path_w.ptr,
-        windows.GENERIC_READ | windows.GENERIC_WRITE,
-        0,
-        null,
-        windows.OPEN_EXISTING,
-        0,
-        null,
-    );
-    try testing.expect(client != windows.INVALID_HANDLE_VALUE);
-    defer windows.CloseHandle(client);
-
-    var framer: LineFramer = .{};
-    defer framer.deinit(alloc);
-    var read_buf: [1024]u8 = undefined;
-
-    // Round 1: valid request → ok response with data.
-    {
-        const request =
-            "{\"id\":7,\"cmd\":\"open\",\"args\":{\"url\":\"https://example.com\"}}\n";
-        var written: windows.DWORD = 0;
-        try testing.expect(kernel32.WriteFile(
-            client,
-            request.ptr,
-            request.len,
-            &written,
-            null,
-        ) != 0);
-        try testing.expectEqual(@as(windows.DWORD, request.len), written);
-
-        const line = line: while (true) {
-            var n: windows.DWORD = 0;
-            try testing.expect(kernel32.ReadFile(
-                client,
-                @ptrCast(&read_buf),
-                read_buf.len,
-                &n,
-                null,
-            ) != 0);
-            try framer.feed(alloc, read_buf[0..n]);
-            if (framer.next()) |l| break :line l;
-        };
-
-        const parsed = try std.json.parseFromSlice(std.json.Value, alloc, line, .{});
-        defer parsed.deinit();
-        try testing.expectEqual(@as(i64, 7), parsed.value.object.get("id").?.integer);
-        try testing.expect(parsed.value.object.get("ok").?.bool);
-        try testing.expectEqualStrings(
-            "opened",
-            parsed.value.object.get("data").?.string,
-        );
-    }
-
-    // Round 2: malformed JSON → in-band error response from the server.
-    {
-        const request = "this is not json\n";
-        var written: windows.DWORD = 0;
-        try testing.expect(kernel32.WriteFile(
-            client,
-            request.ptr,
-            request.len,
-            &written,
-            null,
-        ) != 0);
-
-        const line = line: while (true) {
-            if (framer.next()) |l| break :line l;
-            var n: windows.DWORD = 0;
-            try testing.expect(kernel32.ReadFile(
-                client,
-                @ptrCast(&read_buf),
-                read_buf.len,
-                &n,
-                null,
-            ) != 0);
-            try framer.feed(alloc, read_buf[0..n]);
-        };
-
-        const parsed = try std.json.parseFromSlice(std.json.Value, alloc, line, .{});
-        defer parsed.deinit();
-        try testing.expectEqual(@as(i64, 0), parsed.value.object.get("id").?.integer);
-        try testing.expect(!parsed.value.object.get("ok").?.bool);
-        try testing.expectEqualStrings(
-            ErrorCode.parse_error.message(),
-            parsed.value.object.get("error").?.string,
-        );
-    }
+    var cap3: Captured = .none;
+    const t3 = try hub.register(.{ .capture = &cap3 });
+    hub.cancel(t3);
+    try testing.expectError(error.NotConnected, hub.sendOk(t3, null));
+    try testing.expect(cap3 == .none);
 }
 
-test "ipc: stop unblocks a pending read while a client is connected" {
-    if (builtin.os.tag != .windows) return error.SkipZigTest;
-    const alloc = testing.allocator;
-
-    var name_buf: [64]u8 = undefined;
-    const name = try std.fmt.bufPrint(
-        &name_buf,
-        "wmux-ipc-stoptest-{d}",
-        .{windows.GetCurrentProcessId()},
-    );
-
-    const handler = struct {
-        fn onRequest(ctx: ?*anyopaque, req: *Request) void {
-            _ = ctx;
-            req.destroy();
-        }
-    };
-
-    const server = try Server.start(alloc, name, handler.onRequest, null);
-
-    const path = try std.fmt.allocPrint(alloc, "\\\\.\\pipe\\{s}", .{name});
-    defer alloc.free(path);
-    const path_w = try std.unicode.utf8ToUtf16LeAllocZ(alloc, path);
-    defer alloc.free(path_w);
-
-    const client = kernel32.CreateFileW(
-        path_w.ptr,
-        windows.GENERIC_READ | windows.GENERIC_WRITE,
-        0,
-        null,
-        windows.OPEN_EXISTING,
-        0,
-        null,
-    );
-    try testing.expect(client != windows.INVALID_HANDLE_VALUE);
-    defer windows.CloseHandle(client);
-
-    // Give the pipe thread time to park inside the overlapped ReadFile
-    // wait, then stop with the client still attached. stop() must not
-    // hang: the stop event + CancelIoEx aborts the pending read.
-    std.Thread.sleep(50 * std.time.ns_per_ms);
-    server.stop();
+test "unit: rpc: legacy reply lines are byte-identical to the pre-W1-1a server" {
+    const ok = try legacy_json.serializeOk(testing.allocator, 12, null);
+    defer testing.allocator.free(ok);
+    try testing.expectEqualStrings("{\"id\":12,\"ok\":true,\"data\":null}", trimNewline(ok));
+    const too_long = try Connection.legacyLineAlloc(testing.allocator, 0, Connection.legacy_too_long_message);
+    defer testing.allocator.free(too_long);
+    try testing.expectEqualStrings("{\"id\":0,\"ok\":false,\"error\":\"request exceeds maximum length\"}", too_long);
 }
