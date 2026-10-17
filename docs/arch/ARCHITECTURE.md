@@ -1938,7 +1938,7 @@ The smoke suite (`suites/smoke/smoke.e2e.ps1`, W0-B, upgraded in W1/W2) covers: 
 
 ### D.6 Harness additions from spike S2 (W0-B2) and W0-ST
 
-Folded in by W0-ST part 2 (2026-10-17) from the merged harness (`b47fc46`, `8f28fd5` on `wp/W0-ST-stabilize`); `test/e2e/WmuxTest.psm1` and `run.ps1` are the reference.
+Folded in by W0-ST part 2 (2026-10-17) from the merged W0-B2 harness (`b47fc46`) and the W0-ST part 2 hang fix; `test/e2e/WmuxTest.psm1` and `run.ps1` are the reference.
 
 - **Process-tree sampler.** The focus sampler watches the whole tree of every instance (wmux, conhost, shells, msedgewebview2), refreshes descendants every 250 ms on a per-monitor-v2 DPI-aware thread, keeps exited members and rules out PID reuse by creation time. A foreground window of any member fails the test (`focus stolen by test instance`) and kills the tree.
 - **Visibility guard.** A visible, uncloaked, on-monitor top-level window of the tree fails the test with `visible test window` and kills the tree; cloaked windows and the (-32000, -32000) fallback placement are accepted. The guard is suspended during `Stop-WmuxInstance` teardown.
