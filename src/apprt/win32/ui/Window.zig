@@ -786,6 +786,17 @@ fn onDestroy(self: *Window) void {
     }
 }
 
+/// Add WS_CLIPSIBLINGS to `child` when it is a direct child of `top`
+/// (S7, docs/arch/spikes/S7-d2d-sidebar-child.md): overlapping GL,
+/// WebView2 and D2D siblings must not paint over each other.
+pub fn ensureClipSiblings(top: w32.HWND, child: w32.HWND) void {
+    if (w32.GetParent(child) != top) return;
+    const style = w32.GetWindowLongPtrW(child, w32.GWL_STYLE);
+    const clip: isize = w32.WS_CLIPSIBLINGS;
+    if (style & clip != 0) return;
+    _ = w32.SetWindowLongPtrW(child, w32.GWL_STYLE, style | clip);
+}
+
 /// Window procedure for top-level container HWNDs (GhosttyWindow class).
 /// GWLP_USERDATA stores a *Window pointer.
 pub fn windowWndProc(
@@ -825,6 +836,14 @@ pub fn windowWndProc(
         => return w32.DefWindowProcW(hwnd, msg, wparam, lparam),
         else => {},
     };
+
+    // S7 (AF-10): every direct child of the top-level window clips its
+    // siblings, whoever created it (terminals, browser hosts, the rename
+    // Edit, the D2D sidebar of W1-8). WM_PARENTNOTIFY(WM_CREATE) arrives
+    // before the child's CreateWindowExW returns; it is not consumed.
+    if (msg == w32.WM_PARENTNOTIFY and (wparam & 0xFFFF) == w32.WM_CREATE and lparam != 0) {
+        ensureClipSiblings(hwnd, @ptrFromInt(@as(usize, @bitCast(lparam))));
+    }
 
     // Feature window hooks (ui/contrib.zig, ADR-1.6) see the message
     // first; the first non-null result answers it.

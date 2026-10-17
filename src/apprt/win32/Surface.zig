@@ -246,7 +246,9 @@ pub fn init(
         0,
         App.TERMINAL_CLASS_NAME,
         std.unicode.utf8ToUtf16LeStringLiteral(""),
-        w32.WS_CHILD,
+        // WS_CLIPSIBLINGS: GL terminals, browser hosts and the sidebar are
+        // overlapping siblings (S7, AF-10).
+        w32.WS_CHILD | w32.WS_CLIPSIBLINGS,
         sr.left,
         sr.top,
         @intCast(@max(sr.right - sr.left, 1)),
