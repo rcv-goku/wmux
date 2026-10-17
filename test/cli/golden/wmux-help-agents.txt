@@ -1,0 +1,60 @@
+Agents:
+  send [--surface <id|ref|index>] [--paste] [--force] [--] <text>
+                                              Type text into a terminal surface
+  send-key [--surface <id|ref|index>] [--force] <key>
+                                              Press a single key in a terminal
+  send-panel [--panel <id|ref|index>] [--force] <text>
+                                              Type text into a panel
+  send-key-panel [--panel <id|ref|index>] [--force] <key>
+                                              Send one key to a panel
+  paste [--surface <id|ref|index>] [--submit] [--force] [<text>|-]
+                                              Paste text through the paste path
+  read-screen [--surface <id|ref|index>] [--scrollback] [--lines <n>] [--selection]
+                                              Read terminal text
+  read-selection [--surface <id|ref|index>] [--json]
+                                              Read the active selection
+  capture-pane [--workspace <id|ref|index>] [--surface <id|ref|index>] [--window <id|ref|index>] [--scrollback] [--lines <n>]
+                                              tmux-style capture of terminal text
+  clear-history [--surface <id|ref|index>]    Clear a terminal's scrollback
+  respawn-pane [--surface <id|ref|index>]     Restart a terminal's process
+  pipe-pane [--workspace <id|ref|index>] [--surface <id|ref|index>] [--window <id|ref|index>] [--command <shell-command> | <shell-command>]
+                                              Pipe terminal output to a command
+  notify [--title <text>] [--body <text>] [--workspace <id|ref|index>] [--surface <id|ref|index>] [--desktop <true|false>] [--clear]
+                                              Post a notification
+  list-notifications                          List queued notifications
+  dismiss-notification (--id <uuid|notification:<uuid>> | --all-read) [--json]
+                                              Remove notifications
+  mark-notification-read (--id <uuid> | --workspace <id|ref|index> [--surface <id|ref|index>] [--window <id|ref|index>] | --all) [--json]
+                                              Mark notifications read
+  open-notification --id <uuid|notification:<uuid>> [--json]
+                                              Focus a notification's surface and mark it read
+  jump-to-unread                              Jump to the newest unread notification
+  jump-to-last-prompt                         Focus the surface of the last agent prompt
+  clear-notifications [--workspace <id|ref|index>] [--surface <id|ref|index>]
+                                              Clear queued notifications
+  set-app-focus <active|inactive|clear>       Override app focus state (tests)
+  simulate-app-active                         Run app-activation handling (tests)
+  hooks setup [agent] [--agent <name>] [--yes|-y]
+                                              Agent hook integrations (setup, uninstall, <agent> install|uninstall)
+  setup-hooks                                 Alias of 'hooks setup'
+  uninstall-hooks                             Alias of 'hooks uninstall'
+  codex <install-hooks|uninstall-hooks>       Install or remove the Codex hooks
+  claude-hook <event>                         Claude Code hook entrypoint (stdin JSON)
+  session-debug                               Alias of 'sessions debug'
+  surface-resume <show|set|clear> [flags]     Read or change a surface's resume binding (also 'surface resume')
+  restore [--surface <id|ref>] <kind> <checkpoint-id>
+                                              Replace the CLI with a restored agent process
+  fork [--surface <id|ref>] <kind> <checkpoint-id>
+                                              Replace the CLI with a forked agent process
+  agent message <target> <text|->             Message the agent in another workspace or surface
+  agent inbox [--mark-read]                   List received agent messages
+  agent messages [on|off|status] [<target>] [--workspace]
+                                              Turn agent messages on or off
+  agent-hibernation <on|off> [--json]         Enable or disable Agent Hibernation
+  claude-teams [claude-args...]               Launch Claude Code with agent-team panes
+  codex-teams [codex-args...]                 Launch Codex with subagent panes
+  omo [opencode-args...]                      Run OpenCode through oh-my-openagent
+  omx [omx-args...]                           Launch Oh My Codex with pane integration
+  omc [omc-args...]                           Launch Oh My Claude Code with pane integration
+  wait-for [-S|--signal] <name> [--timeout <seconds>]
+                                              Wait for or signal a named event

@@ -124,6 +124,10 @@ pub fn writeCatalogHelp(w: *Writer, brand: Brand, e: *const catalog.Entry) Write
 
 const testing = std.testing;
 
+test {
+    _ = @import("help/conformance_tests.zig");
+}
+
 fn topLevelAlloc(brand: Brand) ![]u8 {
     var aw: std.Io.Writer.Allocating = .init(testing.allocator);
     errdefer aw.deinit();
