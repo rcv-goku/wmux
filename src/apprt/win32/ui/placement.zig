@@ -1,6 +1,8 @@
 //! Window placement persistence (ARCHITECTURE.md ADR-1.8 W0-A2 step 4):
 //! save and restore the geometry of the main window through the pure
-//! placement_state.zig format. Moved out of Window.zig in W0-A2.
+//! placement_state.zig format. Moved out of Window.zig in W0-A2. Since
+//! W1-7a a pending session v3 restore supplies window 0's geometry and
+//! every geometry change marks the session dirty (features/session).
 
 const std = @import("std");
 
@@ -8,6 +10,7 @@ const App = @import("../App.zig");
 const Window = @import("Window.zig");
 const WindowState = @import("placement_state.zig");
 const app_paths = @import("../app/paths.zig");
+const session = @import("../features/session/api.zig");
 const w32 = @import("../platform/win32.zig");
 
 /// Build the absolute path to the window-state file:
@@ -37,6 +40,9 @@ pub fn windowStatePath(app: *const App, alloc: std.mem.Allocator) ![]u8 {
 /// effort and must never affect normal operation.
 pub fn savePlacement(self: *Window) void {
     if (self.is_quick_terminal) return;
+    // Session v3 keeps every window's placement (ADR-9.2): the next
+    // autosave picks the new geometry up.
+    session.markDirty(self.app);
     // Only the first window in the App's list owns the persisted state.
     // Additional session windows cascade and do not save (avoids two
     // windows fighting over one file).
@@ -132,6 +138,12 @@ pub fn savePlacementWorker(ctx: *SavePlacementCtx) void {
 /// unavailable — callers then fall back to defaults. Best effort: any
 /// error path yields null.
 pub fn restorePlacement(self: *Window) ?WindowState.State {
+    // A pending session restore places window 0 where the session saved
+    // it (clamped to that monitor's work area); restore.zig applies the
+    // exact placement once the window exists.
+    if (!self.app.runtime_env.test_hidden) {
+        if (session.pendingFirstPlacement(self.app)) |state| return state;
+    }
     const alloc = self.app.core_app.alloc;
     const path = windowStatePath(self.app, alloc) catch return null;
     defer alloc.free(path);

@@ -16,6 +16,7 @@
 
 const std = @import("std");
 const limits = @import("limits.zig");
+const proto = @import("wmux_proto");
 
 const Allocator = std.mem.Allocator;
 const Value = std.json.Value;
@@ -243,40 +244,20 @@ pub fn extPut(arena: Allocator, ext: *Ext, key: []const u8, value: Value) !void 
 // ── UUID text ───────────────────────────────────────────────────────
 
 /// Validates a UUID in 8-4-4-4-12 hex form (case-insensitive, `{}` braces
-/// tolerated) and writes the canonical uppercase form into `out`.
+/// tolerated) and writes the canonical uppercase form into `out`
+/// (`wmux_proto.uuid`).
 pub fn canonicalUuid(s: []const u8, out: *[36]u8) bool {
-    var t = s;
-    if (t.len == 38 and t[0] == '{' and t[37] == '}') t = t[1..37];
-    if (t.len != 36) return false;
-    for (t, 0..) |c, i| {
-        if (i == 8 or i == 13 or i == 18 or i == 23) {
-            if (c != '-') return false;
-            out[i] = '-';
-        } else {
-            if (!std.ascii.isHex(c)) return false;
-            out[i] = std.ascii.toUpper(c);
-        }
-    }
+    const id = proto.uuid.Uuid.parse(s) catch return false;
+    out.* = id.toText();
     return true;
 }
 
-/// Renders 16 random bytes as an uppercase UUIDv4 (RFC 4122 variant).
+/// Renders 16 random bytes as an uppercase UUIDv4 (RFC 4122 variant)
+/// (`wmux_proto.uuid`).
 pub fn mintUuid(random: std.Random, out: *[36]u8) void {
     var b: [16]u8 = undefined;
     random.bytes(&b);
-    b[6] = (b[6] & 0x0f) | 0x40;
-    b[8] = (b[8] & 0x3f) | 0x80;
-    const hex = "0123456789ABCDEF";
-    var o: usize = 0;
-    for (b, 0..) |byte, i| {
-        if (i == 4 or i == 6 or i == 8 or i == 10) {
-            out[o] = '-';
-            o += 1;
-        }
-        out[o] = hex[byte >> 4];
-        out[o + 1] = hex[byte & 0x0f];
-        o += 2;
-    }
+    out.* = proto.uuid.Uuid.fromRandomBytes(b).toText();
 }
 
 // ── Timestamps ──────────────────────────────────────────────────────
@@ -970,6 +951,101 @@ pub fn findGroup(groups: []const Group, id: []const u8) ?*const Group {
     return null;
 }
 
+// ── Restore order ───────────────────────────────────────────────────
+
+/// Index of the workspace a window shows after restore: its
+/// `selected_workspace`, else the first one (null for a window without
+/// workspaces).
+pub fn selectedWorkspaceIndex(w: *const Window) ?usize {
+    if (w.workspaces.len == 0) return null;
+    if (w.selected_workspace) |sel| {
+        for (w.workspaces, 0..) |ws, i| if (ws.id) |id| if (std.mem.eql(u8, id, sel)) return i;
+    }
+    return 0;
+}
+
+/// Indexes into `ws.panes` in on-screen order: the layout's leaves
+/// depth-first, `a` before `b` (ADR-2.4), then panes the layout misses.
+pub fn paneOrder(arena: Allocator, ws: *const Workspace) ![]usize {
+    var out: std.ArrayList(usize) = .empty;
+    if (ws.layout) |l| try appendLeaves(arena, &out, l, ws.panes);
+    for (ws.panes, 0..) |_, i| {
+        if (std.mem.indexOfScalar(usize, out.items, i) == null) try out.append(arena, i);
+    }
+    return out.toOwnedSlice(arena);
+}
+
+fn appendLeaves(arena: Allocator, out: *std.ArrayList(usize), l: Layout, panes: []const Pane) !void {
+    switch (l) {
+        .pane => |id| for (panes, 0..) |p, i| {
+            if (p.id) |pid| if (std.mem.eql(u8, pid, id)) {
+                if (std.mem.indexOfScalar(usize, out.items, i) == null) try out.append(arena, i);
+                return;
+            };
+        },
+        .split => |s| {
+            try appendLeaves(arena, out, s.a, panes);
+            try appendLeaves(arena, out, s.b, panes);
+        },
+    }
+}
+
+/// One terminal (or other panel) to bring up after the layout exists.
+pub const SpawnRef = struct {
+    window: usize,
+    workspace: usize,
+    pane: usize,
+    tab: usize,
+    /// In the workspace its window shows: spawned at once; the others
+    /// follow one at a time (ADR-9.4 staggered spawn).
+    immediate: bool,
+};
+
+/// The order restore spawns the tabs of `s` in (ADR-9.4): per window, the
+/// shown workspace first (its focused pane first, each pane's selected
+/// tab first), then the other workspaces in sidebar order, window by
+/// window, so the visible terminals come up before the hidden ones.
+pub fn spawnOrder(arena: Allocator, s: *const Session) ![]SpawnRef {
+    var immediate: std.ArrayList(SpawnRef) = .empty;
+    var later: std.ArrayList(SpawnRef) = .empty;
+    for (s.windows, 0..) |*w, wi| {
+        const shown = selectedWorkspaceIndex(w) orelse continue;
+        try appendWorkspaceSpawns(arena, &immediate, wi, shown, &w.workspaces[shown], true);
+        for (w.workspaces, 0..) |*ws, i| {
+            if (i == shown) continue;
+            try appendWorkspaceSpawns(arena, &later, wi, i, ws, false);
+        }
+    }
+    try immediate.appendSlice(arena, later.items);
+    return immediate.toOwnedSlice(arena);
+}
+
+fn appendWorkspaceSpawns(arena: Allocator, out: *std.ArrayList(SpawnRef), wi: usize, wsi: usize, ws: *const Workspace, immediate: bool) !void {
+    var order = try paneOrder(arena, ws);
+    if (ws.focused_pane) |f| {
+        for (order, 0..) |pi, k| if (ws.panes[pi].id) |id| if (std.mem.eql(u8, id, f)) {
+            std.mem.rotate(usize, order[0 .. k + 1], k);
+            break;
+        };
+    }
+    for (order) |pi| {
+        const pane = &ws.panes[pi];
+        var first: usize = 0;
+        if (pane.selected_tab) |sel| {
+            for (pane.tabs, 0..) |t, ti| if (t.id) |id| if (std.mem.eql(u8, id, sel)) {
+                first = ti;
+                break;
+            };
+        }
+        if (pane.tabs.len == 0) continue;
+        try out.append(arena, .{ .window = wi, .workspace = wsi, .pane = pi, .tab = first, .immediate = immediate });
+        for (pane.tabs, 0..) |_, ti| {
+            if (ti == first) continue;
+            try out.append(arena, .{ .window = wi, .workspace = wsi, .pane = pi, .tab = ti, .immediate = immediate });
+        }
+    }
+}
+
 // ── Writer ──────────────────────────────────────────────────────────
 
 pub const WriteOptions = struct {
@@ -1565,6 +1641,49 @@ test "unit: session: fingerprint ignores volatile fields only" {
     try testing.expectEqual(base, fingerprint(&p.session));
     p.session.windows[0].workspaces[0].layout.?.split.ratio = 0.61;
     try testing.expect(base != fingerprint(&p.session));
+    // A title or a cwd is structure, not volatile.
+    const ratio_fp = fingerprint(&p.session);
+    p.session.windows[0].workspaces[0].cwd = "C:\\elsewhere";
+    try testing.expect(ratio_fp != fingerprint(&p.session));
+}
+
+test "unit: session: restore order spawns the shown workspace first, focused pane and selected tab first" {
+    const doc =
+        \\{"schema":"wmux-session","version":3,"windows":[
+        \\ {"id":"00000000-0000-4000-8000-000000000001","selected_workspace":"00000000-0000-4000-8000-0000000000B2",
+        \\  "workspaces":[
+        \\   {"id":"00000000-0000-4000-8000-0000000000B1","layout":{"pane":"00000000-0000-4000-8000-0000000000C1"},
+        \\    "panes":[{"id":"00000000-0000-4000-8000-0000000000C1","tabs":[{"id":"00000000-0000-4000-8000-0000000000D1"}]}]},
+        \\   {"id":"00000000-0000-4000-8000-0000000000B2","focused_pane":"00000000-0000-4000-8000-0000000000C3",
+        \\    "layout":{"split":{"dir":"vertical","ratio":0.3,"a":{"pane":"00000000-0000-4000-8000-0000000000C2"},"b":{"pane":"00000000-0000-4000-8000-0000000000C3"}}},
+        \\    "panes":[
+        \\     {"id":"00000000-0000-4000-8000-0000000000C3","selected_tab":"00000000-0000-4000-8000-0000000000D4",
+        \\      "tabs":[{"id":"00000000-0000-4000-8000-0000000000D3"},{"id":"00000000-0000-4000-8000-0000000000D4"}]},
+        \\     {"id":"00000000-0000-4000-8000-0000000000C2","tabs":[{"id":"00000000-0000-4000-8000-0000000000D2"}]}]}]},
+        \\ {"id":"00000000-0000-4000-8000-000000000002","workspaces":[
+        \\   {"id":"00000000-0000-4000-8000-0000000000B3","panes":[{"id":"00000000-0000-4000-8000-0000000000C4","tabs":[{"id":"00000000-0000-4000-8000-0000000000D5"}]}]}]}]}
+    ;
+    var p = try parse(testing.allocator, doc, .{}, null);
+    defer p.deinit();
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // Panes in layout order (a before b), whatever their order in the file.
+    const ws2 = &p.session.windows[0].workspaces[1];
+    try testing.expectEqualSlices(usize, &.{ 1, 0 }, try paneOrder(a, ws2));
+    try testing.expectEqual(@as(?usize, 1), selectedWorkspaceIndex(&p.session.windows[0]));
+
+    const order = try spawnOrder(a, &p.session);
+    var ids: std.ArrayList(u8) = .empty;
+    for (order) |r| {
+        const t = p.session.windows[r.window].workspaces[r.workspace].panes[r.pane].tabs[r.tab];
+        try ids.append(a, t.id.?[35]);
+        try ids.append(a, if (r.immediate) '!' else '.');
+    }
+    // Window 1 shows workspace B2: focused pane C3 (selected tab D4 first,
+    // then D3), then C2; window 2 shows B3; then the hidden B1.
+    try testing.expectEqualStrings("4!3!2!5!1.", ids.items);
 }
 
 test "unit: session: ext helpers add and read feature keys" {
