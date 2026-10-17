@@ -5,8 +5,8 @@
 # layouts, sync-input, break/move pane, right sidebar, and a DWMWA_CLOAKED-aware capture of the
 # hidden window. Where the legacy protocol has no getter, effects are observed on the window
 # itself (WmuxTerminal child rectangles) or in the instance's state files; reply shapes are
-# legacy-compat's job. Workspaces and tabs are closed only after their prompt appeared (known
-# teardown flake, ADR-12.7 / W0-ST: the runner's retry covers it).
+# legacy-compat's job. Workspaces and tabs are closed only after their prompt appeared (the
+# former Exec.zig teardown flake, fixed by W0-ST part 1; kept as a cheap safety margin).
 Import-Module (Join-Path $PSScriptRoot '..\..\WmuxTest.psm1') -Force
 
 $script:NextId = 100
@@ -252,9 +252,11 @@ Test-Case 'regression: session save and restore round-trip a layout' {
         Assert-Equal 'split' $saved.workspaces[0].split_tree.node_type 'the split is saved'
         Assert-Equal 'rg-saved' $saved.workspaces[1].name
         # The restore half uses workspace 0 only: legacy restore appends every further workspace
-        # with a fresh terminal and at once replaces its tree, tearing that just-created terminal
-        # down (the Exec.zig teardown race, ADR-12.7 / W0-ST, hangs the UI thread under load),
-        # and it drops the splits of background workspaces (reported to W1-7).
+        # with a fresh terminal and at once replaces its tree, and it drops the splits of
+        # background workspaces (reported to W1-7). The Exec.zig teardown hang is fixed (W0-ST
+        # part 1), but on 2026-10-17 a two-workspace restore still lost workspace 1 within
+        # seconds (read-screen answered UnknownWorkspace after workspace-list had shown it,
+        # 2 of 2 runs on Debug): the limit stays until W1-7 makes multi-workspace restore work.
         $doc = [ordered]@{ version = $saved.version; workspaces = @($saved.workspaces[0]); active_workspace = 0 }
         $b = Start-WmuxInstance
         Wait-Prompt $b

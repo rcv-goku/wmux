@@ -61,7 +61,7 @@ $ErrorActionPreference = 'Stop'
 # `catch [WmuxRpcError]`; helpers live in the WmuxTestHarness namespace.
 # ---------------------------------------------------------------------------
 
-$script:HarnessTypesVersion = '4'
+$script:HarnessTypesVersion = '5'
 
 $script:HarnessTypeSource = @'
 using System;
@@ -367,7 +367,7 @@ namespace WmuxTestHarness
 {
     public static class Native
     {
-        public const string Version = "4";
+        public const string Version = "5";
 
         [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
         [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
@@ -379,6 +379,8 @@ namespace WmuxTestHarness
         [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
         [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
         [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdc, uint flags);
+        /// True when the window's thread has not pumped messages for 5 s (PrintWindow would block).
+        [DllImport("user32.dll")] public static extern bool IsHungAppWindow(IntPtr hWnd);
         [DllImport("user32.dll")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
         [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
         [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
@@ -1560,7 +1562,7 @@ namespace WmuxTestHarness
             const uint WS_POPUP = 0x80000000;
             const uint WS_EX_TOPMOST = 0x8, WS_EX_TRANSPARENT = 0x20, WS_EX_TOOLWINDOW = 0x80, WS_EX_LAYERED = 0x80000, WS_EX_NOACTIVATE = 0x08000000;
             int x = -32000, y = -32000;
-            if (placement != "offscreen")
+            if (placement != "offscreen" && placement != "hung")
             {
                 var mi = new MONITORINFO();
                 mi.cbSize = Marshal.SizeOf(typeof(MONITORINFO));
@@ -1581,6 +1583,15 @@ namespace WmuxTestHarness
                     if (c == null || c.Value == 0) return 2;
                 }
                 ShowWindow(h, 4 /* SW_SHOWNOACTIVATE */);
+                if (placement == "hung")
+                {
+                    // Off-screen window whose thread stops pumping messages: IsHungAppWindow turns
+                    // true after 5 s and PrintWindow would block (harness hang self-test, W0-ST).
+                    MSG first;
+                    while (PeekMessageW(out first, IntPtr.Zero, 0, 0, 1)) { TranslateMessage(ref first); DispatchMessageW(ref first); }
+                    Thread.Sleep(holdMs);
+                    return 0;
+                }
                 var sw = Stopwatch.StartNew();
                 while (sw.ElapsedMilliseconds < holdMs)
                 {
@@ -2581,9 +2592,11 @@ function Get-WmuxTerminalCheck {
 
 function Save-WmuxWindowCapture {
     # PrintWindow(PW_RENDERFULLCONTENT) of a top-level WmuxWindow on a per-monitor-v2 DPI aware
-    # thread; works off-screen and cloaked, never changes focus, gives up after 10 s when the UI
-    # thread is hung. Returns the placement and the terminal check (Get-WmuxTerminalCheck).
-    param([Parameter(Mandatory)][WmuxInstance]$Instance, [Parameter(Mandatory)][string]$Path, $Window)
+    # thread; works off-screen and cloaked, never changes focus. A window whose UI thread is hung
+    # (IsHungAppWindow) is not captured at all, since PrintWindow would block on it; otherwise the
+    # capture gives up after -TimeoutMs (default 10 s) and abandons its thread. Returns the
+    # placement and the terminal check (Get-WmuxTerminalCheck).
+    param([Parameter(Mandatory)][WmuxInstance]$Instance, [Parameter(Mandatory)][string]$Path, $Window, [ValidateRange(100, 600000)][int]$TimeoutMs = 10000)
     $hwnds = @([WmuxTestHarness.Native]::TopLevelWindows($Instance.Pid, 'WmuxWindow'))
     if ($hwnds.Count -eq 0) { $hwnds = @([WmuxTestHarness.Native]::TopLevelWindows($Instance.Pid, [NullString]::Value) | Where-Object { [WmuxTestHarness.Native]::IsWindowVisible($_) }) }
     if ($hwnds.Count -eq 0) { throw (New-WmuxHarnessError -Code 'harness_transport' -Message "no top-level window found for pid $($Instance.Pid)" -Method 'screenshot') }
@@ -2591,8 +2604,9 @@ function Save-WmuxWindowCapture {
     if ($null -ne $Window -and (Test-WmuxIsNumber $Window)) { $index = [int]$Window }
     if ($index -ge $hwnds.Count) { throw (New-WmuxHarnessError -Code 'harness_transport' -Message "window index $index out of range ($($hwnds.Count) windows)" -Method 'screenshot') }
     $hwnd = $hwnds[$index]
-    $cap = [WmuxTestHarness.Capture]::WindowWithTimeout($hwnd, 10000)
-    if ($null -eq $cap) { throw (New-WmuxHarnessError -Code 'harness_timeout' -Message "PrintWindow did not return within 10 s (wmux UI thread of pid $($Instance.Pid) not responding)" -Method 'screenshot') }
+    if ([WmuxTestHarness.Native]::IsHungAppWindow($hwnd)) { throw (New-WmuxHarnessError -Code 'harness_timeout' -Message "window of pid $($Instance.Pid) is not responding (IsHungAppWindow): not captured" -Method 'screenshot') }
+    $cap = [WmuxTestHarness.Capture]::WindowWithTimeout($hwnd, $TimeoutMs)
+    if ($null -eq $cap) { throw (New-WmuxHarnessError -Code 'harness_timeout' -Message "PrintWindow did not return within $([Math]::Round($TimeoutMs / 1000.0, 1)) s (wmux UI thread of pid $($Instance.Pid) not responding)" -Method 'screenshot') }
     if ($cap.Width -le 0 -or $cap.Height -le 0) { throw (New-WmuxHarnessError -Code 'harness_transport' -Message "window has an empty rect $($cap.Width)x$($cap.Height)" -Method 'screenshot') }
     $cap.SavePng($Path)
     $placement = Get-WmuxWindowPlacement -Hwnd $hwnd
@@ -2609,12 +2623,29 @@ function Save-WmuxWindowCapture {
 }
 
 function Save-WmuxFailureSnapshot {
-    # Best effort, instance still alive: screenshot, dialogs, toasts into <root>\artifacts.
+    # Best effort, instance still alive: screenshot, dialogs, toasts into <root>\artifacts. Never
+    # blocks on a hung UI thread (W0-ST): a window that IsHungAppWindow reports is not captured
+    # and the reason goes to artifacts\failure-snapshot.txt; any other capture is bounded to 5 s
+    # (the abandoned capture thread returns once Stop-WmuxInstance kills the tree).
     param([Parameter(Mandatory)][WmuxInstance]$Instance)
     $saved = $script:State.FailMark
     try {
-        try { $null = Get-WmuxScreenshot $Instance -Path (Join-Path $Instance.ArtifactsDir 'failure.png') } catch { }
-        if ($Instance.Protocol -eq 'v2') {
+        $notes = [Collections.Generic.List[string]]::new()
+        $hung = @([WmuxTestHarness.Native]::TopLevelWindows($Instance.Pid, [NullString]::Value) | Where-Object { [WmuxTestHarness.Native]::IsHungAppWindow($_) })
+        if ($hung.Count -gt 0) {
+            $notes.Add("screenshot skipped: $($hung.Count) top-level window(s) of pid $($Instance.Pid) are not responding (IsHungAppWindow)")
+        } elseif ($Instance.Protocol -eq 'v2') {
+            try { $null = Get-WmuxScreenshot $Instance -Path (Join-Path $Instance.ArtifactsDir 'failure.png') } catch { $notes.Add("screenshot failed: $($_.Exception.Message)") }
+        } else {
+            try { $null = Save-WmuxWindowCapture -Instance $Instance -Path (Join-Path $Instance.ArtifactsDir 'failure.png') -TimeoutMs 5000 } catch { $notes.Add("screenshot failed: $($_.Exception.Message)") }
+        }
+        if ($notes.Count -gt 0) {
+            try {
+                $null = New-Item -ItemType Directory -Force -Path $Instance.ArtifactsDir
+                [IO.File]::WriteAllLines((Join-Path $Instance.ArtifactsDir 'failure-snapshot.txt'), $notes, $script:Utf8NoBom)
+            } catch { }
+        }
+        if ($hung.Count -eq 0 -and $Instance.Protocol -eq 'v2') {
             try {
                 $d = Invoke-WmuxRpc $Instance 'wmux.debug.dialogs.list' -TimeoutSec 3
                 [IO.File]::WriteAllText((Join-Path $Instance.ArtifactsDir 'dialogs.json'), (ConvertTo-Json -InputObject $d -Depth 50), $script:Utf8NoBom)
