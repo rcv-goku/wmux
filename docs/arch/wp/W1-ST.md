@@ -66,3 +66,8 @@ Source: `research/parity/FOLLOWUPS.md` (sections of 2026-10-16 and 2026-10-17) a
 - Gate notes from W0-C2: the `-Merge` budget holds only with a warm Zig cache (ReleaseFast about
   11 min cold); a union merge of two appends can leave an aggregator unsorted (re-sort by hand); the
   schema step sets `git config merge.ours.driver true` in the shared `.git/config`.
+- Schema golden (integrator decision, W1-IF review 2026-10-17): the check that compares the
+  committed `docs/wmux/schema/wmux.schema.json` with the settings specs stays in `test-fast`
+  (`src/build/WmuxSteps.zig`) for now, so a WP that adds a settings spec regenerates and commits
+  the schema on its branch; decide at the W1 stabilization (by CCR) whether to move it into the
+  `-Full` contract step.
