@@ -1236,7 +1236,7 @@ namespace WmuxTestHarness
                 if (!Native.GetWindowRect(h, out rect) || rect.Right <= rect.Left || rect.Bottom <= rect.Top) continue;
                 int? cloaked = Native.Cloaked(h);
                 if (cloaked == null) continue;
-                if (cloaked.Value != 0) { lock (Gate) { r.Placements.Add("cloaked"); } continue; }
+                if (cloaked.Value != 0) { bool on = Native.OnAnyMonitor(h); lock (Gate) { r.Placements.Add(on ? "cloaked" : "cloaked-offscreen"); } continue; }
                 if (!Native.OnAnyMonitor(h)) { lock (Gate) { r.Placements.Add("offscreen"); } continue; }
                 // Re-check after the slower calls: a window hidden meanwhile is not a hit.
                 if (!Native.IsWindowVisible(h)) continue;
@@ -2531,14 +2531,15 @@ function Get-WmuxArtifactBase {
 }
 
 function Get-WmuxWindowPlacement {
-    # Where a top-level window is, as the user would see it: 'cloaked' (DWMWA_CLOAKED != 0),
-    # 'offscreen' (visible but on no monitor, the (-32000,-32000) placement), 'onscreen',
-    # 'hidden' (not visible) or 'unknown' (the DWM query failed).
+    # Where a top-level window is, as the user would see it: 'cloaked' (DWMWA_CLOAKED != 0, on a
+    # monitor: the S2 placement, GL capturable), 'cloaked-offscreen' (cloaked and on no
+    # monitor), 'offscreen' (visible but on no monitor, the (-32000,-32000) placement),
+    # 'onscreen', 'hidden' (not visible) or 'unknown' (the DWM query failed).
     param([Parameter(Mandatory)][IntPtr]$Hwnd)
     if (-not [WmuxTestHarness.Native]::IsWindowVisible($Hwnd)) { return 'hidden' }
     $cloaked = [WmuxTestHarness.Native]::Cloaked($Hwnd)
     if ($null -eq $cloaked) { return 'unknown' }
-    if ($cloaked -ne 0) { return 'cloaked' }
+    if ($cloaked -ne 0) { if ([WmuxTestHarness.Native]::OnAnyMonitor($Hwnd)) { return 'cloaked' } else { return 'cloaked-offscreen' } }
     if (-not [WmuxTestHarness.Native]::OnAnyMonitor($Hwnd)) { return 'offscreen' }
     return 'onscreen'
 }
@@ -2561,7 +2562,7 @@ function Get-WmuxTerminalCheck {
     $result.stats = $best.ToString()
     if ($Placement -ne 'cloaked') {
         $result.check = 'inconclusive'
-        $result.reason = "window is $Placement, not cloaked: GL output is not capturable (spike S2; the cloaked hidden mode lands in W0-A4)"
+        $result.reason = "window is $Placement, not cloaked on a monitor: GL output is not capturable there (spike S2)"
     } elseif ($best.NotBlank) {
         $result.check = 'ok'
         $result.reason = $null
@@ -2578,7 +2579,7 @@ function Save-WmuxWindowCapture {
     # thread is hung. Returns the placement and the terminal check (Get-WmuxTerminalCheck).
     param([Parameter(Mandatory)][WmuxInstance]$Instance, [Parameter(Mandatory)][string]$Path, $Window)
     $hwnds = @([WmuxTestHarness.Native]::TopLevelWindows($Instance.Pid, 'WmuxWindow'))
-    if ($hwnds.Count -eq 0) { $hwnds = @([WmuxTestHarness.Native]::TopLevelWindows($Instance.Pid, $null) | Where-Object { [WmuxTestHarness.Native]::IsWindowVisible($_) }) }
+    if ($hwnds.Count -eq 0) { $hwnds = @([WmuxTestHarness.Native]::TopLevelWindows($Instance.Pid, [NullString]::Value) | Where-Object { [WmuxTestHarness.Native]::IsWindowVisible($_) }) }
     if ($hwnds.Count -eq 0) { throw (New-WmuxHarnessError -Code 'harness_transport' -Message "no top-level window found for pid $($Instance.Pid)" -Method 'screenshot') }
     $index = 0
     if ($null -ne $Window -and (Test-WmuxIsNumber $Window)) { $index = [int]$Window }
@@ -3578,7 +3579,7 @@ function Get-WmuxScreenshot {
         10 s limit for a hung UI thread).
     .OUTPUTS
         [System.IO.FileInfo] with note properties (DWMWA_CLOAKED-aware, spike S2):
-        Placement      cloaked | offscreen | onscreen | hidden | unknown (the main window)
+        Placement      cloaked | cloaked-offscreen | offscreen | onscreen | hidden | unknown
         Cloaked        DWMWA_CLOAKED value, $null when the query failed
         TerminalCheck  ok | blank | inconclusive | none: the WmuxTerminal area shows 3+ colours
                        and no colour above 99.9 %; GL output reaches PrintWindow only on a
