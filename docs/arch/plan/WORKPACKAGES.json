@@ -2125,11 +2125,11 @@
    "wave": 11,
    "arch_id": "W1-2c",
    "arch_wave": "W1",
-   "status": "planned",
+   "status": "done",
    "executor": "external:cfleet-wave1",
    "est_size": "L",
    "units": 11.4,
-   "summary": "Verifies and completes the W1-2a implementation against the cmux contract without a running app: grammar edge cases (global options only before the command, presentation options anywhere, -- terminator, values starting with + or --version as payload), help task groups and topics (start agents navigate inspect customize automation browser remote diagnostics), per-command --help offline for every Appendix C command (stubs print usage), version, guide/--skill embedded Markdown, docs [topic], welcome, focus default from GetConsoleMode + agent markers + WMUX_/CMUX_FOCUS_NEW, --id-format refs|uuids|both. test/cli/probes.ps1 adapts cmux's no-socket probe list with the cmux and wmux names and runs in gate -Full as a contract test. Integrator grant (W1-IF review, 2026-10-17): owns src/wmux_cli/platform.zig for the offline Platform gaps (stat/size, writeFileAtomic with flush + sidecar lock + symlink/ACL-preserving replace, stdin-only console check); W1-2d (plan wave 12) touches it later for the server PID and eager connect for explicit pipes.",
+   "summary": "Verifies and completes the W1-2a implementation against the cmux contract without a running app: grammar edge cases (global options only before the command, presentation options anywhere, -- terminator, values starting with + or --version as payload), help task groups and topics (start agents navigate inspect customize automation browser remote diagnostics), per-command --help offline for every Appendix C command (stubs print usage), version, guide/--skill embedded Markdown, docs [topic], welcome, focus default from GetConsoleMode + agent markers + WMUX_/CMUX_FOCUS_NEW, --id-format refs|uuids|both. test/cli/probes.ps1 adapts cmux's no-socket probe list with the cmux and wmux names and runs in gate -Full as a contract test. Integrator grant (W1-IF review, 2026-10-17): owns src/wmux_cli/platform.zig for the offline Platform gaps (stat/size, writeFileAtomic with flush + sidecar lock + symlink/ACL-preserving replace, stdin-only console check); W1-2d (plan wave 12) touches it later for the server PID and eager connect for explicit pipes. Merged 8cd1691 (2026-10-17) on a green gate -Merge.",
    "features": [
     "cli-global-options",
     "cli-no-socket-help-probes",
