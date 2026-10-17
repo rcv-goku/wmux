@@ -333,13 +333,13 @@ test "unit: platform: dpapi (windows) tampered or truncated ciphertext is reject
     const copy = try gpa.dupe(u8, sealed);
     defer gpa.free(copy);
 
-    // Flip one bit in the payload (the tail holds the encrypted data and
-    // its HMAC).
+    // Flip one bit in the HMAC at the tail of the blob. Windows reports a MAC
+    // mismatch as ERROR_INVALID_DATA, like wrong entropy.
     copy[copy.len - 10] ^= 0x01;
     if (dpapi.unprotect(gpa, copy, null)) |p| {
         dpapi.freeSecret(gpa, p);
         return error.TestUnexpectedResult;
-    } else |err| try std.testing.expect(err == error.InvalidData or err == error.InvalidParameter);
+    } else |err| try std.testing.expectEqual(error.InvalidData, err);
 
     // Truncated and garbage input.
     if (dpapi.unprotect(gpa, sealed[0 .. sealed.len / 2], null)) |p| {
@@ -377,10 +377,12 @@ test "unit: platform: shell (windows) AssocQueryStringW finds the .txt handler" 
     defer gpa.free(open_cmd);
     try std.testing.expect(open_cmd.len > 0);
 
-    // An unregistered extension has no association.
+    // An unregistered extension has no association: with
+    // ASSOCF_INIT_IGNOREUNKNOWN Windows returns
+    // HRESULT_FROM_WIN32(ERROR_NO_ASSOCIATION), not the "Open With" handler.
     if (shell.assocQueryString(gpa, .executable, ".wmux-test-no-such-ext-7f3a", null)) |s| {
         gpa.free(s);
         return error.TestUnexpectedResult;
-    } else |_| {}
+    } else |err| try std.testing.expectEqual(error.NoAssociation, err);
     try std.testing.expectError(error.InvalidPath, shell.assocQueryString(gpa, .executable, "", null));
 }
