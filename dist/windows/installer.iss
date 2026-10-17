@@ -36,7 +36,10 @@
 ;                                         NuGet package, build/native/x64 --
 ;                                         redistributable per the WebView2 SDK
 ;                                         license)
+;   cli\cmux.exe, cli\wmux.exe,          (required; the console CLI and its
+;     cli\wmux.com, cli\posix\*           byte copies, POSIX launchers)
 ;   share\terminfo\ghostty.terminfo      (optional; resourcesDir() sentinel)
+;   share\wmux\...                       (optional; web apps, settings schema)
 ;   share\ghostty\themes\...             (optional)
 ;   share\ghostty\shell-integration\...  (optional)
 ;   LICENSE.txt                          (optional)
@@ -63,7 +66,13 @@
 ; Unique AppId for this community build's install/uninstall registration.
 ; Never reuse this GUID for a different product. The doubled '{' escapes
 ; the literal brace.
+#ifdef ReleaseSmoke
+; test/contract/release-smoke.ps1 (release.ps1 -Smoke): its own AppId so a
+; silent test install and uninstall never touch the user's installation.
+AppId={{4F3B8E1C-2D6A-4C7B-9E51-7A0D2B6C9F13}
+#else
 AppId={{B5D596AF-6D83-4ABD-A430-F4203FC1239F}
+#endif
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
@@ -124,6 +133,14 @@ Source: "{#StagingDir}\wmux.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; WebView2Loader.dll: from the Microsoft.Web.WebView2 NuGet package
 ; (build/native/x64). Redistribution is permitted by the WebView2 SDK license.
 Source: "{#StagingDir}\WebView2Loader.dll"; DestDir: "{app}"; Flags: ignoreversion
+; Console CLI (ARCHITECTURE ADR-4.1, W1-2b): cmux.exe and its byte copies
+; wmux.exe and wmux.com; the GUI wmux.exe relays CLI argv to cli\cmux.exe.
+; The LF sh launchers for Git Bash and WSL live in cli\posix (spike S4).
+; Never added to PATH (see the environment rule in the header).
+Source: "{#StagingDir}\cli\cmux.exe"; DestDir: "{app}\cli"; Flags: ignoreversion
+Source: "{#StagingDir}\cli\wmux.exe"; DestDir: "{app}\cli"; Flags: ignoreversion
+Source: "{#StagingDir}\cli\wmux.com"; DestDir: "{app}\cli"; Flags: ignoreversion
+Source: "{#StagingDir}\cli\posix\*"; DestDir: "{app}\cli\posix"; Flags: ignoreversion
 ; Resource tree (terminfo sentinel, themes, shell integration). Optional:
 ; skipifsourcedoesntexist lets a minimal staging (exe + dll only) compile.
 Source: "{#StagingDir}\share\*"; DestDir: "{app}\share"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
@@ -132,8 +149,10 @@ Source: "{#StagingDir}\LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion skip
 [Icons]
 ; {autoprograms}/{autodesktop} resolve to the per-user Start Menu / Desktop
 ; because of PrivilegesRequired=lowest.
+#ifndef ReleaseSmoke
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Comment: "wmux terminal multiplexer"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
+#endif
 
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
@@ -246,6 +265,8 @@ end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
+#ifndef ReleaseSmoke
   if CurStep = ssPostInstall then
     InstallWebView2IfNeeded;
+#endif
 end;
