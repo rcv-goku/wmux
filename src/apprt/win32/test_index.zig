@@ -22,8 +22,10 @@ test {
     inline for (manifest.modules) |module| _ = module;
 
     _ = @import("app/clipboard.zig");
+    _ = @import("app/dialogs.zig");
     _ = @import("app/foreground.zig");
     _ = @import("app/hooks.zig");
+    _ = @import("app/logger.zig");
     _ = @import("app/modal.zig");
     _ = @import("app/paths.zig");
     _ = @import("app/runtime_env.zig");

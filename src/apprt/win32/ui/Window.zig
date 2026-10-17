@@ -28,6 +28,7 @@ const SessionState = @import("../features/session/legacy_v2.zig");
 const WindowState = @import("placement_state.zig");
 const SplitTree = @import("../../../datastruct/split_tree.zig").SplitTree;
 const app_foreground = @import("../app/foreground.zig");
+const app_logger = @import("../app/logger.zig");
 const app_paths = @import("../app/paths.zig");
 const contrib = @import("contrib.zig");
 const hooks = @import("../app/hooks.zig");
@@ -409,6 +410,11 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
     // across windows since onPaneButtonClick recovers the *Window from the
     // overlay's bound owner pointer.
     PaneButtonsMod.on_click = onPaneButtonClick;
+
+    // STATE\logs\wmux.log (app/logger.zig; idempotent, so only the first
+    // window opens it). TODO(W1-1): start it from App.init, before the
+    // config loads, once the App.zig owner wires it.
+    app_logger.start(app.core_app.alloc, &app.runtime_env);
 
     // Mint the window's handle and create its first workspace before any
     // addTab(). Every init site (App.run, new_window, QuickTerminal.init)
