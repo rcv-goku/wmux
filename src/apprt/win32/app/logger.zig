@@ -262,13 +262,16 @@ fn startLocked(alloc: Allocator, env: *const RuntimeEnv) !void {
 
     const t = try std.heap.page_allocator.create(Tee);
     errdefer std.heap.page_allocator.destroy(t);
+    // A GUI-subsystem process started without redirected stdio (Explorer,
+    // a shortcut) has a zero stderr handle: treat it like INVALID_HANDLE_VALUE.
     const original = windows.peb().ProcessParameters.hStdError;
+    const original_raw = @intFromPtr(original);
     t.* = .{
         .file = file,
         .filter = undefined,
         .read_end = read_end,
         .write_end = write_end,
-        .original = if (original == windows.INVALID_HANDLE_VALUE) null else original,
+        .original = if (original_raw == 0 or original == windows.INVALID_HANDLE_VALUE) null else original,
         .thread = undefined,
     };
     t.filter = .{ .threshold = env.log_level, .out = &t.file };

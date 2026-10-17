@@ -56,7 +56,7 @@ pub const RuntimeEnv = struct {
     /// empty or "cancel" cancels the dialog.
     test_file_dialog: ?[]const u8 = null,
 
-    /// WMUX_LOG: the lowest level written to STATEogswmux.log
+    /// WMUX_LOG: the lowest level written to STATE\logs\wmux.log
     /// (app/logger.zig): "debug", "info" (default), "warn", "error" or
     /// "off" (no log file).
     log_level: LogLevel = .info,

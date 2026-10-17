@@ -1,8 +1,12 @@
 //! The choke point for everything the app shows or starts outside its own
 //! windows (ARCHITECTURE.md ADR-12.3, Appendix G / AF-16): message boxes,
 //! file dialogs, external launches (ShellExecute) and sounds. Nothing
-//! else in the apprt calls MessageBoxW, IFileDialog, ShellExecuteW,
-//! MessageBeep or PlaySoundW.
+//! else in the apprt calls MessageBoxW, IFileDialog, MessageBeep or
+//! PlaySoundW. One ShellExecuteW exception remains outside this WP's
+//! files: settings/legacy_config_files.zig (openConfigFile and
+//! openConfigFolder, reached from the sidebar gear and the settings menu)
+//! until W1-4 routes it through `openExternal`; the `.open_config` action
+//! is already intercepted in test mode by app/perform_action.zig.
 //!
 //! In WMUX_TEST_MODE none of them reach the user (they would block
 //! automation, open windows outside the instance's process tree, or make
