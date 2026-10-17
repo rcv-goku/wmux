@@ -14,6 +14,16 @@ owns:                        # plan files_new + files_touched, then the summary'
   - test/e2e/suites/_quarantine/**
   - test/e2e/suites/regression/W0-ST*.e2e.ps1
   - changes/W0-ST.md
+  # part 2 (wp/W0-ST-stabilize): harness hang fix and the W0-B2 suites it re-runs (W0-B2 is done;
+  # FOLLOWUPS gives the hang fix to "W0-B, or W0-ST part 2 if unowned"), docs reconciliation
+  - test/e2e/WmuxTest.psm1
+  - test/e2e/suites/_selftest/harness.e2e.ps1
+  - test/e2e/suites/regression/w0-regression.e2e.ps1
+  - docs/arch/ARCHITECTURE.md
+  - docs/arch/wp/W0-B2.md
+  # part 2: the unfiltered win32 test build (gate -FullTest) compiles again: two legacy_v2
+  # tests built SplitTree(Pane) through init/deinit, which reaches the GTK apprt tests
+  - src/apprt/win32/features/session/legacy_v2.zig
 touches:                     # frozen core paths approved by ruling D17 (Appendix F.2, 2026-10-16)
   - path: src/termio/Exec.zig
     reason: ruling D17 core CCR, read-thread teardown race (a CancelIoEx issued before ReadFile starts is lost and the join hangs core_surface.deinit)
@@ -21,7 +31,7 @@ touches:                     # frozen core paths approved by ruling D17 (Appendi
     reason: ruling D17 core CCR, the unnamed search Thread test stops and joins its thread when its 100 ms wait times out
 appends: []
 apis_needed: []
-ccr: []                      # ruling D17 approves both core changes directly; no CCR file
+ccr: [W0-ST-1, W0-ST-2]      # ruling D17 approved both core changes directly; the CCR files record them (status done)
 deviations: []
 ---
 
