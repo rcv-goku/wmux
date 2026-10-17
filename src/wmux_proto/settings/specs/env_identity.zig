@@ -3,7 +3,8 @@
 //! `CMUX_PORT_RANGE` (cmux keys `automation.portBase`, `automation.portRange`)
 //! and whether the inherited Anthropic credentials stay in terminals
 //! (`wmux.agents.preserveAuthEnv`, ADR-3.9). All apply to terminals spawned
-//! after the change; running terminals keep their environment.
+//! after the change (a workspace keeps the port block of its first
+//! terminal); running terminals keep their environment.
 
 const Spec = @import("../spec.zig").Spec;
 
@@ -14,7 +15,7 @@ pub const specs = [_]Spec{
         .default = "9100",
         .section = "automation",
         .label = "Workspace port base",
-        .doc = "First port of the per-workspace port blocks: each workspace's terminals get CMUX_PORT = base + ordinal * range, CMUX_PORT_END and CMUX_PORT_RANGE. New terminals only.",
+        .doc = "First port of the per-workspace port blocks: each workspace's terminals get CMUX_PORT = base + ordinal * range, CMUX_PORT_END and CMUX_PORT_RANGE. A workspace keeps the block of its first terminal: applies to workspaces started after the change.",
         .keywords = &.{ "port", "CMUX_PORT", "environment" },
     },
     .{
@@ -23,7 +24,7 @@ pub const specs = [_]Spec{
         .default = "10",
         .section = "automation",
         .label = "Ports per workspace",
-        .doc = "Number of ports reserved for each workspace (CMUX_PORT_RANGE). New terminals only.",
+        .doc = "Number of ports reserved for each workspace (CMUX_PORT_RANGE). Applies to workspaces started after the change.",
         .keywords = &.{ "port", "CMUX_PORT_RANGE", "environment" },
     },
     .{

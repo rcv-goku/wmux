@@ -22,8 +22,10 @@ pub const App = struct {
     /// each into its `Tab.ext.env_identity` once the tab exists.
     pending_jobs: std.AutoHashMapUnmanaged(Uuid, job.Job) = .empty,
 
-    /// Port-block ordinal of every workspace that spawned a terminal.
-    port_ordinals: std.AutoHashMapUnmanaged(Uuid, u32) = .empty,
+    /// Port block of every workspace that spawned a terminal, snapshotted
+    /// at its first spawn (null when none fit), so every terminal of a
+    /// workspace shares it even after the port settings change.
+    port_blocks: std.AutoHashMapUnmanaged(Uuid, ?ports.Block) = .empty,
     ordinals: ports.Ordinals = .{},
 
     /// Instance-wide values of the terminal environment, resolved once in
@@ -35,7 +37,7 @@ pub const App = struct {
         var it = self.pending_jobs.valueIterator();
         while (it.next()) |j| j.deinit();
         self.pending_jobs.deinit(gpa);
-        self.port_ordinals.deinit(gpa);
+        self.port_blocks.deinit(gpa);
         self.instance.deinit(gpa);
         self.* = .{};
     }

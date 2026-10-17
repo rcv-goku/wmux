@@ -45,7 +45,7 @@
       "properties": {
         "portBase": {
           "title": "Workspace port base",
-          "description": "First port of the per-workspace port blocks: each workspace's terminals get CMUX_PORT = base + ordinal * range, CMUX_PORT_END and CMUX_PORT_RANGE. New terminals only.",
+          "description": "First port of the per-workspace port blocks: each workspace's terminals get CMUX_PORT = base + ordinal * range, CMUX_PORT_END and CMUX_PORT_RANGE. A workspace keeps the block of its first terminal: applies to workspaces started after the change.",
           "type": "integer",
           "minimum": 1,
           "maximum": 65535,
@@ -62,7 +62,7 @@
         },
         "portRange": {
           "title": "Ports per workspace",
-          "description": "Number of ports reserved for each workspace (CMUX_PORT_RANGE). New terminals only.",
+          "description": "Number of ports reserved for each workspace (CMUX_PORT_RANGE). Applies to workspaces started after the change.",
           "type": "integer",
           "minimum": 1,
           "maximum": 65535,
