@@ -79,6 +79,7 @@ Dates are commit dates (CDT, UTC-5). A branch merged twice was merged again afte
 | `f47b957` | 2026-10-17 | `wp/W0-ST-stabilize` | W0-ST (part 2) | WP-09-w0-stabilization | done (status set before its merge; the wave-0 tag follows the merge) | integrator |
 | `e5982b3` | 2026-10-17 | `wp/W1-IF-kickoff` | W1-IF | WP-10-w1-interface | done | integrator |
 | `98836b4` | 2026-10-17 | `wp/W1-IF-grants` | W1-IF (grants) | WP-10-w1-interface | done | integrator |
+| `f0ab9e2` | 2026-10-17 | `wp/cf-w1-6b` | W1-6b | WP-11-webview2-bindings | done | external:cfleet-wave1 |
 
 Direct commits on master between merges (no branch): `c7598b0` (test-fast runs the gfx logic tests,
 `[W0-K]`) and `12abd0c`, `59ba772` (smoke-suite fixes, `[W0-A1]`).
