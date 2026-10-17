@@ -2,7 +2,7 @@
 id: W0-ST-2
 wp: W0-ST
 title: terminal.search.Thread test stops and joins its thread on every path
-status: accepted
+status: done
 files:
   - path: src/terminal/search/Thread.zig
     class: frozen            # shared Ghostty core (section 0); listed in W0-ST touches

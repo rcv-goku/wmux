@@ -21,6 +21,14 @@
 # comment, which records cli.ssh-cache.DiskCache failures of the gnu test binary on the
 # CI runner; commit 2b18067 (DiskCache atomic rename on Windows) fixed them locally.
 # Prune them once the unfiltered suite is green on windows-latest.
+#
+# Status 2026-10-17 (W0-ST part 2, wp/W0-ST-stabilize on master 9538cf4): the unfiltered binary
+# had stopped compiling since W0-A3 wired features/session/legacy_v2.zig into test_index.zig: two
+# of its tests built SplitTree(Pane) through init/deinit, which reaches Pane.unref -> Tab.unref ->
+# Surface.deinit -> the renderer's apprt switch on apprt.gtk, and so the GTK apprt's own tests
+# ("no module named 'adw'"). With those tests building the tree by hand it compiles and passes:
+# 4047/4102 passed, 55 skipped, 0 failed; the DiskCache entries below pass locally again. Any test
+# that reaches Tab.unref or Surface.deinit brings the error back.
 cli.ssh-cache.DiskCache.test.disk cache default path  # CI runner only (windows-ci.yml comment); passes locally
 cli.ssh-cache.DiskCache.test.disk cache clear  # CI runner only (windows-ci.yml comment); passes locally
 cli.ssh-cache.DiskCache.test.disk cache operations  # CI runner only (windows-ci.yml comment); passes locally

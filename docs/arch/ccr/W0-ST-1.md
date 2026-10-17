@@ -2,7 +2,7 @@
 id: W0-ST-1
 wp: W0-ST
 title: Race-free Windows read-thread teardown in termio/Exec.zig
-status: accepted
+status: done
 files:
   - path: src/termio/Exec.zig
     class: frozen            # shared Ghostty core (section 0); listed in W0-ST touches

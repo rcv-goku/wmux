@@ -40,6 +40,9 @@ Columns: **id** (matrix id) · **check** (what a person does and expects) · **w
 | extra-terminal-local-file-drop | Drag files from Explorer onto a terminal pane; quoted paths are inserted | OLE drag and drop from another process on screen | W4-6b | open | - |
 | panels-file-drag-into-workspace | Drag a file from the right sidebar into a pane; a preview tab opens | OLE drag on screen | W5b-10b | open | - |
 | remote-cli-relay | Review the reverse CLI relay (auth, allowlist, socket permissions) before release | security sign-off by the program owner | W6-4a | open | - |
+| w0-cloaked-gl-capture | On an UNLOCKED session (no `LogonUI.exe`), run `pwsh test/e2e/run.ps1 -Suite w0-regression -Filter "hidden window"` on Debug and ReleaseFast; the cloaked capture passes with a non-blank terminal child (3+ colours) instead of skipping | GL output of a cloaked window is blank while the workstation is locked; every W0-ST run on 2026-10-17 was locked (one colour, 0x282C34 at 100 %, reported as a skip); non-blocking | W0-ST | open | 2026-10-17, W0-ST part 2, Debug + ReleaseFast: inconclusive (session locked) |
+| w0-ci-web-node-job | First GitHub Actions run of the CI job 'Web panels (Node, jsdom)' passes and runs every `test/web-node/**/*.test.mjs` | the job exists only on GitHub Actions; this host cannot run it; non-blocking | W0-ST | open | - |
+| w0-ci-nightly-full-gate | First GitHub Actions run of the nightly 'full-gate' job (`scripts/gate.ps1 -Full`, artifact upload) completes and uploads its logs | scheduled job on GitHub Actions; this host cannot run it; non-blocking | W0-ST | open | - |
 
 ## Planned checks without a feature row yet
 

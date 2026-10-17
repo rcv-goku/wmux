@@ -812,6 +812,40 @@ Test-Case 'kill-on-close job object terminates an assigned process' {
     }
 }
 
+Test-Case 'failure snapshot and capture never block on a hung UI thread' {
+    # W0-ST: Save-WmuxFailureSnapshot used to call PrintWindow on a window whose thread no longer
+    # pumps messages. The fixture is an off-screen, no-activate window whose thread sleeps.
+    $psi = [System.Diagnostics.ProcessStartInfo]::new([Environment]::ProcessPath)
+    foreach ($a in '-NoLogo', '-NoProfile', '-NonInteractive', '-Command', "Import-Module '$($script:ModulePath)'; exit [WmuxTestHarness.Fixtures]::ShowProbeWindow('hung', 60000)") { $psi.ArgumentList.Add($a) }
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $p = [System.Diagnostics.Process]::Start($psi)
+    try {
+        $hwnd = Wait-WmuxCondition -TimeoutSec 40 -IntervalMs 250 {
+            $h = @([WmuxTestHarness.Native]::TopLevelWindows($p.Id, 'Static') | Where-Object { [WmuxTestHarness.Native]::Title($_) -eq 'wmux-e2e-probe-hung' })
+            if ($h.Count -gt 0 -and [WmuxTestHarness.Native]::IsHungAppWindow($h[0])) { $h[0] }
+        }
+        $inst = New-FakeInstance -Protocol 'legacy'
+        $inst.Pid = $p.Id
+        $inst.Process = $p
+        $clock = [Diagnostics.Stopwatch]::StartNew()
+        InModule { param($i) Save-WmuxFailureSnapshot -Instance $i } $inst
+        Assert-True ($clock.Elapsed.TotalSeconds -lt 5) "the failure snapshot returned at once ($($clock.Elapsed.TotalSeconds) s)"
+        $note = Join-Path $inst.ArtifactsDir 'failure-snapshot.txt'
+        Assert-True (Test-Path -LiteralPath $note -PathType Leaf) 'the skipped capture is recorded'
+        Assert-Match 'IsHungAppWindow' ([IO.File]::ReadAllText($note))
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $inst.ArtifactsDir 'failure.png'))) 'no capture of a hung window'
+        $clock.Restart()
+        $e = Assert-Throws { InModule { param($i, $path) Save-WmuxWindowCapture -Instance $i -Path $path -TimeoutMs 2000 } $inst (Join-Path $inst.ArtifactsDir 'x.png') }
+        Assert-Match 'not responding' $e.Message
+        Assert-True ($clock.Elapsed.TotalSeconds -lt 5) "the capture gave up at once ($($clock.Elapsed.TotalSeconds) s)"
+        Remove-Item -LiteralPath $inst.Root -Recurse -Force -ErrorAction SilentlyContinue
+    } finally {
+        if (-not $p.HasExited) { $p.Kill($true) }
+        $p.Dispose()
+    }
+}
+
 # The remaining tests orchestrate nested pwsh processes (up to six each). On a loaded machine
 # that can take minutes, so they get a larger per-test budget than the default 120 s.
 if ([int]($env:WMUX_E2E_TEST_TIMEOUT_SEC ?? '0') -lt 300) { $env:WMUX_E2E_TEST_TIMEOUT_SEC = '300' }

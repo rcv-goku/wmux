@@ -543,6 +543,25 @@ fn jsonFloat(v: ?std.json.Value) ?f64 {
 
 const testing = std.testing;
 
+/// A one-leaf SplitTree(Pane) built without SplitTree.init/deinit (W0-ST): those reference
+/// Pane.unref -> Tab.unref -> Surface.deinit -> the renderer, whose apprt switch names
+/// apprt.gtk, which pulls the GTK apprt's tests (and its missing adw/gtk modules) into the
+/// unfiltered win32 test build. Free it with freeTestLeafTree.
+fn testLeafTree(alloc: Allocator, pane: *Pane) Allocator.Error!SplitTree(Pane) {
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    errdefer arena.deinit();
+    const nodes = try arena.allocator().alloc(SplitTree(Pane).Node, 1);
+    nodes[0] = .{ .leaf = pane };
+    pane.ref_count += 1;
+    return .{ .arena = arena, .nodes = nodes, .zoomed = null };
+}
+
+fn freeTestLeafTree(alloc: Allocator, tree: SplitTree(Pane), pane: *Pane) void {
+    var t = tree;
+    t.arena.deinit();
+    alloc.destroy(pane);
+}
+
 test "SessionState: jsonString extracts strings and rejects non-strings" {
     try testing.expectEqualStrings("hello", jsonString(.{ .string = "hello" }).?);
     try testing.expect(jsonString(.{ .integer = 42 }) == null);
@@ -619,11 +638,11 @@ test "SessionState: focusedContainerIndex returns 0 when focused is null" {
 test "SessionState: focusedContainerIndex finds correct leaf in single-node tree" {
     const alloc = testing.allocator;
     const pc = try Pane.create(alloc);
-    const tree = try SplitTree(Pane).init(alloc, pc);
-    defer {
-        var t = tree;
-        t.deinit();
-    }
+    const tree = testLeafTree(alloc, pc) catch |err| {
+        alloc.destroy(pc);
+        return err;
+    };
+    defer freeTestLeafTree(alloc, tree, pc);
     var ws: Window.Workspace = .{ .window = undefined };
     ws.tree = tree;
     ws.focused_pane = pc;
@@ -644,11 +663,11 @@ test "SessionState: containerDataFrom produces correct tab count and active inde
 test "SessionState: serializeNode round-trips a single-leaf tree" {
     const alloc = testing.allocator;
     const pc = try Pane.create(alloc);
-    const tree = try SplitTree(Pane).init(alloc, pc);
-    defer {
-        var t = tree;
-        t.deinit();
-    }
+    const tree = testLeafTree(alloc, pc) catch |err| {
+        alloc.destroy(pc);
+        return err;
+    };
+    defer freeTestLeafTree(alloc, tree, pc);
 
     var arena = std.heap.ArenaAllocator.init(alloc);
     defer arena.deinit();

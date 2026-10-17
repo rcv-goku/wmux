@@ -33,8 +33,8 @@ function Invoke-StressCommand {
         $rpc = $_.Exception
         while ($rpc -and $rpc -isnot [WmuxRpcError]) { $rpc = $rpc.InnerException }
         if ($rpc -and $rpc.Code -eq 'harness_timeout') {
-            # Kill the hung instance first: the failure snapshot in Stop-WmuxInstance calls
-            # PrintWindow, which blocks forever on a window whose UI thread is hung.
+            # Kill the hung instance at once: the failure snapshot would only skip the capture of
+            # a hung window (IsHungAppWindow) and record why, so nothing useful is lost.
             $null = & taskkill.exe /T /F /PID $Instance.Pid 2>&1
             Assert-True $false "$What got no reply within 10 s (UI thread hang)"
         }

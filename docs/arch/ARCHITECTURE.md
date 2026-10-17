@@ -1291,7 +1291,7 @@ GitHub Actions `windows-latest` (interactive session; WebView2 runtime preinstal
 
 A test may retry once; a test that flakes twice within 7 days moves to `suites/_quarantine/` (stabilization WP) and is fixed within the wave. Never sleep; wait on conditions or events. `coverage.ps1` reads `# covers:` tags and reports parity coverage per area against `matrix.csv`; each wave tag records the report.
 
-Known flakes (ruling D17, 2026-10-16): W0-ST fixes the two flakes known at the end of W0 through core CCRs approved by that ruling, so the frozen core files they need are W0-ST `touches`: (1) `src/termio/Exec.zig` read-thread teardown: `threadExit` cancels the read thread with one `CancelIoEx`, which is lost when `ReadFile` has not started yet, so the join hangs `core_surface.deinit` on the UI thread (about 1 in 6-10 fast create/close runs of a workspace or tab); (2) the `terminal.search.Thread` unit test (`src/terminal/search/Thread.zig`), which returns on a 100 ms wait timeout without stopping and joining its thread, which then crashes under load (the test is unnamed, so `test/known-failures.txt` cannot list it). Until the fix lands, a one-off hang while closing a just-created tab or workspace is a known flake.
+Known flakes: none at the end of W0. The two that ruling D17 named (the `src/termio/Exec.zig` read-thread teardown race that hung `core_surface.deinit` when a just-created tab or workspace closed, and the unnamed `terminal.search.Thread` unit test that left its thread running) were fixed by W0-ST part 1 through the core CCRs W0-ST-1 and W0-ST-2 (merge `0106f4f`, 2026-10-17); `test/e2e/suites/regression/W0-ST.e2e.ps1` keeps the create/close stress in every merge gate.
 
 ---
 
@@ -1875,16 +1875,16 @@ Families (pre-seeded stubs): `system window workspace workspace_group pane_surfa
 2. `config\wmux.json` = `{ "automation": { "socketControlMode": "automation" } }` deep-merged with `-Settings` (dotted keys expanded, e.g. `@{ 'sidebar.showPorts' = $false }`).
 3. `ghostty.conf` = `-Ghostty` lines plus `command = <shell>` (default `cmd.exe /d /k prompt WMUX$G`, a deterministic prompt; tests needing pwsh pass `-Shell 'pwsh.exe -NoLogo -NoProfile'`).
 4. Child environment: `WMUX_TEST_MODE=1`, `WMUX_TEST_HIDDEN=1` (omitted only with `-Visible`, for local debugging), `WMUX_CHANNEL=test-<id>`, `WMUX_STATE_DIR=<root>\state`, `WMUX_CONFIG_DIR=<root>\config`, `XDG_CONFIG_HOME=<root>\xdg` (isolates `cmux.json` and Ghostty user config), `WMUX_SOCKET_MODE=automation`, `WMUX_DISABLE_SESSION_RESTORE=1` (with `-Restore`: `WMUX_TEST_SESSION_RESTORE=1` instead), `WMUX_TEST_TOAST_SINK=<root>\toasts.jsonl`; inherited `CMUX_*`, `WMUX_SOCKET_*` and `GHOSTTY_*` from the harness's own terminal are removed.
-5. Launch `<exe> --config-default-files=false --config-file=<root>\ghostty.conf` with `ProcessStartInfo` (`UseShellExecute=false`, `CreateNoWindow=true`); the app itself shows windows with `SW_SHOWNOACTIVATE` off-screen.
+5. Launch `<exe> --config-default-files=false --config-file=<root>\ghostty.conf` with `ProcessStartInfo` (`UseShellExecute=false`, `CreateNoWindow=true`); the app itself creates every top-level window DWM-cloaked at the primary work-area origin and shows it only with `SW_SHOWNOACTIVATE` (ADR-12.3, W0-A4); the (-32000, -32000) placement is left only as the fallback when cloaking fails.
 6. Wait (≤ `-TimeoutSec`, default 30): read `state\run\instance.json` or compute the pipe name with the same algorithm as `wmux_proto/pipe_name.zig` (`wmux-test-<id>-<sidhash8>-s<session>`), poll `NamedPipeClientStream.Connect(100)`, then poll `wmux.debug.ready` until `{ready:true}`.
-7. Start the focus sampler: every 100 ms, `GetWindowThreadProcessId(GetForegroundWindow())`; if it ever equals the instance PID, the current test fails with `focus stolen by test instance` (robust to the user switching windows while tests run).
+7. Start the focus sampler and the visibility guard over the instance's whole process tree (D.6): a foreground window of any tree member fails the current test with `focus stolen by test instance`, a visible, uncloaked, on-monitor top-level window with `visible test window`; either kills the tree (robust to the user switching windows while tests run).
 
 ### D.3 Exported functions
 
 ```powershell
 Start-WmuxInstance  [-Build Debug|Release] [-Exe <path>] [-Settings <hashtable>] [-Ghostty <string[]>] [-Shell <string>]
                     [-Restore] [-Visible] [-KeepArtifacts] [-TimeoutSec 30]                       # → [WmuxInstance]
-Stop-WmuxInstance   [WmuxInstance] [-TimeoutSec 5]        # wmux.debug.app.quit → wait → taskkill /T /F; collect artifacts on failure; delete root
+Stop-WmuxInstance   [WmuxInstance] [-TimeoutSec 5]        # failure snapshot (D.6) → wmux.debug.app.quit (v2) → wait → kill tree + orphans; collect artifacts on failure; delete root (D.6)
 Invoke-WmuxRpc      [WmuxInstance] <method> [<hashtable params>] [-TimeoutSec 15] [-Raw]          # → result | throws [WmuxRpcError] (.Code, .Message, .Data)
 Invoke-WmuxRawLine  [WmuxInstance] <line> [-TimeoutSec 15]                                         # → reply line (legacy JSON or text-v1)
 Invoke-WmuxCli      [WmuxInstance] <string[] args> [-Stdin <string>] [-Env <hashtable>] [-AsWmux] # runs cli\cmux.exe (or wmux.com) with WMUX_SOCKET_PATH set → @{ ExitCode; Stdout; Stderr }
@@ -1935,6 +1935,20 @@ Test-Case 'workspace.create returns handles and keeps focus' {
 The smoke suite (`suites/smoke/smoke.e2e.ps1`, W0-B, upgraded in W1/W2) covers: `system.ping`, `system.capabilities`, `system.tree`, workspace create/close, send + read-screen, `cli\cmux.exe ping`, `events.stream` ack. Before W1-1a it uses the legacy JSON protocol through `Invoke-WmuxRawLine`.
 
 `coverage.ps1` joins `# covers:`/`# manual:` tags with the in-scope ids of `matrix.csv` and prints coverage per area, the list of uncovered critical ids, and stale tags (ids not in the matrix).
+
+### D.6 Harness additions from spike S2 (W0-B2) and W0-ST
+
+Folded in by W0-ST part 2 (2026-10-17) from the merged W0-B2 harness (`b47fc46`) and the W0-ST part 2 hang fix; `test/e2e/WmuxTest.psm1` and `run.ps1` are the reference.
+
+- **Process-tree sampler.** The focus sampler watches the whole tree of every instance (wmux, conhost, shells, msedgewebview2), refreshes descendants every 250 ms on a per-monitor-v2 DPI-aware thread, keeps exited members and rules out PID reuse by creation time. A foreground window of any member fails the test (`focus stolen by test instance`) and kills the tree.
+- **Visibility guard.** A visible, uncloaked, on-monitor top-level window of the tree fails the test with `visible test window` and kills the tree; cloaked windows and the (-32000, -32000) fallback placement are accepted. The guard is suspended during `Stop-WmuxInstance` teardown.
+- **Screenshot result notes.** `Get-WmuxScreenshot` returns the PNG `FileInfo` with note properties `Placement` (`cloaked`, `cloaked-offscreen`, `offscreen`, `onscreen`, `hidden`, `unknown`), `Cloaked` (the `DWMWA_CLOAKED` value), `TerminalCheck` (`ok`, `blank`, `inconclusive`, `none`: the `WmuxTerminal` area shows 3+ colours and no colour above 99.9 %; anything but a cloaked window is `inconclusive`, since GL output reaches `PrintWindow` only on a monitor), `TerminalStats` and `TerminalReason`. Legacy instances are captured harness-side with `PrintWindow(PW_RENDERFULLCONTENT)` on a timed thread (10 s). On a locked workstation (`LogonUI.exe` running, `WindowFromPoint` returning `LockScreenBackstopFrame`) even cloaked GL captures come out blank: such results are inconclusive, never a pass or a failure.
+- **Hung UI threads (W0-ST).** The failure snapshot that `Stop-WmuxInstance` takes for a failed test skips the capture when `IsHungAppWindow` reports any top-level window of the instance and writes the reason to `artifacts\failure-snapshot.txt`; other snapshot captures are bounded to 5 s, so a hung instance never stalls the run.
+- **Orphan kill.** After the graceful stop (v2 `wmux.debug.app.quit`; legacy instances are killed directly so the legacy app never saves its session) the tree is killed, then every recorded member still alive (WebView2 outlives its host) is killed, and the stop waits until `Win32_Process` lists none; leftovers are recorded as `survivors`.
+- **Background root deletion.** One synchronous delete of the instance root; when files stay locked (the WebView2 user-data folder for 25-60 s) a detached hidden pwsh retries for up to 90 s, and it only ever deletes a directory directly under a `wmux-e2e` folder.
+- **Stale-root sweep.** Before running, `run.ps1` deletes roots under `%RUNNER_TEMP%` or `%TEMP%\wmux-e2e` whose `owner.json` names a harness process that no longer runs, and roots without `owner.json` older than 24 h; roots of live runs in any worktree are kept.
+- **`# budget-sec: <n>` header.** The runner kills a file whose process outlives `TestTimeoutSec` × its number of `Test-Case` blocks plus a grace period (status `timeout`); the header raises that budget for one file.
+- **Result fields.** Every `Test-Case` record carries `instances[]` with `pid`, `channel`, `protocol`, `exit_code`, `hidden_mode` (the placement the guard saw: cloaked or offscreen), `root_deletion` (`sync`, `async`, `none`, `refused` or `kept`) and `survivors`, plus `focus_violations[]` and `visible_windows[]`; artifacts of a failed instance include `instance.json` with `hidden_mode`, the process `tree` and `survivors`.
 
 ---
 
