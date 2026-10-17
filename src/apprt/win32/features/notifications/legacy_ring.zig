@@ -17,7 +17,7 @@ const Surface = @import("../../Surface.zig");
 const Window = @import("../../ui/Window.zig");
 const foreground_mod = @import("../../app/foreground.zig");
 const hooks = @import("../../app/hooks.zig");
-const modal = @import("../../app/modal.zig");
+const dialogs = @import("../../app/dialogs.zig");
 const taskbar = @import("../../platform/taskbar.zig");
 const ops_surface = @import("../../model/ops/surface.zig");
 const titles = @import("../../model/logic/titles.zig");
@@ -768,8 +768,8 @@ pub fn dropDesktopNotifsForWindow(self: *App, window: *Window) void {
 
 /// `.ring_bell`: audible + visual bell, sidebar bell mark and log entry.
 pub fn onBell(self: *App, target: apprt.Target) void {
-    // Audio bell (no sounds in WMUX_TEST_MODE).
-    if (!self.runtime_env.test_mode) _ = w32.MessageBeep(0xFFFFFFFF);
+    // Audio bell (app/dialogs.zig: WMUX_TEST_SOUND_SINK in test mode).
+    dialogs.messageBeep(self, "bell", 0xFFFFFFFF);
     // Visual bell: flash the taskbar button if the window owning
     // this surface isn't currently the foreground window. Without
     // this, BEL on a backgrounded terminal is invisible.
@@ -849,7 +849,7 @@ pub fn onChildExited(self: *App, target: apprt.Target, value: apprt.Action.Value
 
                 var utf16_buf: [256]u16 = undefined;
                 const utf16_len = std.unicode.utf8ToUtf16Le(&utf16_buf, msg_utf8) catch {
-                    _ = modal.messageBox(
+                    _ = dialogs.messageBox(
                         self,
                         hwnd_val,
                         std.unicode.utf8ToUtf16LeStringLiteral("The shell process exited unexpectedly."),
@@ -859,7 +859,7 @@ pub fn onChildExited(self: *App, target: apprt.Target, value: apprt.Action.Value
                     return;
                 };
                 utf16_buf[utf16_len] = 0;
-                _ = modal.messageBox(
+                _ = dialogs.messageBox(
                     self,
                     hwnd_val,
                     @ptrCast(&utf16_buf),
