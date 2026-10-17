@@ -17,7 +17,7 @@ const Tab = @import("model/Tab.zig");
 const Window = @import("ui/Window.zig");
 const ids = @import("model/ids.zig");
 const app_foreground = @import("app/foreground.zig");
-const app_modal = @import("app/modal.zig");
+const app_dialogs = @import("app/dialogs.zig");
 const env_identity = @import("features/env_identity/api.zig");
 const menus = @import("ui/menus.zig");
 const session_api = @import("features/session/api.zig");
@@ -246,7 +246,9 @@ pub fn init(
         0,
         App.TERMINAL_CLASS_NAME,
         std.unicode.utf8ToUtf16LeStringLiteral(""),
-        w32.WS_CHILD,
+        // WS_CLIPSIBLINGS: GL terminals, browser hosts and the sidebar are
+        // overlapping siblings (S7, AF-10).
+        w32.WS_CHILD | w32.WS_CLIPSIBLINGS,
         sr.left,
         sr.top,
         @intCast(@max(sr.right - sr.left, 1)),
@@ -571,7 +573,7 @@ pub fn close(self: *Surface, process_active: bool) void {
     // the core would return process_active=true unconditionally).
     if (process_active) {
         const parent_hwnd = self.parent_window.hwnd;
-        const result = app_modal.messageBox(
+        const result = app_dialogs.messageBox(
             self.app,
             parent_hwnd,
             std.unicode.utf8ToUtf16LeStringLiteral(

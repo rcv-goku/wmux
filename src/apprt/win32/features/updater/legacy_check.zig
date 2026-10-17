@@ -1,6 +1,7 @@
 //! Legacy update checker: a background GitHub releases probe (throttled
-//! through `%LOCALAPPDATA%\ghostty\update_check_at`) that shows a tray
-//! balloon linking to the releases page when a newer version exists.
+//! through `update_check_at` in the state directory, app/paths.zig) that
+//! shows a tray balloon linking to the releases page when a newer version
+//! exists. Off in WMUX_TEST_MODE (ADR-12.3).
 //!
 //! Moved verbatim from App.zig in W0-A1 (ARCHITECTURE.md ADR-1.8). W5b's
 //! `updater` WP replaces it (correct repo URL, ADR-14.6).
@@ -10,7 +11,9 @@ const Allocator = std.mem.Allocator;
 
 const App = @import("../../App.zig");
 const build_config = @import("../../../../build_config.zig");
+const dialogs = @import("../../app/dialogs.zig");
 const hooks = @import("../../app/hooks.zig");
+const paths = @import("../../app/paths.zig");
 const tasks = @import("../../app/tasks.zig");
 const w32 = @import("../../platform/win32.zig");
 
@@ -48,7 +51,8 @@ const UpdateTask = struct {
 };
 
 /// Minimum interval between update checks, in seconds. The check
-/// timestamp is persisted in %LOCALAPPDATA%/ghostty/update_check_at.
+/// timestamp is persisted in app/paths.updateCheckPath
+/// (%LOCALAPPDATA%\ghostty\update_check_at unless WMUX_STATE_DIR is set).
 const UPDATE_CHECK_INTERVAL_SECS: i64 = 60 * 60; // 1 hour
 
 /// Start a background thread to check for updates. Skips the actual
@@ -75,9 +79,7 @@ pub fn startUpdateCheck(self: *App) void {
 /// the way out so a successful return throttles the next call.
 fn shouldRunUpdateCheck(self: *App) bool {
     const alloc = self.core_app.alloc;
-    const dir = std.process.getEnvVarOwned(alloc, "LOCALAPPDATA") catch return true;
-    defer alloc.free(dir);
-    const path = std.fs.path.join(alloc, &.{ dir, "ghostty", "update_check_at" }) catch return true;
+    const path = paths.updateCheckPath(alloc, &self.runtime_env) catch return true;
     defer alloc.free(path);
 
     const now = std.time.timestamp();
@@ -250,26 +252,16 @@ fn fetchLatestVersion() !VersionResult {
 /// event): claims the update balloon's uID; a click opens the GitHub
 /// releases page. (Moved from App.msgWndProc.)
 pub fn onTrayCallback(self: *App, wparam: usize, lparam: isize) ?isize {
-    _ = self;
     if (wparam != NOTIF_UPDATE_UID) return null;
     const event: u32 = @intCast(lparam & 0xFFFF);
-    if (event == w32.NIN_BALLOONUSERCLICK) openReleasesPage();
+    if (event == w32.NIN_BALLOONUSERCLICK) openReleasesPage(self);
     return 0;
 }
 
-/// A click on the update balloon opens the GitHub releases page.
-fn openReleasesPage() void {
-    var url_buf: [256]u16 = undefined;
-    const url_len = std.unicode.utf8ToUtf16Le(&url_buf, RELEASES_URL) catch return;
-    url_buf[url_len] = 0;
-    _ = w32.ShellExecuteW(
-        null,
-        std.unicode.utf8ToUtf16LeStringLiteral("open"),
-        @ptrCast(&url_buf),
-        null,
-        null,
-        w32.SW_SHOW,
-    );
+/// A click on the update balloon opens the GitHub releases page
+/// (through app/dialogs.zig: recorded, not opened, in test mode).
+fn openReleasesPage(self: *App) void {
+    _ = dialogs.openExternal(self, "update_page", "open", RELEASES_URL);
 }
 
 /// app.timers callback: the update balloon's 10 s cleanup elapsed; remove

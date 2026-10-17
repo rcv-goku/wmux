@@ -41,6 +41,26 @@ pub const RuntimeEnv = struct {
     /// notification that test mode does not show.
     test_toast_sink: ?[]const u8 = null,
 
+    /// WMUX_TEST_EXTERNAL_SINK: file receiving one JSON line per external
+    /// launch (ShellExecute: open_url, the update page, ...) that test mode
+    /// does not perform (app/dialogs.zig, Appendix G / AF-16).
+    test_external_sink: ?[]const u8 = null,
+
+    /// WMUX_TEST_SOUND_SINK: file receiving one JSON line per sound
+    /// (MessageBeep, PlaySound) that test mode does not play
+    /// (app/dialogs.zig).
+    test_sound_sink: ?[]const u8 = null,
+
+    /// WMUX_TEST_FILE_DIALOG: what every file dialog answers in test mode
+    /// (app/dialogs.zig): a path is returned as the selection; unset,
+    /// empty or "cancel" cancels the dialog.
+    test_file_dialog: ?[]const u8 = null,
+
+    /// WMUX_LOG: the lowest level written to STATE\logs\wmux.log
+    /// (app/logger.zig): "debug", "info" (default), "warn", "error" or
+    /// "off" (no log file).
+    log_level: LogLevel = .info,
+
     /// Parse the process environment. Never fails: an unreadable
     /// environment yields the defaults.
     pub fn load(alloc: Allocator) RuntimeEnv {
@@ -61,6 +81,10 @@ pub const RuntimeEnv = struct {
             .state_dir = dupePath(alloc, env.get("WMUX_STATE_DIR")),
             .config_dir = dupePath(alloc, env.get("WMUX_CONFIG_DIR")),
             .test_toast_sink = dupePath(alloc, env.get("WMUX_TEST_TOAST_SINK")),
+            .test_external_sink = dupePath(alloc, env.get("WMUX_TEST_EXTERNAL_SINK")),
+            .test_sound_sink = dupePath(alloc, env.get("WMUX_TEST_SOUND_SINK")),
+            .test_file_dialog = dupePath(alloc, env.get("WMUX_TEST_FILE_DIALOG")),
+            .log_level = LogLevel.parse(env.get("WMUX_LOG")),
         };
     }
 
@@ -68,7 +92,29 @@ pub const RuntimeEnv = struct {
         if (self.state_dir) |v| alloc.free(v);
         if (self.config_dir) |v| alloc.free(v);
         if (self.test_toast_sink) |v| alloc.free(v);
+        if (self.test_external_sink) |v| alloc.free(v);
+        if (self.test_sound_sink) |v| alloc.free(v);
+        if (self.test_file_dialog) |v| alloc.free(v);
         self.* = .{};
+    }
+
+    /// Whether the window placement (`window-state`) may be read and
+    /// written: never in WMUX_TEST_HIDDEN (the hidden geometry is fixed),
+    /// and in test mode only with WMUX_TEST_SESSION_RESTORE (ADR-12.3).
+    pub fn placementPersistenceAllowed(self: *const RuntimeEnv) bool {
+        if (self.test_hidden) return false;
+        if (self.test_mode) return self.test_session_restore;
+        return true;
+    }
+
+    /// Whether closing a window saves the session layout
+    /// (`session-state.json`): in test mode only with
+    /// WMUX_TEST_SESSION_RESTORE, so a test instance never leaves session
+    /// state behind (ADR-12.3). The explicit `session-save` command is a
+    /// request and is not gated.
+    pub fn sessionSaveOnCloseAllowed(self: *const RuntimeEnv) bool {
+        if (self.test_mode) return self.test_session_restore;
+        return true;
     }
 
     /// Whether restoring the previous session on launch is allowed: never
@@ -80,6 +126,40 @@ pub const RuntimeEnv = struct {
         if (self.disable_session_restore) return false;
         if (self.test_mode) return self.test_session_restore;
         return true;
+    }
+};
+
+/// WMUX_LOG levels, from quietest to most verbose.
+pub const LogLevel = enum(u3) {
+    off,
+    err,
+    warn,
+    info,
+    debug,
+
+    /// "off"/"none", "error"/"err", "warn"/"warning", "info",
+    /// "debug"/"trace" (ASCII case-insensitive, trimmed); anything else,
+    /// including unset, is the default `.info`.
+    pub fn parse(value: ?[]const u8) LogLevel {
+        const raw = value orelse return .info;
+        const v = std.mem.trim(u8, raw, &std.ascii.whitespace);
+        const table = .{
+            .{ "off", LogLevel.off },     .{ "none", LogLevel.off },
+            .{ "error", LogLevel.err },   .{ "err", LogLevel.err },
+            .{ "warn", LogLevel.warn },   .{ "warning", LogLevel.warn },
+            .{ "info", LogLevel.info },   .{ "debug", LogLevel.debug },
+            .{ "trace", LogLevel.debug },
+        };
+        inline for (table) |entry| {
+            if (std.ascii.eqlIgnoreCase(v, entry[0])) return entry[1];
+        }
+        return .info;
+    }
+
+    /// Whether a record of level `record` is written at this threshold.
+    pub fn allows(self: LogLevel, record: LogLevel) bool {
+        if (self == .off or record == .off) return false;
+        return @intFromEnum(record) <= @intFromEnum(self);
     }
 };
 
@@ -157,4 +237,60 @@ test "unit: app: runtime_env session restore gating" {
     try testing.expect(!e.sessionRestoreAllowed());
     e = .{ .disable_session_restore = true };
     try testing.expect(!e.sessionRestoreAllowed());
+}
+
+test "unit: app: runtime_env parses the sink, file dialog and log variables" {
+    const alloc = testing.allocator;
+    var env = std.process.EnvMap.init(alloc);
+    defer env.deinit();
+    try env.put("WMUX_TEST_EXTERNAL_SINK", "C:\\tmp\\external.jsonl");
+    try env.put("WMUX_TEST_SOUND_SINK", " C:\\tmp\\sound.jsonl ");
+    try env.put("WMUX_TEST_FILE_DIALOG", "");
+    try env.put("WMUX_LOG", "Debug");
+
+    var parsed = RuntimeEnv.parse(alloc, &env);
+    defer parsed.deinit(alloc);
+    try testing.expectEqualStrings("C:\\tmp\\external.jsonl", parsed.test_external_sink.?);
+    try testing.expectEqualStrings("C:\\tmp\\sound.jsonl", parsed.test_sound_sink.?);
+    try testing.expect(parsed.test_file_dialog == null); // empty = cancel
+    try testing.expectEqual(LogLevel.debug, parsed.log_level);
+
+    const defaults = RuntimeEnv.parse(alloc, &std.process.EnvMap.init(alloc));
+    try testing.expectEqual(LogLevel.info, defaults.log_level);
+    try testing.expect(defaults.test_external_sink == null);
+}
+
+test "unit: app: runtime_env WMUX_LOG levels" {
+    try testing.expectEqual(LogLevel.info, LogLevel.parse(null));
+    try testing.expectEqual(LogLevel.info, LogLevel.parse("loud"));
+    try testing.expectEqual(LogLevel.off, LogLevel.parse("OFF"));
+    try testing.expectEqual(LogLevel.off, LogLevel.parse("none"));
+    try testing.expectEqual(LogLevel.err, LogLevel.parse("error"));
+    try testing.expectEqual(LogLevel.warn, LogLevel.parse(" warning "));
+    try testing.expectEqual(LogLevel.debug, LogLevel.parse("trace"));
+
+    try testing.expect(LogLevel.info.allows(.err));
+    try testing.expect(LogLevel.info.allows(.info));
+    try testing.expect(!LogLevel.info.allows(.debug));
+    try testing.expect(LogLevel.debug.allows(.debug));
+    try testing.expect(!LogLevel.err.allows(.warn));
+    try testing.expect(!LogLevel.off.allows(.err));
+}
+
+test "unit: app: runtime_env placement and close-time session save gating" {
+    var e: RuntimeEnv = .{};
+    try testing.expect(e.placementPersistenceAllowed());
+    try testing.expect(e.sessionSaveOnCloseAllowed());
+    e.test_mode = true;
+    try testing.expect(!e.placementPersistenceAllowed());
+    try testing.expect(!e.sessionSaveOnCloseAllowed());
+    e.test_session_restore = true;
+    try testing.expect(e.placementPersistenceAllowed());
+    try testing.expect(e.sessionSaveOnCloseAllowed());
+    // Hidden instances never persist placement, even with restore on.
+    e.test_hidden = true;
+    try testing.expect(!e.placementPersistenceAllowed());
+    try testing.expect(e.sessionSaveOnCloseAllowed());
+    e = .{ .test_hidden = true };
+    try testing.expect(!e.placementPersistenceAllowed());
 }

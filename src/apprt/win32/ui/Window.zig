@@ -28,6 +28,7 @@ const SessionState = @import("../features/session/legacy_v2.zig");
 const WindowState = @import("placement_state.zig");
 const SplitTree = @import("../../../datastruct/split_tree.zig").SplitTree;
 const app_foreground = @import("../app/foreground.zig");
+const app_logger = @import("../app/logger.zig");
 const app_paths = @import("../app/paths.zig");
 const contrib = @import("contrib.zig");
 const hooks = @import("../app/hooks.zig");
@@ -410,6 +411,11 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
     // overlay's bound owner pointer.
     PaneButtonsMod.on_click = onPaneButtonClick;
 
+    // STATE\logs\wmux.log (app/logger.zig; idempotent, so only the first
+    // window opens it). TODO(W1-1): start it from App.init, before the
+    // config loads, once the App.zig owner wires it.
+    app_logger.start(app.core_app.alloc, &app.runtime_env);
+
     // Mint the window's handle and create its first workspace before any
     // addTab(). Every init site (App.run, new_window, QuickTerminal.init)
     // flows through here before its first addTab().
@@ -780,6 +786,17 @@ fn onDestroy(self: *Window) void {
     }
 }
 
+/// Add WS_CLIPSIBLINGS to `child` when it is a direct child of `top`
+/// (S7, docs/arch/spikes/S7-d2d-sidebar-child.md): overlapping GL,
+/// WebView2 and D2D siblings must not paint over each other.
+pub fn ensureClipSiblings(top: w32.HWND, child: w32.HWND) void {
+    if (w32.GetParent(child) != top) return;
+    const style = w32.GetWindowLongPtrW(child, w32.GWL_STYLE);
+    const clip: isize = w32.WS_CLIPSIBLINGS;
+    if (style & clip != 0) return;
+    _ = w32.SetWindowLongPtrW(child, w32.GWL_STYLE, style | clip);
+}
+
 /// Window procedure for top-level container HWNDs (GhosttyWindow class).
 /// GWLP_USERDATA stores a *Window pointer.
 pub fn windowWndProc(
@@ -819,6 +836,14 @@ pub fn windowWndProc(
         => return w32.DefWindowProcW(hwnd, msg, wparam, lparam),
         else => {},
     };
+
+    // S7 (AF-10): every direct child of the top-level window clips its
+    // siblings, whoever created it (terminals, browser hosts, the rename
+    // Edit, the D2D sidebar of W1-8). WM_PARENTNOTIFY(WM_CREATE) arrives
+    // before the child's CreateWindowExW returns; it is not consumed.
+    if (msg == w32.WM_PARENTNOTIFY and (wparam & 0xFFFF) == w32.WM_CREATE and lparam != 0) {
+        ensureClipSiblings(hwnd, @ptrFromInt(@as(usize, @bitCast(lparam))));
+    }
 
     // Feature window hooks (ui/contrib.zig, ADR-1.6) see the message
     // first; the first non-null result answers it.
@@ -915,7 +940,11 @@ pub fn windowWndProc(
             window.savePlacement();
             // Persist the session layout (workspaces/tabs/cwds) alongside
             // the window geometry so it can be restored on next launch.
-            SessionState.save(window.app.core_app.alloc, window) catch {};
+            // A test instance leaves no session state behind unless
+            // WMUX_TEST_SESSION_RESTORE asks for it (ADR-12.3).
+            if (window.app.runtime_env.sessionSaveOnCloseAllowed()) {
+                SessionState.save(window.app.core_app.alloc, window) catch {};
+            }
             window.close();
             return 0;
         },

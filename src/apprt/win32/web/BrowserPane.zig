@@ -136,7 +136,8 @@ pub fn create(alloc: Allocator, app: *App, parent: *Window) !*BrowserPane {
         0,
         App.BROWSER_HOST_CLASS_NAME,
         L(""),
-        w32.WS_CHILD,
+        // WS_CLIPSIBLINGS: a direct child of the top-level window (S7).
+        w32.WS_CHILD | w32.WS_CLIPSIBLINGS,
         sr.left,
         sr.top,
         @intCast(@max(sr.right - sr.left, 1)),

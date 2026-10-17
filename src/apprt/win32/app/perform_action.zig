@@ -20,6 +20,7 @@ const SplitTree = @import("../../../datastruct/split_tree.zig").SplitTree;
 const Surface = @import("../Surface.zig");
 const Window = @import("../ui/Window.zig");
 const config_files = @import("../settings/legacy_config_files.zig");
+const dialogs = @import("dialogs.zig");
 const foreground = @import("foreground.zig");
 const input_actions = @import("../input/actions.zig");
 const notifications = @import("../features/notifications/api.zig");
@@ -52,10 +53,10 @@ pub fn perform(
         .toggle_maximize => toggleMaximize(app, target),
         // Close the entire window (all tabs), not just one tab.
         .close_window => if (parentWindow(target)) |w| w.close(),
-        .open_config => config_files.openConfigFile(app),
+        .open_config => openConfig(app),
         .scrollbar => if (rtSurface(target)) |s| s.setScrollbar(value),
         .mouse_shape => if (rtSurface(target)) |s| s.setMouseShape(value),
-        .open_url => openUrl(value),
+        .open_url => openUrl(app, value),
         // The cursor shape change is handled separately by mouse_shape →
         // IDC_HAND. We could show the URL in a status bar or tooltip here
         // in the future.
@@ -254,23 +255,23 @@ fn toggleMaximize(self: *App, target: apprt.Target) void {
     }
 }
 
-fn openUrl(value: apprt.Action.Value(.open_url)) void {
-    // Open a URL using ShellExecuteW — the native Windows way.
-    // internal_os.open() uses std.process.Child which can hit
-    // unreachable on Windows, so we use ShellExecuteW directly.
-    var wbuf: [2048]u16 = undefined;
-    const wlen = std.unicode.utf8ToUtf16Le(&wbuf, value.url) catch return;
-    if (wlen < wbuf.len) {
-        wbuf[wlen] = 0;
-        _ = w32.ShellExecuteW(
-            null,
-            std.unicode.utf8ToUtf16LeStringLiteral("open"),
-            @ptrCast(&wbuf),
-            null,
-            null,
-            w32.SW_SHOW,
-        );
+/// `.open_config`: open the config file in its editor. Test mode never
+/// starts the editor: app/dialogs.zig records the launch in
+/// WMUX_TEST_EXTERNAL_SINK instead.
+fn openConfig(app: *App) void {
+    if (app.runtime_env.test_mode) {
+        _ = dialogs.openExternal(app, "open_config", "open", "ghostty-config");
+        return;
     }
+    config_files.openConfigFile(app);
+}
+
+fn openUrl(app: *App, value: apprt.Action.Value(.open_url)) void {
+    // Open a URL with ShellExecuteW — the native Windows way.
+    // internal_os.open() uses std.process.Child which can hit
+    // unreachable on Windows. app/dialogs.zig owns the call (and records
+    // it in WMUX_TEST_EXTERNAL_SINK instead in test mode).
+    _ = dialogs.openExternal(app, "open_url", "open", value.url);
 }
 
 fn newTab(target: apprt.Target) void {

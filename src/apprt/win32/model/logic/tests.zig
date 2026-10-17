@@ -11,6 +11,7 @@
 
 test {
     _ = @import("arith.zig");
+    _ = @import("display_order.zig");
     _ = @import("handle_registry.zig");
     _ = @import("titles.zig");
 }
