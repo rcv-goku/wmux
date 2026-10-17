@@ -33,6 +33,8 @@ const File = std.fs.File;
 const EnvMap = std.process.EnvMap;
 const apprt = @import("apprt.zig");
 
+const log = std.log.scoped(.command);
+
 /// Function prototype for a function executed /in the child process/ after the
 /// fork, but before exec'ing the command. If the function returns a u8, the
 /// child process will be exited with that error code.
@@ -109,8 +111,11 @@ pseudo_console: if (builtin.os.tag == .windows) ?windows.exp.HPCON else void =
 
 /// Windows: the job object the process is created in (a second
 /// PROC_THREAD_ATTRIBUTE_JOB_LIST attribute next to the pseudo console,
-/// added by W1-3; ARCHITECTURE.md ADR-3.9). Borrowed: the caller keeps it
-/// open. Not used yet.
+/// W1-3; ARCHITECTURE.md ADR-3.9). Borrowed: the caller keeps it open.
+/// Only used with `pseudo_console`. If CreateProcessW fails with the job
+/// (for example a parent job that forbids nesting), the process is
+/// created again without it: the caller identification then falls back
+/// to ancestry and the capability.
 job: Job = no_job,
 
 /// User data that is sent to the callback. Set with setData and getData
@@ -301,84 +306,124 @@ fn startWindows(self: *Command, arena: Allocator) !void {
     // attributes such that the child process only inherits these handles,
     // then set bInheritsHandles below.
 
-    const attribute_list, const stdin, const stdout, const stderr = if (self.pseudo_console) |pseudo_console| b: {
-        var attribute_list_size: usize = undefined;
-        _ = windows.exp.kernel32.InitializeProcThreadAttributeList(
+    // The per-tab job (W1-3, ADR-3.9) goes in a second attribute next to
+    // the pseudo console. The value is read by CreateProcessW, so the
+    // array must live until it returns.
+    const job_list: [1]windows.HANDLE = if (self.job) |j| .{j} else undefined;
+    var use_job = self.job != null and self.pseudo_console != null;
+
+    while (true) {
+        const attribute_list, const stdin, const stdout, const stderr = if (self.pseudo_console) |pseudo_console| b: {
+            const count: windows.DWORD = if (use_job) 2 else 1;
+            var attribute_list_size: usize = undefined;
+            _ = windows.exp.kernel32.InitializeProcThreadAttributeList(
+                null,
+                count,
+                0,
+                &attribute_list_size,
+            );
+
+            const attribute_list_buf = try arena.alloc(u8, attribute_list_size);
+            if (windows.exp.kernel32.InitializeProcThreadAttributeList(
+                attribute_list_buf.ptr,
+                count,
+                0,
+                &attribute_list_size,
+            ) == 0) return windows.unexpectedError(windows.kernel32.GetLastError());
+
+            if (windows.exp.kernel32.UpdateProcThreadAttribute(
+                attribute_list_buf.ptr,
+                0,
+                windows.exp.PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
+                pseudo_console,
+                @sizeOf(windows.exp.HPCON),
+                null,
+                null,
+            ) == 0) return windows.unexpectedError(windows.kernel32.GetLastError());
+
+            if (use_job) {
+                if (windows.exp.kernel32.UpdateProcThreadAttribute(
+                    attribute_list_buf.ptr,
+                    0,
+                    PROC_THREAD_ATTRIBUTE_JOB_LIST,
+                    @ptrCast(@constCast(&job_list)),
+                    @sizeOf(@TypeOf(job_list)),
+                    null,
+                    null,
+                ) == 0) {
+                    log.warn("job list attribute rejected, spawning without the tab job err={}", .{windows.kernel32.GetLastError()});
+                    use_job = false;
+                    continue;
+                }
+            }
+
+            break :b .{ attribute_list_buf.ptr, null, null, null };
+        } else b: {
+            const stdin = if (self.stdin) |f| f.handle else null_fd.?;
+            const stdout = if (self.stdout) |f| f.handle else null_fd.?;
+            const stderr = if (self.stderr) |f| f.handle else null_fd.?;
+            break :b .{ null, stdin, stdout, stderr };
+        };
+
+        var startup_info_ex = windows.exp.STARTUPINFOEX{
+            .StartupInfo = .{
+                .cb = if (attribute_list != null) @sizeOf(windows.exp.STARTUPINFOEX) else @sizeOf(windows.STARTUPINFOW),
+                .hStdError = stderr,
+                .hStdOutput = stdout,
+                .hStdInput = stdin,
+                .dwFlags = windows.STARTF_USESTDHANDLES,
+                .lpReserved = null,
+                .lpDesktop = null,
+                .lpTitle = null,
+                .dwX = 0,
+                .dwY = 0,
+                .dwXSize = 0,
+                .dwYSize = 0,
+                .dwXCountChars = 0,
+                .dwYCountChars = 0,
+                .dwFillAttribute = 0,
+                .wShowWindow = 0,
+                .cbReserved2 = 0,
+                .lpReserved2 = null,
+            },
+            .lpAttributeList = attribute_list,
+        };
+
+        var flags: windows.DWORD = windows.exp.CREATE_UNICODE_ENVIRONMENT;
+        if (attribute_list != null) flags |= windows.exp.EXTENDED_STARTUPINFO_PRESENT;
+
+        var process_information: windows.PROCESS_INFORMATION = undefined;
+        if (windows.exp.kernel32.CreateProcessW(
             null,
-            1,
-            0,
-            &attribute_list_size,
-        );
-
-        const attribute_list_buf = try arena.alloc(u8, attribute_list_size);
-        if (windows.exp.kernel32.InitializeProcThreadAttributeList(
-            attribute_list_buf.ptr,
-            1,
-            0,
-            &attribute_list_size,
-        ) == 0) return windows.unexpectedError(windows.kernel32.GetLastError());
-
-        if (windows.exp.kernel32.UpdateProcThreadAttribute(
-            attribute_list_buf.ptr,
-            0,
-            windows.exp.PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
-            pseudo_console,
-            @sizeOf(windows.exp.HPCON),
+            command_line_w.ptr,
             null,
             null,
-        ) == 0) return windows.unexpectedError(windows.kernel32.GetLastError());
+            windows.TRUE,
+            flags,
+            if (env_w) |w| w.ptr else null,
+            if (cwd_w) |w| w.ptr else null,
+            @ptrCast(&startup_info_ex.StartupInfo),
+            &process_information,
+        ) == 0) {
+            const err = windows.kernel32.GetLastError();
+            if (use_job) {
+                // A parent job that forbids nesting (or a stale handle)
+                // must not cost the user the terminal.
+                log.warn("spawn in the tab job failed, retrying without it err={}", .{err});
+                use_job = false;
+                continue;
+            }
+            return windows.unexpectedError(err);
+        }
 
-        break :b .{ attribute_list_buf.ptr, null, null, null };
-    } else b: {
-        const stdin = if (self.stdin) |f| f.handle else null_fd.?;
-        const stdout = if (self.stdout) |f| f.handle else null_fd.?;
-        const stderr = if (self.stderr) |f| f.handle else null_fd.?;
-        break :b .{ null, stdin, stdout, stderr };
-    };
-
-    var startup_info_ex = windows.exp.STARTUPINFOEX{
-        .StartupInfo = .{
-            .cb = if (attribute_list != null) @sizeOf(windows.exp.STARTUPINFOEX) else @sizeOf(windows.STARTUPINFOW),
-            .hStdError = stderr,
-            .hStdOutput = stdout,
-            .hStdInput = stdin,
-            .dwFlags = windows.STARTF_USESTDHANDLES,
-            .lpReserved = null,
-            .lpDesktop = null,
-            .lpTitle = null,
-            .dwX = 0,
-            .dwY = 0,
-            .dwXSize = 0,
-            .dwYSize = 0,
-            .dwXCountChars = 0,
-            .dwYCountChars = 0,
-            .dwFillAttribute = 0,
-            .wShowWindow = 0,
-            .cbReserved2 = 0,
-            .lpReserved2 = null,
-        },
-        .lpAttributeList = attribute_list,
-    };
-
-    var flags: windows.DWORD = windows.exp.CREATE_UNICODE_ENVIRONMENT;
-    if (attribute_list != null) flags |= windows.exp.EXTENDED_STARTUPINFO_PRESENT;
-
-    var process_information: windows.PROCESS_INFORMATION = undefined;
-    if (windows.exp.kernel32.CreateProcessW(
-        null,
-        command_line_w.ptr,
-        null,
-        null,
-        windows.TRUE,
-        flags,
-        if (env_w) |w| w.ptr else null,
-        if (cwd_w) |w| w.ptr else null,
-        @ptrCast(&startup_info_ex.StartupInfo),
-        &process_information,
-    ) == 0) return windows.unexpectedError(windows.kernel32.GetLastError());
-
-    self.pid = process_information.hProcess;
+        self.pid = process_information.hProcess;
+        return;
+    }
 }
+
+/// `ProcThreadAttributeValue(ProcThreadAttributeJobList, FALSE, TRUE,
+/// FALSE)` (winbase.h): the jobs a new process starts in (W1-3).
+const PROC_THREAD_ATTRIBUTE_JOB_LIST: usize = 0x0002_000D;
 
 fn setupFd(src: File.Handle, target: i32) !void {
     switch (builtin.os.tag) {
