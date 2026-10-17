@@ -570,7 +570,7 @@ Add-Step 'ownership' 'scripts/check-ownership.ps1' @('local', 'merge', 'full') {
     return "pwsh scripts/check-ownership.ps1 -Wp $($wps[0]) -Base $diffBase"
 } {
     if (-not $wps.Count) { return (New-StepResult SKIP 'no WP id (pass -Wp, or run on a wp/<id>-<slug> branch)') }
-    $refs = @(if ($isBatch) { Get-BatchRefs } else { 'HEAD' })
+    $refs = if ($isBatch) { Get-BatchRefs } else { 'HEAD' }   # Get-BatchRefs returns one array object
     $fails = @(); $missing = @(); $warnTotal = 0
     for ($i = 0; $i -lt $wps.Count; $i++) {
         $id = $wps[$i]
