@@ -336,6 +336,9 @@ pub fn run(self: *Connection) void {
     if (w32.GetNamedPipeClientProcessId(self.pipe, &pid) != 0) self.client_pid = pid;
 
     const action: ConnectAction = if (server.handler.on_connect) |f| f(server.handler.ctx, self) else .authorized;
+    // Paired with every on_connect, also when the connection is rejected
+    // below, so state the dispatcher attached in on_connect is released.
+    defer if (server.handler.on_disconnect) |f| f(server.handler.ctx, self);
     switch (action) {
         .authorized => self.authorized.store(true, .release),
         .needs_auth => {
@@ -347,7 +350,6 @@ pub fn run(self: *Connection) void {
         .reject => return,
     }
     defer if (self.preauth) server.gate.endPreauth();
-    defer if (server.handler.on_disconnect) |f| f(server.handler.ctx, self);
     self.serve();
 }
 

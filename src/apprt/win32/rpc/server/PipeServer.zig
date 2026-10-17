@@ -81,7 +81,8 @@ pub const Handler = struct {
     dispatch: *const fn (ctx: ?*anyopaque, conn: *Connection, req: *Request) void,
     /// Decides how a new connection is served (default: authorized).
     on_connect: ?*const fn (ctx: ?*anyopaque, conn: *Connection) ConnectAction = null,
-    /// Called before the connection's slot is freed.
+    /// Called once after every `on_connect` (also when the connection is
+    /// then rejected or closed without reading), before its slot is freed.
     on_disconnect: ?*const fn (ctx: ?*anyopaque, conn: *Connection) void = null,
 };
 

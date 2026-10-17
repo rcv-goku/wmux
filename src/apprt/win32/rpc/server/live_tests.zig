@@ -54,6 +54,10 @@ const TestHandler = struct {
     work: std.ArrayList(Work) = .empty,
     quit: bool = false,
     worker: ?std.Thread = null,
+    /// What `on_connect` answers, and how often it and `on_disconnect` ran.
+    connect_action: Connection.ConnectAction = .authorized,
+    connects: std.atomic.Value(u32) = .init(0),
+    disconnects: std.atomic.Value(u32) = .init(0),
 
     const Work = struct { token: Token, id: std.json.Value, id_buf: [64]u8 };
 
@@ -73,7 +77,18 @@ const TestHandler = struct {
     }
 
     fn handler(self: *TestHandler) PipeServer.Handler {
-        return .{ .ctx = self, .dispatch = dispatch };
+        return .{ .ctx = self, .dispatch = dispatch, .on_connect = onConnect, .on_disconnect = onDisconnect };
+    }
+
+    fn onConnect(ctx: ?*anyopaque, _: *Connection) Connection.ConnectAction {
+        const self: *TestHandler = @ptrCast(@alignCast(ctx.?));
+        _ = self.connects.fetchAdd(1, .acq_rel);
+        return self.connect_action;
+    }
+
+    fn onDisconnect(ctx: ?*anyopaque, _: *Connection) void {
+        const self: *TestHandler = @ptrCast(@alignCast(ctx.?));
+        _ = self.disconnects.fetchAdd(1, .acq_rel);
     }
 
     fn dispatch(ctx: ?*anyopaque, conn: *Connection, req: *PipeServer.Request) void {
@@ -183,8 +198,13 @@ const Fixture = struct {
 
     /// In place: the handler's address is the server's callback context.
     fn init(self: *Fixture, config: PipeServer.Config) !void {
+        return self.initAction(config, .authorized);
+    }
+
+    fn initAction(self: *Fixture, config: PipeServer.Config, action: Connection.ConnectAction) !void {
         try self.handler.init(testing.allocator);
         errdefer self.handler.deinit();
+        self.handler.connect_action = action;
         self.name = testPipeName(&self.name_buf);
         var c = config;
         c.name = self.name;
@@ -321,6 +341,32 @@ test "unit: rpc: live: pool saturation and pending expiry answer overloaded" {
     var c5 = try f.connect();
     defer c5.close();
     try expectContains(try request(&c5, "{\"id\":5,\"method\":\"test.echo\"}"), "\"id\":5,\"ok\":true");
+}
+
+test "unit: rpc: live: pre-authorization caps readers, times out idle peers and pairs every on_connect with on_disconnect" {
+    if (!is_windows) return error.SkipZigTest;
+    var f: Fixture = undefined;
+    try f.initAction(.{ .name = "", .limits = .{ .max_preauth = 1 }, .preauth_read_ms = 500 }, .needs_auth);
+    defer f.deinit();
+    var c1 = try f.connect();
+    defer c1.close();
+    try expectContains(try request(&c1, "{\"id\":1,\"method\":\"test.echo\"}"), "\"ok\":true");
+    // c1 holds the only pre-authorization slot.
+    var c2 = try f.connect();
+    defer c2.close();
+    const sat = try c2.readLine(io_timeout_ms);
+    try expectContains(sat, "\"reason\":\"preauthorization_saturated\"");
+    try testing.expectError(error.Closed, c2.readLine(io_timeout_ms));
+    // c1 sends nothing more: its read window answers timeout and closes.
+    const t = try c1.readLine(io_timeout_ms);
+    try expectContains(t, "\"code\":\"timeout\"");
+    try expectContains(t, "\"stage\":\"preauthorization\"");
+    try testing.expectError(error.Closed, c1.readLine(io_timeout_ms));
+    // on_disconnect runs before the live count drops.
+    try waitFor(f.server, liveIsZero);
+    try testing.expectEqual(@as(u32, 0), f.server.counts().preauth);
+    try testing.expectEqual(@as(u32, 2), f.handler.connects.load(.acquire));
+    try testing.expectEqual(@as(u32, 2), f.handler.disconnects.load(.acquire));
 }
 
 test "unit: rpc: live: a waiting client is admitted when a slot frees" {
