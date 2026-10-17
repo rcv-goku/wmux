@@ -2379,11 +2379,11 @@
    "wave": 11,
    "arch_id": "W1-7a",
    "arch_wave": "W1",
-   "status": "planned",
+   "status": "done",
    "executor": "plan",
    "est_size": "L",
    "units": 8.2,
-   "summary": "ADR-9.1-9.4 and 9.6/9.8 using the PB-session schema/migration logic. Model events set a dirty flag; an 8 s app.timers tick serializes on the UI thread, fingerprints without volatile fields and hands bytes to one coalescing writer thread (tmp + FlushFileBuffers + ReplaceFileW with .bak). Full save on quit, close_all_windows, last WM_CLOSE and WM_QUERYENDSESSION/WM_ENDSESSION through broadcast-window app_hooks (ShutdownBlockReasonCreate), per-window WM_CLOSE overwrites removed, RegisterApplicationRestart(\"--restore\"). Restore on launch with session.restoring crash guard, hidden window creation, clamped SetWindowPlacement, adopt()ed handles, feature ext restore, staggered terminal spawn; skipped by WMUX/CMUX_DISABLE_SESSION_RESTORE, test mode without WMUX_TEST_SESSION_RESTORE and explicit launch intents. .pwd (OSC 7, OSC 9;9) updates Tab.cwd through meta.api.onPwd; restore uses tab cwd -> workspace cwd -> USERPROFILE. One-time migration of %LOCALAPPDATA%/ghostty/session-state.json; features/session/legacy_v2.zig becomes the read-only v2 reader used by migrate.zig and is never written again (resolves the old legacy_v2 contradiction).",
+   "summary": "ADR-9.1-9.4 and 9.6/9.8 using the PB-session schema/migration logic. Model events set a dirty flag; an 8 s app.timers tick serializes on the UI thread, fingerprints without volatile fields and hands bytes to one coalescing writer thread (tmp + FlushFileBuffers + ReplaceFileW with .bak). Full save on quit, close_all_windows, last WM_CLOSE and WM_QUERYENDSESSION/WM_ENDSESSION through broadcast-window app_hooks (ShutdownBlockReasonCreate), per-window WM_CLOSE overwrites removed, RegisterApplicationRestart(\"--restore\"). Restore on launch with session.restoring crash guard, hidden window creation, clamped SetWindowPlacement, adopt()ed handles, feature ext restore, staggered terminal spawn; skipped by WMUX/CMUX_DISABLE_SESSION_RESTORE, test mode without WMUX_TEST_SESSION_RESTORE and explicit launch intents. .pwd (OSC 7, OSC 9;9) updates Tab.cwd through meta.api.onPwd; restore uses tab cwd -> workspace cwd -> USERPROFILE. One-time migration of %LOCALAPPDATA%/ghostty/session-state.json; features/session/legacy_v2.zig becomes the read-only v2 reader used by migrate.zig and is never written again (resolves the old legacy_v2 contradiction). Merged 76e7f18 (2026-10-17) on a green gate -Merge.",
    "features": [
     "persistence-session-snapshot-autosave",
     "persistence-session-restore-on-launch",
