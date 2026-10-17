@@ -1171,7 +1171,13 @@ namespace WmuxTestHarness
         /// One synchronous foreground sample; public so self-tests can drive the detector.
         public static bool SampleOnce()
         {
-            IntPtr fg = Native.ForegroundWindow();
+            return SampleWindow(Native.ForegroundWindow());
+        }
+
+        /// Evaluates fg as if it were the foreground window (the sampler's decision without a
+        /// real focus change; self-tests use it so they never take focus from the user).
+        public static bool SampleWindow(IntPtr fg)
+        {
             Interlocked.Increment(ref _samples);
             if (fg == IntPtr.Zero)
             {
