@@ -2635,7 +2635,12 @@ function Save-WmuxFailureSnapshot {
         if ($hung.Count -gt 0) {
             $notes.Add("screenshot skipped: $($hung.Count) top-level window(s) of pid $($Instance.Pid) are not responding (IsHungAppWindow)")
         } elseif ($Instance.Protocol -eq 'v2') {
-            try { $null = Get-WmuxScreenshot $Instance -Path (Join-Path $Instance.ArtifactsDir 'failure.png') } catch { $notes.Add("screenshot failed: $($_.Exception.Message)") }
+            # Straight RPC with a 5 s limit (Get-WmuxScreenshot would wait the default 15 s); the app
+            # writes the PNG to the given path itself.
+            try {
+                $null = New-Item -ItemType Directory -Force -Path $Instance.ArtifactsDir
+                $null = Invoke-WmuxRpc $Instance 'wmux.debug.window.screenshot' ([ordered]@{ path = (Join-Path $Instance.ArtifactsDir 'failure.png') }) -TimeoutSec 5
+            } catch { $notes.Add("screenshot failed: $($_.Exception.Message)") }
         } else {
             try { $null = Save-WmuxWindowCapture -Instance $Instance -Path (Join-Path $Instance.ArtifactsDir 'failure.png') -TimeoutMs 5000 } catch { $notes.Add("screenshot failed: $($_.Exception.Message)") }
         }
