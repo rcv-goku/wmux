@@ -219,6 +219,19 @@ pub const gui = struct {
         return true;
     }
 
+    /// Before an in-process `+action`: a GUI-subsystem wmux.exe started by
+    /// cli\cmux.exe in a console (`cmux +version`) inherits console handles
+    /// without being attached to that console; attach to the parent's so the
+    /// output reaches it. Missing or redirected handles change nothing (an
+    /// interactive cmd still gets no output from the GUI binary, as before).
+    pub fn attachConsoleForAction() void {
+        if (builtin.os.tag != .windows) return;
+        if (GetConsoleWindow() != null) return;
+        const h = stdHandle(w.STD_OUTPUT_HANDLE) orelse return;
+        if (GetFileType(h) != FILE_TYPE_CHAR) return;
+        _ = AttachConsole(ATTACH_PARENT_PROCESS);
+    }
+
     fn fail(comptime fmt: []const u8, a: anytype) u8 {
         var buf: [512]u8 = undefined;
         var fw = std.fs.File.stderr().writer(&buf);

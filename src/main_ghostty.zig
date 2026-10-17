@@ -75,6 +75,9 @@ pub fn main() !MainReturn {
 
     // Execute our action if we have one
     if (state.action) |action| {
+        if (comptime builtin.os.tag == .windows and build_config.app_runtime == .win32) {
+            cli_relay.gui.attachConsoleForAction();
+        }
         std.log.info("executing CLI action={}", .{action});
         posix.exit(action.run(alloc) catch |err| err: {
             std.log.err("CLI action failed error={}", .{err});
