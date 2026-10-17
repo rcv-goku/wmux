@@ -11,12 +11,11 @@
 //! messages are cmux's (Appendix B); wmux-only methods are
 //! `wmux.<domain>.<verb>` (G2).
 //!
-//! Until the v2 server exists (W1-1a) a `Ctx` records its single reply in
-//! `reply` (G5: exactly one `ok`, `okRaw`, `fail` or `deferReply`); the
-//! dispatcher then encodes it into the cmux envelope. The resolve helpers
-//! resolve explicit selectors through the model's handle registry; W1-1
-//! adds the caller context and active-window fallback of ADR-2.6
-//! (`rpc/router.zig`).
+//! A `Ctx` records its single reply in `reply` (G5: exactly one `ok`,
+//! `okRaw`, `fail` or `deferReply`); the dispatcher (rpc/dispatch.zig,
+//! W1-1a) then encodes it into the cmux envelope (rpc/reply.zig). The
+//! resolve helpers route through rpc/router.zig (ADR-2.6: explicit
+//! selectors, then the caller context, then the active window).
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -28,7 +27,8 @@ const Tab = @import("../model/Tab.zig");
 const Window = @import("../ui/Window.zig");
 const Workspace = @import("../model/Workspace.zig");
 const legacy_json = @import("compat/legacy_json.zig");
-const model_registry = @import("../model/registry.zig");
+const reply_mod = @import("reply.zig");
+const router = @import("router.zig");
 
 pub const ErrorCode = proto.errors.Code;
 pub const Selectors = proto.selectors.Selectors;
@@ -149,51 +149,40 @@ pub const Ctx = struct {
         ) catch self.fail(.invalid_params, ErrorCode.invalid_params.defaultMessage(), null);
     }
 
-    /// The window an explicit selector names (window_id, or the window of
-    /// the workspace/pane/surface selected). Fails closed with `not_found`.
+    /// The routing selectors of the request (`window_id`, `group_id`,
+    /// `workspace_id`, `surface_id`/`terminal_id`/`tab_id`, `pane_id`),
+    /// parsed from `raw_params`. Non-canonical spellings, blank or
+    /// malformed values and refs of another kind fail (fail closed).
+    pub fn selectors(self: *Ctx) Error!Selectors {
+        var failure: proto.selectors.Failure = undefined;
+        return proto.selectors.parse(self.arena, &self.raw_params, &failure) catch |err| switch (err) {
+            error.OutOfMemory => self.fail(.internal_error, "Out of memory", null),
+            error.Rejected => self.fail(failure.code, failure.message, .{ .selector = failure.key }),
+        };
+    }
+
+    /// The target window (ADR-2.6: explicit selectors in precedence order,
+    /// then the caller context, then the active window). An explicit
+    /// selector that does not resolve fails with `not_found`.
     pub fn resolveWindow(self: *Ctx, sel: Selectors) Error!*Window {
-        const ws = self.selectedWorkspace(sel) catch |err| return err;
-        if (ws) |w| return w.window;
-        if (sel.window) |h| {
-            if (model_registry.resolveWindow(self.app, h)) |w| return w;
-            return self.notFound(.window, "window_id");
-        }
-        return self.noSelector();
+        return router.resolveWindow(self, sel);
     }
 
-    /// The workspace an explicit selector names (workspace_id, or the
-    /// workspace of the pane/surface selected; an index counts in the
-    /// selected window).
+    /// The target workspace; an index is the display position in the
+    /// selected (or caller's, or active) window (ADR-2.4).
     pub fn resolveWorkspace(self: *Ctx, sel: Selectors) Error!*Workspace {
-        if (try self.selectedWorkspace(sel)) |ws| return ws;
-        return self.noSelector();
+        return router.resolveWorkspace(self, sel);
     }
 
-    /// The pane an explicit selector names (pane_id, or the pane of the
-    /// surface selected; an index counts in the selected workspace).
+    /// The target pane; an index counts in the resolved workspace.
     pub fn resolvePane(self: *Ctx, sel: Selectors) Error!*Pane {
-        if (sel.surface) |_| {
-            const tab = try self.resolveTab(sel);
-            return tab.pane orelse self.notFound(.surface, "surface_id");
-        }
-        const h = sel.pane orelse return self.noSelector();
-        const ws: ?*Workspace = if (sel.workspace != null or sel.window != null) try self.resolveWorkspace(sel) else null;
-        if (model_registry.resolvePane(self.app, ws, h)) |p| return p;
-        return self.notFound(.pane, "pane_id");
+        return router.resolvePane(self, sel);
     }
 
-    /// The surface (tab) an explicit selector names (surface_id; an index
-    /// counts in the selected pane, else the selected workspace).
+    /// The target surface (tab); an index counts in the selected pane, else
+    /// the resolved workspace.
     pub fn resolveTab(self: *Ctx, sel: Selectors) Error!*Tab {
-        const h = sel.surface orelse return self.noSelector();
-        var scope: model_registry.SurfaceScope = .none;
-        if (sel.pane != null) {
-            scope = .{ .pane = try self.resolvePane(.{ .window = sel.window, .workspace = sel.workspace, .pane = sel.pane }) };
-        } else if (sel.workspace != null or sel.window != null) {
-            scope = .{ .workspace = try self.resolveWorkspace(.{ .window = sel.window, .workspace = sel.workspace }) };
-        }
-        if (model_registry.resolveSurface(self.app, scope, h)) |t| return t;
-        return self.notFound(.surface, "surface_id");
+        return router.resolveTab(self, sel);
     }
 
     /// Reply `{"ok":true,"result":<value>}`.
@@ -226,42 +215,15 @@ pub const Ctx = struct {
         return error.RpcFailed;
     }
 
-    /// Promise exactly one later completion through the returned token.
+    /// Promise exactly one later completion through the returned token:
+    /// `rpc/reply.zig` `complete`, `completeRaw` or `completeError`, from
+    /// any thread. The request counts as running for its deadline (a
+    /// timeout then says `retryable:false`).
     pub fn deferReply(self: *Ctx) Deferred {
         std.debug.assert(self.reply == .none);
         self.reply = .deferred;
+        reply_mod.deferStart(self.deferred_id, self.id);
         return self.deferred_id;
-    }
-
-    /// The workspace selected by workspace_id, or by pane_id/surface_id
-    /// (their workspace); null when none of them is present.
-    fn selectedWorkspace(self: *Ctx, sel: Selectors) Error!?*Workspace {
-        if (sel.workspace) |h| {
-            const window: ?*Window = if (sel.window) |wh|
-                model_registry.resolveWindow(self.app, wh) orelse return self.notFound(.window, "window_id")
-            else
-                null;
-            if (model_registry.resolveWorkspace(self.app, window, h)) |ws| return ws;
-            return self.notFound(.workspace, "workspace_id");
-        }
-        if (sel.surface) |_| {
-            const tab = try self.resolveTab(.{ .surface = sel.surface });
-            const pane = tab.pane orelse return self.notFound(.surface, "surface_id");
-            return pane.workspace orelse self.notFound(.surface, "surface_id");
-        }
-        if (sel.pane) |h| {
-            const pane = model_registry.resolvePane(self.app, null, h) orelse return self.notFound(.pane, "pane_id");
-            return pane.workspace orelse self.notFound(.pane, "pane_id");
-        }
-        return null;
-    }
-
-    fn notFound(self: *Ctx, kind: proto.handles.Kind, key: []const u8) Error {
-        return self.fail(.not_found, proto.errors.notFoundMessage(kind), .{ .selector = key });
-    }
-
-    fn noSelector(self: *Ctx) Error {
-        return self.fail(.not_found, proto.errors.msg.no_focused_surface, null);
     }
 };
 

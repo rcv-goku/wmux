@@ -3,12 +3,14 @@
 //! declares in its `features/<id>/mod.zig`:
 //!
 //!     pub const rpc_methods = ...;      // []const rpc.Method       → all_methods, by_name
+//!     pub const debug_methods = ...;    // []const rpc.Method, test_only (features/<id>/debug.zig, AF-14) → all_methods
 //!     pub const legacy_commands = ...;  // []const rpc.LegacyCommand → legacy_commands
 //!     pub const text_verbs = ...;       // []const rpc.TextVerb      → text_verbs
 //!
 //! Comptime checks (`@compileError` naming the offender): no duplicate
 //! method name, legacy command or text verb (verbs case-insensitively);
-//! no empty name; `test_only` methods are `wmux.debug.*`; every legacy
+//! no empty name; `test_only` methods are `wmux.debug.*` and every
+//! `debug_methods` entry is `test_only`; every legacy
 //! command names a `legacy_json.Command` and every such command has
 //! exactly one handler (the guarantee the old exhaustive switch in
 //! `App.handleIpcRequest` gave). No codegen, no runtime registration:
@@ -27,11 +29,13 @@ pub fn Registry(comptime modules: anytype) type {
     return struct {
         const Self = @This();
 
-        const methods_array = collect(types.Method, modules, "rpc_methods");
+        const debug_array = collect(types.Method, modules, "debug_methods");
+        const methods_array = collect(types.Method, modules, "rpc_methods") ++ debug_array;
         const legacy_array = collect(types.LegacyCommand, modules, "legacy_commands");
         const verbs_array = collect(types.TextVerb, modules, "text_verbs");
 
-        /// Every v2 method, in manifest order.
+        /// Every v2 method: the features' `rpc_methods` in manifest order,
+        /// then their `debug_methods` (test hooks, AF-14) in manifest order.
         pub const all_methods: []const types.Method = &methods_array;
 
         /// Every legacy wmux-v1 JSON command, in manifest order.
@@ -56,6 +60,9 @@ pub fn Registry(comptime modules: anytype) type {
         comptime {
             @setEvalBranchQuota(1_000_000);
             for (methods_array) |m| checkMethod(m);
+            for (debug_array) |m| {
+                if (!m.test_only) @compileError("rpc/registry.zig: debug_methods entry '" ++ m.name ++ "' must be test_only (AF-14)");
+            }
             if (firstDuplicate(namesOf(types.Method, &methods_array, "name"), false)) |dup|
                 @compileError("rpc/registry.zig: duplicate rpc method '" ++ dup ++ "' in the features' rpc_methods");
             for (legacy_array) |c| {
@@ -296,4 +303,24 @@ test "unit: rpc: registry duplicate detection names the duplicate" {
         if (firstDuplicate(&.{ "ping", "PING" }, true) == null) @compileError("case-insensitive duplicate missed");
         if (firstDuplicate(&.{}, false) != null) @compileError("empty list has no duplicate");
     }
+}
+
+const ModD = struct {
+    pub const id = "d";
+    pub const rpc_methods = [_]types.Method{
+        .{ .name = "wmux.d.plain", .handler = TestHandlers.ping },
+    };
+    pub const debug_methods = [_]types.Method{
+        .{ .name = "wmux.debug.d.hook", .handler = TestHandlers.ping, .test_only = true },
+    };
+};
+
+test "unit: rpc: registry appends every module's debug_methods after the rpc_methods" {
+    const R = Registry(.{ ModD, ModA });
+    try testing.expectEqual(@as(usize, 4), R.all_methods.len);
+    try testing.expectEqualStrings("wmux.d.plain", R.all_methods[0].name);
+    try testing.expectEqualStrings("system.ping", R.all_methods[1].name);
+    try testing.expectEqualStrings("wmux.a.fail", R.all_methods[2].name);
+    try testing.expectEqualStrings("wmux.debug.d.hook", R.all_methods[3].name);
+    try testing.expect(R.method("wmux.debug.d.hook").?.test_only);
 }
