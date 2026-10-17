@@ -9,6 +9,9 @@ on branches `wp/cf-*`; their round follows from the integration bases `cfleet/ba
 `cfleet/base-r3` (branches, not work packages). W0-ST refreshes this file with the plan statuses at the
 end of W0.
 
+Refreshed by W0-ST part 2 on 2026-10-17 from `git log --merges --first-parent master` at `9538cf4`: every W0 work
+package is merged and `done` in the plan; section (b) has no live branch left.
+
 ## (a) Merged branches
 
 Dates are commit dates (CDT, UTC-5). A branch merged twice was merged again after review fixes.
@@ -65,6 +68,15 @@ Dates are commit dates (CDT, UTC-5). A branch merged twice was merged again afte
 | `d08f63b` | 2026-10-16 14:36 | `wp/cf-remote` | none (ahead of plan) | none | merged, no WP | external:cfleet-fanout-r3 |
 | `dd3fc4c` | 2026-10-16 14:41 | `wp/cf-cli-misc` | none (ahead of plan) | none | merged, no WP | external:cfleet-fanout-r3 |
 | `fb31ab1` | 2026-10-16 17:57 | `wp/W0-A3-skeleton` | W0-A3 | WP-03-registries-prewiring | done | external:wave0-core-lane |
+| `1152de0` | 2026-10-16 23:02 | `wp/cf-platform` | PB-platform | WP-02-pb-platform | done | external:cfleet-fanout-r4 |
+| `d9eb6c2` | 2026-10-16 23:11 | `wp/W0-R-reconcile` | W0-R | WP-01-reconcile-streams | done | integrator |
+| `254a205` | 2026-10-16 23:16 | `wp/cf-webharness` | PB-web-harness | WP-02-pb-web-harness | done | external:cfleet-fanout-r4 |
+| `304cf53` | 2026-10-16 23:27 | `wp/cf-rpc` | W1-1a-t | WP-02-rpc-transport | done | external:cfleet-fanout-r4 |
+| `0106f4f` | 2026-10-17 00:29 | `wp/W0-ST-flakes` | W0-ST (part 1) | WP-09-w0-stabilization | done | external:wave0-local-lane |
+| `319510c` | 2026-10-17 00:55 | `wp/W0-C2-tooling-gates` | W0-C2 | WP-02-tooling-gates | done | external:wave0-local-lane |
+| `b47fc46` | 2026-10-17 01:22 | `wp/W0-B2-harness-hardening` | W0-B2 | WP-02-harness-hardening | done | external:wave0-local-lane |
+| `9538cf4` | 2026-10-17 03:08 | `wp/W0-A4-spike-foldins` | W0-A4 | WP-04-spike-foldins-isolation | done | external:wave0-local-lane |
+| (part 2) | 2026-10-17 | `wp/W0-ST-stabilize` | W0-ST (part 2) | WP-09-w0-stabilization | done (status set before its merge; the wave-0 tag follows the merge) | integrator |
 
 Direct commits on master between merges (no branch): `c7598b0` (test-fast runs the gfx logic tests,
 `[W0-K]`) and `12abd0c`, `59ba772` (smoke-suite fixes, `[W0-A1]`).
@@ -87,23 +99,16 @@ must not register the same commands again).
 
 ## (b) Live branches (round 4 and parallel lanes)
 
-| Branch | arch_id | Plan id | Status | Executor |
-|---|---|---|---|---|
-| `wp/cf-rpc` | W1-1a-t | WP-02-rpc-transport | in_progress | external:cfleet-fanout-r4 |
-| `wp/cf-platform` | PB-platform | WP-02-pb-platform | in_progress | external:cfleet-fanout-r4 |
-| `wp/cf-webharness` | PB-web-harness | WP-02-pb-web-harness | in_progress | external:cfleet-fanout-r4 |
-| `wp/W0-R-reconcile` | W0-R | WP-01-reconcile-streams | in_progress (done with its merge) | integrator |
-
-The three round-4 branches are worked on by the cfleet round-4 integrators and are not in this
-repository at `fb31ab1`. W0-B2 (WP-02-harness-hardening), W0-C2 (WP-02-tooling-gates), W0-A4
-(WP-04-spike-foldins-isolation) and the early part of W0-ST (WP-09-w0-stabilization, branch
-`wp/W0-ST-flakes`; the final part runs on `wp/W0-ST-stabilize`) run in parallel worktrees from
-2026-10-16; the plan keeps them `planned` until they merge.
+None. The round-4 pre-builds (`wp/cf-rpc` W1-1a-t, `wp/cf-platform` PB-platform, `wp/cf-webharness`
+PB-web-harness) and the local lane (`wp/W0-R-reconcile`, `wp/W0-ST-flakes`, `wp/W0-C2-tooling-gates`,
+`wp/W0-B2-harness-hardening`, `wp/W0-A4-spike-foldins`) merged between 2026-10-16 23:02 and
+2026-10-17 03:08 (table (a)); the local lane ran as workflow `wf_ede9528f-d43` (executor
+`external:wave0-local-lane`). W0-ST part 2 runs on `wp/W0-ST-stabilize`.
 
 Stopped workflows: `wave0-proto-and-prebuilds` and `wave0-prebuilds-2` were stopped on 2026-10-15
 and left no branch in this repository. Their items kept their ids: W1-2a, PB-palette, PB-sidebar,
 PB-feed, PB-todo-status, PB-vault, PB-automation, PB-layouts-actions and the five PB-web apps were
-built by cfleet rounds 2 and 3 (done); W1-1a-t, PB-platform and PB-web-harness run in round 4.
+built by cfleet rounds 2 and 3 (done); W1-1a-t, PB-platform and PB-web-harness by round 4 (done).
 
 ## (c) Old plan ids → new plan ids
 
