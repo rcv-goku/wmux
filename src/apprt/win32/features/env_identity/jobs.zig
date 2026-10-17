@@ -103,18 +103,24 @@ pub fn inInstanceJob(app: *const App, pid: u32) bool {
 }
 
 /// The surface whose per-tab job contains `pid`, searched over every
-/// terminal tab of every window, or null.
+/// terminal tab of every window (and of the quick terminal), or null.
 pub fn surfaceForPid(app: *App, pid: u32) ?*Surface {
     for (app.windows.items) |w| {
-        if (w.closing) continue;
-        for (w.workspaces.items) |ws| {
-            var i: usize = 0;
-            while (registry.paneAtDepthFirst(ws, i)) |pane| : (i += 1) {
-                for (pane.tabs.items) |tab| {
-                    const surface = tab.surface() orelse continue;
-                    const j = jobOf(surface) orelse continue;
-                    if (j.containsPid(pid) catch false) return surface;
-                }
+        if (surfaceInWindow(w, pid)) |s| return s;
+    }
+    if (app.quick_terminal) |qt| return surfaceInWindow(qt.window, pid);
+    return null;
+}
+
+fn surfaceInWindow(w: anytype, pid: u32) ?*Surface {
+    if (w.closing) return null;
+    for (w.workspaces.items) |ws| {
+        var i: usize = 0;
+        while (registry.paneAtDepthFirst(ws, i)) |pane| : (i += 1) {
+            for (pane.tabs.items) |tab| {
+                const surface = tab.surface() orelse continue;
+                const j = jobOf(surface) orelse continue;
+                if (j.containsPid(pid) catch false) return surface;
             }
         }
     }
