@@ -20,6 +20,7 @@ const SplitTree = @import("../../../datastruct/split_tree.zig").SplitTree;
 const Surface = @import("../Surface.zig");
 const Window = @import("../ui/Window.zig");
 const config_files = @import("../settings/legacy_config_files.zig");
+const settings = @import("../settings/api.zig");
 const dialogs = @import("dialogs.zig");
 const foreground = @import("foreground.zig");
 const input_actions = @import("../input/actions.zig");
@@ -53,7 +54,7 @@ pub fn perform(
         .toggle_maximize => toggleMaximize(app, target),
         // Close the entire window (all tabs), not just one tab.
         .close_window => if (parentWindow(target)) |w| w.close(),
-        .open_config => openConfig(app),
+        .open_config => config_files.openConfigFile(app),
         .scrollbar => if (rtSurface(target)) |s| s.setScrollbar(value),
         .mouse_shape => if (rtSurface(target)) |s| s.setMouseShape(value),
         .open_url => openUrl(app, value),
@@ -81,7 +82,7 @@ pub fn perform(
         .restore_session => restoreSession(app),
         .focus_right_sidebar => if (parentWindow(target)) |w| w.focusRightSidebar(),
         .initial_size => initialSize(app, target, value),
-        .reload_config => config_files.reloadConfig(app, value.soft),
+        .reload_config => settings.reloadConfiguration(app, value.soft),
         .show_child_exited => notifications.onChildExited(app, target, value),
         .toggle_window_decorations => if (rtSurface(target)) |s| s.toggleWindowDecorations(),
         // Close all surfaces: the core tracks surfaces; iterate via quit.
@@ -253,17 +254,6 @@ fn toggleMaximize(self: *App, target: apprt.Target) void {
             }
         },
     }
-}
-
-/// `.open_config`: open the config file in its editor. Test mode never
-/// starts the editor: app/dialogs.zig records the launch in
-/// WMUX_TEST_EXTERNAL_SINK instead.
-fn openConfig(app: *App) void {
-    if (app.runtime_env.test_mode) {
-        _ = dialogs.openExternal(app, "open_config", "open", "ghostty-config");
-        return;
-    }
-    config_files.openConfigFile(app);
 }
 
 fn openUrl(app: *App, value: apprt.Action.Value(.open_url)) void {
