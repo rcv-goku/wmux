@@ -84,6 +84,7 @@ Dates are commit dates (CDT, UTC-5). A branch merged twice was merged again afte
 | `906ae9d` | 2026-10-17 | `wp/W1-4a-settings-layer` | W1-4a | WP-11-settings-layer | done | plan |
 | `6bb1230` | 2026-10-17 | `wp/W1-2b-cli-relay` | W1-2b | WP-11-cli-relay-staging | done | plan |
 | `76e7f18` | 2026-10-17 | `wp/W1-7a-session-v3` | W1-7a | WP-11-session-core | done | plan |
+| `7d591b9` | 2026-10-17 | `wp/W1-1a-v2-control-plane` | W1-1a | WP-11-rpc-dispatch | done | plan |
 
 Direct commits on master between merges (no branch): `c7598b0` (test-fast runs the gfx logic tests,
 `[W0-K]`) and `12abd0c`, `59ba772` (smoke-suite fixes, `[W0-A1]`).
