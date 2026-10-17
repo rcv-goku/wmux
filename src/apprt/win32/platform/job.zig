@@ -417,7 +417,11 @@ pub fn queryProcessIds(gpa: std.mem.Allocator, job: ?HANDLE) Error![]u32 {
             }
         }
         const view = decodePidList(words);
-        if (ok and view.complete()) return pidsToOwned(gpa, view.ids);
+        // Success means the kernel wrote every id it had; only
+        // ERROR_MORE_DATA grows. (Re-querying on a success whose count
+        // races with an exiting process would grow up to the cap and then
+        // fail with OutOfMemory.)
+        if (ok) return pidsToOwned(gpa, view.ids);
         capacity = nextPidCapacity(capacity, view.assigned) orelse return error.OutOfMemory;
     }
 }
