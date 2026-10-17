@@ -13,6 +13,44 @@ Import-Module (Join-Path $PSScriptRoot '..\..\WmuxTest.psm1') -Force
 $script:Mod = Get-Module WmuxTest
 $script:Utf8 = [Text.UTF8Encoding]::new($false)
 
+if (-not ('W1aFakePipe' -as [type])) {
+    # A one-connection v2 stand-in server: answers every line with {pong:true}, echoing the id.
+    Add-Type -TypeDefinition @'
+using System.IO;
+using System.IO.Pipes;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
+public static class W1aFakePipe {
+    public static Task<int> ServePings(string bareName, int connectTimeoutMs) {
+        var srv = new NamedPipeServerStream(bareName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+        return Task.Run(async () => {
+            int served = 0;
+            using (srv) {
+                using (var cts = new CancellationTokenSource(connectTimeoutMs)) {
+                    try { await srv.WaitForConnectionAsync(cts.Token); } catch (System.OperationCanceledException) { return 0; }
+                }
+                var utf8 = new UTF8Encoding(false);
+                var r = new StreamReader(srv, utf8, false, 4096, true);
+                var w = new StreamWriter(srv, utf8, 4096, true);
+                w.AutoFlush = true;
+                w.NewLine = "\n";
+                string line;
+                while ((line = await r.ReadLineAsync()) != null) {
+                    var m = Regex.Match(line, "\"id\"\\s*:\\s*(\"(?:[^\"\\\\]|\\\\.)*\"|-?\\d+)");
+                    var id = m.Success ? m.Groups[1].Value : "null";
+                    try { w.WriteLine("{\"id\":" + id + ",\"ok\":true,\"result\":{\"pong\":true}}"); } catch (IOException) { break; }
+                    served++;
+                }
+            }
+            return served;
+        });
+    }
+}
+'@
+}
+
 function ConvertTo-BarePipe([string]$Path) {
     return ($Path -replace '^\\\\\.\\pipe\\', '')
 }
@@ -376,12 +414,22 @@ Test-Case 'cli: cli\cmux.exe with no socket environment finds the instance throu
         $r = Invoke-WmuxCli $w @('ping') -Env $noSocket
         Assert-Equal 0 $r.ExitCode "cmux ping through the marker: $($r.Stderr)"
         Assert-True ($r.Stderr -notmatch 'unavailable') "the marker's pipe is the expected default (no fallback note): $($r.Stderr)"
-        # The marker is what the CLI found: move it away and point it at nothing else.
+        # The marker is consulted before the computed default: point it at an -alt- name served by
+        # a stand-in pipe of this test; the CLI must pick it over the live default and say so.
         $marker = Join-Path $w.StateDir 'run\instance.json'
         $saved = [IO.File]::ReadAllText($marker)
+        $alt = (Get-Marker $w).pipe + '-alt-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+        $served = [W1aFakePipe]::ServePings((ConvertTo-BarePipe $alt), 30000)
         try {
             $m = $saved | ConvertFrom-Json
-            Assert-Equal (Get-Marker $w).pipe $m.pipe
+            $m.pipe = $alt
+            $m.launch_pipe = $null
+            [IO.File]::WriteAllText($marker, ($m | ConvertTo-Json -Depth 8), $script:Utf8)
+            $r = Invoke-WmuxCli $w @('ping') -Env $noSocket
+            Assert-Equal 0 $r.ExitCode "cmux ping through the rewritten marker: $($r.Stderr)"
+            Assert-True ($served.Wait(15000)) 'the stand-in pipe named by the marker was used'
+            Assert-True ($served.Result -ge 1) "the stand-in pipe answered the ping ($($served.Result) line(s))"
+            Assert-True ($r.Stderr.Contains("is unavailable; using $alt.")) "the CLI took the marker's pipe over the default: $($r.Stderr)"
         } finally { [IO.File]::WriteAllText($marker, $saved, $script:Utf8) }
     } finally { Stop-WmuxInstance $w }
 }
