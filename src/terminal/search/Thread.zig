@@ -870,6 +870,14 @@ test {
         threadMain,
         .{&thread},
     );
+    // Stop and join the thread on every path, including a failed or
+    // timed-out wait below: otherwise it keeps running after the
+    // deferred deinits free the terminal and crashes under load.
+    defer {
+        thread.stop.notify() catch |err|
+            log.err("error notifying search thread to stop err={}", .{err});
+        os_thread.join();
+    }
 
     // Start our search
     _ = thread.mailbox.push(
@@ -881,12 +889,9 @@ test {
     );
     try thread.wakeup.notify();
 
-    // Wait for completion
-    try ud.reset.timedWait(100 * std.time.ns_per_ms);
-
-    // Stop the thread
-    try thread.stop.notify();
-    os_thread.join();
+    // Wait for completion. The timeout is generous so a loaded machine
+    // does not fail the test; the deferred stop and join run either way.
+    try ud.reset.timedWait(10 * std.time.ns_per_s);
 
     // 1 total matches
     try testing.expectEqual(1, ud.total);
