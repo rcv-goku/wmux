@@ -56,6 +56,7 @@ public static class ConPty {
 
     const uint EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
     const uint CREATE_UNICODE_ENVIRONMENT = 0x00000400;
+    const int STARTF_USESTDHANDLES = 0x00000100;
     static readonly IntPtr PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE = (IntPtr)0x00020016;
 
     // CommandLineToArgvW quoting.
@@ -115,6 +116,10 @@ public static class ConPty {
             var si = new STARTUPINFOEX();
             si.StartupInfo.cb = Marshal.SizeOf(typeof(STARTUPINFOEX));
             si.lpAttributeList = list;
+            // STARTF_USESTDHANDLES with null handles: without it a child of a parent whose
+            // std handles are redirected (the e2e runner) inherits those pipes instead of the
+            // pseudoconsole, so its stdout is not a console and its output bypasses the ConPTY.
+            si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
             envBlock = Marshal.StringToHGlobalUni(EnvBlock(env));
             var cmd = new StringBuilder(Quote(exe));
             foreach (var a in args) cmd.Append(' ').Append(Quote(a));
@@ -140,6 +145,62 @@ public static class ConPty {
             if (envBlock != IntPtr.Zero) Marshal.FreeHGlobal(envBlock);
             inWrite.Dispose();
         }
+    }
+}
+
+// Minimal v2 control pipe: records every request line and answers each with
+// {id, ok:true, result:{workspace_id, workspace_ref}}. Lets the focus-default tests check the
+// `focus` param cmux.exe sends without a v2 server (W1-1a) in the app.
+public sealed class FakeV2 : IDisposable {
+    readonly string name;
+    readonly List<string> lines = new List<string>();
+    readonly Thread thread;
+    volatile bool stopping;
+
+    public FakeV2(string pipeName) {
+        name = pipeName;
+        thread = new Thread(Serve);
+        thread.IsBackground = true;
+        thread.Start();
+    }
+
+    public string Path { get { return @"\\.\pipe\" + name; } }
+
+    public string[] Lines { get { lock (lines) return lines.ToArray(); } }
+
+    static readonly System.Text.RegularExpressions.Regex IdRx =
+        new System.Text.RegularExpressions.Regex("^\\{\\s*\"id\"\\s*:\\s*(\"[^\"]*\"|-?\\d+)");
+
+    void Serve() {
+        while (!stopping) {
+            try {
+                using (var s = new System.IO.Pipes.NamedPipeServerStream(name, System.IO.Pipes.PipeDirection.InOut,
+                    System.IO.Pipes.NamedPipeServerStream.MaxAllowedServerInstances, System.IO.Pipes.PipeTransmissionMode.Byte)) {
+                    s.WaitForConnection();
+                    if (stopping) return;
+                    var reader = new StreamReader(s, new UTF8Encoding(false), false, 4096, true);
+                    string line;
+                    while ((line = reader.ReadLine()) != null) {
+                        lock (lines) lines.Add(line);
+                        var m = IdRx.Match(line);
+                        string id = m.Success ? m.Groups[1].Value : "null";
+                        string reply = "{\"id\":" + id + ",\"ok\":true,\"result\":{\"workspace_id\":\"8f0c2d4e-1a2b-4c3d-9e8f-0a1b2c3d4e5f\",\"workspace_ref\":\"workspace:2\"}}\n";
+                        byte[] b = Encoding.UTF8.GetBytes(reply);
+                        s.Write(b, 0, b.Length);
+                        s.Flush();
+                    }
+                }
+            } catch (IOException) { }
+        }
+    }
+
+    public void Dispose() {
+        stopping = true;
+        // Unblock WaitForConnection.
+        try {
+            using (var c = new System.IO.Pipes.NamedPipeClientStream(".", name, System.IO.Pipes.PipeDirection.InOut)) c.Connect(500);
+        } catch (Exception) { }
+        thread.Join(2000);
     }
 }
 }
@@ -184,34 +245,82 @@ function Get-W12cWorkspaceCount {
     return @(Get-W12cProp $r @('workspaces')).Count
 }
 
-# Runs cli\cmux.exe under a ConPTY against the instance. The environment is the harness process
-# environment without socket, agent and color variables, plus the instance's pipe and $Extra.
+# Runs cli\cmux.exe under a ConPTY against the instance (or, with -Pipe, against that pipe). The
+# environment is the harness process environment without socket, agent and color variables,
+# plus the pipe and $Extra.
 function Invoke-W12cConPty {
-    param($Instance, [string[]]$Arguments, [hashtable]$Extra = @{})
+    param($Instance, [string[]]$Arguments, [hashtable]$Extra = @{}, [string]$Pipe, [string]$WorkDir)
     if (-not $IsWindows) { throw [WmuxSkipException]::new('ConPTY runs need Windows') }
     $cli = Resolve-W12cCli $Instance
     $envMap = [System.Collections.Hashtable]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($e in [Environment]::GetEnvironmentVariables().GetEnumerator()) {
         if ([string]$e.Key -notmatch $script:DropEnv) { $envMap[[string]$e.Key] = [string]$e.Value }
     }
-    $envMap['WMUX_SOCKET_PATH'] = $Instance.Pipe
-    $envMap['CMUX_SOCKET_PATH'] = $Instance.Pipe
-    $envMap['WMUX_CHANNEL'] = $Instance.Channel
-    if ($Instance.LocalAppData) { $envMap['LOCALAPPDATA'] = $Instance.LocalAppData }
+    if ($null -ne $Instance) {
+        $Pipe = $Instance.Pipe
+        $envMap['WMUX_CHANNEL'] = $Instance.Channel
+        if ($Instance.LocalAppData) { $envMap['LOCALAPPDATA'] = $Instance.LocalAppData }
+        if (-not $WorkDir) { $WorkDir = $Instance.WorkDir }
+    }
+    if ($Pipe) {
+        $envMap['WMUX_SOCKET_PATH'] = $Pipe
+        $envMap['CMUX_SOCKET_PATH'] = $Pipe
+    }
     $envMap['CMUX_QUIET'] = '1'
     foreach ($k in $Extra.Keys) { $envMap[[string]$k] = [string]$Extra[$k] }
-    $cwd = if ($Instance.WorkDir -and (Test-Path -LiteralPath $Instance.WorkDir)) { $Instance.WorkDir } else { (Get-Location).ProviderPath }
+    $cwd = if ($WorkDir -and (Test-Path -LiteralPath $WorkDir)) { $WorkDir } else { [IO.Path]::GetTempPath() }
     $r = [W12c.ConPty]::Run($cli, $Arguments, $envMap, $cwd, 60000)
     if ($r.TimedOut) { throw "cmux $($Arguments -join ' ') did not exit within 60 s under the ConPTY: $($r.Output)" }
     return $r
 }
 
-# Opens a fresh directory with `cmux open <dir>` (workspace.create {cwd, focus}) under a ConPTY
-# and checks whether the new workspace took the selection.
+# The protocol of the live instances, remembered per file: the live checks need the v2 server
+# (W1-1a); a legacy instance answers v2 requests with the legacy JSON shape.
+$script:W12cLiveProtocol = $null
+
+function Assert-W12cLiveV2 {
+    param($Instance, [string]$What)
+    $script:W12cLiveProtocol = $Instance.Protocol
+    if ($Instance.Protocol -ne 'v2') {
+        throw [WmuxSkipException]::new("${What}: the instance speaks the legacy wmux JSON protocol; this live check needs the v2 server (W1-1a)")
+    }
+}
+
+# Opens a fresh directory with `cmux open <dir>` (workspace.create {cwd, focus}) under a ConPTY:
+# 1. against a recording v2 pipe (always): the request carries focus = $ExpectFocus;
+# 2. against a live instance when it speaks v2: the new workspace takes (or leaves) the selection.
 function Test-W12cFocusDefault {
     param([hashtable]$Extra, [bool]$ExpectFocus, [string]$Label)
+    $tmp = Join-Path ([IO.Path]::GetTempPath()) ('w12c-' + [guid]::NewGuid().ToString('N').Substring(0, 12))
+    New-Item -ItemType Directory -Path $tmp | Out-Null
+    $fake = [W12c.FakeV2]::new('wmux-w12c-' + [guid]::NewGuid().ToString('N'))
+    try {
+        $dir = Join-Path $tmp 'project'
+        New-Item -ItemType Directory -Path $dir | Out-Null
+        $isolated = @{ LOCALAPPDATA = (Join-Path $tmp 'localappdata') }
+        foreach ($k in $Extra.Keys) { $isolated[$k] = $Extra[$k] }
+        $r = Invoke-W12cConPty -Arguments @('open', $dir) -Extra $isolated -Pipe $fake.Path -WorkDir $tmp
+        Assert-Equal 0 $r.ExitCode "cmux open under the ConPTY against the recording pipe ($Label) exit code; output: $($r.Output)"
+        $creates = @($fake.Lines | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.method -eq 'workspace.create' })
+        Assert-Equal 1 $creates.Count "$Label`: one workspace.create request; requests: $($fake.Lines -join ' | ')"
+        Assert-Equal $dir ([string]$creates[0].params.cwd) "$Label`: workspace.create cwd"
+        Assert-Equal $ExpectFocus ([bool]$creates[0].params.focus) "$Label`: workspace.create focus"
+    } finally {
+        $fake.Dispose()
+        Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    if ($script:W12cLiveProtocol -eq 'legacy') {
+        Write-Host "$Label`: live selection check skipped (the app speaks the legacy protocol; the v2 server lands in W1-1a)"
+        return
+    }
     $w = Start-WmuxInstance
     try {
+        $script:W12cLiveProtocol = $w.Protocol
+        if ($w.Protocol -ne 'v2') {
+            Write-Host "$Label`: live selection check skipped (the app speaks the legacy protocol; the v2 server lands in W1-1a)"
+            return
+        }
         $before = Get-W12cCurrentWorkspace $w
         $count = Get-W12cWorkspaceCount $w
         $base = if ($w.WorkDir) { $w.WorkDir } else { [IO.Path]::GetTempPath() }
@@ -249,6 +358,7 @@ Test-Case 'cli: the no-socket probe contract passes with no instance (cmux and w
 Test-Case 'cli: --json and --id-format work before or after the command; rpc stays raw' {
     $w = Start-WmuxInstance
     try {
+        Assert-W12cLiveV2 $w '--json/--id-format against a live instance'
         $quiet = @{ CMUX_QUIET = '1' }
         $a = Invoke-WmuxCli $w @('--json', 'list-workspaces') -Env $quiet
         $b = Invoke-WmuxCli $w @('list-workspaces', '--json') -Env $quiet
@@ -282,14 +392,12 @@ Test-Case 'cli: --json and --id-format work before or after the command; rpc sta
 }
 
 Test-Case 'cli: under a ConPTY stdout is a console (focus premise)' {
-    $w = Start-WmuxInstance
-    try {
-        $r = Invoke-W12cConPty $w @('welcome')
-        Assert-Equal 0 $r.ExitCode "welcome under the ConPTY: $($r.Output)"
-        Assert-Match 'Shortcuts' $r.Output
-        # welcome colors its logo only when stdout is a console.
-        Assert-Match '\x1b\[38;2;' $r.Output 'truecolor logo (stdout is a console)'
-    } finally { Stop-WmuxInstance $w }
+    # welcome is offline: no instance needed.
+    $r = Invoke-W12cConPty -Arguments @('welcome')
+    Assert-Equal 0 $r.ExitCode "welcome under the ConPTY: $($r.Output)"
+    Assert-Match 'Shortcuts' $r.Output
+    # welcome colors its logo only when stdout is a console.
+    Assert-Match '\x1b\[38;2;' $r.Output 'truecolor logo (stdout is a console)'
 }
 
 Test-Case 'cli: interactive run without agent markers focuses (focus=true)' {
