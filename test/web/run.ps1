@@ -409,6 +409,15 @@ function Get-Prop {
     return $Default
 }
 
+function Get-Count {
+    # A non-negative integer count from the results; $Missing when absent, -1 when not a count.
+    param($Object, [string] $Name, [int] $Missing = -1)
+    if ($null -eq $Object -or -not ($Object.PSObject.Properties.Name -contains $Name)) { return $Missing }
+    $v = $Object.$Name
+    if (($v -is [long] -or $v -is [int]) -and $v -ge 0) { return [int] $v }
+    return -1
+}
+
 function Get-Tail {
     param([string] $Text, [int] $Lines = 20)
     if (-not $Text) { return '' }
@@ -463,10 +472,10 @@ try {
             userAgent = $null; tests = @(); errors = @(); stderrTail = $null
         }
         if ($results) {
-            $record.total = [int] (Get-Prop $results 'total' 0)
-            $record.passed = [int] (Get-Prop $results 'passed' 0)
-            $record.failed = [int] (Get-Prop $results 'failed' 0)
-            $record.skipped = [int] (Get-Prop $results 'skipped' 0)
+            $record.total = Get-Count $results 'total'
+            $record.passed = Get-Count $results 'passed'
+            $record.failed = Get-Count $results 'failed'
+            $record.skipped = Get-Count $results 'skipped' 0
             $record.userAgent = Get-Prop $results 'userAgent'
             $record.tests = @(Get-Prop $results 'tests' @())
             $record.errors = @(Get-Prop $results 'errors' @())
@@ -479,11 +488,26 @@ try {
             $record.status = 'error'
             $record.reason = $parsed.Problem + $(if ($null -ne $run.ExitCode -and $run.ExitCode -ne 0) { " (browser exit code $($run.ExitCode))" } else { '' })
         }
-        elseif ((Get-Prop $results 'status') -eq 'passed' -and $record.failed -eq 0 -and $record.errors.Count -eq 0 -and $record.total -gt 0) {
-            $record.status = 'passed'
-        }
         else {
-            $record.reason = if ($record.total -eq 0) { 'the suite reported no tests' } elseif ($record.failed -eq 0) { 'the suite reported uncaught errors' } else { $null }
+            # The counts must agree with the per-test list: a page that reports
+            # "passed" next to a failed test entry (or no entries) is not a pass.
+            $listed = @{ passed = 0; failed = 0; skipped = 0; other = 0 }
+            foreach ($t in $record.tests) {
+                $s = Get-Prop $t 'status'
+                if ($s -is [string] -and $listed.ContainsKey($s) -and $s -ne 'other') { $listed[$s]++ } else { $listed.other++ }
+            }
+            $consistent = $listed.other -eq 0 -and $record.tests.Count -eq $record.total -and
+                $listed.passed -eq $record.passed -and $listed.failed -eq $record.failed -and $listed.skipped -eq $record.skipped
+            if ((Get-Prop $results 'status') -eq 'passed' -and $consistent -and $record.failed -eq 0 -and
+                $record.errors.Count -eq 0 -and $record.total -gt 0) {
+                $record.status = 'passed'
+            }
+            elseif (-not $consistent) {
+                $record.reason = 'the results block is inconsistent: its counts do not match its test list'
+            }
+            else {
+                $record.reason = if ($record.total -eq 0) { 'the suite reported no tests' } elseif ($record.failed -eq 0) { 'the suite reported uncaught errors' } else { $null }
+            }
         }
         if ($record.status -ne 'passed') {
             $record.stderrTail = Get-Tail $run.Stderr 40
@@ -496,8 +520,8 @@ try {
     }
 
     $failedSuites = @($records | Where-Object { $_.status -ne 'passed' })
-    $testsTotal = ($records | ForEach-Object { if ($null -ne $_.total) { $_.total } else { 0 } } | Measure-Object -Sum).Sum
-    $testsPassed = ($records | ForEach-Object { if ($null -ne $_.passed) { $_.passed } else { 0 } } | Measure-Object -Sum).Sum
+    $testsTotal = ($records | ForEach-Object { if ($_.total -gt 0) { $_.total } else { 0 } } | Measure-Object -Sum).Sum
+    $testsPassed = ($records | ForEach-Object { if ($_.passed -gt 0) { $_.passed } else { 0 } } | Measure-Object -Sum).Sum
     $summary = [ordered]@{
         format = 'wmux-web-run/1'
         status = if ($failedSuites.Count -eq 0) { 'passed' } else { 'failed' }

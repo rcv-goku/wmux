@@ -190,7 +190,7 @@ follow-up.
 
 Edge runs headless (`--headless=new`, started with `CreateNoWindow`). On
 Windows 11 with Edge 155, a sampler that checked the foreground window and all
-visible top-level windows every 100 ms during full runs found no window from
+visible top-level windows about every 330 ms during full runs found no window from
 the browser's processes. On a work-joined host, Edge signs every new
 profile in to the Windows account ("implicit sign-in"): each suite would then
 get tokens through the account broker and call Microsoft Graph, Office and
