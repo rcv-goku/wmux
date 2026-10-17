@@ -19,3 +19,6 @@ Part 2, stabilization (test infrastructure only):
   `Save-WmuxWindowCapture` takes a `-TimeoutMs`. New self-test with a hung fixture window.
 - `regression/w0-regression`: the session test keeps restoring workspace 0 only; a
   two-workspace legacy restore still loses workspace 1 (W1-7).
+- The unfiltered win32 `zig build test` compiles again: two `features/session/legacy_v2.zig`
+  tests no longer build `SplitTree(Pane)` through init/deinit, which pulled the GTK apprt's tests
+  into the binary.
