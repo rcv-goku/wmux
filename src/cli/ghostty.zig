@@ -20,20 +20,6 @@ const validate_config = @import("validate_config.zig");
 const crash_report = @import("crash_report.zig");
 const show_face = @import("show_face.zig");
 const boo = @import("boo.zig");
-const new_window = @import("new_window.zig");
-const toggle_quick_terminal = @import("toggle_quick_terminal.zig");
-const browser = @import("browser.zig");
-const workspace = @import("workspace.zig");
-const tab = @import("tab.zig");
-const send = @import("send.zig");
-const notify = @import("notify.zig");
-const surface = @import("surface.zig");
-const split = @import("split.zig");
-const status = @import("status.zig");
-const logcmd = @import("log.zig");
-const read_screen = @import("read_screen.zig");
-const capture_pane = @import("capture_pane.zig");
-const session = @import("session.zig");
 const hooks = @import("hooks.zig");
 
 /// Special commands that can be invoked via CLI flags. These are all
@@ -88,50 +74,12 @@ pub const Action = enum {
     // Boo!
     boo,
 
-    // Use IPC to tell the running Ghostty to open a new window.
-    @"new-window",
-
-    // Use IPC to tell the running Ghostty to toggle the quick terminal.
-    @"toggle-quick-terminal",
-
-    // Use IPC to drive the running Ghostty's WebView2 browser panes.
-    browser,
-
-    // Use IPC to manage the running Ghostty's sidebar workspaces.
-    workspace,
-
-    // Use IPC to manage tabs within the focused PaneContainer.
-    tab,
-
-    // Use IPC to write text to a running Ghostty terminal pane.
-    send,
-
-    // Use IPC to set/clear a pane's notification ring (attention).
-    notify,
-
-    // Use IPC to list/focus the panes of a running Ghostty (orchestration).
-    surface,
-
-    // Use IPC to split a terminal pane and print the new pane's id.
-    split,
-
-    // Use IPC to set a tab's orchestration status string / progress.
-    status,
-
-    // Use IPC to append a line to a tab's ring log buffer.
-    log,
-
-    // Use IPC to read a pane's terminal screen text (agent-reads-agent).
-    @"read-screen",
-
-    // Use IPC to capture a pane's screen + scrollback (tmux capture-pane).
-    @"capture-pane",
-
-    // Use IPC to capture/resume an agent's native session id for a pane.
-    session,
-
     // Install per-agent SessionStart hooks that drive +session capture.
     hooks,
+
+    // The legacy wmux IPC verbs (+workspace, +tab, +send, ...) are no
+    // longer actions: wmux.exe relays them to cli\cmux.exe, which keeps
+    // their legacy output (src/wmux_cli/relay.zig, ADR-4.10, AF-11).
 
     pub fn detectSpecialCase(arg: []const u8) ?SpecialCase(Action) {
         // If we see a "-e" and we haven't seen a command yet, then
@@ -212,20 +160,6 @@ pub const Action = enum {
             .@"crash-report" => try crash_report.run(alloc),
             .@"show-face" => try show_face.run(alloc),
             .boo => try boo.run(alloc),
-            .@"new-window" => try new_window.run(alloc),
-            .@"toggle-quick-terminal" => try toggle_quick_terminal.run(alloc),
-            .browser => try browser.run(alloc),
-            .workspace => try workspace.run(alloc),
-            .tab => try tab.run(alloc),
-            .send => try send.run(alloc),
-            .notify => try notify.run(alloc),
-            .surface => try surface.run(alloc),
-            .split => try split.run(alloc),
-            .status => try status.run(alloc),
-            .log => try logcmd.run(alloc),
-            .@"read-screen" => try read_screen.run(alloc),
-            .@"capture-pane" => try capture_pane.run(alloc),
-            .session => try session.run(alloc),
             .hooks => try hooks.run(alloc),
         };
     }
@@ -267,20 +201,6 @@ pub const Action = enum {
                 .@"crash-report" => crash_report.Options,
                 .@"show-face" => show_face.Options,
                 .boo => boo.Options,
-                .@"new-window" => new_window.Options,
-                .@"toggle-quick-terminal" => toggle_quick_terminal.Options,
-                .browser => browser.Options,
-                .workspace => workspace.Options,
-                .tab => tab.Options,
-                .send => send.Options,
-                .notify => notify.Options,
-                .surface => surface.Options,
-                .split => split.Options,
-                .status => status.Options,
-                .log => logcmd.Options,
-                .@"read-screen" => read_screen.Options,
-                .@"capture-pane" => capture_pane.Options,
-                .session => session.Options,
                 .hooks => hooks.Options,
             };
         }
@@ -394,5 +314,16 @@ test "parse action plus ignores -e" {
             actionpkg.DetectError.MultipleActions,
             actionpkg.detectIter(Action, &iter),
         );
+    }
+}
+
+test "unit: cli-relay: the wmux.exe relay tables match the Ghostty actions" {
+    const testing = std.testing;
+    const relay = @import("../wmux_cli/relay.zig");
+    const fields = @typeInfo(Action).@"enum".fields;
+    try testing.expectEqual(fields.len, relay.ghostty_actions.len);
+    inline for (fields) |f| {
+        try testing.expect(relay.isGhosttyAction(f.name));
+        try testing.expect(!relay.isLegacyVerb(f.name));
     }
 }

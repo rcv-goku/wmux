@@ -1,9 +1,9 @@
-//! Shared client helpers for the agent IPC CLI verbs
-//! (`+workspace`/`+tab`/`+send`). Resolves the target instance's named
-//! pipe (`wmux-ipc-<pid>`), sends one request line, reads one response
-//! line, and prints `data` (on ok) or `error` (on failure) — the same
-//! round-trip `+browser` performs, factored out so the scripting verbs
-//! don't each re-implement the FindFirstFileW pipe enumeration.
+//! Legacy-pipe client helper of `+ssh --workspace` (ssh.zig): resolves the
+//! target instance's named pipe (`wmux-ipc-<pid>`), sends one request line,
+//! reads one response line, and prints `data` (on ok) or `error` (on
+//! failure). The legacy `+workspace`/`+tab`/`+send`/... verbs that also used
+//! it were removed by W1-2b (their legacy output now comes from
+//! src/wmux_cli/relay.zig, AF-11); this file goes with ssh.zig (W6-1a).
 //!
 //! Windows-only: the named-pipe machinery is gated behind a comptime
 //! os.tag check by the callers, which only reference `impl` on Windows.
@@ -12,9 +12,9 @@ const std = @import("std");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 
-/// The Windows-only implementation, mirroring `cli/browser.zig`'s private
-/// machinery. Kept in a struct so it is only semantically analyzed on
-/// Windows (callers gate references behind `builtin.os.tag == .windows`).
+/// The Windows-only implementation. Kept in a struct so it is only
+/// semantically analyzed on Windows (callers gate references behind
+/// `builtin.os.tag == .windows`).
 pub const impl = if (builtin.os.tag == .windows) struct {
     const windows = std.os.windows;
     const kernel32 = windows.kernel32;
