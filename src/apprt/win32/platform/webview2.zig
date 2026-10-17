@@ -242,8 +242,9 @@ pub const GetAvailableCoreWebView2BrowserVersionStringFn = *const fn (
 ) callconv(.winapi) HRESULT;
 
 /// `CreateCoreWebView2EnvironmentWithOptions` export of WebView2Loader.dll.
-/// `environment_options` is an ICoreWebView2EnvironmentOptions (we always
-/// pass null); `environment_created_handler` is an
+/// `environment_options` is an ICoreWebView2EnvironmentOptions (null from
+/// `createEnvironment`, an `EnvironmentOptions` from
+/// `createEnvironmentWithOptions`); `environment_created_handler` is an
 /// ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler.
 pub const CreateCoreWebView2EnvironmentWithOptionsFn = *const fn (
     browser_executable_folder: ?LPCWSTR,
@@ -4074,6 +4075,9 @@ pub fn Handler(
     return extern struct {
         const Self = @This();
 
+        /// The callback interface this handler implements.
+        pub const IID = iid;
+
         /// User callback type. Runs on the UI (STA) thread that pumped the
         /// message that triggered the event.
         pub const Callback = *const fn (ctx: *Ctx, arg0: Arg0, arg1: Arg1) void;
@@ -4176,6 +4180,9 @@ pub fn Handler1(
 ) type {
     return extern struct {
         const Self = @This();
+
+        /// The callback interface this handler implements.
+        pub const IID = iid;
 
         pub const Callback = *const fn (ctx: *Ctx, arg0: Arg0) void;
 
@@ -4904,10 +4911,11 @@ fn verifyBindings() usize {
         if (std.mem.startsWith(u8, d.name, "IID_")) {
             const row = iids.find(d.name[4..]) orelse
                 @compileError("IID constant without a fixture row: " ++ d.name);
-            if (std.mem.endsWith(u8, row.name, "Handler")) {
-                verifyIid(@field(bindings, d.name), row);
-                n += 1;
-            }
+            // Every IID_* constant (handler or consumed interface) must
+            // match its row; only handler rows count, interface rows are
+            // counted once through their struct below.
+            verifyIid(@field(bindings, d.name), row);
+            if (std.mem.endsWith(u8, row.name, "Handler")) n += 1;
         } else if (std.mem.eql(u8, d.name, "IUnknown") or std.mem.startsWith(u8, d.name, "ICoreWebView2")) {
             const T = @field(bindings, d.name);
             const row = iids.find(d.name) orelse
@@ -5052,7 +5060,10 @@ test "unit: platform: every handler row has a factory with its IID" {
             const H = @field(bindings, factoryName(row.name))(Dummy);
             const iid = @field(bindings, "IID_" ++ row.name);
             try std.testing.expectEqual(@as(usize, 4), @sizeOf(H.VTable) / @sizeOf(usize));
-            try std.testing.expect(guidEql(&iid, &iid));
+            const want = row.guid();
+            // The factory implements the row's interface, not a neighbour's.
+            try std.testing.expect(guidEql(&H.IID, &iid));
+            try std.testing.expect(guidEql(&H.IID, @ptrCast(&want)));
         }
     }
 }
