@@ -278,11 +278,29 @@ function Get-BrowserArguments {
             '--disable-background-networking', '--disable-component-update', '--no-proxy-server',
             '--mute-audio', '--hide-scrollbars', '--window-size=1280,900',
             "--virtual-time-budget=$BudgetMs")) { $list.Add($a) }
+    # Edge on a work-joined Windows host signs every new profile in to the OS
+    # account ("implicit sign-in"), so each suite would fetch tokens through the
+    # account broker and call Graph, Office and Intune endpoints with the user's
+    # identity, and a sign-in that needs interaction could open a broker window
+    # outside the browser's process tree. msImplicitSignin turns that off; other
+    # browsers ignore unknown feature names.
+    $disabledFeatures = [System.Collections.Generic.List[string]]::new()
+    $disabledFeatures.Add('msImplicitSignin')
     # Extra flags for unusual hosts, e.g. WMUX_WEB_BROWSER_ARGS=--no-sandbox in a
-    # container without user namespaces. Split on whitespace.
+    # container without user namespaces. Split on whitespace. A repeated
+    # --disable-features would replace ours, so its features are merged instead.
+    $extra = [System.Collections.Generic.List[string]]::new()
     if ($env:WMUX_WEB_BROWSER_ARGS) {
-        foreach ($a in ($env:WMUX_WEB_BROWSER_ARGS -split '\s+')) { if ($a) { $list.Add($a) } }
+        foreach ($a in ($env:WMUX_WEB_BROWSER_ARGS -split '\s+')) {
+            if (-not $a) { continue }
+            if ($a -match '^--disable-features=(.*)$') {
+                foreach ($f in ($Matches[1] -split ',')) { if ($f -and -not $disabledFeatures.Contains($f)) { $disabledFeatures.Add($f) } }
+            }
+            else { $extra.Add($a) }
+        }
     }
+    $list.Add('--disable-features=' + ($disabledFeatures -join ','))
+    foreach ($a in $extra) { $list.Add($a) }
     $list.Add('--dump-dom')
     $list.Add($Url)
     return $list

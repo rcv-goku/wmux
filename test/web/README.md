@@ -49,9 +49,12 @@ app (`markdown`, `diff`, `notifications`, `feed`, `settings`, `task-manager`,
 3. Runs each suite page in a new temporary profile:
    `--headless=new --disable-gpu --no-first-run --no-default-browser-check
    --user-data-dir=<temp> --virtual-time-budget=<ms> --dump-dom <url>` (plus a
-   few quieting flags). With a virtual time budget the browser fast-forwards
-   timers while the page is idle, so suites with delays and timeouts finish in
-   about a second of real time.
+   few quieting flags and `--disable-features=msImplicitSignin`, see the
+   Windows notes). With a virtual time budget the browser fast-forwards timers
+   while the page is idle, so a suite's page work, delays and timeouts
+   included, takes about a second of real time. Browser start and exit add a
+   few seconds: with Edge on Windows a suite takes about 3-6 s and a full run
+   about a minute.
 4. Reads the results block from the dumped DOM and prints one line per suite
    and every failure.
 5. Writes `test-results/web.json` (`-OutFile` overrides), then always stops the
@@ -182,6 +185,20 @@ vendored bundles that need a real engine, and the bridge contract end to end.
 `mock-host.js` is plain ES and does not depend on the DOM, so the jsdom tests
 could adopt it in place of their two in-file mocks. That is left as a
 follow-up.
+
+## Windows notes
+
+Edge runs headless (`--headless=new`, started with `CreateNoWindow`). On
+Windows 11 with Edge 155, a sampler that checked the foreground window and all
+visible top-level windows every 100 ms during full runs found no window from
+the browser's processes. On a work-joined host, Edge signs every new
+profile in to the Windows account ("implicit sign-in"): each suite would then
+get tokens through the account broker and call Microsoft Graph, Office and
+Intune endpoints with the user's identity. `run.ps1` passes
+`--disable-features=msImplicitSignin` to turn that off (other browsers ignore
+the name). A `--disable-features=...` given in `WMUX_WEB_BROWSER_ARGS` is merged
+with it rather than replacing it. The non-elevated `HttpListener` on
+`http://127.0.0.1:<port>/` needed no URL ACL on Windows 11.
 
 ## Linux notes
 
