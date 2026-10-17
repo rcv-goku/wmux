@@ -796,7 +796,7 @@ pub const TabContent = union(enum) {
 };
 ```
 
-`setBounds` and `snapshot` were added to `model/TabContent.zig` by the W1 kickoff interface commit (W1-IF, ruling D5): for now `setBounds` moves `hwnd()` (at least 1x1, repainted) for every variant and `snapshot` writes `{kind}`; W1-6c refines the `.web` variant and later owners add snapshot fields.
+`setBounds` and `snapshot` were added to `model/TabContent.zig` by the W1 kickoff interface commit (W1-IF, ruling D5): for now `setBounds` moves `hwnd()` (at least 1x1, repainted) for every variant (`ui/chrome.zig` `layoutSplits` places the selected tab with it) and `snapshot` writes `{kind}`; W1-6c refines the `.web` variant and later owners add snapshot fields.
 
 Host placements (one host HWND class `WmuxPanelHost`): (1) pane tab, laid out like `BrowserPane`; (2) right-sidebar mode content; (3) owned popup (notifications popover); (4) top-level `PanelHostWindow` (Settings, Task Manager, About). Creation goes through `model/ops/surface.zig: create(pane, .{ .web = .{ .kind = "markdown", .params = … } }, opts)`.
 

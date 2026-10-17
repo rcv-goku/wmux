@@ -28,6 +28,7 @@ owns:                        # plan files_new + non-frozen files_touched (hand-w
   - src/apprt/win32/rpc/server/mod.zig
   - src/apprt/win32/web/env.zig
   - src/apprt/win32/features/session/api.zig
+  - src/apprt/win32/ui/chrome.zig
   # the owner decisions of 2026-10-17 and the plan fixes (integrator)
   - docs/arch/ARCHITECTURE.md
   - docs/arch/plan/WORKPACKAGES.json
@@ -55,7 +56,8 @@ deviations: []               # Appendix E rows requested (D34 is an owner decisi
   Appendix B.4, E D34, G.2, the W0-A4 acceptance wording, the release notes); (2) `docs(plan)` the
   stale W0-C2 paths, the W1 executors, W1-IF in progress and the kickoff file lists; (3) `docs(wp)`
   the rendered W1 specs with their carried follow-ups; (4) `feat` the kickoff interface code; (5)
-  `feat(model)` `TabContent.setBounds`/`snapshot` (ruling D5).
+  `feat(model)` `TabContent.setBounds`/`snapshot` (ruling D5); `ui/chrome.zig` `layoutSplits` moves and
+  shows the selected tab through `setBounds`/`setVisible` (a pure substitution).
 - Kickoff interface code (AF-1): sub-files and pre-declared tables where two W1 WPs of one plan
   wave would otherwise edit the same file, and a facade with its final signature and a stub body in
   the owning WP's file for every call a W1 WP makes into another WP of the same sub-wave (plus the
