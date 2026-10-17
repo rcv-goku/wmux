@@ -292,6 +292,7 @@ try {
     # f) AF-15 merge-time artifact and aggregators; PB ids; -Head
     Invoke-FixtureGit $repo @('checkout', '-q', 'master')
     Write-Fixture $repo 'docs/wmux/schema/wmux.schema.json' @('{', '  "type": "object"', '}')
+    Write-Fixture $repo 'docs/arch/manual-checks.md' @('| id | check |', '|---|---|', '| a-one | one |')
     Write-Fixture $repo 'src/apprt/win32/fast_tests.zig' @('test {', '    _ = @import("features/a/logic/tests.zig");', '    _ = @import("features/c/logic/tests.zig");', '}')
     Write-Fixture $repo 'src/apprt/win32/features/bar/logic/tests.zig' @('test {', '    _ = @import("a.zig");', '    _ = @import("b.zig");', '}')
     Write-Fixture $repo 'docs/arch/wp/W9-2.md' @(
@@ -312,6 +313,13 @@ try {
     Invoke-FixtureGit $repo @('commit', '-q', '-am', 'schema')
     $r = Invoke-Script 'check-ownership.ps1' @('-Wp', 'W9-1', '-RepoRoot', $repo)
     Test-That 'ownership: a branch changing the settings schema passes for any WP (AF-15)' (($r.Code -eq 0) -and ($r.Output -match 'merge-time artifact')) $r.Output
+    Write-Fixture $repo 'docs/arch/manual-checks.md' @('| id | check |', '|---|---|', '| a-one | one |', '| b-two | two |')
+    $r = Invoke-Script 'check-ownership.ps1' @('-Wp', 'W9-1', '-RepoRoot', $repo)
+    Test-That 'ownership: any WP may append a ledger row (AF-19)' (($r.Code -eq 0) -and ($r.Output -match '0 violation\(s\), 0 warning\(s\)')) $r.Output
+    Write-Fixture $repo 'docs/arch/manual-checks.md' @('| id | check |', '|---|---|')
+    $r = Invoke-Script 'check-ownership.ps1' @('-Wp', 'W9-1', '-RepoRoot', $repo)
+    Test-That 'ownership: dropping a ledger row warns' (($r.Code -eq 0) -and ($r.Output -match 'manual-checks\.md is shared-appendable but loses 1 line')) $r.Output
+    Invoke-FixtureGit $repo @('checkout', '-q', '--', '.')
 
     Invoke-FixtureGit $repo @('checkout', '-q', 'master')
     Invoke-FixtureGit $repo @('checkout', '-q', '-b', 'wp/W9-2-append')
@@ -346,6 +354,40 @@ try {
     Invoke-FixtureGit $repo @('commit', '-q', '-m', 'pb')
     $r = Invoke-Script 'check-ownership.ps1' @('-RepoRoot', $repo)
     Test-That 'ownership: PB-notif inferred from wp/PB-notif-store and accepted' (($r.Code -eq 0) -and ($r.Output -match 'PB-notif vs')) $r.Output
+
+    # g) the repository's .gitattributes merge drivers (AF-15): union keeps both appends,
+    #    ours keeps the target branch's schema (once merge.ours.driver is defined).
+    Write-Host 'merge drivers: .gitattributes of this checkout'
+    $md = Join-Path $fixtureRoot 'drivers'
+    New-Item -ItemType Directory -Force -Path $md | Out-Null
+    Invoke-FixtureGit $md @('init', '-q', '-b', 'master')
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot '../.gitattributes') -Destination (Join-Path $md '.gitattributes')
+    Test-That 'merge drivers: Set-WmuxMergeDrivers defines "ours" once' ((Set-WmuxMergeDrivers -RepoRoot $md) -and -not (Set-WmuxMergeDrivers -RepoRoot $md))
+    Write-Fixture $md 'src/apprt/win32/features/x/logic/tests.zig' @('test {', '    _ = @import("a.zig");', '    _ = @import("m.zig");', '}')
+    Write-Fixture $md 'src/wmux_proto/proto.zig' @('pub const a = @import("a.zig");', 'pub const m = @import("m.zig");')
+    Write-Fixture $md 'docs/wmux/schema/wmux.schema.json' @('{', '  "base": true', '}')
+    Invoke-FixtureGit $md @('add', '-A')
+    Invoke-FixtureGit $md @('commit', '-q', '-m', 'base')
+    Invoke-FixtureGit $md @('checkout', '-q', '-b', 'one')
+    Write-Fixture $md 'src/apprt/win32/features/x/logic/tests.zig' @('test {', '    _ = @import("a.zig");', '    _ = @import("b.zig");', '    _ = @import("m.zig");', '}')
+    Write-Fixture $md 'src/wmux_proto/proto.zig' @('pub const a = @import("a.zig");', 'pub const b = @import("b.zig");', 'pub const m = @import("m.zig");')
+    Write-Fixture $md 'docs/wmux/schema/wmux.schema.json' @('{', '  "one": true', '}')
+    Invoke-FixtureGit $md @('commit', '-q', '-am', 'one')
+    Invoke-FixtureGit $md @('checkout', '-q', 'master')
+    Invoke-FixtureGit $md @('checkout', '-q', '-b', 'two')
+    Write-Fixture $md 'src/apprt/win32/features/x/logic/tests.zig' @('test {', '    _ = @import("a.zig");', '    _ = @import("c.zig");', '    _ = @import("m.zig");', '}')
+    Write-Fixture $md 'src/wmux_proto/proto.zig' @('pub const a = @import("a.zig");', 'pub const c = @import("c.zig");', 'pub const m = @import("m.zig");')
+    Write-Fixture $md 'docs/wmux/schema/wmux.schema.json' @('{', '  "two": true', '}')
+    Invoke-FixtureGit $md @('commit', '-q', '-am', 'two')
+    Invoke-FixtureGit $md @('checkout', '-q', 'one')
+    $mergeOk = $true
+    try { Invoke-FixtureGit $md @('merge', '-q', '--no-ff', '-m', 'merge two', 'two') } catch { $mergeOk = $false }
+    $tests = [System.IO.File]::ReadAllText((Join-Path $md 'src/apprt/win32/features/x/logic/tests.zig'))
+    $schema = [System.IO.File]::ReadAllText((Join-Path $md 'docs/wmux/schema/wmux.schema.json'))
+    Test-That 'merge drivers: the merge has no conflict' $mergeOk
+    Test-That 'merge drivers: union keeps both logic/tests.zig appends' (($tests -match 'b\.zig') -and ($tests -match 'c\.zig') -and ($tests -notmatch '<<<<<<<')) $tests
+    Test-That 'merge drivers: union keeps both proto.zig re-exports' ([System.IO.File]::ReadAllText((Join-Path $md 'src/wmux_proto/proto.zig')) -match '(?s)b\.zig.*c\.zig')
+    Test-That 'merge drivers: ours keeps the target schema (regenerated by gate -Merge)' (($schema -match '"one"') -and ($schema -notmatch '"two"')) $schema
 
     # ------------------------------------------------------------ check-manifest
     Write-Host 'check-manifest: fixture trees'

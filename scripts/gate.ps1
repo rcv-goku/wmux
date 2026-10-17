@@ -745,7 +745,8 @@ Add-Step 'e2e' 'test/e2e/run.ps1' @('local', 'merge', 'full') {
     if (-not $r.Args) { return (New-StepResult SKIP "no suite present$missingNote") }
     $res = Invoke-Logged -Id 'e2e' -FilePath $pwshExe -Arguments $r.Args -TimeoutSec $E2ETimeoutSec
     $wpNote = ''
-    if ($mode -ne 'full' -and $wps.Count -and (Get-WpSuites).Count -eq 0) {
+    $coversIds = @($specs | ForEach-Object { @($_.Data['covers']) } | Where-Object { $_ })
+    if ($mode -ne 'full' -and $wps.Count -and $coversIds.Count -and (Get-WpSuites).Count -eq 0) {
         $wpNote = "no $($wps -join '/')*.e2e.ps1 suite (ADR-12.5 expects one per feature WP); "
     }
     if ($res.TimedOut) { return (New-StepResult FAIL "$wpNote$($r.Label) timed out after $E2ETimeoutSec s$missingNote") }
