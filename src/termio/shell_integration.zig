@@ -255,6 +255,10 @@ test detectShell {
     try testing.expectEqual(.bash, try detectShell(alloc, .{ .shell = "\"/a b/bash\"" }));
     // A bare `bash` depends on the system's WSL launcher on Windows.
     try testing.expectEqual(.bash, detectShellExe("bash", fakeNoSystemBash));
+    if (comptime builtin.os.tag != .windows) {
+        try testing.expectEqual(.bash, try detectShell(alloc, .{ .shell = "bash" }));
+        try testing.expectEqual(.bash, try detectShell(alloc, .{ .shell = "bash -c 'command'" }));
+    }
 }
 
 test "unit: shell integration: Windows names, Git Bash and the WSL launcher" {
