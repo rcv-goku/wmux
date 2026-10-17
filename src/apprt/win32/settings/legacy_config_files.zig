@@ -12,6 +12,8 @@ const Allocator = std.mem.Allocator;
 
 const App = @import("../App.zig");
 const configpkg = @import("../../../config.zig");
+const dialogs = @import("../app/dialogs.zig");
+const ghostty_layer = @import("ghostty_layer.zig");
 const tasks = @import("../app/tasks.zig");
 const w32 = @import("../platform/win32.zig");
 
@@ -275,22 +277,18 @@ pub fn openConfigFile(self: *App) void {
     const path = resolveConfigFile(self) orelse return;
     defer self.core_app.alloc.free(path);
 
+    // app/dialogs owns the ShellExecuteW call; in test mode it records the
+    // launch in WMUX_TEST_EXTERNAL_SINK and reports success, so the
+    // notepad fallback below never runs in test mode.
+    if (dialogs.openExternal(self, "open_config", "open", path)) return;
+
     var wbuf: [512]u16 = undefined;
+    // Cap first (G6): utf8ToUtf16Le does not bounds-check in ReleaseFast.
+    if (path.len >= wbuf.len) return;
     const wlen = std.unicode.utf8ToUtf16Le(&wbuf, path) catch return;
     if (wlen >= wbuf.len) return;
     wbuf[wlen] = 0;
-
-    // ShellExecuteW returns > 32 on success; <= 32 is an SE_ERR_* code.
-    const result = w32.ShellExecuteW(
-        null,
-        std.unicode.utf8ToUtf16LeStringLiteral("open"),
-        @ptrCast(&wbuf),
-        null,
-        null,
-        w32.SW_SHOW,
-    );
-    if (result > 32) return;
-    log.warn("ShellExecuteW open config failed code={d}, falling back to notepad", .{result});
+    log.warn("open config failed, falling back to notepad", .{});
 
     // CreateProcessW may modify the command line, so build it in a
     // mutable buffer. Quoting is safe: Windows paths cannot contain '"'.
@@ -330,44 +328,36 @@ pub fn openConfigFolder(self: *App) void {
     const path = resolveConfigFile(self) orelse return;
     defer self.core_app.alloc.free(path);
     const dir = std.fs.path.dirname(path) orelse return;
-
-    var wbuf: [512]u16 = undefined;
-    const wlen = std.unicode.utf8ToUtf16Le(&wbuf, dir) catch return;
-    if (wlen >= wbuf.len) return;
-    wbuf[wlen] = 0;
-    _ = w32.ShellExecuteW(
-        null,
-        std.unicode.utf8ToUtf16LeStringLiteral("open"),
-        @ptrCast(&wbuf),
-        null,
-        null,
-        w32.SW_SHOW,
-    );
+    // Through app/dialogs (test mode records it in the external sink).
+    _ = dialogs.openExternal(self, "open_config_folder", "open", dir);
 }
 
-/// `.reload_config`: reload the config and push it to the core, which
-/// triggers config_change actions on all surfaces. (Moved from
-/// App.performAction in W0-A1.)
-pub fn reloadConfig(self: *App, soft: bool) void {
-    // Reload config and push to the core, which triggers
-    // config_change actions on all surfaces.
+/// Reload the Ghostty config and push it to the core, which triggers
+/// config_change actions on all surfaces. A hard reload reads the files
+/// again, with the wmux overlay and the settings overrides
+/// (ghostty_layer.loadConfig, ADR-5.5). Returns whether it succeeded.
+/// The `.reload_config` action reaches it through settings/api.zig
+/// `reloadConfiguration`. (Moved from App.performAction in W0-A1.)
+pub fn reloadConfig(self: *App, soft: bool) bool {
     const alloc = self.core_app.alloc;
     if (soft) {
         // Soft reload: re-apply existing config (for conditional state changes)
         self.core_app.updateConfig(self, &self.config) catch |err| {
             log.err("soft config reload error: {}", .{err});
+            return false;
         };
-    } else {
-        // Hard reload: read config from disk
-        var new_config = configpkg.Config.load(alloc) catch |err| {
-            log.err("failed to reload config: {}", .{err});
-            return;
-        };
-        defer new_config.deinit();
-        self.core_app.updateConfig(self, &new_config) catch |err| {
-            log.err("config update error: {}", .{err});
-        };
+        return true;
     }
+    var new_config = ghostty_layer.loadConfig(alloc, &self.runtime_env) catch |err| {
+        log.err("failed to reload config: {}", .{err});
+        return false;
+    };
+    defer new_config.deinit();
+    self.core_app.updateConfig(self, &new_config) catch |err| {
+        log.err("config update error: {}", .{err});
+        return false;
+    };
+    return true;
 }
 
 // ---------------------------------------------------------------------------
