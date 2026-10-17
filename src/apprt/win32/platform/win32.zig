@@ -1598,3 +1598,42 @@ pub extern "user32" fn CallNextHookEx(
     wParam: usize,
     lParam: isize,
 ) callconv(.winapi) isize;
+
+// -----------------------------------------------------------------------
+// W0-A4: hidden-mode focus gate, S7 sibling clipping, test sinks, logger
+// -----------------------------------------------------------------------
+
+/// WH_CBT code for SetFocus; returning nonzero from the hook refuses it.
+pub const HCBT_SETFOCUS: i32 = 9;
+
+/// GetAncestor: the root window (walks the parent chain, not owners).
+pub const GA_ROOT: u32 = 2;
+
+pub extern "user32" fn GetAncestor(hwnd: HWND, gaFlags: u32) callconv(.winapi) ?HWND;
+
+pub extern "user32" fn GetActiveWindow() callconv(.winapi) ?HWND;
+
+/// Clip a child window against its overlapping siblings (S7: the D2D
+/// sidebar, GL terminals and WebView2 hosts share one parent).
+pub const WS_CLIPSIBLINGS: u32 = 0x04000000;
+
+/// Sent to the parent (and ancestors) when a child is created or
+/// destroyed; LOWORD(wParam) is WM_CREATE/WM_DESTROY, lParam the child.
+pub const WM_PARENTNOTIFY: u32 = 0x0210;
+pub const WM_CREATE: u32 = 0x0001;
+
+/// PlaySoundW (winmm); only app/dialogs.zig calls it.
+pub extern "winmm" fn PlaySoundW(
+    pszSound: ?[*:0]const u16,
+    hmod: ?HINSTANCE,
+    fdwSound: u32,
+) callconv(.winapi) i32;
+
+/// SetStdHandle (kernel32); app/logger.zig points STD_ERROR_HANDLE at its
+/// log pipe.
+pub const STD_ERROR_HANDLE: u32 = @bitCast(@as(i32, -12));
+
+pub extern "kernel32" fn SetStdHandle(
+    nStdHandle: u32,
+    hHandle: ?*anyopaque,
+) callconv(.winapi) i32;
