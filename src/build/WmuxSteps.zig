@@ -3,7 +3,8 @@
 //! build.zig delegates here once. Every step later work packages need is
 //! defined now, pointing at stub files, so no later WP edits build.zig:
 //!
-//!   zig build test-fast        wmux_proto + every pure logic/ test index (std only)
+//!   zig build test-fast        wmux_proto + every pure logic/ test index (std only),
+//!                              plus the platform/ binding tests on Windows targets
 //!   zig build test-cli         tests rooted at src/wmux_cli/main.zig
 //!   zig build settings-schema  regenerates docs/wmux/schema/wmux.schema.json
 //!   zig build cli              builds and installs only the cmux CLI
@@ -136,6 +137,27 @@ pub fn init(b: *std.Build, cfg: *const Config, opts: Options) !WmuxSteps {
             }),
         });
         step.dependOn(&b.addRunArtifact(proto_tests).step);
+
+        // The PB-platform bindings (job objects, DPAPI, shell; W1-3 wires
+        // them here so every gate tier runs them). std only, plus the
+        // Win32 libraries their live tests call; those tests start hidden
+        // `cmd.exe` children only and never show a window or take focus.
+        if (windows) {
+            const platform_tests = b.addTest(.{
+                .name = "wmux-platform-test",
+                .filters = opts.test_filters,
+                .root_module = b.createModule(.{
+                    .root_source_file = b.path("src/apprt/win32/platform/tests.zig"),
+                    .target = test_target,
+                    .optimize = .Debug,
+                    .link_libc = true,
+                }),
+            });
+            for ([_][]const u8{ "crypt32", "shell32", "ole32", "shlwapi" }) |lib| {
+                platform_tests.root_module.linkSystemLibrary(lib, .{});
+            }
+            step.dependOn(&b.addRunArtifact(platform_tests).step);
+        }
 
         // Golden check (ADR-5.6): the committed schema must match the specs.
         if (schema_committed) {
