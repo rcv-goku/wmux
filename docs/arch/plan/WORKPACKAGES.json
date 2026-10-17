@@ -2274,11 +2274,11 @@
    "wave": 11,
    "arch_id": "W1-4a",
    "arch_wave": "W1",
-   "status": "planned",
+   "status": "done",
    "executor": "plan",
    "est_size": "L",
    "units": 11.6,
-   "summary": "ADR-5.1-5.5/5.7 app side on top of W0-P2: layer stack defaults < explicitly-set legacy Ghostty keys (Config._replay_steps, never defaults) < cmux.json < wmux.json < packs < project files < policy, with id-keyed project overrides; atomic refcounted snapshot swap; one watcher thread (ReadDirectoryChangesW, 300 ms debounce, content hash, symlink resolution) posting app.tasks; onSettingsChanged fan-out and config.reloaded; Ghostty overlay CONFIG/config.ghostty and generated STATE/run/settings-overrides.ghostty reload through the existing reload_config path; parse error keeps the last good snapshot and raises a ui/notice.zig notice with the first three errors; policy reads HKLM/HKCU Software/Policies/wmux (test mode: WMUX_TEST_POLICY_FILE JSON instead of the registry), re-read on WM_SETTINGCHANGE(\"Policy\") and every 60 s. Every reload is logged to STATE/logs/wmux.log, which the e2e asserts on (wmux.config.reload and the notices debug hook come with W1-4b).",
+   "summary": "ADR-5.1-5.5/5.7 app side on top of W0-P2: layer stack defaults < explicitly-set legacy Ghostty keys (Config._replay_steps, never defaults) < cmux.json < wmux.json < packs < project files < policy, with id-keyed project overrides; atomic refcounted snapshot swap; one watcher thread (ReadDirectoryChangesW, 300 ms debounce, content hash, symlink resolution) posting app.tasks; onSettingsChanged fan-out and config.reloaded; Ghostty overlay CONFIG/config.ghostty and generated STATE/run/settings-overrides.ghostty reload through the existing reload_config path; parse error keeps the last good snapshot and raises a ui/notice.zig notice with the first three errors; policy reads HKLM/HKCU Software/Policies/wmux (test mode: WMUX_TEST_POLICY_FILE JSON instead of the registry), re-read on WM_SETTINGCHANGE(\"Policy\") and every 60 s. Every reload is logged to STATE/logs/wmux.log, which the e2e asserts on (wmux.config.reload and the notices debug hook come with W1-4b). Merged 906ae9d (2026-10-17) on a green gate -Merge.",
    "features": [
     "persistence-cmuxjson-locations-and-precedence",
     "persistence-ghostty-config-loading-and-reload",

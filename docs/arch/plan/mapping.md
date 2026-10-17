@@ -81,6 +81,7 @@ Dates are commit dates (CDT, UTC-5). A branch merged twice was merged again afte
 | `98836b4` | 2026-10-17 | `wp/W1-IF-grants` | W1-IF (grants) | WP-10-w1-interface | done | integrator |
 | `f0ab9e2` | 2026-10-17 | `wp/cf-w1-6b` | W1-6b | WP-11-webview2-bindings | done | external:cfleet-wave1 |
 | `8cd1691` | 2026-10-17 | `wp/cf-w1-2c` | W1-2c | WP-11-cli-offline-conformance | done | external:cfleet-wave1 |
+| `906ae9d` | 2026-10-17 | `wp/W1-4a-settings-layer` | W1-4a | WP-11-settings-layer | done | plan |
 
 Direct commits on master between merges (no branch): `c7598b0` (test-fast runs the gfx logic tests,
 `[W0-K]`) and `12abd0c`, `59ba772` (smoke-suite fixes, `[W0-A1]`).
