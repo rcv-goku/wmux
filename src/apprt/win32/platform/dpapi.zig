@@ -38,10 +38,12 @@ pub const NTE_BAD_DATA: u32 = 0x8009_0005;
 pub const NTE_BAD_KEY_STATE: u32 = 0x8009_000B;
 
 pub const Error = error{
-    /// Ciphertext was tampered with, truncated, protected with different
-    /// entropy, or belongs to another user.
+    /// The encrypted payload or its MAC was modified, the blob was
+    /// truncated, or it was protected with different (or no) entropy.
     InvalidData,
-    /// The user's master key is unavailable (e.g. profile not loaded).
+    /// The master key the blob names is unavailable: the profile is not
+    /// loaded, or the blob belongs to another user (or its header was
+    /// damaged).
     KeyUnavailable,
     /// Input longer than a DATA_BLOB can describe (4 GiB).
     TooLarge,
@@ -137,8 +139,10 @@ pub fn protect(gpa: std.mem.Allocator, plaintext: []const u8, entropy: ?[]const 
     return gpa.dupe(u8, outSlice(out));
 }
 
-/// Decrypt a `protect` result. Wrong entropy or a modified ciphertext is
-/// `error.InvalidData`. Release the plaintext with `freeSecret`.
+/// Decrypt a `protect` result. Wrong or missing entropy, truncation or a
+/// modified payload/MAC is `error.InvalidData`; a damaged header can also
+/// fail with `KeyUnavailable`, `InvalidParameter` or `Unexpected`, so treat
+/// every error as "cannot decrypt". Release the plaintext with `freeSecret`.
 pub fn unprotect(gpa: std.mem.Allocator, ciphertext: []const u8, entropy: ?[]const u8) Error![]u8 {
     const in = try blobFromSlice(ciphertext);
     const ent: ?DATA_BLOB = if (entropy) |e| try blobFromSlice(e) else null;
