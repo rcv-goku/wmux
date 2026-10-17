@@ -1973,7 +1973,7 @@
    "executor": "plan",
    "est_size": "L",
    "units": 11.6,
-   "summary": "ADR-3.1-3.7 remainder on top of W1-1a-t: dispatch.zig parses the v2 envelope (W0-P1), checks UTF-8/JSON/method, routes by lane (pipe/worker/ui via app.tasks), enforces the 10 s ui deadline with the queued->expired CAS, holds mutating ui requests while app.modal.depth > 0, completes deferred replies bound to connection generation, and maps Zig errors with errors.fromZig. router.zig resolves UUID/ref/index (index = display order from model/logic/display_order.zig) with cmux precedence and exact cmux error strings; non-canonical keys fail. The legacy JSON adapter runs over the registry and is served both on the sniffed control pipe and on wmux-ipc-<pid>. instance.json marker, -alt-<8hex> squatting rule, app/single_instance.zig with app.launch on the launch pipe. system.ping/system.capabilities. wmux.debug framework: per-feature features/<id>/debug.zig exporting debug_methods aggregated by the registry, plus the core hooks ready, app.quit (graceful, waits for WebView2 exit once W1-6c lands), dialogs.list/answer, clipboard.get/set (fake), focus_state, layout, type, key, menu.list, menu.invoke (MenuBuilder introspection), timers, external_open.list and sounds.list (W0-A4 sinks).",
+   "summary": "ADR-3.1-3.7 remainder on top of W1-1a-t: dispatch.zig parses the v2 envelope (W0-P1), checks UTF-8/JSON/method, routes by lane (pipe/worker/ui via app.tasks), enforces the 10 s ui deadline with the queued->expired CAS, holds mutating ui requests while app.modal.depth > 0, completes deferred replies bound to connection generation, and maps Zig errors with errors.fromZig. router.zig resolves UUID/ref/index (index = display order from model/logic/display_order.zig) with cmux precedence and exact cmux error strings; non-canonical keys fail. The legacy JSON adapter runs over the registry and is served both on the sniffed control pipe and on wmux-ipc-<pid>. instance.json marker, -alt-<8hex> squatting rule, app/single_instance.zig with app.launch on the launch pipe. system.ping/system.capabilities. wmux.debug framework: per-feature features/<id>/debug.zig exporting debug_methods aggregated by the registry, plus the core hooks ready, app.quit (graceful, waits for WebView2 exit once W1-6c lands), dialogs.list/answer, clipboard.get/set (fake), focus_state, layout, type, key, menu.list, menu.invoke (MenuBuilder introspection), timers, external_open.list and sounds.list (W0-A4 sinks). Integrator grant (W1-IF review, 2026-10-17): touches App.zig for the two file-logger calls (app/logger.start right after RuntimeEnv.load, logger.stop in App.terminate); features/debug/hooks_core.zig (serves wmux.debug.focus_state) exposes a hotkeys provider hook so W1-5b fills focus_state.hotkeys without editing this WP's file.",
    "features": [
     "cli-v2-json-envelope",
     "cli-handle-refs-and-indexes",
@@ -2018,7 +2018,8 @@
     "src/wmux_proto/settings/specs/system.zig",
     "src/apprt/win32/rpc/types.zig",
     "src/apprt/win32/rpc/registry.zig",
-    "src/apprt/win32/rpc/server/mod.zig"
+    "src/apprt/win32/rpc/server/mod.zig",
+    "src/apprt/win32/App.zig"
    ],
    "touches": [
     {
@@ -2028,6 +2029,10 @@
     {
      "path": "src/apprt/win32/rpc/registry.zig",
      "reason": "aggregate per-feature debug_methods (test_only) and legacy commands over the registry (AF-14)"
+    },
+    {
+     "path": "src/apprt/win32/App.zig",
+     "reason": "call app/logger.start right after RuntimeEnv.load and logger.stop in App.terminate (integrator grant, W1-IF review 2026-10-17)"
     }
    ],
    "appends": [
@@ -2124,7 +2129,7 @@
    "executor": "external:cfleet-wave1",
    "est_size": "L",
    "units": 11.4,
-   "summary": "Verifies and completes the W1-2a implementation against the cmux contract without a running app: grammar edge cases (global options only before the command, presentation options anywhere, -- terminator, values starting with + or --version as payload), help task groups and topics (start agents navigate inspect customize automation browser remote diagnostics), per-command --help offline for every Appendix C command (stubs print usage), version, guide/--skill embedded Markdown, docs [topic], welcome, focus default from GetConsoleMode + agent markers + WMUX_/CMUX_FOCUS_NEW, --id-format refs|uuids|both. test/cli/probes.ps1 adapts cmux's no-socket probe list with the cmux and wmux names and runs in gate -Full as a contract test.",
+   "summary": "Verifies and completes the W1-2a implementation against the cmux contract without a running app: grammar edge cases (global options only before the command, presentation options anywhere, -- terminator, values starting with + or --version as payload), help task groups and topics (start agents navigate inspect customize automation browser remote diagnostics), per-command --help offline for every Appendix C command (stubs print usage), version, guide/--skill embedded Markdown, docs [topic], welcome, focus default from GetConsoleMode + agent markers + WMUX_/CMUX_FOCUS_NEW, --id-format refs|uuids|both. test/cli/probes.ps1 adapts cmux's no-socket probe list with the cmux and wmux names and runs in gate -Full as a contract test. Integrator grant (W1-IF review, 2026-10-17): owns src/wmux_cli/platform.zig for the offline Platform gaps (stat/size, writeFileAtomic with flush + sidecar lock + symlink/ACL-preserving replace, stdin-only console check); W1-2d (plan wave 12) touches it later for the server PID and eager connect for explicit pipes.",
    "features": [
     "cli-global-options",
     "cli-no-socket-help-probes",
@@ -2157,7 +2162,8 @@
     "src/wmux_cli/help/**",
     "src/wmux_cli/output.zig",
     "src/wmux_cli/focus_default.zig",
-    "test/cli/golden/**"
+    "test/cli/golden/**",
+    "src/wmux_cli/platform.zig"
    ],
    "touches": [],
    "appends": [],
@@ -2181,7 +2187,7 @@
    "executor": "plan",
    "est_size": "M",
    "units": 7.4,
-   "summary": "ADR-3.9 and S4 guidance for W1-3. spawnHooks() returns the protected environment applied after every override: CMUX_/WMUX_ WORKSPACE_ID, SURFACE_ID, PANEL_ID, TAB_ID (workspace UUID, cmux legacy meaning), PANE_ID, TERMINAL_LIFECYCLE_ID, SOCKET_PATH (pipe from wmux_proto/pipe_name.zig), CMUX_SOCKET=\"\" , BUNDLE_ID, BUNDLED_CLI_PATH, SHELL_INTEGRATION_DIR, CMUX_PORT/_END/_RANGE (port block per workspace), TERM=xterm-256color unless Ghostty term is set, COLORTERM, TERM_PROGRAM(_VERSION); PATH prepends INSTALL/cli (and STATE/shims/<build-id>/agents only while an agent integration is enabled; directory created, sentinel .wmux-shims written, stale build-ids pruned; wrapper names arrive with W3-2) and keeps the INSTALL append; WSLENV twins; Anthropic auth variables removed unless wmux.agents.preserveAuthEnv. Instance job at startup and a nested per-tab job (BREAKAWAY_OK only, never KILL_ON_JOB_CLOSE) via PB-platform job.zig; api inInstanceJob/surfaceForPid/processIds. Shell-integration fixes: PowerShell 5.1 escape, cmd PROMPT with OSC 9;9 and 133, Git Bash detection. Merges after W1-2b so `wmux +verb` inside a terminal already resolves to the compatible CLI.",
+   "summary": "ADR-3.9 and S4 guidance for W1-3. spawnHooks() returns the protected environment applied after every override: CMUX_/WMUX_ WORKSPACE_ID, SURFACE_ID, PANEL_ID, TAB_ID (workspace UUID, cmux legacy meaning), PANE_ID, TERMINAL_LIFECYCLE_ID, SOCKET_PATH (pipe from wmux_proto/pipe_name.zig), CMUX_SOCKET=\"\" , BUNDLE_ID, BUNDLED_CLI_PATH, SHELL_INTEGRATION_DIR, CMUX_PORT/_END/_RANGE (port block per workspace), TERM=xterm-256color unless Ghostty term is set, COLORTERM, TERM_PROGRAM(_VERSION); PATH prepends INSTALL/cli (and STATE/shims/<build-id>/agents only while an agent integration is enabled; directory created, sentinel .wmux-shims written, stale build-ids pruned; wrapper names arrive with W3-2) and keeps the INSTALL append; WSLENV twins; Anthropic auth variables removed unless wmux.agents.preserveAuthEnv. Instance job at startup and a nested per-tab job (BREAKAWAY_OK only, never KILL_ON_JOB_CLOSE) via PB-platform job.zig; api inInstanceJob/surfaceForPid/processIds. Shell-integration fixes: PowerShell 5.1 escape, cmd PROMPT with OSC 9;9 and 133, Git Bash detection. Merges after W1-2b so `wmux +verb` inside a terminal already resolves to the compatible CLI. Integrator grant (W1-IF review, 2026-10-17): touches platform/job.zig (job.errorFromWin32 per call) and src/build/WmuxSteps.zig (run the PB-platform live tests src/apprt/win32/platform/tests.zig in a gate step).",
    "features": [
     "cli-terminal-env-identity",
     "cli-terminal-env-terminal-identity",
@@ -2223,7 +2229,8 @@
     "src/termio/shell_integration.zig",
     "src/apprt/win32/features/env_identity/mod.zig",
     "src/apprt/win32/platform/job.zig",
-    "src/apprt/win32/platform/tests.zig"
+    "src/apprt/win32/platform/tests.zig",
+    "src/build/WmuxSteps.zig"
    ],
    "touches": [
     {
@@ -2237,6 +2244,14 @@
     {
      "path": "src/termio/shell_integration.zig",
      "reason": "detect bash.exe/zsh.exe (Git Bash, MSYS) for integration"
+    },
+    {
+     "path": "src/apprt/win32/platform/job.zig",
+     "reason": "job.errorFromWin32 per call (integrator grant, W1-IF review 2026-10-17)"
+    },
+    {
+     "path": "src/build/WmuxSteps.zig",
+     "reason": "run the PB-platform live tests in a gate step (src/apprt/win32/platform/tests.zig; integrator grant, W1-IF review 2026-10-17)"
     }
    ],
    "appends": [
@@ -2428,7 +2443,7 @@
    "executor": "plan",
    "est_size": "L",
    "units": 10.4,
-   "summary": "Completes the client half of the control plane end to end: ping/capabilities/rpc against a real instance, CMUX_SOCKET_PATH / WMUX_SOCKET_PATH / --socket precedence and the CMUX_SOCKET mismatch failure, every CLI-read variable with a WMUX_ twin taking precedence (env.zig), targets.zig implementing the cmux target-selection contract once (explicit flags, CMUX_WORKSPACE_ID / CMUX_SURFACE_ID defaults only without --workspace/--window, fail-closed exact messages), error rendering with Reason/What to do/Details and the version-skew diagnosis on method_not_found (the only owner of skew text), retries on overloaded/rate_limited honoring retry_after_ms, launch-if-needed commands starting ..\\wmux.exe detached and waiting up to the startup timeout for the launch pipe, and `cmux <path>` sending app.launch {intent:\"open\"} without control-socket access.",
+   "summary": "Completes the client half of the control plane end to end: ping/capabilities/rpc against a real instance, CMUX_SOCKET_PATH / WMUX_SOCKET_PATH / --socket precedence and the CMUX_SOCKET mismatch failure, every CLI-read variable with a WMUX_ twin taking precedence (env.zig), targets.zig implementing the cmux target-selection contract once (explicit flags, CMUX_WORKSPACE_ID / CMUX_SURFACE_ID defaults only without --workspace/--window, fail-closed exact messages), error rendering with Reason/What to do/Details and the version-skew diagnosis on method_not_found (the only owner of skew text), retries on overloaded/rate_limited honoring retry_after_ms, launch-if-needed commands starting ..\\wmux.exe detached and waiting up to the startup timeout for the launch pipe, and `cmux <path>` sending app.launch {intent:\"open\"} without control-socket access. Integrator grant (W1-IF review, 2026-10-17): touches src/wmux_cli/platform.zig (owned by W1-2c in plan wave 11) for the server PID and eager connect for explicit pipes.",
    "features": [
     "cli-ping-command",
     "cli-rpc-command",
@@ -2468,7 +2483,12 @@
     "src/wmux_cli/output.zig",
     "src/wmux_cli/commands/system.zig"
    ],
-   "touches": [],
+   "touches": [
+    {
+     "path": "src/wmux_cli/platform.zig",
+     "reason": "server PID for AllowSetForegroundWindow and eager connect for explicit pipes (W1-2c owns the file; integrator grant, W1-IF review 2026-10-17)"
+    }
+   ],
    "appends": [
     "src/wmux_cli/logic/tests.zig"
    ],
@@ -2494,7 +2514,7 @@
    "executor": "external:cfleet-wave1",
    "est_size": "L",
    "units": 11.8,
-   "summary": "ADR-5.6 CLI and the remaining Ghostty interplay: config get|set|unset|toggle|cycle|preset|doctor|check|validate|path|docs [--json] offline through wmux_proto/json_edit.zig, sidecar write lock + atomic replace, --preview/--expect-revision/receipts and undo per cmux config transactions, source per key in get --json, policy-locked keys refused, legacy shorthands sidebar-font-size and surface-tab-bar-font-size, settingPresets, `config preset <name>` writing only the differences, `config reload` -> wmux.config.reload (system module). Ghostty side: JSON keys with ghostty_override generate the overrides file; cmux-only Ghostty keys (sidebar-background with light:/dark:, sidebar-tint-opacity, sidebar-font-size, surface-tab-bar-font-size) are read from the Ghostty files by the settings layer without adding Config.zig keys (G8) and their unknown-key diagnostics are suppressed; `config doctor` reports deprecated Ghostty keys and Mac-only cmux keys. wmux.debug.notices lists ui/notice.zig notices.",
+   "summary": "ADR-5.6 CLI and the remaining Ghostty interplay: config get|set|unset|toggle|cycle|preset|doctor|check|validate|path|docs [--json] offline through wmux_proto/json_edit.zig, sidecar write lock + atomic replace, --preview/--expect-revision/receipts and undo per cmux config transactions, source per key in get --json, policy-locked keys refused, legacy shorthands sidebar-font-size and surface-tab-bar-font-size, settingPresets, `config preset <name>` writing only the differences, `config reload` -> wmux.config.reload (system module). Ghostty side: JSON keys with ghostty_override generate the overrides file; cmux-only Ghostty keys (sidebar-background with light:/dark:, sidebar-tint-opacity, sidebar-font-size, surface-tab-bar-font-size) are read from the Ghostty files by the settings layer without adding Config.zig keys (G8) and their unknown-key diagnostics are suppressed; `config doctor` reports deprecated Ghostty keys and Mac-only cmux keys. wmux.debug.notices lists ui/notice.zig notices. Integrator grant (W1-IF review, 2026-10-17): touches src/wmux_proto/settings/specs/browser.zig to register wmux.browser.enabled.",
    "features": [
     "persistence-config-doctor-validate",
     "persistence-config-get-set-mutations",
@@ -2536,7 +2556,12 @@
     "src/wmux_proto/settings/specs/system.zig",
     "src/apprt/win32/features/system/mod.zig"
    ],
-   "touches": [],
+   "touches": [
+    {
+     "path": "src/wmux_proto/settings/specs/browser.zig",
+     "reason": "register wmux.browser.enabled (integrator grant, W1-IF review 2026-10-17)"
+    }
+   ],
    "appends": [
     "src/wmux_cli/logic/tests.zig",
     "src/apprt/win32/settings/logic/tests.zig",
@@ -2563,7 +2588,7 @@
    "executor": "plan",
    "est_size": "L",
    "units": 11.8,
-   "summary": "ADR-8.2-8.7: router.zig called from message_loop.preTranslate and WebView2 accelerators (entry API), text-producing keys never match, AltGr \"text always wins\" via ToUnicodeEx(0x4) tables rebuilt on WM_INPUTLANGCHANGE, contexts and when-clauses (W0-P3 parser), 1.5 s chords with tab-bar hint and Esc cancel, performable pass-through, effective bindings = wmux.json literal shortcuts.bindings + explicit Ghostty keybinds suppressing router defaults + catalog defaults; handlers for every existing behavior in the 13 pre-seeded modules (chrome handlers call the ui/sidebar and ui/right_sidebar facades implemented by W1-8b/8c/8d), Ghostty tab semantics wmux.ghosttyTabActions (goto_tab off-by-one fixed, performAction returns the real bool), Keybinds.init win32 pruning, Shift+Insert repaired, wmux.action.run and wmux.shortcuts.list. Critic fixes: a one-time \"keymap changed\" notice links to the presets, and the wmux-classic preset (W0-P3 data) applied through wmux.json restores Ctrl+T/W/B, Alt+1..9 and Ctrl+Enter.",
+   "summary": "ADR-8.2-8.7: router.zig called from message_loop.preTranslate and WebView2 accelerators (entry API), text-producing keys never match, AltGr \"text always wins\" via ToUnicodeEx(0x4) tables rebuilt on WM_INPUTLANGCHANGE, contexts and when-clauses (W0-P3 parser), 1.5 s chords with tab-bar hint and Esc cancel, performable pass-through, effective bindings = wmux.json literal shortcuts.bindings + explicit Ghostty keybinds suppressing router defaults + catalog defaults; handlers for every existing behavior in the 13 pre-seeded modules (chrome handlers call the ui/sidebar and ui/right_sidebar facades implemented by W1-8b/8c/8d), Ghostty tab semantics wmux.ghosttyTabActions (goto_tab off-by-one fixed, performAction returns the real bool), Keybinds.init win32 pruning, Shift+Insert repaired, wmux.action.run and wmux.shortcuts.list. Critic fixes: a one-time \"keymap changed\" notice links to the presets, and the wmux-classic preset (W0-P3 data) applied through wmux.json restores Ctrl+T/W/B, Alt+1..9 and Ctrl+Enter. Integrator grant (W1-IF review, 2026-10-17): owns src/wmux_cli/commands/wmux/action.zig (wmux action run -> wmux.action.run).",
    "features": [
     "core-shortcuts-defaults-app-window",
     "core-shortcuts-defaults-workspaces",
@@ -2615,7 +2640,8 @@
     "src/apprt/win32/features/terminal_io/actions.zig",
     "src/wmux_proto/settings/specs/shortcuts.zig",
     "src/config/Config.zig",
-    "src/apprt/win32/features/shortcuts/mod.zig"
+    "src/apprt/win32/features/shortcuts/mod.zig",
+    "src/wmux_cli/commands/wmux/action.zig"
    ],
    "touches": [
     {
@@ -2942,7 +2968,7 @@
    "executor": "plan",
    "est_size": "L",
    "units": 9.8,
-   "summary": "ADR-8.6/8.9 customization: wmux.json literal strokes, cmux.json mac strokes translated by mac_translate.zig (cmd -> ctrl+shift, cmd+shift/cmd+opt non-letter/cmd+ctrl -> ctrl+shift+alt, cmd+opt+letter -> alt+shift+letter) with collision and terminal-safety drops reported by config doctor, chords as arrays or \"a b\", unbind values, shortcuts.when overrides, live reload; keymap presets listed and applied (W1-4b command); modifier-hold hint chips in tab bars and sidebar hint pills (shortcuts.showModifierHoldHints); showHideAllWindows binding registers RegisterHotKey (none in test mode; a test hook reports the registration).",
+   "summary": "ADR-8.6/8.9 customization: wmux.json literal strokes, cmux.json mac strokes translated by mac_translate.zig (cmd -> ctrl+shift, cmd+shift/cmd+opt non-letter/cmd+ctrl -> ctrl+shift+alt, cmd+opt+letter -> alt+shift+letter) with collision and terminal-safety drops reported by config doctor, chords as arrays or \"a b\", unbind values, shortcuts.when overrides, live reload; keymap presets listed and applied (W1-4b command); modifier-hold hint chips in tab bars and sidebar hint pills (shortcuts.showModifierHoldHints); showHideAllWindows binding registers RegisterHotKey (none in test mode; a test hook reports the registration). Integrator grant (W1-IF review, 2026-10-17): the registrations reach wmux.debug.focus_state.hotkeys through the hotkeys provider hook that W1-1a exposes in features/debug/hooks_core.zig; this WP never edits that file.",
    "features": [
     "core-shortcuts-cmux-json",
     "persistence-settings-shortcuts-config",
