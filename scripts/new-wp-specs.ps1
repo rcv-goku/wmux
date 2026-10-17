@@ -202,7 +202,7 @@ foreach ($w in $selected) {
     if (-not (Test-WmuxWpId $archId)) { Add-PlanError "${where}: arch_id '$archId' is not a WP id." }
     $title = [string](Get-Field $w 'title')
     # Titles may quote CLI syntax (`cmux <path>`): only the word placeholders count there.
-    if (-not $title.Trim() -or $title -match $titlePlaceholder) { Add-PlanError "${where}: placeholder or empty title '$title'." }
+    if (-not $title.Trim() -or $title -cmatch $titlePlaceholder) { Add-PlanError "${where}: placeholder or empty title '$title'." }
     $filesNew = Get-List $w 'files_new'
     $filesTouched = Get-List $w 'files_touched'
     $touches = Get-TouchList $w
@@ -210,17 +210,17 @@ foreach ($w in $selected) {
     foreach ($pair in @(@('files_new', $filesNew), @('files_touched', $filesTouched), @('appends', $appends), @('touches', @($touches | ForEach-Object Path)))) {
         foreach ($p in $pair[1]) {
             if (-not ([string]$p).Trim()) { Add-PlanError "${where}: empty path in $($pair[0])." }
-            elseif ($p -match $placeholder) { Add-PlanError "${where}: placeholder path in $($pair[0]): '$p'." }
+            elseif ($p -cmatch $placeholder) { Add-PlanError "${where}: placeholder path in $($pair[0]): '$p'." }
         }
     }
     foreach ($t in $touches) {
         if (-not $t.Reason.Trim()) { Add-PlanError "${where}: touches entry '$($t.Path)' has no reason." }
-        elseif ($t.Reason -match $placeholder) { Add-PlanError "${where}: placeholder reason for touches '$($t.Path)': '$($t.Reason)'." }
+        elseif ($t.Reason -cmatch $placeholder) { Add-PlanError "${where}: placeholder reason for touches '$($t.Path)': '$($t.Reason)'." }
     }
     $status = [string](Get-Field $w 'status')
     if ($status -notin @('done', 'in_progress')) {
         foreach ($p in $filesNew) {
-            if ($p -and $p -notmatch $placeholder -and (Test-InTree $p)) {
+            if ($p -and $p -cnotmatch $placeholder -and (Test-InTree $p)) {
                 $msg = "${where}: files_new path '$p' already exists in the tree (move it to files_touched in the plan, or drop it)."
                 if ($AllowExisting) { Add-PlanWarning "$msg Rendered as owned (-AllowExisting)."; $drift.Add("$($archId)|$p") }
                 else { Add-PlanError $msg }
@@ -257,7 +257,7 @@ foreach ($w in $selected) {
 # files_touched must exist or be created earlier in the plan (warning).
 foreach ($r in $records) {
     foreach ($p in $r.FilesTouched) {
-        if (-not $p -or $p -match $placeholder -or (Test-InTree $p)) { continue }
+        if (-not $p -or $p -cmatch $placeholder -or (Test-InTree $p)) { continue }
         $creator = @($all | Where-Object {
                 $ww = [int](Get-Field $_ 'wave')
                 ($ww -lt $r.Wave -or (Get-Field $_ 'id') -eq $r.PlanId) -and @((Get-List $_ 'files_new') | Where-Object { Test-WmuxGlobOverlap -A $_ -B $p }).Count
