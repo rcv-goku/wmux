@@ -1798,7 +1798,7 @@ Names are exactly cmux's (verified against `Sources/TerminalController+Capabilit
 | `toggle-right-sidebar` | `wmux.right_sidebar.toggle` (target window honored) | W1-8 |
 | `session-capture`, `-resume`, `-list`, `-save`, `-restore` | `surface.resume.set`, `wmux.surface.resume_run`, agents store read inside the adapter, `wmux.session.save`, `session.restore_previous` | W1-7 / W3-5 |
 
-Action names of `workspace.action` and `tab.action` are cmux's hyphenated ones (`set-description`, `mark-read`, `clear-name`, `mark-unread`, …), as the CLI's `workspace-action`/`tab-action` already send them (ruling D6).
+Action names of `workspace.action` and `tab.action` are cmux's hyphenated ones (`set-description`, `mark-read`, `clear-name`, `mark-unread`, …) (ruling D6). As in cmux, whose v2 parameter parsing lowercases the action and maps `-` to `_`, the handlers accept both spellings: the CLI's `tab-action` sends the hyphenated names, while its `workspace-action` sends cmux's underscore wire spelling (`set_description`, `mark_read`; `src/wmux_cli/commands/workspace.zig`).
 
 ---
 
