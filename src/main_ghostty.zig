@@ -8,6 +8,7 @@ const posix = std.posix;
 const build_config = @import("build_config.zig");
 const macos = if (builtin.target.os.tag.isDarwin()) @import("macos") else undefined;
 const cli = @import("cli.zig");
+const cli_relay = @import("wmux_cli/relay.zig");
 const renderer = @import("renderer.zig");
 const apprt = @import("apprt.zig");
 
@@ -24,6 +25,17 @@ const MainReturn = switch (build_config.artifact) {
 };
 
 pub fn main() !MainReturn {
+    // ADR-4.10 argv routing (W1-2b): a cmux command, a global CLI option or
+    // a legacy wmux `+verb` runs `<exe dir>\cli\cmux.exe` with inherited
+    // handles and exits with its code; Ghostty-native `+actions` and app
+    // launches continue below.
+    if (comptime builtin.os.tag == .windows and
+        build_config.artifact == .exe and
+        build_config.app_runtime == .win32)
+    {
+        if (cli_relay.gui.relayIfCliArgv()) |code| std.process.exit(code);
+    }
+
     // We first start by initializing our global state. This will setup
     // process-level state we need to run the terminal. The reason we use
     // a global is because the C API needs to be able to access this state;
@@ -63,6 +75,9 @@ pub fn main() !MainReturn {
 
     // Execute our action if we have one
     if (state.action) |action| {
+        if (comptime builtin.os.tag == .windows and build_config.app_runtime == .win32) {
+            cli_relay.gui.attachConsoleForAction();
+        }
         std.log.info("executing CLI action={}", .{action});
         posix.exit(action.run(alloc) catch |err| err: {
             std.log.err("CLI action failed error={}", .{err});

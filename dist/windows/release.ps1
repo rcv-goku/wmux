@@ -4,11 +4,20 @@
 
 .DESCRIPTION
     Steps:
-      1. zig build (ReleaseFast, win32 app runtime, x86_64-windows-gnu)
-      2. Stage wmux.exe, WebView2Loader.dll, and share/ resources into
-         dist\windows\_staging\
+      1. zig build (ReleaseFast, win32 app runtime, x86_64-windows-gnu) into
+         -Prefix (default zig-out)
+      2. Stage into dist\windows\_staging\ (or -StageDir) the install layout
+         of ARCHITECTURE ADR-4.1 (W1-2b):
+           wmux.exe, WebView2Loader.dll, LICENSE.txt
+           cli\cmux.exe, cli\wmux.exe and cli\wmux.com (byte copies of the
+             console CLI; wmux.exe relays CLI argv to cli\cmux.exe)
+           cli\posix\cmux, cli\posix\wmux (LF sh launchers running ..\cmux.exe)
+           share\terminfo, share\ghostty\{themes,shell-integration}
+           share\wmux\** (web apps, settings schema and every other wmux
+             resource the build installs)
       3. Compile dist\windows\installer.iss with Inno Setup 6 (ISCC.exe),
-         emitting the setup exe to dist\windows\output\
+         emitting the setup exe to dist\windows\output\ (or -OutputDir);
+         skipped with -NoInstaller
 
     WebView2Loader.dll origin: the Microsoft.Web.WebView2 NuGet package,
     path build/native/x64/WebView2Loader.dll inside the .nupkg. It is
@@ -23,7 +32,29 @@
     Default: `git describe --tags --always` in the repo, else "dev".
 
 .PARAMETER SkipBuild
-    Skip the zig build and package whatever already exists in zig-out\bin.
+    Skip the zig build and package whatever already exists under -Prefix.
+
+.PARAMETER Prefix
+    Install prefix of the zig build (bin\ and share\ below it). Default:
+    zig-out in the repo. test/contract/release-smoke.ps1 passes zig-out\release.
+
+.PARAMETER StageDir
+    Staging directory (default dist\windows\_staging). It is recreated.
+
+.PARAMETER OutputDir
+    Directory for the compiled setup exe (default dist\windows\output).
+
+.PARAMETER NoInstaller
+    Stop after staging (exit 0); ISCC is not needed.
+
+.PARAMETER Smoke
+    Compile the installer with /DReleaseSmoke=1: a separate AppId and no
+    shortcuts, so a silent test install never touches the user's wmux
+    installation (test/contract/release-smoke.ps1).
+
+.PARAMETER NoDownload
+    Never download WebView2Loader.dll from NuGet; stage without it (with a
+    warning) when no local copy exists.
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File dist\windows\release.ps1
@@ -34,7 +65,13 @@
 [CmdletBinding()]
 param(
     [string]$Version,
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+    [string]$Prefix,
+    [string]$StageDir,
+    [string]$OutputDir,
+    [switch]$NoInstaller,
+    [switch]$Smoke,
+    [switch]$NoDownload
 )
 
 $ErrorActionPreference = 'Stop'
@@ -48,19 +85,24 @@ $RepoRoot  = (Resolve-Path (Join-Path $ScriptDir '..\..')).Path
 $ZigExe = if ($env:ZIG) { $env:ZIG }
           elseif (Test-Path 'C:\Users\ReyColónValero\claude\tools\zig-x86_64-windows-0.15.2\zig.exe') { 'C:\Users\ReyColónValero\claude\tools\zig-x86_64-windows-0.15.2\zig.exe' }
           else { 'zig' }
+$Prefix = if ($Prefix) { [IO.Path]::GetFullPath($Prefix) } else { Join-Path $RepoRoot 'zig-out' }
+$BinDir = Join-Path $Prefix 'bin'
+$ShareDir = Join-Path $Prefix 'share'
 # WebView2Loader.dll from the Microsoft.Web.WebView2 NuGet package
 # (build/native/x64). Search order: $env:WEBVIEW2LOADER_PATH, the dll beside
-# this script, the dll in zig-out\bin, then the local dev staging copy.
+# this script, the dll in the build's bin\, the local dev staging copy, then
+# an installed wmux.
 $WebView2LoaderSource = @(
     $env:WEBVIEW2LOADER_PATH,
     (Join-Path $ScriptDir 'WebView2Loader.dll'),
-    (Join-Path $RepoRoot 'zig-out\bin\WebView2Loader.dll'),
-    'C:\Users\ReyColónValero\claude\ghostty-staging\WebView2Loader.dll'
+    (Join-Path $BinDir 'WebView2Loader.dll'),
+    'C:\Users\ReyColónValero\claude\ghostty-staging\WebView2Loader.dll',
+    $(if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'Programs\wmux\WebView2Loader.dll' })
 ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
 if (-not $WebView2LoaderSource) { $WebView2LoaderSource = 'WebView2Loader.dll' }
-$StageDir  = Join-Path $ScriptDir '_staging'
+$StageDir  = if ($StageDir) { [IO.Path]::GetFullPath($StageDir) } else { Join-Path $ScriptDir '_staging' }
 $IssFile   = Join-Path $ScriptDir 'installer.iss'
-$OutputDir = Join-Path $ScriptDir 'output'
+$OutputDir = if ($OutputDir) { [IO.Path]::GetFullPath($OutputDir) } else { Join-Path $ScriptDir 'output' }
 
 function Fail([string]$Message) {
     Write-Host ''
@@ -103,7 +145,7 @@ Write-Host ''
 # Build (ReleaseFast)
 # --------------------------------------------------------------------------
 if ($SkipBuild) {
-    Write-Host 'Skipping zig build (-SkipBuild); using existing zig-out\bin.' -ForegroundColor Yellow
+    Write-Host "Skipping zig build (-SkipBuild); using existing $BinDir." -ForegroundColor Yellow
 } else {
     # $ZigExe may be a full path or a bare command on PATH (CI). Test-Path
     # only resolves the former, so fall back to Get-Command for the latter.
@@ -117,7 +159,7 @@ if ($SkipBuild) {
         # match its declared version. Pass an explicit semantic version to
         # bypass that check (and stamp the build) whenever $Version is a
         # plain a.b.c; otherwise let the build derive it from git.
-        $zigArgs = @('build', '-Dapp-runtime=win32', '-Dtarget=x86_64-windows-gnu', '-Doptimize=ReleaseFast')
+        $zigArgs = @('build', '-Dapp-runtime=win32', '-Dtarget=x86_64-windows-gnu', '-Doptimize=ReleaseFast', '--prefix', $Prefix)
         if ($Version -match '^\d+\.\d+\.\d+$') { $zigArgs += "-Dversion-string=$Version" }
         & $ZigExe @zigArgs
         if ($LASTEXITCODE -ne 0) {
@@ -128,13 +170,17 @@ if ($SkipBuild) {
     }
 }
 
-$ExePath = Join-Path $RepoRoot 'zig-out\bin\ghostty.exe'
+$ExePath = Join-Path $BinDir 'wmux.exe'
 if (-not (Test-Path $ExePath)) {
-    # Also check for wmux.exe in case the build system has been updated.
-    $ExePath = Join-Path $RepoRoot 'zig-out\bin\wmux.exe'
+    # Builds before the wmux rename produced ghostty.exe.
+    $ExePath = Join-Path $BinDir 'ghostty.exe'
 }
 if (-not (Test-Path $ExePath)) {
-    Fail "wmux.exe (or ghostty.exe) not found in zig-out\bin. Run without -SkipBuild, or run the zig build first."
+    Fail "wmux.exe (or ghostty.exe) not found in $BinDir. Run without -SkipBuild, or run the zig build first."
+}
+$CliExe = Join-Path $BinDir 'cli\cmux.exe'
+if (-not (Test-Path $CliExe)) {
+    Fail "cli\cmux.exe not found in $BinDir (the build installs it next to wmux.exe, ADR-4.1)."
 }
 
 # --------------------------------------------------------------------------
@@ -147,9 +193,31 @@ New-Item -ItemType Directory -Path $StageDir -Force | Out-Null
 Copy-Item $ExePath -Destination (Join-Path $StageDir 'wmux.exe')
 Write-Host "  wmux.exe  ($([math]::Round((Get-Item $ExePath).Length / 1MB, 1)) MB)"
 
+# cli\: the console CLI and its byte copies (ADR-4.1; amendments of spike S4
+# and S6), and the POSIX launchers in cli\posix\ running ..\cmux.exe.
+$CliStage = Join-Path $StageDir 'cli'
+New-Item -ItemType Directory -Path (Join-Path $CliStage 'posix') -Force | Out-Null
+foreach ($name in 'cmux.exe', 'wmux.exe', 'wmux.com') {
+    Copy-Item $CliExe -Destination (Join-Path $CliStage $name)
+}
+Write-Host '  cli\cmux.exe, cli\wmux.exe, cli\wmux.com'
+foreach ($name in 'cmux', 'wmux') {
+    $src = Join-Path $RepoRoot "src\wmux_cli\scripts\$name"
+    if (-not (Test-Path $src)) { Fail "POSIX launcher not found: $src" }
+    # The source launcher runs its sibling cmux.exe; staged in cli\posix\ it
+    # runs ..\cmux.exe. LF line endings, no BOM (sh reads it).
+    $text = [IO.File]::ReadAllText($src).Replace("`r`n", "`n")
+    $text = $text.Replace('"$(dirname "$0")/cmux.exe"', '"$(dirname "$0")/../cmux.exe"')
+    if ($text -notmatch [regex]::Escape('"$(dirname "$0")/../cmux.exe"')) { Fail "unexpected launcher contents in $src" }
+    [IO.File]::WriteAllText((Join-Path $CliStage "posix\$name"), $text, [Text.UTF8Encoding]::new($false))
+}
+Write-Host '  cli\posix\cmux, cli\posix\wmux'
+
 if (Test-Path $WebView2LoaderSource) {
     Copy-Item $WebView2LoaderSource -Destination $StageDir
     Write-Host '  WebView2Loader.dll  (Microsoft.Web.WebView2 NuGet, build/native/x64)'
+} elseif ($NoDownload) {
+    Write-Host '  WARNING: WebView2Loader.dll not found locally and -NoDownload is set; staged without it.' -ForegroundColor Yellow
 } else {
     Write-Host '  WebView2Loader.dll not found locally; downloading from NuGet...' -ForegroundColor Yellow
     $NuGetTmp = Join-Path $env:TEMP 'webview2-nuget'
@@ -192,32 +260,52 @@ It is redistributable per the WebView2 SDK license. To fetch it manually:
 # share/ resources: terminfo sentinel + themes + shell integration.
 # resourcesDir() (src/os/resourcesdir.zig) climbs from the exe looking for
 # share/terminfo/ghostty.terminfo; without it, theme loading silently fails.
-$TerminfoSource = Join-Path $RepoRoot 'zig-out\share\terminfo\ghostty.terminfo'
+$TerminfoSource = Join-Path $ShareDir 'terminfo\ghostty.terminfo'
 if (Test-Path $TerminfoSource) {
     $dest = Join-Path $StageDir 'share\terminfo'
     New-Item -ItemType Directory -Path $dest -Force | Out-Null
     Copy-Item $TerminfoSource -Destination $dest
     Write-Host '  share\terminfo\ghostty.terminfo  (resource-dir sentinel)'
 } else {
-    Write-Host '  WARNING: zig-out\share\terminfo\ghostty.terminfo not found; skipping (theme loading may fail at runtime).' -ForegroundColor Yellow
+    Write-Host "  WARNING: $TerminfoSource not found; skipping (theme loading may fail at runtime)." -ForegroundColor Yellow
 }
 
 foreach ($sub in 'themes', 'shell-integration') {
-    $src = Join-Path $RepoRoot "zig-out\share\ghostty\$sub"
+    $src = Join-Path $ShareDir "ghostty\$sub"
     if (Test-Path $src) {
         $dest = Join-Path $StageDir 'share\ghostty'
         New-Item -ItemType Directory -Path $dest -Force | Out-Null
         Copy-Item $src -Destination $dest -Recurse
         Write-Host "  share\ghostty\$sub\"
     } else {
-        Write-Host "  note: zig-out\share\ghostty\$sub not found; skipping." -ForegroundColor Yellow
+        Write-Host "  note: $src not found; skipping." -ForegroundColor Yellow
     }
+}
+
+# share\wmux\**: everything the build installs for wmux (web apps, settings
+# schema, and later icons and shell integration), copied as a whole so the
+# installed layout matches the build's share\ (ADR-4.1, W1-2b).
+$WmuxShare = Join-Path $ShareDir 'wmux'
+if (Test-Path $WmuxShare) {
+    $dest = Join-Path $StageDir 'share'
+    New-Item -ItemType Directory -Path $dest -Force | Out-Null
+    Copy-Item $WmuxShare -Destination $dest -Recurse
+    $subs = @(Get-ChildItem -LiteralPath $WmuxShare -Directory | ForEach-Object Name) -join ', '
+    Write-Host "  share\wmux\  ($subs)"
+} else {
+    Write-Host "  WARNING: $WmuxShare not found; the web panels and the settings schema are missing." -ForegroundColor Yellow
 }
 
 $LicenseSource = Join-Path $RepoRoot 'LICENSE'
 if (Test-Path $LicenseSource) {
     Copy-Item $LicenseSource -Destination (Join-Path $StageDir 'LICENSE.txt')
     Write-Host '  LICENSE.txt'
+}
+
+if ($NoInstaller) {
+    Write-Host ''
+    Write-Host "Staging complete (-NoInstaller): $StageDir" -ForegroundColor Green
+    exit 0
 }
 
 # --------------------------------------------------------------------------
@@ -252,7 +340,9 @@ if (-not $Iscc) {
 # --------------------------------------------------------------------------
 Write-Host ''
 Write-Host "Compiling installer with: $Iscc" -ForegroundColor Cyan
-& $Iscc "/DAppVersion=$Version" "/DAppVersionNumeric=$VersionNumeric" "/DStagingDir=$StageDir" "/O$OutputDir" $IssFile
+$IsccArgs = @("/DAppVersion=$Version", "/DAppVersionNumeric=$VersionNumeric", "/DStagingDir=$StageDir", "/O$OutputDir")
+if ($Smoke) { $IsccArgs += '/DReleaseSmoke=1' }
+& $Iscc @IsccArgs $IssFile
 if ($LASTEXITCODE -ne 0) {
     Fail "ISCC failed with exit code $LASTEXITCODE"
 }
