@@ -242,7 +242,7 @@ pub fn restore(alloc: Allocator, app: *App) !void {
         return;
     };
     if (app.windows.items.len == 0) return;
-    try @import("restore.zig").apply(app, &session, .{ .stagger = false, .placement = false, .all_windows = false });
+    try @import("restore.zig").apply(app, &session, .{ .stagger = false, .placement = false, .all_windows = false, .launch = false });
 }
 
 // ── Tests ──────────────────────────────────────────────────────────

@@ -65,6 +65,9 @@ pub const Options = struct {
     placement: bool = true,
     /// Restore every saved window (false: only the first, into window 0).
     all_windows: bool = true,
+    /// The launch restore: `finish` ends it (marker, pending session).
+    /// False for the explicit legacy `session-restore`.
+    launch: bool = true,
 };
 
 // ── Entry points ────────────────────────────────────────────────────
@@ -185,7 +188,7 @@ fn runLaunch(app: *App) void {
     const core = autosave.get(app) orelse return;
     const parsed = core.pending orelse return;
     log.info("restoring the session: {d} window(s)", .{parsed.session.windows.len});
-    apply(app, &parsed.session, .{}) catch |err| {
+    apply(app, &parsed.session, .{ .launch = true }) catch |err| {
         log.err("session restore failed err={}", .{err});
         finish(app);
     };
@@ -251,11 +254,11 @@ pub fn apply(app: *App, s: *const schema.Session, opts: Options) !void {
     for (targets[0..built]) |window| refreshWindow(window, true);
 
     const core = autosave.get(app);
-    if (plan.deferred.items.len == 0 or core == null) {
-        // Nothing deferred (or no runtime to own a timer queue): done.
+    if (plan.deferred.items.len == 0 or core == null or !opts.launch) {
+        // Nothing deferred (or no launch restore to own a timer queue): done.
         for (plan.deferred.items) |*item| spawnDeferred(app, item);
         plan.deinit();
-        finish(app);
+        if (opts.launch) finish(app) else autosave.markDirty(app);
         return;
     }
     // The deferred items now own their strings; the plan keeps only them.

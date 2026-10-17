@@ -33,6 +33,9 @@ pub fn onEvent(app: *App, ev: *const events.Event) void {
     // status) do not, unless their owners snapshot ext state (they call
     // api.markDirty).
     if (isStructural(ev)) autosave.markDirty(app);
+    // A window opened after the final save (the app kept running without
+    // windows): automatic saves resume.
+    if (ev.kind == .@"window.created") autosave.resumeAfterFinalSave(app);
 }
 
 fn isStructural(ev: *const events.Event) bool {

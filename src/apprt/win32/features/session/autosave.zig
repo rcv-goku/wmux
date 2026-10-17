@@ -680,3 +680,11 @@ pub fn flushNotices(app: *App) void {
     }
     core.notices.clearRetainingCapacity();
 }
+
+/// A window was created after the final save (quit-after-last-window-closed
+/// is off and the app got a new window): saving resumes.
+pub fn resumeAfterFinalSave(app: *const App) void {
+    const core = get(app) orelse return;
+    core.final_saved = false;
+    core.dirty = true;
+}
