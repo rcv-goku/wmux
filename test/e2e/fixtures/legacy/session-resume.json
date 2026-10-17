@@ -1,0 +1,21 @@
+{
+  "//": "Reply shapes of the legacy wmux JSON command 'session-resume' (ADR-3.7), keyed by case; see README.md.",
+  "no_recipe": {
+    "<strict>": true,
+    "id": "<int>",
+    "ok": false,
+    "error": "NoResumeRecipe"
+  },
+  "no_session": {
+    "<strict>": true,
+    "id": "<int>",
+    "ok": false,
+    "error": "NoSession"
+  },
+  "unknown_surface": {
+    "<strict>": true,
+    "id": "<int>",
+    "ok": false,
+    "error": "UnknownSurface"
+  }
+}

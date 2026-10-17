@@ -1,0 +1,27 @@
+{
+  "//": "Protocol-level replies of the legacy pipe (framing and validation errors); see README.md.",
+  "unknown_command": {
+    "<strict>": true,
+    "id": "<int>",
+    "ok": false,
+    "error": "unknown command"
+  },
+  "not_json": {
+    "<strict>": true,
+    "id": 0,
+    "ok": false,
+    "error": "request is not valid JSON"
+  },
+  "invalid_request": {
+    "<strict>": true,
+    "id": 0,
+    "ok": false,
+    "error": "request must be an object with a non-negative integer \"id\", a string \"cmd\", and an optional object \"args\""
+  },
+  "invalid_args": {
+    "<strict>": true,
+    "id": "<int>",
+    "ok": false,
+    "error": "request must be an object with a non-negative integer \"id\", a string \"cmd\", and an optional object \"args\""
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "//": "Reply shapes of the legacy wmux JSON command 'surface-focus' (ADR-3.7), keyed by case; see README.md.",
+  "ok": {
+    "<strict>": true,
+    "id": "<int>",
+    "ok": true,
+    "data": null
+  },
+  "unknown_surface": {
+    "<strict>": true,
+    "id": "<int>",
+    "ok": false,
+    "error": "UnknownSurface"
+  },
+  "unknown_pane": {
+    "<strict>": true,
+    "id": "<int>",
+    "ok": false,
+    "error": "UnknownPane"
+  }
+}

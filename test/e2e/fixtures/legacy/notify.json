@@ -1,0 +1,75 @@
+{
+  "//": "Reply shapes of the legacy wmux JSON command 'notify' (ADR-3.7), keyed by case; see README.md.",
+  "ring": {
+    "<strict>": true,
+    "id": "<int>",
+    "ok": true,
+    "data": null
+  },
+  "clear": {
+    "<strict>": true,
+    "id": "<int>",
+    "ok": true,
+    "data": null
+  },
+  "next_jumped": {
+    "<strict>": true,
+    "id": "<int>",
+    "ok": true,
+    "data": {
+      "<strict>": true,
+      "jumped": true,
+      "surface": "<int>"
+    }
+  },
+  "next_none": {
+    "<strict>": true,
+    "id": "<int>",
+    "ok": true,
+    "data": {
+      "<strict>": true,
+      "jumped": false
+    }
+  },
+  "toggle_read": {
+    "<strict>": true,
+    "id": "<int>",
+    "ok": true,
+    "data": {
+      "<strict>": true,
+      "toggled": true,
+      "read": "<bool>"
+    }
+  },
+  "toggle_read_none": {
+    "<strict>": true,
+    "id": "<int>",
+    "ok": true,
+    "data": {
+      "<strict>": true,
+      "toggled": false
+    }
+  },
+  "mark_oldest_next": {
+    "<strict>": true,
+    "id": "<int>",
+    "ok": true,
+    "data": {
+      "<strict>": true,
+      "jumped": "<bool>",
+      "surface?": "<int>"
+    }
+  },
+  "missing_action": {
+    "<strict>": true,
+    "id": "<int>",
+    "ok": false,
+    "error": "MissingAction"
+  },
+  "bad_action": {
+    "<strict>": true,
+    "id": "<int>",
+    "ok": false,
+    "error": "BadAction"
+  }
+}

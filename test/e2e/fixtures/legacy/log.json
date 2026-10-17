@@ -1,0 +1,15 @@
+{
+  "//": "Reply shapes of the legacy wmux JSON command 'log' (ADR-3.7), keyed by case; see README.md.",
+  "ok": {
+    "<strict>": true,
+    "id": "<int>",
+    "ok": true,
+    "data": null
+  },
+  "missing_text": {
+    "<strict>": true,
+    "id": "<int>",
+    "ok": false,
+    "error": "MissingText"
+  }
+}
