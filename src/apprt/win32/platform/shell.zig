@@ -313,10 +313,15 @@ pub fn knownFolderPath(gpa: std.mem.Allocator, folder: KnownFolder) Error![]u8 {
 }
 
 /// ShellExecuteExW(`verb`, `target`) with SW_SHOWNORMAL, synchronously and
-/// without error UI. Visible by design: call only for user gestures.
+/// without error UI. Initializes COM (STA) on the calling thread for the
+/// duration (balanced): ShellExecuteExW activates shell extensions through
+/// COM and callers off the UI thread (G3) have none. Visible by design:
+/// call only for user gestures.
 pub fn shellExecute(gpa: std.mem.Allocator, verb: Verb, target: []const u8) Error!void {
     const file = try toWideZ(gpa, target);
     defer gpa.free(file);
+    const scope = try ComScope.init();
+    defer scope.deinit();
     var info: SHELLEXECUTEINFOW = .{
         .fMask = shell_execute_mask,
         .lpVerb = verb.wide().ptr,
