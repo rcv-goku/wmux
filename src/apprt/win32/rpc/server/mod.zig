@@ -316,15 +316,18 @@ pub fn stop(app: *App) void {
         gpa.free(path);
         p.marker_path = null;
     }
+    if (p.control) |c| c.stop();
+    // Worker-lane jobs hold the control server (`Call.server`): join them
+    // after the server stopped (their begin/complete are then no-ops) and
+    // before it is freed.
+    p.workers.stop();
     if (p.control) |c| {
-        c.stop();
         reply.unbind();
         p.hub.forgetServer(c);
         c.deinit();
         p.control = null;
     }
     legacy_pipe.stopPipe(&p.hub);
-    p.workers.stop();
     p.ui.close();
     if (p.launch) |lp| lp.deinit();
     p.launch = null;
