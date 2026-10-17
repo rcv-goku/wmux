@@ -250,15 +250,8 @@ pub fn threadExit(self: *Exec, td: *termio.Termio.ThreadData) void {
         ),
     };
 
-    if (comptime builtin.os.tag == .windows) {
-        // Interrupt the blocking read so the thread can see the quit message
-        if (windows.kernel32.CancelIoEx(exec.read_thread_fd, null) == 0) {
-            switch (windows.kernel32.GetLastError()) {
-                .NOT_FOUND => {},
-                else => |err| log.warn("error interrupting read thread err={}", .{err}),
-            }
-        }
-    }
+    // Interrupt the blocking read so the thread can see the quit message.
+    if (comptime builtin.os.tag == .windows) stopReadThreadWindows(exec);
 
     exec.read_thread.join();
 
@@ -266,6 +259,64 @@ pub fn threadExit(self: *Exec, td: *termio.Termio.ThreadData) void {
         if (exec.process_watcher_thread) |t| t.join();
     }
 }
+
+/// Windows: make the read thread leave its blocking ReadFile after the quit
+/// byte was written, without racing it (ruling D17, CCR W0-ST-1).
+///
+/// A single CancelIoEx only cancels a ReadFile that is already pending. If
+/// the read thread is anywhere else (processing output, or between two
+/// reads), the cancel finds nothing, the thread then enters ReadFile and
+/// blocks until the pseudoconsole writes again, which may never happen, so
+/// the join hung core_surface.deinit on the UI thread. Two halves close
+/// that window:
+///   - the read thread checks the quit pipe before every ReadFile, so once
+///     the quit byte is written it can only block in a ReadFile it entered
+///     after passing that check;
+///   - this function repeats the cancel (CancelSynchronousIo on the
+///     thread, which targets exactly its synchronous ReadFile, plus
+///     CancelIoEx on the handle) until the thread handle is signaled, so a
+///     cancel that landed in the gap between the check and ReadFile is
+///     followed by one that hits the blocked read.
+/// The loop gives up after a bounded time and lets the caller's join block
+/// as before, with an error logged. Closing the read handle is not a
+/// usable last resort: CloseHandle on a synchronous handle waits for the
+/// pending read like the join does, and the pty owns the handle (it closes
+/// it again in Pty.deinit).
+fn stopReadThreadWindows(exec: *ThreadData) void {
+    const thread_handle = exec.read_thread.getHandle();
+    const retry_ms = 10;
+    const max_attempts = 1000; // 10 s
+    var attempt: u32 = 0;
+    while (attempt < max_attempts) : (attempt += 1) {
+        if (CancelSynchronousIo(thread_handle) == 0) {
+            switch (windows.kernel32.GetLastError()) {
+                .NOT_FOUND => {},
+                else => |err| log.warn("error interrupting read thread err={}", .{err}),
+            }
+        }
+        if (windows.kernel32.CancelIoEx(exec.read_thread_fd, null) == 0) {
+            switch (windows.kernel32.GetLastError()) {
+                .NOT_FOUND, .INVALID_HANDLE => {},
+                else => |err| log.warn("error interrupting read thread err={}", .{err}),
+            }
+        }
+
+        std.os.windows.WaitForSingleObject(thread_handle, retry_ms) catch |err| switch (err) {
+            error.WaitTimeOut => continue,
+            else => {
+                log.warn("error waiting for read thread err={}", .{err});
+                return;
+            },
+        };
+        if (attempt > 0) log.debug("read thread exited after {} cancels", .{attempt + 1});
+        return;
+    }
+    log.err("read thread did not exit after {}ms of cancels, joining anyway", .{retry_ms * max_attempts});
+}
+
+/// Not declared in the std windows bindings; used only by
+/// stopReadThreadWindows.
+extern "kernel32" fn CancelSynchronousIo(hThread: windows.HANDLE) callconv(.winapi) std.os.windows.BOOL;
 
 pub fn focusGained(
     self: *Exec,
@@ -1543,24 +1594,10 @@ pub const ReadThread = struct {
 
         var buf: [1024]u8 = undefined;
         while (true) {
-            while (true) {
-                var n: windows.DWORD = 0;
-                if (windows.kernel32.ReadFile(fd, &buf, buf.len, &n, null) == 0) {
-                    const err = windows.kernel32.GetLastError();
-                    switch (err) {
-                        // Check for a quit signal
-                        .OPERATION_ABORTED => break,
-
-                        else => {
-                            log.err("io reader error err={}", .{err});
-                            unreachable;
-                        },
-                    }
-                }
-
-                @call(.always_inline, termio.Termio.processOutput, .{ io, buf[0..n] });
-            }
-
+            // Check the quit pipe before every ReadFile, not only after a
+            // cancelled one: a cancel issued while this thread is outside
+            // ReadFile is lost, and threadExit writes the quit byte before
+            // it starts cancelling (see stopReadThreadWindows).
             var quit_bytes: windows.DWORD = 0;
             if (windows.exp.kernel32.PeekNamedPipe(quit, null, 0, null, &quit_bytes, null) == 0) {
                 const err = windows.kernel32.GetLastError();
@@ -1572,6 +1609,22 @@ pub const ReadThread = struct {
                 log.info("read thread got quit signal", .{});
                 return;
             }
+
+            var n: windows.DWORD = 0;
+            if (windows.kernel32.ReadFile(fd, &buf, buf.len, &n, null) == 0) {
+                const err = windows.kernel32.GetLastError();
+                switch (err) {
+                    // Cancelled by threadExit: check for the quit signal.
+                    .OPERATION_ABORTED => continue,
+
+                    else => {
+                        log.err("io reader error err={}", .{err});
+                        unreachable;
+                    },
+                }
+            }
+
+            @call(.always_inline, termio.Termio.processOutput, .{ io, buf[0..n] });
         }
     }
 };
